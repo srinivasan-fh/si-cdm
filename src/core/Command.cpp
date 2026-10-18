@@ -40,9 +40,11 @@ constexpr CommandSpec kCommands[] = {
     {"EXPORT", "EXP", "EXPORT path.stl|.obj|.dxf|.svg", "STL/OBJ of visible bodies; DXF/SVG of the sketch plane"},
     // Motion & simulation
     {"MOTION", "MOT MOTIONS", "MOTION CIRCLE|LINEAR [name] [AXIS X|Y|Z|x,y,z] [AT x,y,z] [SPEED v] [RANGE r] "
-     "[MODE CONT|LOOP|OSC|ONCE] [START s] [EACH] [BODIES name... | ALL]  |  MOTION DELETE|ON|OFF name  |  MOTION",
+     "[MODE CONT|LOOP|OSC|ONCE] [START s] [EACH] [FOLLOW circular|NONE] [RADIUS r] [BODIES name... | ALL]  |  "
+     "MOTION DELETE|ON|OFF name  |  MOTION",
      "Circular (deg/s about an axis; EACH: every body about its own centre) or linear (mm/s along a direction) "
-     "motion of bodies; no args lists them"},
+     "motion of bodies; FOLLOW makes a linear motion roll with a wheel spin (travel = angle x RADIUS, "
+     "default the wheel's size); no args lists them"},
     {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t]",
      "Open the Simulation window and control playback; SIM AT t reports body poses at time t"},
     // Editing

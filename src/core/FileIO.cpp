@@ -297,6 +297,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         jm.set("axis", vec3Json(m.axis)).set("origin", vec3Json(m.origin)).set("each_centre", m.eachCentre);
         jm.set("speed", m.speed).set("range", m.range).set("mode", motionModeKey(m.mode));
         jm.set("start", m.start).set("enabled", m.enabled);
+        if (!m.follow.empty()) jm.set("follow", m.follow).set("radius", m.radius);
         motions.push(jm);
     }
     doc.set("motions", motions);
@@ -410,6 +411,8 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         m.mode = motionModeFromKey(jm["mode"].asString()).value_or(MotionMode::Continuous);
         m.start = std::max(jm["start"].asFloat(), 0.0f);
         m.enabled = jm["enabled"].asBool(true);
+        m.follow = jm["follow"].asString();
+        m.radius = std::max(jm["radius"].asFloat(), 0.0f);
         loaded.motions().push_back(std::move(m));
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);

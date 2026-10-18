@@ -1499,8 +1499,8 @@ void Application::drawSimulationOverlay() const {
             const Vec3 dir = normalize(outer.transformDir(m.axis));
             const float r = std::max(groups[k].radius * 0.6f, 24.0f * wpp);
             char text[96];
-            std::snprintf(text, sizeof(text), "%s  %.1f %s  %.0f %s", m.name.c_str(), static_cast<double>(motionValue(m, t)),
-                          m.unit(), static_cast<double>(motionRate(m, t)), m.rateUnit());
+            std::snprintf(text, sizeof(text), "%s  %.1f %s  %.0f %s", m.name.c_str(), static_cast<double>(motionValue(scene, m, t)),
+                          m.unit(), static_cast<double>(motionRate(scene, m, t)), m.rateUnit());
             if (m.kind == MotionKind::Circular) {
                 const Vec3 pivot = m.eachCentre ? bodies[static_cast<std::size_t>(groups[k].body)].bounds().center() : m.origin;
                 const Vec3 o = outer.transformPoint(pivot);
@@ -1533,7 +1533,7 @@ void Application::drawSimulationOverlay() const {
             } else {
                 const Mat4 full = bodyMotionTransform(scene, static_cast<std::size_t>(groups[k].body), t);
                 const Vec3 p = full.transformPoint(groups[k].centre);
-                const float rate = motionRate(m, t);
+                const float rate = motionRate(scene, m, t);
                 const float sign = (rate != 0.0f ? rate : m.speed) < 0.0f ? -1.0f : 1.0f; // current direction
                 const Vec3 end = p + dir * (sign * r * 1.4f);
                 line(p, end, c, 2.5f);

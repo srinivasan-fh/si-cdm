@@ -1327,6 +1327,26 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 ImGui::Checkbox("Each body about its own centre", &m.eachCentre);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("One motion spins every wheel about its own hub");
             }
+            if (m.kind == MotionKind::Linear) {
+                ImGui::TextDisabled("Rolls with");
+                ImGui::SameLine(90);
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::BeginCombo("##follow", m.follow.empty() ? "Own speed" : m.follow.c_str())) {
+                    if (ImGui::Selectable("Own speed", m.follow.empty())) m.follow.clear();
+                    for (const Motion& d : motions)
+                        if (d.kind == MotionKind::Circular && ImGui::Selectable(d.name.c_str(), d.name == m.follow))
+                            m.follow = d.name;
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Travel follows a wheel spin: distance = wheel angle x radius");
+                if (!m.follow.empty()) {
+                    ImGui::TextDisabled("Radius");
+                    ImGui::SameLine(90);
+                    ImGui::SetNextItemWidth(130);
+                    ImGui::DragFloat("##radius", &m.radius, 0.5f, 0.0f, 1e5f, m.radius <= 0.0f ? "wheel size" : "%.1f mm");
+                    m.radius = std::max(m.radius, 0.0f);
+                }
+            }
             if (m.kind == MotionKind::Circular && !m.eachCentre) {
                 ImGui::TextDisabled("Through");
                 ImGui::SameLine(90);
@@ -1371,8 +1391,8 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             // Live value.
             ImGui::TextDisabled("Now");
             ImGui::SameLine(90);
-            ImGui::TextColored(col, "%.2f %s   %.1f %s", static_cast<double>(motionValue(m, st.simTime)), m.unit(),
-                               static_cast<double>(motionRate(m, st.simTime)), m.rateUnit());
+            ImGui::TextColored(col, "%.2f %s   %.1f %s", static_cast<double>(motionValue(scene, m, st.simTime)), m.unit(),
+                               static_cast<double>(motionRate(scene, m, st.simTime)), m.rateUnit());
             ImGui::Spacing();
         }
         ImGui::PopID();

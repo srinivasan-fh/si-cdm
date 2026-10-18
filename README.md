@@ -60,6 +60,8 @@ of the 3D model without changing it — Stop puts every body back where it was m
   (or rpm). The axis point defaults to the centre of the moved bodies, so a wheel spins about its hub;
   *Each body about its own centre* (`EACH`) lets one motion spin all the wheels of a vehicle.
 - **Linear motion:** travel along a direction in mm/s.
+- **Rolling drive:** a linear motion can *roll with* a circular one (`FOLLOW`): travel = wheel angle × radius
+  (default: the wheel's size), so the wheels drive the vehicle — stop or reverse them and it stops or backs up.
 - **Range & mode:** an optional sweep (deg) or stroke (mm) with Continuous, Loop, Oscillate (back and
   forth) or Once; a start delay; negative speeds reverse. Each motion can be switched on and off.
 - **Chained motions:** a body in several motions gets them in list order, the first outermost — e.g. a
@@ -78,6 +80,7 @@ Motions are saved in the project. On the command line:
 ```text
 MOTION LINEAR Drive DIR X SPEED 20 STROKE 200 OSC BODIES ALL
 MOTION CIRCLE "Wheel spin" AXIS Y RPM 30 EACH BODIES "Wheel 1" "Wheel 2" "Wheel 3"
+MOTION LINEAR Drive FOLLOW "Wheel spin"        # the body rolls with the wheels (RADIUS r to override)
 MOTION CIRCLE Turntable AXIS Z AT 0,0,0 SPEED -45 RANGE 90 ONCE START 2
 MOTION   MOTION OFF Drive   MOTION DELETE Drive
 SIM PLAY   SIM PAUSE   SIM STOP   SIM TIME 2.5   SIM SPEED 2   SIM DURATION 12   SIM AXES OFF   SIM AT 3

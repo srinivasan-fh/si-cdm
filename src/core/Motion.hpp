@@ -37,6 +37,11 @@ struct Motion {
     MotionMode mode = MotionMode::Continuous;
     float start = 0.0f;              // delay before it starts (s)
     bool enabled = true;
+    // Linear only: travel is driven by this circular motion rolling a wheel of
+    // `radius` (0 = half the first driven body's size along the direction);
+    // speed, range and mode then come from that motion.
+    std::string follow;
+    float radius = 0.0f;
 
     bool moves(std::string_view bodyName) const;
     const char* unit() const noexcept { return kind == MotionKind::Circular ? "deg" : "mm"; }
@@ -46,6 +51,9 @@ struct Motion {
 // Angle (deg) or travel (mm) at time t (s), and its rate of change.
 float motionValue(const Motion& m, float t) noexcept;
 float motionRate(const Motion& m, float t) noexcept;
+// The same with a followed motion resolved in the scene (a rolling drive).
+float motionValue(const Scene& scene, const Motion& m, float t);
+float motionRate(const Scene& scene, const Motion& m, float t);
 // World transform the motion applies at time t.
 Mat4 motionMatrix(const Motion& m, float t) noexcept;
 // The same with the rotation axis through `origin` instead of m.origin.
