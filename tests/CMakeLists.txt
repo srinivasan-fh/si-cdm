@@ -1,0 +1,9 @@
+add_executable(sicdm_tests
+    test_main.cpp
+    test_math.cpp
+    test_camera.cpp
+    test_geometry.cpp
+)
+target_link_libraries(sicdm_tests PRIVATE sicdm_core)
+sicdm_set_compile_options(sicdm_tests)
+add_test(NAME sicdm_tests COMMAND sicdm_tests)

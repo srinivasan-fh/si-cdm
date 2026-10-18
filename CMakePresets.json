@@ -1,0 +1,39 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "xcode",
+      "displayName": "Xcode (macOS, Universal)",
+      "generator": "Xcode",
+      "binaryDir": "${sourceDir}/build/xcode",
+      "cacheVariables": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (Unix Makefiles / Ninja)",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "SICDM_ENABLE_LTO": "OFF" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "xcode-release", "configurePreset": "xcode", "configuration": "Release" },
+    { "name": "xcode-debug", "configurePreset": "xcode", "configuration": "Debug" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "debug", "configurePreset": "debug" }
+  ],
+  "testPresets": [
+    { "name": "xcode", "configurePreset": "xcode", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } }
+  ]
+}

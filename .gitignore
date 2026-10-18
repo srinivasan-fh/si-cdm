@@ -1,0 +1,21 @@
+# Build output
+/build/
+/out/
+cmake-build-*/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.dSYM/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+compile_commands.json
+.cache/
+
+# Screenshots from --screenshot
+*.ppm
