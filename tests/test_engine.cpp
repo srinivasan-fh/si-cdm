@@ -160,3 +160,101 @@ TEST_CASE("extruded bodies survive save and reopen") {
     CHECK(e.scene.bodies()[0].kind == "extrude");
     CHECK(e.scene.bodies()[0].mesh.indices.size() == d.scene.bodies()[0].mesh.indices.size());
 }
+
+namespace {
+
+// Minimal multi-document host: like the app, it swaps the open files through `doc`.
+struct TabsHost final : ViewHost {
+    Document& doc;
+    std::vector<Document> parked; // the inactive files
+    int prepared = 0;
+    explicit TabsHost(Document& d) : doc(d) {}
+
+    void openWindow(bool) override {}
+    void standardView(StandardView) override {}
+    void planeChanged(SketchPlane) override {}
+    void fit() override {}
+    void zoomStep(float) override {}
+    void home() override {}
+    void roll(float, bool) override {}
+    void setProjection(Projection) override {}
+    void setDisplay(int) override {}
+    void setGrid(std::optional<bool>) override {}
+    void setPanel(std::optional<bool>) override {}
+    std::string describe() const override { return {}; }
+
+    bool prepareDocument(const std::string& path) override {
+        ++prepared;
+        for (Document& p : parked)
+            if (!path.empty() && p.path == path) {
+                std::swap(p, doc);
+                return true;
+            }
+        parked.push_back(std::move(doc));
+        doc = Document{};
+        doc.name = "Untitled " + std::to_string(parked.size() + 1);
+        return false;
+    }
+    std::vector<std::string> fileTabs() const override {
+        std::vector<std::string> t{"> " + doc.title()};
+        for (const Document& p : parked) t.push_back("  " + p.title());
+        return t;
+    }
+    bool closeFile(bool discard, std::string* error) override {
+        if (doc.dirty && !discard) {
+            *error = "unsaved";
+            return false;
+        }
+        if (parked.empty()) doc = Document{};
+        else {
+            doc = std::move(parked.back());
+            parked.pop_back();
+        }
+        return true;
+    }
+};
+
+} // namespace
+
+TEST_CASE("NEW and OPEN ask a multi-document host for a tab; FILES and CLOSE") {
+    Document d;
+    TabsHost host(d);
+    auto runIn = [&](const std::string& line) { return executeCommand(d, line, &host); };
+
+    CHECK(runIn("BOX 10 10 10").ok);
+    const std::string proj = tmpPath("tabs_a.sicdm");
+    CHECK(runIn("SAVE " + proj).ok);
+    const std::string savedPath = d.path;
+
+    CHECK(runIn("NEW").ok); // the saved file stays open in its tab
+    CHECK(host.prepared == 1);
+    CHECK(host.parked.size() == 1);
+    CHECK(host.parked[0].scene.bodies().size() == 1);
+    CHECK(d.scene.bodies().empty());
+    CHECK(d.title() == "Untitled 2");
+
+    CHECK(!runIn("OPEN " + tmpPath("missing.sicdm")).ok); // nothing loads: no tab is made
+    CHECK(host.prepared == 1);
+
+    const CommandOutput again = runIn("OPEN " + proj); // already open: its tab is shown
+    CHECK(again.ok);
+    CHECK(!again.documentReplaced);
+    CHECK(d.path == savedPath);
+    CHECK(d.scene.bodies().size() == 1);
+    CHECK(runIn("FILES").lines.size() == 2);
+
+    CHECK(runIn("SPHERE 4").ok);
+    d.dirty = true;
+    CHECK(!runIn("CLOSE").ok); // unsaved work is not dropped silently
+    CHECK(runIn("CLOSE DISCARD").ok);
+    CHECK(d.title() == "Untitled 2");
+    CHECK(!runIn("CLOSE NOW").ok);
+}
+
+TEST_CASE("file tab commands are harmless headless") {
+    Document d;
+    CHECK(run(d, "FILES").ok);
+    CHECK(!run(d, "FILES 2").ok);
+    CHECK(!run(d, "CLOSE").ok);
+    CHECK(run(d, "NEW").ok);
+}

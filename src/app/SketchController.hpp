@@ -39,6 +39,9 @@ public:
     std::optional<Vec2> lastPoint() const noexcept {
         return m_points.empty() ? std::nullopt : std::optional<Vec2>(m_points.back());
     }
+    std::optional<Vec2> firstPoint() const noexcept {
+        return m_points.empty() ? std::nullopt : std::optional<Vec2>(m_points.front());
+    }
 
     void cancel() { m_points.clear(); }
     bool busy() const noexcept { return !m_points.empty(); }

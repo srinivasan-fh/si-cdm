@@ -128,11 +128,9 @@ CommandOutput needView(ViewHost* view, const char* what) {
 
 } // namespace
 
-std::string Document::title() const {
-    std::string t = path.empty() ? "Untitled" : fs::path(path).filename().string();
-    if (dirty) t += " *";
-    return t;
-}
+std::string Document::displayName() const { return path.empty() ? name : fs::path(path).filename().string(); }
+
+std::string Document::title() const { return dirty ? displayName() + " *" : displayName(); }
 
 Body defaultPrimitive(const std::string& kind, int serial) {
     Body b;
@@ -337,6 +335,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
 
     // ---- Files ------------------------------------------------------------
     if (cmd == "NEW") {
+        if (view) view->prepareDocument("");
         doc.scene.clear();
         doc.path.clear();
         doc.dirty = false;
@@ -353,6 +352,10 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         Scene loaded;
         ProjectState st;
         if (!loadProject(loaded, st, path, &err, &warn)) return out.fail(err);
+        if (view && view->prepareDocument(fs::absolute(path).string())) {
+            out.say(fs::path(path).filename().string() + " is already open");
+            return out;
+        }
         doc.scene.assign(std::move(loaded));
         doc.state = st;
         doc.path = fs::absolute(path).string();
@@ -362,6 +365,30 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         out.documentReplaced = true;
         out.say("Opened " + doc.path);
         if (!warn.empty()) out.say(warn);
+        return out;
+    }
+    if (cmd == "FILES") {
+        if (a.empty()) {
+            const auto tabs = view ? view->fileTabs() : std::vector<std::string>{};
+            if (tabs.empty()) out.say("> 1  " + doc.title());
+            for (const std::string& t : tabs) out.say(t);
+            return out;
+        }
+        if (!view) return out.fail("Only one document is open");
+        std::string err;
+        if (!view->switchFile(joinArgs(a), &err)) return out.fail(err);
+        out.say("Switched to " + doc.title()); // `doc` now holds the activated file
+        return out;
+    }
+    if (cmd == "CLOSE") {
+        if (!view) return out.fail("CLOSE needs the app window");
+        const bool discard = !a.empty() && toUpper(a[0]) == "DISCARD";
+        if (!a.empty() && !discard) return usage();
+        const std::string closed = doc.displayName();
+        std::string err;
+        if (!view->closeFile(discard, &err)) return out.fail(err);
+        out.say("Closed " + closed + "; now editing " + doc.title());
+        out.documentReplaced = false;
         return out;
     }
     if (cmd == "SAVE" || cmd == "SAVEAS") {

@@ -46,8 +46,20 @@ struct UiState {
 
     // Project / file.
     std::string projectTitle = "Untitled";
+    std::string projectName = "Untitled"; // file stem, or the name of an unsaved file
     std::string projectPath;
     bool dirty = false;
+
+    // Open files, one tab each, shown at the top of the canvas.
+    struct FileTabInfo {
+        int id = 0;
+        std::string name; // "part.sicdm" or "Untitled 2"
+        std::string path;
+        bool dirty = false;
+        ViewMode mode = ViewMode::Model3D;
+    };
+    std::vector<FileTabInfo> files;
+    int activeFile = 0; // index into files
 
     // MCP server for AI agents (live app over HTTP).
     bool mcpRunning = false;
@@ -79,6 +91,9 @@ struct UiCommands {
     bool toggleMcp = false;
     bool applyExtrude = false;
     bool cancelExtrude = false;
+    std::optional<int> switchFile; // file tab id; applied first
+    std::optional<int> closeFile;  // file tab id; applied last, only if saved unless closeDiscard
+    bool closeDiscard = false;
 };
 
 // Workbench chrome around the canvas: menu bar, options bar (tool options and
@@ -97,7 +112,8 @@ public:
 private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
-    void drawDocumentTabs(UiCommands& cmd, const UiState& st);
+    void drawFileTabs(UiCommands& cmd, const UiState& st);
+    void requestClose(UiCommands& cmd, const UiState& st, int index);
     void drawRulers(const OrbitCamera& cam, const UiState& st);
     float drawModelTree(Scene& scene, UiState& st, float x, float top, float bottom); // returns width
     void drawCommandBar(UiCommands& cmd, UiState& st);
@@ -111,7 +127,7 @@ private:
 
     Toolbox m_toolbox;
     ViewCube m_viewCube;
-    std::optional<ViewMode> m_tabMode; // tab the tab bar currently shows
+    int m_shownFile = -1; // file tab id the tab bar currently shows
     float m_toolboxWidth = 0.0f;
     float m_leftDockWidth = 0.0f; // rail + docked Model panel
     float m_menuHeight = 0.0f;
@@ -135,8 +151,9 @@ private:
     enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
-    int m_confirmAction = FileNone; // New (-1) / Open waiting for "discard changes?"
-    bool m_confirmOpen = false;
+    int m_closeAsk = -1;          // file tab id waiting for "save changes?"
+    bool m_closeAskOpen = false;
+    int m_closeAfterSave = -1;    // file tab id to close once Save As succeeds
     bool m_showMcp = false;
 };
 

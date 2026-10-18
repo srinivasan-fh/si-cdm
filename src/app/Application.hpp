@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 struct GLFWwindow;
 
@@ -51,6 +52,12 @@ public:
     void setPanel(std::optional<bool> on) override;
     std::string describe() const override;
 
+    // ViewHost: file tabs.
+    bool prepareDocument(const std::string& path) override;
+    std::vector<std::string> fileTabs() const override;
+    bool switchFile(const std::string& which, std::string* error) override;
+    bool closeFile(bool discard, std::string* error) override;
+
 private:
     bool init();
     void shutdown();
@@ -81,8 +88,34 @@ private:
     void updatePrompt();
     void toggleMcp();
     std::string handleMcp(const std::string& body);
-    std::uint64_t contentSignature() const; // changes whenever the saved content would
+    static std::uint64_t signatureOf(const Document& doc); // changes whenever the saved content would
+    std::uint64_t contentSignature() const { return signatureOf(m_doc); }
     void updateTitle();
+    void init2DCamera();
+
+    // File tabs. Each open file keeps its own document, cameras, windows and selection.
+    // The active file lives in the members below (m_doc, m_cam3D, ...); the others are
+    // parked in m_files, and m_files[m_activeFile] is an empty placeholder.
+    struct FileTab {
+        int id = 0;
+        Document doc;
+        OrbitCamera cam3D, cam2D;
+        ViewportSettings vp3D, vp2D;
+        bool ready2D = false;
+        std::uint64_t savedSignature = 0;
+        ViewMode mode = ViewMode::Model3D;
+        bool demo = false; // the start-up demo part: Open replaces it while it is untouched
+    };
+    void parkActiveFile();
+    void loadFile(int index);
+    void activateFile(int index);
+    void newFileTab();
+    bool closeFileTab(int index, bool discard);
+    int fileIndex(int id) const;
+    const Document& fileDoc(int index) const;
+    bool anyFileDirty() const;
+    void refreshFileTabs();
+    void saveAll();
 
     // Each window keeps its own camera and display settings.
     OrbitCamera& camera() noexcept { return m_uiState.mode == ViewMode::Drawing2D ? m_cam2D : m_cam3D; }
@@ -99,6 +132,11 @@ private:
     AppOptions m_options;
     GLFWwindow* m_window = nullptr;
     bool m_imguiReady = false;
+
+    std::vector<FileTab> m_files;
+    int m_activeFile = 0;
+    int m_nextFileId = 1;
+    int m_untitledCount = 0;
 
     Document m_doc;
     OrbitCamera m_cam3D, m_cam2D;

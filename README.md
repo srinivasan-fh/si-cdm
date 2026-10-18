@@ -20,9 +20,19 @@ Requires CMake 3.24+ (`brew install cmake`) and, on macOS, Xcode 15+.
 
 In Xcode, select the **sicdm** scheme and press ⌘R.
 
+## Files in tabs
+
+Every open file has its own tab at the top of the canvas, AutoCAD style: `☰` (file menu and the list
+of open files), one tab per file (`*` = unsaved, `×` or middle-click closes it) and `+` for a new file.
+Each file keeps its own model, 2D / 3D window, cameras and selection, so switching tabs puts you back
+exactly where you were. `Ctrl/⌘ N` and `+` open a new tab, Open opens the project in its own tab (or
+shows it if it is already open; the untouched demo part is replaced), `Ctrl/⌘ W` closes the tab —
+asking to save first if needed — and `Ctrl + Tab` / `Ctrl + Shift + Tab` cycle through the files. On the
+command line, `FILES` lists the tabs, `FILES 2` or `FILES part` switches, `CLOSE [DISCARD]` closes.
+
 ## View windows
 
-The top bar of the canvas switches between two windows (also via the document tabs or `Tab`):
+The top bar of the canvas switches between two windows of the active file (also `Tab`):
 
 - **3D Model** – perspective / orthographic model view with Shaded, Shaded + Edges, Wireframe and
   Hidden Line display.
@@ -88,7 +98,7 @@ With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,d
 | **Import** (Ctrl/⌘ I) | `.stl` `.obj` → body · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
 | **Export** (Ctrl/⌘ E) | `.stl` `.obj` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
 
-Unsaved changes are tracked (`*` in the title); New, Open and Quit ask before discarding them.
+Unsaved changes are tracked (`*` in the tab and title); closing a tab or quitting asks before discarding them.
 
 **Reference images** (scanned drawings, photos, blueprints) lie on the active sketch plane and show in
 both windows: under the sketch in 2D for tracing, in place in 3D. Select one to set its width (mm),
@@ -103,7 +113,7 @@ and edit the 2D and 3D model. Tools: `get_scene`, `create_sketch`, `create_solid
 
 - **Live app (HTTP):** enable *AI → MCP Server* or start with `--mcp-port 8765`, then
   `claude mcp add --transport http si-cdm http://127.0.0.1:8765/mcp`. The agent drives the open
-  window (views, 2D/3D switch included). Listens on localhost only.
+  window (views, 2D/3D switch and file tabs included: `run_command` with `FILES`, `CLOSE`). Listens on localhost only.
 - **Headless (stdio):** `sicdm-mcp [project.sicdm]` works on files without a window:
   `claude mcp add si-cdm-files -- /path/to/build/release/sicdm-mcp`.
 
@@ -112,6 +122,7 @@ and edit the 2D and 3D model. Tools: `get_scene`, `create_sketch`, `create_solid
 ## Controls
 
 - `Tab`: switch 2D Drawing / 3D Model window
+- `Ctrl + Tab` / `Ctrl + Shift + Tab`: next / previous file tab; `Ctrl/⌘ W`: close the file tab
 - `Space`: command line
 - Right drag (or left drag on empty space): orbit in 3D, pan in 2D
 - Middle drag / Shift + left drag: pan

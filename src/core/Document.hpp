@@ -17,6 +17,7 @@ struct Document {
     Scene scene;
     ProjectState state;
     std::string path; // project file, empty until saved
+    std::string name = "Untitled"; // shown while there is no path
     bool dirty = false;
 
     int selectedBody = -1;
@@ -29,7 +30,8 @@ struct Document {
     int primitiveSerial = 0;
 
     void clearSelection() noexcept { selectedBody = selectedCurve = selectedImage = -1; }
-    std::string title() const; // "name.sicdm" or "Untitled", with " *" when dirty
+    std::string title() const; // "file.sicdm" or the name, with " *" when dirty
+    std::string displayName() const; // "file.sicdm" or the name
 };
 
 // Window / camera operations. Implemented by the GUI; absent when headless.
@@ -48,6 +50,23 @@ public:
     virtual void setGrid(std::optional<bool> on) = 0;  // nullopt toggles
     virtual void setPanel(std::optional<bool> on) = 0; // Model panel
     virtual std::string describe() const = 0;          // window, plane, camera summary
+
+    // Multi-document hosts keep each project in its own file tab. NEW / OPEN call
+    // prepareDocument() before they fill the document: the host may make a fresh tab
+    // active (the current file stays open in its tab). It returns true when `path`
+    // is already open and its tab was activated instead, so there is nothing to load.
+    virtual bool prepareDocument(const std::string& path) { (void)path; return false; }
+    virtual std::vector<std::string> fileTabs() const { return {}; } // "> " marks the active one
+    virtual bool switchFile(const std::string& which, std::string* error) {
+        *error = "Only one document is open";
+        (void)which;
+        return false;
+    }
+    virtual bool closeFile(bool discard, std::string* error) {
+        *error = "CLOSE needs the app window";
+        (void)discard;
+        return false;
+    }
 };
 
 struct CommandOutput {

@@ -111,7 +111,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     // The Model panel docks beside the rail; tabs, rulers and canvas start after it.
     m_leftDockWidth = m_toolboxWidth;
     if (st.showModelTree) m_leftDockWidth += drawModelTree(scene, st, mv->WorkPos.x + m_toolboxWidth, railTop, bottom);
-    drawDocumentTabs(cmd, st);
+    drawFileTabs(cmd, st);
 
     const bool is2D = st.mode == ViewMode::Drawing2D;
     m_canvasMin = {mv->WorkPos.x + m_leftDockWidth + (is2D ? kRulerSize : 0.0f), m_tabsBottom + (is2D ? kRulerSize : 0.0f)};
@@ -151,6 +151,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Project", "Ctrl+N")) requestFile(-1, st);
         if (ImGui::MenuItem("Open Project...", "Ctrl+O")) requestFile(FileOpen, st);
+        if (ImGui::MenuItem("Close", "Ctrl+W")) requestClose(cmd, st, st.activeFile);
         ImGui::Separator();
         if (ImGui::MenuItem("Save", "Ctrl+S")) {
             if (st.projectPath.empty()) requestFile(FileSaveAs, st);
@@ -388,8 +389,9 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     ImGui::PopStyleVar(2);
 }
 
-void LandingUI::drawDocumentTabs(UiCommands& cmd, const UiState& st) {
-    // Each view window is a document tab, so switching feels like Photoshop.
+void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
+    // One tab per open file at the top of the canvas (AutoCAD style): the file
+    // menu, the files (with * when unsaved, x to close) and + for a new file.
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     const float x = mv->WorkPos.x + m_leftDockWidth;
     const float y = mv->WorkPos.y + m_optionsHeight;
@@ -402,30 +404,79 @@ void LandingUI::drawDocumentTabs(UiCommands& cmd, const UiState& st) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::Begin("##tabs", nullptr, flags);
 
-    // Tabs change the mode only when clicked; otherwise they follow it.
-    auto flagsFor = [&](ViewMode m) {
-        return st.mode == m && m_tabMode != m ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
-    };
-    char label2D[96];
-    std::snprintf(label2D, sizeof(label2D), "Demo Bracket @ 2D Drawing (%s)###tab2d", shortPlaneName(st.plane));
-    if (ImGui::BeginTabBar("##docs")) {
-        const bool open3D = ImGui::BeginTabItem("Demo Bracket @ 3D Model###tab3d", nullptr, flagsFor(ViewMode::Model3D));
-        if (ImGui::IsItemClicked()) cmd.mode = ViewMode::Model3D;
-        if (open3D) {
-            m_tabMode = ViewMode::Model3D;
-            ImGui::EndTabItem();
+    const int activeId = st.activeFile >= 0 && st.activeFile < static_cast<int>(st.files.size())
+                             ? st.files[static_cast<std::size_t>(st.activeFile)].id
+                             : -1;
+    if (ImGui::BeginTabBar("##files", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip)) {
+        // File menu: three bars drawn over a blank leading button.
+        if (ImGui::TabItemButton("    ##filemenu", ImGuiTabItemFlags_Leading | ImGuiTabItemFlags_NoTooltip))
+            ImGui::OpenPopup("##filesMenu");
+        {
+            const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+            const float cx = (a.x + b.x) * 0.5f, cy = (a.y + b.y) * 0.5f;
+            const ImU32 c = ImGui::GetColorU32(ImGuiCol_Text);
+            for (float dy : {-4.0f, 0.0f, 4.0f}) ImGui::GetWindowDrawList()->AddLine({cx - 6, cy + dy}, {cx + 6, cy + dy}, c, 1.5f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Files");
         }
-        const bool open2D = ImGui::BeginTabItem(label2D, nullptr, flagsFor(ViewMode::Drawing2D));
-        if (ImGui::IsItemClicked()) cmd.mode = ViewMode::Drawing2D;
-        if (open2D) {
-            m_tabMode = ViewMode::Drawing2D;
-            ImGui::EndTabItem();
+        if (ImGui::BeginPopup("##filesMenu")) {
+            if (ImGui::MenuItem("New", "Ctrl+N")) cmd.commands.push_back("NEW");
+            if (ImGui::MenuItem("Open...", "Ctrl+O")) requestFile(FileOpen, st);
+            if (ImGui::MenuItem("Save", "Ctrl+S")) {
+                if (st.projectPath.empty()) requestFile(FileSaveAs, st);
+                else cmd.commands.push_back("SAVE");
+            }
+            if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) requestFile(FileSaveAs, st);
+            if (ImGui::MenuItem("Close", "Ctrl+W")) requestClose(cmd, st, st.activeFile);
+            ImGui::Separator();
+            for (const auto& f : st.files) {
+                const std::string label = f.name + (f.dirty ? "*" : "") + "###menufile" + std::to_string(f.id);
+                if (ImGui::MenuItem(label.c_str(), nullptr, f.id == activeId)) cmd.switchFile = f.id;
+            }
+            ImGui::EndPopup();
         }
+
+        for (std::size_t i = 0; i < st.files.size(); ++i) {
+            const auto& f = st.files[i];
+            const std::string label = f.name + (f.dirty ? "*" : "") + "###file" + std::to_string(f.id);
+            bool open = true;
+            // Tabs switch files only when clicked; otherwise they follow the active file.
+            const ImGuiTabItemFlags tf =
+                f.id == activeId && m_shownFile != activeId ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+            const bool selected = ImGui::BeginTabItem(label.c_str(), &open, tf);
+            if (ImGui::IsItemClicked() && f.id != activeId) cmd.switchFile = f.id;
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) requestClose(cmd, st, static_cast<int>(i));
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::SetTooltip("%s\n%s window%s", f.path.empty() ? "Not saved yet" : f.path.c_str(),
+                                  f.mode == ViewMode::Drawing2D ? "2D Drawing" : "3D Model",
+                                  f.dirty ? "\nUnsaved changes" : "");
+            }
+            if (selected) {
+                if (f.id == activeId) m_shownFile = activeId;
+                ImGui::EndTabItem();
+            }
+            if (!open) requestClose(cmd, st, static_cast<int>(i));
+        }
+        if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip))
+            cmd.commands.push_back("NEW");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("New file (Ctrl+N)");
         ImGui::EndTabBar();
     }
     m_tabsBottom = y + ImGui::GetWindowSize().y;
     ImGui::End();
     ImGui::PopStyleVar(2);
+}
+
+void LandingUI::requestClose(UiCommands& cmd, const UiState& st, int index) {
+    if (index < 0 || index >= static_cast<int>(st.files.size())) return;
+    const auto& f = st.files[static_cast<std::size_t>(index)];
+    if (!f.dirty) {
+        cmd.closeFile = f.id;
+        return;
+    }
+    // Unsaved: show the file, then ask whether to save it.
+    cmd.switchFile = f.id;
+    m_closeAsk = f.id;
+    m_closeAskOpen = true;
 }
 
 void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
@@ -688,7 +739,7 @@ std::string startDirFor(const UiState& st) {
 }
 
 std::string projectStem(const UiState& st) {
-    return st.projectPath.empty() ? std::string("Untitled") : std::filesystem::path(st.projectPath).stem().string();
+    return st.projectPath.empty() ? st.projectName : std::filesystem::path(st.projectPath).stem().string();
 }
 
 } // namespace
@@ -733,6 +784,11 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
         if (mod && ImGui::IsKeyPressed(ImGuiKey_O, false)) requestFile(FileOpen, st);
         if (mod && ImGui::IsKeyPressed(ImGuiKey_I, false)) requestFile(FileImport, st);
         if (mod && ImGui::IsKeyPressed(ImGuiKey_E, false)) requestFile(FileExport, st);
+        if (mod && ImGui::IsKeyPressed(ImGuiKey_W, false)) requestClose(cmd, st, st.activeFile);
+        if (mod && ImGui::IsKeyPressed(ImGuiKey_Tab, false) && st.files.size() > 1) { // next / previous file
+            const int n = static_cast<int>(st.files.size());
+            cmd.switchFile = st.files[static_cast<std::size_t>((st.activeFile + (io.KeyShift ? n - 1 : 1)) % n)].id;
+        }
         if (mod && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
             if (io.KeyShift || st.projectPath.empty()) requestFile(FileSaveAs, st);
             else cmd.commands.push_back("SAVE");
@@ -847,12 +903,7 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
 }
 
 void LandingUI::requestFile(int action, const UiState& st) {
-    // New / Open would discard unsaved work: ask first.
-    if ((action == -1 || action == FileOpen) && st.dirty) {
-        m_confirmAction = action;
-        m_confirmOpen = true;
-        return;
-    }
+    // New and Open use their own file tab, so nothing is discarded.
     m_fileAction = action;
     const std::string dir = startDirFor(st);
     switch (action) {
@@ -886,7 +937,11 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
     if (const auto path = m_fileDialog.draw()) {
         switch (m_fileAction) {
         case FileOpen: cmd.commands.push_back("OPEN " + quoted(*path)); break;
-        case FileSaveAs: cmd.commands.push_back("SAVE " + quoted(*path)); break;
+        case FileSaveAs:
+            cmd.commands.push_back("SAVE " + quoted(*path));
+            if (m_closeAfterSave >= 0) cmd.closeFile = m_closeAfterSave; // closes only if the save worked
+            m_closeAfterSave = -1;
+            break;
         case FileImport:
         case FileImportImage: cmd.commands.push_back("IMPORT " + quoted(*path)); break;
         case FileExport: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
@@ -895,33 +950,34 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         m_fileAction = FileNone;
     }
 
-    if (m_confirmOpen) {
-        ImGui::OpenPopup("Unsaved changes");
-        m_confirmOpen = false;
+    // Close Save As'd or cancelled: forget the pending close.
+    if (m_closeAfterSave >= 0 && m_fileAction != FileSaveAs) m_closeAfterSave = -1;
+
+    if (m_closeAskOpen) {
+        ImGui::OpenPopup("Close File###closefile");
+        m_closeAskOpen = false;
     }
-    if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("%s has unsaved changes.", st.projectTitle.c_str());
-        ImGui::TextDisabled(m_confirmAction == -1 ? "Start a new project anyway?" : "Open another project anyway?");
+    if (ImGui::BeginPopupModal("Close File###closefile", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        std::string name = "This file";
+        for (const auto& f : st.files)
+            if (f.id == m_closeAsk) name = f.name;
+        ImGui::Text("Save changes to %s before closing?", name.c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Save First", {110, 0})) {
+        if (ImGui::Button("Save", {110, 0})) {
             if (st.projectPath.empty()) {
-                ImGui::CloseCurrentPopup();
                 requestFile(FileSaveAs, st);
+                m_closeAfterSave = m_closeAsk;
             } else {
                 cmd.commands.push_back("SAVE");
-                st.dirty = false; // so the follow-up action does not ask again
-                const int next = m_confirmAction;
-                ImGui::CloseCurrentPopup();
-                requestFile(next, st);
+                cmd.closeFile = m_closeAsk; // closes only if the save worked
             }
+            ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Discard", {110, 0})) {
-            const int next = m_confirmAction;
+        if (ImGui::Button("Don't Save", {110, 0})) {
+            cmd.closeFile = m_closeAsk;
+            cmd.closeDiscard = true;
             ImGui::CloseCurrentPopup();
-            UiState clean = st;
-            clean.dirty = false;
-            requestFile(next, clean);
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel", {110, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
@@ -977,6 +1033,8 @@ void LandingUI::drawControlsWindow(UiState& st) {
         if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
             const char* rows[][2] = {
                 {"Tab", "Switch 2D Drawing / 3D Model window"},
+                {"Ctrl + Tab / Shift", "Next / previous file tab"},
+                {"Ctrl + W", "Close the file tab"},
                 {"ViewCube click", "Face / edge / corner view (26 views)"},
                 {"ViewCube drag", "Orbit (3D)"},
                 {"ViewCube right-click", "More views & windows"},

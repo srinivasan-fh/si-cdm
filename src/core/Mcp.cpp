@@ -191,8 +191,8 @@ Json McpServer::toolDefinitions() {
         tools.push(tool("save_project", "Save the project.", p, {}));
         Json o = Json::object();
         o.set("path", prop("string", "Project file to open (.sicdm)"));
-        tools.push(tool("open_project", "Open a project, replacing the current document.", o, {"path"}));
-        tools.push(tool("new_project", "Start an empty project (unsaved changes are discarded).", Json::object(), {}));
+        tools.push(tool("open_project", "Open a project. In the app it opens in its own file tab (or shows its tab if already open).", o, {"path"}));
+        tools.push(tool("new_project", "Start an empty project. In the app it opens a new file tab; headless, unsaved changes are discarded.", Json::object(), {}));
     }
     {
         Json p = Json::object();

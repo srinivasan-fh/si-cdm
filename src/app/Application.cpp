@@ -119,7 +119,11 @@ bool Application::init() {
     m_uiState.gpuName = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     m_uiState.glVersion = std::string("OpenGL ") + reinterpret_cast<const char*>(glGetString(GL_VERSION));
 
+    m_files.push_back(FileTab{});
+    m_files.back().id = m_nextFileId++;
+    m_files.back().demo = true;
     m_doc.scene = Scene::makeDemo();
+    m_doc.name = "Demo Bracket";
     m_renderer->upload(m_doc.scene);
 
     int fbw = 0, fbh = 0;
@@ -156,7 +160,7 @@ bool Application::init() {
     glfwSetWindowCloseCallback(m_window, [](GLFWwindow* w) {
         // Ask before discarding unsaved work; frame() shows the dialog.
         auto* app = static_cast<Application*>(glfwGetWindowUserPointer(w));
-        if (app->m_doc.dirty) {
+        if (app->anyFileDirty()) {
             glfwSetWindowShouldClose(w, GLFW_FALSE);
             app->m_closeRequested = true;
             onEvent(w);
@@ -164,11 +168,14 @@ bool Application::init() {
     });
 
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
+    m_savedSignature = contentSignature(); // the demo part counts as unmodified
     if (!m_options.openPath.empty()) {
+        // A project opens in its own tab next to the demo; other files import into the demo.
         const FileKind kind = fileKindOf(m_options.openPath);
         runCommandLine((kind == FileKind::Project ? "OPEN \"" : "IMPORT \"") + m_options.openPath + "\"");
+        if (kind != FileKind::Project) m_savedSignature = contentSignature();
     }
-    m_savedSignature = contentSignature(); // the demo part counts as unmodified
+    refreshFileTabs();
     updateTitle();
     return true;
 }
@@ -253,16 +260,18 @@ void Application::setMode(ViewMode mode) {
     m_sketcher.cancel();
     m_leftDrag = m_otherDrag = DragMode::None;
     m_uiState.mode = mode;
-    if (mode == ViewMode::Drawing2D && !m_2DReady) {
-        // First visit: plan view of the active plane, framed on the model.
-        m_cam2D.setAspect(m_aspect);
-        m_cam2D.setProjection(Projection::Orthographic);
-        m_cam2D.setStandardView(planeView(m_uiState.plane), false);
-        m_cam2D.fitToBounds(m_doc.scene.bounds(), false);
-        m_2DReady = true;
-    }
+    if (mode == ViewMode::Drawing2D && !m_2DReady) init2DCamera();
     setStatus(mode == ViewMode::Drawing2D ? std::string("2D Drawing window: ") + planeName(m_uiState.plane)
                                           : std::string("3D Model window"));
+}
+
+void Application::init2DCamera() {
+    // First visit: plan view of the active plane, framed on the model.
+    m_cam2D.setAspect(m_aspect);
+    m_cam2D.setProjection(Projection::Orthographic);
+    m_cam2D.setStandardView(planeView(m_uiState.plane), false);
+    if (m_doc.scene.bounds().valid()) m_cam2D.fitToBounds(m_doc.scene.bounds(), false);
+    m_2DReady = true;
 }
 
 void Application::setPlane(SketchPlane plane) {
@@ -524,7 +533,7 @@ void Application::handleViewportInput() {
 
     const bool ctrl = commandModifierHeld();
     UiCommands cmd;
-    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false))
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !ctrl)
         cmd.mode = is2D ? ViewMode::Model3D : ViewMode::Drawing2D;
     auto viewKey = [&](ImGuiKey a, ImGuiKey b) { return ImGui::IsKeyPressed(a) || ImGui::IsKeyPressed(b); };
     if (viewKey(ImGuiKey_1, ImGuiKey_Keypad1)) cmd.view = ctrl ? StandardView::Back : StandardView::Front;
@@ -578,6 +587,8 @@ void Application::handleViewportInput() {
 }
 
 void Application::handleCommands(const UiCommands& cmd) {
+    if (cmd.switchFile)
+        if (const int i = fileIndex(*cmd.switchFile); i >= 0) activateFile(i);
     if (cmd.plane) setPlane(*cmd.plane);
     if (cmd.mode) setMode(*cmd.mode);
     const bool is2D = m_uiState.mode == ViewMode::Drawing2D;
@@ -613,7 +624,7 @@ void Application::handleCommands(const UiCommands& cmd) {
                                                                                : Projection::Perspective);
     if (cmd.quit) {
         glfwSetWindowShouldClose(m_window, GLFW_TRUE);
-        if (m_doc.dirty) { // same question as closing the window
+        if (anyFileDirty()) { // same question as closing the window
             glfwSetWindowShouldClose(m_window, GLFW_FALSE);
             m_closeRequested = true;
         }
@@ -622,6 +633,10 @@ void Application::handleCommands(const UiCommands& cmd) {
     if (cmd.applyExtrude) applyExtrude();
     if (cmd.cancelExtrude) cancelExtrude();
     for (const std::string& line : cmd.commands) runCommandLine(line);
+    if (cmd.closeFile) {
+        if (const int i = fileIndex(*cmd.closeFile); i >= 0 && !closeFileTab(i, cmd.closeDiscard))
+            setStatus(fileDoc(i).displayName() + " was not saved, so it stays open");
+    }
 }
 
 void Application::frame(float dt) {
@@ -635,6 +650,7 @@ void Application::frame(float dt) {
 
     handleViewportInput();
     updatePrompt();
+    refreshFileTabs();
     const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
 
@@ -642,31 +658,37 @@ void Application::frame(float dt) {
     m_doc.dirty = contentSignature() != m_savedSignature;
     m_uiState.dirty = m_doc.dirty;
     updateTitle();
+    refreshFileTabs();
 
     if (m_closeRequested) {
         ImGui::OpenPopup("Quit SI CDM?");
         m_closeRequested = false;
     }
     if (ImGui::BeginPopupModal("Quit SI CDM?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("%s has unsaved changes.", m_uiState.projectTitle.c_str());
+        bool canSave = true;
+        ImGui::Text("These files have unsaved changes:");
+        for (int i = 0; i < static_cast<int>(m_files.size()); ++i) {
+            const Document& d = fileDoc(i);
+            if (!d.dirty) continue;
+            ImGui::BulletText("%s", d.displayName().c_str());
+            canSave = canSave && !d.path.empty();
+        }
         ImGui::Spacing();
-        const bool canSave = !m_doc.path.empty();
         if (!canSave) ImGui::BeginDisabled();
-        if (ImGui::Button("Save and Quit", {130, 0})) {
-            runCommandLine("SAVE");
-            if (!m_doc.dirty) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+        if (ImGui::Button("Save All and Quit", {150, 0})) {
+            saveAll();
+            if (!anyFileDirty()) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
             ImGui::CloseCurrentPopup();
         }
         if (!canSave) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Quit Without Saving", {160, 0})) {
-            m_doc.dirty = false;
             glfwSetWindowShouldClose(m_window, GLFW_TRUE);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
-        if (!canSave) ImGui::TextDisabled("Not saved yet: use File > Save As first.");
+        if (!canSave) ImGui::TextDisabled("Some files were never saved: use File > Save As on them first.");
         ImGui::EndPopup();
     }
     const bool anim3D = m_cam3D.update(dt);
@@ -791,7 +813,10 @@ void Application::runCommandLine(const std::string& raw) {
             return;
         }
         std::optional<Vec2> p;
-        if (const auto in = parsePointInput(text)) p = in->resolve(m_sketcher.lastPoint().value_or(Vec2{}));
+        const std::string upper = toUpper(text);
+        if (tool == ToolId::Polyline && m_sketcher.stage() >= 2 && (upper == "C" || upper == "CLOSE"))
+            p = m_sketcher.firstPoint(); // close the loop, like clicking the first point
+        else if (const auto in = parsePointInput(text)) p = in->resolve(m_sketcher.lastPoint().value_or(Vec2{}));
         else if (const auto r = parseNumber(text); r && tool == ToolId::Circle && m_sketcher.stage() == 1 && *r > 0)
             p = Vec2{m_sketcher.lastPoint()->x + *r, m_sketcher.lastPoint()->y}; // typed radius
         if (p) {
@@ -857,7 +882,7 @@ void Application::toggleMcp() {
     }
 }
 
-std::uint64_t Application::contentSignature() const {
+std::uint64_t Application::signatureOf(const Document& doc) {
     // FNV-1a over everything a project file stores.
     std::uint64_t h = 1469598103934665603ull;
     auto mix = [&h](const void* data, std::size_t n) {
@@ -865,7 +890,7 @@ std::uint64_t Application::contentSignature() const {
         for (std::size_t i = 0; i < n; ++i) h = (h ^ p[i]) * 1099511628211ull;
     };
     auto mixStr = [&](const std::string& s) { mix(s.data(), s.size()); };
-    const Scene& s = m_doc.scene;
+    const Scene& s = doc.scene;
     const std::size_t counts[3] = {s.bodies().size(), s.sketch().curves().size(), s.images().size()};
     mix(counts, sizeof(counts));
     for (const Body& b : s.bodies()) {
@@ -893,13 +918,14 @@ std::uint64_t Application::contentSignature() const {
         mix(&i.opacity, sizeof(i.opacity));
         mix(&i.visible, sizeof(i.visible));
     }
-    mix(&m_doc.state.plane, sizeof(m_doc.state.plane));
+    mix(&doc.state.plane, sizeof(doc.state.plane));
     return h;
 }
 
 void Application::updateTitle() {
     m_uiState.projectPath = m_doc.path;
     m_uiState.projectTitle = m_doc.title();
+    m_uiState.projectName = m_doc.name;
     const std::string title = m_uiState.projectTitle + "  —  SI CDM";
     if (title != m_shownTitle) {
         glfwSetWindowTitle(m_window, title.c_str());
@@ -1100,6 +1126,208 @@ void Application::drawExtrudePreview() const {
     const ImVec2 ts = ImGui::CalcTextSize(label);
     dl->AddRectFilled({at.x - 4, at.y - 2}, {at.x + ts.x + 4, at.y + ts.y + 2}, IM_COL32(20, 22, 28, 220), 3.0f);
     dl->AddText(at, IM_COL32(240, 240, 240, 255), label);
+}
+
+// File tabs -------------------------------------------------------------------
+
+void Application::parkActiveFile() {
+    syncToDoc();
+    FileTab& t = m_files[static_cast<std::size_t>(m_activeFile)];
+    t.doc = std::move(m_doc);
+    m_doc = Document{};
+    t.cam3D = m_cam3D;
+    t.cam2D = m_cam2D;
+    t.vp3D = m_vp3D;
+    t.vp2D = m_vp2D;
+    t.ready2D = m_2DReady;
+    t.savedSignature = m_savedSignature;
+    t.mode = m_uiState.mode;
+}
+
+void Application::loadFile(int index) {
+    FileTab& t = m_files[static_cast<std::size_t>(index)];
+    m_activeFile = index;
+    m_doc = std::move(t.doc);
+    t.doc = Document{};
+    m_cam3D = t.cam3D;
+    m_cam2D = t.cam2D;
+    m_vp3D = t.vp3D;
+    m_vp2D = t.vp2D;
+    m_2DReady = t.ready2D;
+    m_savedSignature = t.savedSignature;
+    m_uiState.mode = t.mode;
+    m_uiState.plane = m_doc.state.plane;
+    m_uiState.selectedBody = m_doc.selectedBody;
+    m_uiState.selectedCurve = m_doc.selectedCurve;
+    m_uiState.selectedImage = m_doc.selectedImage;
+    m_uiState.snapGrid = m_doc.snapGrid;
+    m_uiState.snapPoints = m_doc.snapPoints;
+}
+
+void Application::activateFile(int index) {
+    if (index == m_activeFile || index < 0 || index >= static_cast<int>(m_files.size())) return;
+    m_sketcher.cancel();
+    cancelExtrude();
+    m_leftDrag = m_otherDrag = DragMode::None;
+    parkActiveFile();
+    loadFile(index);
+    updateTitle();
+    setStatus(m_doc.displayName() + (m_uiState.mode == ViewMode::Drawing2D ? "  -  2D Drawing" : "  -  3D Model"));
+    m_framesToRender = std::max(m_framesToRender, 3);
+}
+
+void Application::newFileTab() {
+    // A fresh untitled file: same window and display settings, framed on the origin.
+    m_sketcher.cancel();
+    cancelExtrude();
+    m_leftDrag = m_otherDrag = DragMode::None;
+    const ViewportSettings vp3D = m_vp3D, vp2D = m_vp2D;
+    const ViewMode mode = m_uiState.mode;
+    parkActiveFile();
+    FileTab t;
+    t.id = m_nextFileId++;
+    t.vp3D = vp3D;
+    t.vp2D = vp2D;
+    t.vp2D.gridPlane = SketchPlane::Top;
+    t.mode = mode;
+    t.doc.name = "Untitled " + std::to_string(++m_untitledCount);
+    t.cam3D.setAspect(m_aspect);
+    t.cam3D.setStandardView(StandardView::Isometric, false);
+    AABB box;
+    box.expand(Vec3{-60, -60, 0});
+    box.expand(Vec3{60, 60, 40});
+    t.cam3D.fitToBounds(box, false);
+    t.savedSignature = signatureOf(t.doc);
+    m_files.push_back(std::move(t));
+    loadFile(static_cast<int>(m_files.size()) - 1);
+    if (mode == ViewMode::Drawing2D) {
+        init2DCamera();
+        AABB plane;
+        plane.expand(Vec3{-60, -60, -60});
+        plane.expand(Vec3{60, 60, 60});
+        m_cam2D.fitToBounds(plane, false);
+    }
+    updateTitle();
+}
+
+bool Application::closeFileTab(int index, bool discard) {
+    if (index < 0 || index >= static_cast<int>(m_files.size())) return false;
+    if (!discard && fileDoc(index).dirty) return false;
+    const std::string name = fileDoc(index).displayName();
+    if (m_files.size() == 1) newFileTab(); // never leave the canvas without a file
+    if (index == m_activeFile) activateFile(index + 1 < static_cast<int>(m_files.size()) ? index + 1 : index - 1);
+    m_files.erase(m_files.begin() + index);
+    if (m_activeFile > index) --m_activeFile;
+    updateTitle();
+    log("Closed " + name, UiState::LogLine::Output);
+    setStatus("Closed " + name);
+    m_framesToRender = std::max(m_framesToRender, 3);
+    return true;
+}
+
+int Application::fileIndex(int id) const {
+    for (std::size_t i = 0; i < m_files.size(); ++i)
+        if (m_files[i].id == id) return static_cast<int>(i);
+    return -1;
+}
+
+const Document& Application::fileDoc(int index) const {
+    return index == m_activeFile ? m_doc : m_files[static_cast<std::size_t>(index)].doc;
+}
+
+bool Application::anyFileDirty() const {
+    for (int i = 0; i < static_cast<int>(m_files.size()); ++i)
+        if (fileDoc(i).dirty) return true;
+    return false;
+}
+
+void Application::refreshFileTabs() {
+    auto& files = m_uiState.files;
+    files.resize(m_files.size());
+    for (std::size_t i = 0; i < m_files.size(); ++i) {
+        const Document& d = fileDoc(static_cast<int>(i));
+        files[i].id = m_files[i].id;
+        files[i].name = d.displayName();
+        files[i].path = d.path;
+        files[i].dirty = d.dirty;
+        files[i].mode = static_cast<int>(i) == m_activeFile ? m_uiState.mode : m_files[i].mode;
+    }
+    m_uiState.activeFile = m_activeFile;
+}
+
+void Application::saveAll() {
+    const int back = m_activeFile;
+    for (int i = 0; i < static_cast<int>(m_files.size()); ++i) {
+        if (!fileDoc(i).dirty || fileDoc(i).path.empty()) continue;
+        activateFile(i);
+        runCommandLine("SAVE");
+        m_doc.dirty = contentSignature() != m_savedSignature;
+    }
+    activateFile(back);
+}
+
+bool Application::prepareDocument(const std::string& path) {
+    if (!path.empty()) {
+        // Already open: show that tab instead of opening a second copy.
+        const std::filesystem::path want = std::filesystem::path(path).lexically_normal();
+        for (int i = 0; i < static_cast<int>(m_files.size()); ++i) {
+            const std::string& p = fileDoc(i).path;
+            if (!p.empty() && std::filesystem::path(p).lexically_normal() == want) {
+                activateFile(i);
+                return true;
+            }
+        }
+        // An empty (or the demo) untouched untitled file is replaced rather than kept beside it.
+        const Scene& s = m_doc.scene;
+        const bool blank = s.bodies().empty() && s.sketch().curves().empty() && s.images().empty();
+        if (m_doc.path.empty() && !m_doc.dirty && (blank || m_files[static_cast<std::size_t>(m_activeFile)].demo)) {
+            m_files[static_cast<std::size_t>(m_activeFile)].demo = false;
+            return false;
+        }
+    }
+    newFileTab();
+    return false;
+}
+
+std::vector<std::string> Application::fileTabs() const {
+    std::vector<std::string> out;
+    for (int i = 0; i < static_cast<int>(m_files.size()); ++i) {
+        const Document& d = fileDoc(i);
+        out.push_back((i == m_activeFile ? "> " : "  ") + std::to_string(i + 1) + "  " + d.title() +
+                      (d.path.empty() ? std::string() : "   " + d.path));
+    }
+    return out;
+}
+
+bool Application::switchFile(const std::string& which, std::string* error) {
+    int index = -1;
+    if (const auto n = parseNumber(which); n && *n >= 1 && *n <= static_cast<float>(m_files.size()) &&
+                                           std::floor(*n) == *n)
+        index = static_cast<int>(*n) - 1;
+    const std::string want = toUpper(which);
+    for (int i = 0; i < static_cast<int>(m_files.size()) && index < 0; ++i) {
+        const std::string name = toUpper(fileDoc(i).displayName());
+        if (name == want || std::filesystem::path(name).stem().string() == want) index = i;
+    }
+    if (index < 0) {
+        *error = "No open file " + which + " (FILES lists them)";
+        return false;
+    }
+    syncToDoc();
+    activateFile(index);
+    syncToDoc(); // the command engine re-reads the selection from the activated file
+    return true;
+}
+
+bool Application::closeFile(bool discard, std::string* error) {
+    if (!discard && m_doc.dirty) {
+        *error = m_doc.displayName() + " has unsaved changes: SAVE it first, or CLOSE DISCARD";
+        return false;
+    }
+    syncToDoc();
+    closeFileTab(m_activeFile, true);
+    syncToDoc();
+    return true;
 }
 
 // ViewHost --------------------------------------------------------------------
