@@ -1,7 +1,8 @@
 #include "core/Command.hpp"
 
 #include <cctype>
-#include <charconv>
+#include <locale>
+#include <sstream>
 #include <cmath>
 
 namespace sicdm {
@@ -150,9 +151,13 @@ std::optional<float> parseNumber(std::string_view text) {
     text = trim(text);
     if (text.empty()) return std::nullopt;
     if (text.front() == '+') text.remove_prefix(1);
+    if (text.empty() || text.front() == '+' || text.front() == ' ') return std::nullopt;
+    // Floating-point std::from_chars needs macOS 26; parse with the "C" locale instead.
+    std::istringstream in{std::string(text)};
+    in.imbue(std::locale::classic());
     float v = 0.0f;
-    const auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), v);
-    if (ec != std::errc{} || ptr != text.data() + text.size() || !std::isfinite(v)) return std::nullopt;
+    in >> v;
+    if (in.fail() || in.peek() != std::char_traits<char>::eof() || !std::isfinite(v)) return std::nullopt;
     return v;
 }
 
