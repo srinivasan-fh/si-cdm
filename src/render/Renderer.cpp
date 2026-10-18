@@ -128,6 +128,32 @@ void main() {
 }
 )";
 
+constexpr const char* kImageVS = R"(#version 410 core
+uniform mat4 uViewProj;
+uniform vec3 uCorners[4]; // bottom-left, bottom-right, top-right, top-left
+out vec2 vUV;
+void main() {
+    const int idx[6] = int[](0, 1, 2, 0, 2, 3);
+    const vec2 uv[4] = vec2[](vec2(0, 1), vec2(1, 1), vec2(1, 0), vec2(0, 0)); // pixel rows top first
+    int i = idx[gl_VertexID];
+    vUV = uv[i];
+    gl_Position = uViewProj * vec4(uCorners[i], 1.0);
+}
+)";
+
+constexpr const char* kImageFS = R"(#version 410 core
+in vec2 vUV;
+uniform sampler2D uTex;
+uniform float uOpacity;
+uniform float uHighlight;
+out vec4 fragColor;
+void main() {
+    vec4 c = texture(uTex, vUV);
+    c.rgb = mix(c.rgb, vec3(0.35, 0.65, 1.0), uHighlight * 0.18);
+    fragColor = vec4(c.rgb, c.a * uOpacity);
+}
+)";
+
 constexpr const char* kGridVS = R"(#version 410 core
 uniform mat4 uViewProj;
 uniform vec2 uCenter;   // patch centre in plane coordinates
@@ -233,7 +259,15 @@ Renderer::Renderer()
       m_mesh(kMeshVS, kMeshFS),
       m_lines(kLinesVS, kLinesFS),
       m_grid(kGridVS, kGridFS),
-      m_sketchShader(kSketchVS, kSketchFS) {
+      m_sketchShader(kSketchVS, kSketchFS),
+      m_imageShader(kImageVS, kImageFS) {
+    glGenBuffers(1, &m_outlineVbo);
+    glGenVertexArrays(1, &m_outlineVao);
+    glBindVertexArray(m_outlineVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_outlineVbo);
+    glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(Vec3), nullptr, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vec3), nullptr);
     glGenVertexArrays(1, &m_emptyVao);
     glGenVertexArrays(1, &m_sketchVao);
     glGenBuffers(1, &m_sketchVbo);
@@ -249,10 +283,14 @@ Renderer::~Renderer() {
     if (m_emptyVao) glDeleteVertexArrays(1, &m_emptyVao);
     if (m_sketchVao) glDeleteVertexArrays(1, &m_sketchVao);
     if (m_sketchVbo) glDeleteBuffers(1, &m_sketchVbo);
+    releaseImages();
+    if (m_outlineVao) glDeleteVertexArrays(1, &m_outlineVao);
+    if (m_outlineVbo) glDeleteBuffers(1, &m_outlineVbo);
 }
 
 bool Renderer::valid() const noexcept {
-    return m_background.valid() && m_mesh.valid() && m_lines.valid() && m_grid.valid() && m_sketchShader.valid();
+    return m_background.valid() && m_mesh.valid() && m_lines.valid() && m_grid.valid() && m_sketchShader.valid() &&
+           m_imageShader.valid();
 }
 
 void Renderer::releaseMeshes() {
@@ -271,6 +309,86 @@ void Renderer::upload(const Scene& scene) {
     m_meshes.reserve(scene.bodies().size());
     for (const Body& b : scene.bodies()) m_meshes.push_back(uploadMesh(b.mesh));
     m_uploadedRevision = scene.revision();
+}
+
+void Renderer::releaseImages() {
+    for (GLuint t : m_imageTextures)
+        if (t) glDeleteTextures(1, &t);
+    m_imageTextures.clear();
+}
+
+void Renderer::uploadImages(const Scene& scene) {
+    releaseImages();
+    for (const ImageRef& img : scene.images()) {
+        GLuint tex = 0;
+        if (!img.pixels.empty()) {
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img.pixelWidth, img.pixelHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                         img.pixels.data());
+            glGenerateMipmap(GL_TEXTURE_2D);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+        m_imageTextures.push_back(tex);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    m_imageRevision = scene.imageRevision();
+}
+
+void Renderer::drawImages(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s, int selected) {
+    if (scene.imageRevision() != m_imageRevision) uploadImages(scene);
+    const auto& images = scene.images();
+    const std::size_t n = std::min(images.size(), m_imageTextures.size());
+    if (n == 0) return;
+    // 2D drawing window: images stay visible under the sketch for tracing.
+    // 3D: pushed back in depth so bodies resting on the image plane win.
+    if (s.sketchOnTop) glDisable(GL_DEPTH_TEST);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(4.0f, 8.0f);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    m_imageShader.bind();
+    m_imageShader.set("uViewProj", cam.viewProjection());
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1i(glGetUniformLocation(m_imageShaderProgram(), "uTex"), 0);
+    glBindVertexArray(m_emptyVao);
+    for (std::size_t i = 0; i < n; ++i) {
+        const ImageRef& img = images[i];
+        if (!img.visible || !m_imageTextures[i]) continue;
+        const auto c = img.corners();
+        const GLint loc = glGetUniformLocation(m_imageShaderProgram(), "uCorners");
+        glUniform3fv(loc, 4, &c[0].x);
+        m_imageShader.set("uOpacity", img.opacity);
+        m_imageShader.set("uHighlight", static_cast<int>(i) == selected ? 1.0f : 0.0f);
+        glBindTexture(GL_TEXTURE_2D, m_imageTextures[i]);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    // Outline the selected image (also shows images whose file is missing).
+    for (std::size_t i = 0; i < images.size(); ++i) {
+        const bool sel = static_cast<int>(i) == selected;
+        const bool missing = i >= m_imageTextures.size() || !m_imageTextures[i];
+        if (!images[i].visible || (!sel && !missing)) continue;
+        const auto c = images[i].corners();
+        glBindBuffer(GL_ARRAY_BUFFER, m_outlineVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, 4 * sizeof(Vec3), c.data());
+        m_sketchShader.bind();
+        m_sketchShader.set("uViewProj", cam.viewProjection());
+        m_sketchShader.set("uColor", sel ? Vec4{0.35f, 0.72f, 1.0f, 1.0f} : Vec4{0.9f, 0.4f, 0.4f, 1.0f});
+        m_sketchShader.set("uRound", 0.0f);
+        m_sketchShader.set("uPointSize", 1.0f);
+        glBindVertexArray(m_outlineVao);
+        glDrawArrays(GL_LINE_LOOP, 0, 4);
+    }
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
 }
 
 void Renderer::uploadSketch(const Sketch& sketch) {
@@ -360,7 +478,7 @@ void Renderer::drawGrid(const OrbitCamera& cam, const ViewportSettings& s) {
 }
 
 void Renderer::render(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s,
-                      int fbWidth, int fbHeight, int selectedBody, int selectedCurve) {
+                      int fbWidth, int fbHeight, int selectedBody, int selectedCurve, int selectedImage) {
     glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(s.backgroundBottom.x, s.backgroundBottom.y, s.backgroundBottom.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -428,6 +546,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     }
 
     if (s.showGrid) drawGrid(cam, s);
+    drawImages(scene, cam, s, selectedImage);
     if (scene.sketch().revision() != m_sketchRevision) uploadSketch(scene.sketch());
     drawSketch(scene, cam, s, selectedCurve);
 

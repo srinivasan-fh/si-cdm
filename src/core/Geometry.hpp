@@ -23,7 +23,20 @@ struct MeshData {
     AABB bounds() const noexcept;
     void transform(const Mat4& m);
     void append(const MeshData& other);
+
+    // Rebuilds edgeVertices from the triangles: open boundaries plus edges
+    // whose adjacent faces meet at more than `angleDeg` (for imported meshes).
+    void computeFeatureEdges(float angleDeg = 30.0f);
 };
+
+// Parametric description of a body, so projects can be saved and edited.
+// Parameters per kind (all mm, body-local; Body::offset places it):
+//   box, wedge: x0 y0 z0 x1 y1 z1     cylinder: r h      tube: R r h
+//   cone: r0 r1 h    sphere: r (rests on z=0)    torus: R r (rests on z=0)
+//   pyramid, prism: r h sides         mesh: none (triangles stored as-is)
+bool isPrimitiveKind(const std::string& kind);
+// Returns an empty mesh for unknown kinds or bad parameter counts.
+MeshData buildPrimitive(const std::string& kind, const std::vector<float>& params);
 
 namespace primitives {
 

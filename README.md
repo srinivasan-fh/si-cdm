@@ -11,7 +11,7 @@ A high-performance CAD / CAM desktop application written in C++20.
 Requires CMake 3.24+ (`brew install cmake`) and, on macOS, Xcode 15+.
 
 ```bash
-./run.sh            # build (Release) and launch the app
+./run.sh            # build (Release) and launch the app (also builds sicdm-mcp)
 ./run.sh debug      # build (Debug) and launch
 ./run.sh test       # build and run the unit tests
 ./run.sh xcode      # generate build/xcode/SICDM.xcodeproj and open it in Xcode (macOS)
@@ -57,12 +57,58 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
 
 Shift + a tool key cycles through that slot's tools.
 
+## Command line
+
+The full-width command line above the status bar runs every operation by typing, AutoCAD style.
+`Space` focuses it, `Tab` completes a command name, `↑` / `↓` recall earlier input, and the ▲ button
+shows the history. Type `HELP` for the full list.
+
+```text
+LINE 0,0 @50,0 @0,30          RECT 0,0 @40,20          CIRCLE 10,10 5        PLINE 0,0 10,0 10,10 CLOSE
+BOX 40 30 20 @10,0,5          CYLINDER 10 30           SPHERE 8              TORUS 20 4
+SELECT Block 1   MOVE 0,0,10   ERASE        VIEW FRONT   2D RIGHT   3D   ROLL 90   DISPLAY HIDDEN
+IMPORT "plans/scan.jpg" WIDTH 150 @0,0      EXPORT part.stl      SAVE project.sicdm      OPEN project.sicdm
+```
+
+With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,dy` (relative) or
+`@length<angle` (polar); for a circle, a single number is the radius; `Enter` finishes a polyline.
+
+## Files
+
+| Menu (shortcut) | Formats |
+| --- | --- |
+| **New / Open / Save / Save As** (Ctrl/⌘ N, O, S, Shift+S) | `.sicdm` project (JSON): parametric solids, meshes, sketches, reference images |
+| **Import** (Ctrl/⌘ I) | `.stl` `.obj` → body · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
+| **Export** (Ctrl/⌘ E) | `.stl` `.obj` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
+
+Unsaved changes are tracked (`*` in the title); New, Open and Quit ask before discarding them.
+
+**Reference images** (scanned drawings, photos, blueprints) lie on the active sketch plane and show in
+both windows: under the sketch in 2D for tracing, in place in 3D. Select one to set its width (mm),
+centre and opacity in the Model panel, or drag it with the Move tool.
+
+## AI agents (MCP)
+
+SI CDM includes a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents can read
+and edit the 2D and 3D model. Tools: `get_scene`, `create_sketch`, `create_solid`, `modify`, `delete`,
+`set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
+`import_file`, `export_file`.
+
+- **Live app (HTTP):** enable *AI → MCP Server* or start with `--mcp-port 8765`, then
+  `claude mcp add --transport http si-cdm http://127.0.0.1:8765/mcp`. The agent drives the open
+  window (views, 2D/3D switch included). Listens on localhost only.
+- **Headless (stdio):** `sicdm-mcp [project.sicdm]` works on files without a window:
+  `claude mcp add si-cdm-files -- /path/to/build/release/sicdm-mcp`.
+
+*AI → Connect an AI Agent…* shows ready-to-copy settings.
+
 ## Controls
 
 - `Tab`: switch 2D Drawing / 3D Model window
+- `Space`: command line
 - Right drag (or left drag on empty space): orbit in 3D, pan in 2D
 - Middle drag / Shift + left drag: pan
 - Scroll: zoom at the cursor
-- Delete: remove the selected body or sketch curve
+- Delete: remove the selected body, sketch curve or image
 - `F`: fit to view
 - `1` / `3` / `7` / `0`: Front / Right / Top / Isometric (in 2D: pick the drawing plane)

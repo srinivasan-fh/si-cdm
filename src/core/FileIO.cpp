@@ -1,0 +1,786 @@
+#include "core/FileIO.hpp"
+
+#include "core/Json.hpp"
+
+#include <stb_image.h>
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+
+namespace sicdm {
+
+namespace fs = std::filesystem;
+
+namespace {
+
+void setError(std::string* e, std::string msg) {
+    if (e) *e = std::move(msg);
+}
+
+std::string lowerExt(const std::string& path) {
+    std::string ext = fs::path(path).extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext;
+}
+
+std::optional<std::string> readFile(const std::string& path, std::string* error) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        setError(error, "Cannot open " + path);
+        return std::nullopt;
+    }
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+bool writeFile(const std::string& path, const std::string& data, std::string* error) {
+    std::error_code ec;
+    const fs::path parent = fs::path(path).parent_path();
+    if (!parent.empty()) fs::create_directories(parent, ec);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        setError(error, "Cannot write " + path);
+        return false;
+    }
+    out.write(data.data(), static_cast<std::streamsize>(data.size()));
+    if (!out) {
+        setError(error, "Write failed for " + path);
+        return false;
+    }
+    return true;
+}
+
+const char* curveKey(CurveKind k) {
+    switch (k) {
+    case CurveKind::Point: return "point";
+    case CurveKind::Line: return "line";
+    case CurveKind::Polyline: return "polyline";
+    case CurveKind::Rectangle: return "rectangle";
+    case CurveKind::Circle: return "circle";
+    }
+    return "line";
+}
+
+std::optional<CurveKind> curveFromKey(const std::string& k) {
+    if (k == "point") return CurveKind::Point;
+    if (k == "line") return CurveKind::Line;
+    if (k == "polyline") return CurveKind::Polyline;
+    if (k == "rectangle") return CurveKind::Rectangle;
+    if (k == "circle") return CurveKind::Circle;
+    return std::nullopt;
+}
+
+Json vec3Json(const Vec3& v) { return Json(Json::Array{v.x, v.y, v.z}); }
+Vec3 jsonVec3(const Json& j, Vec3 fallback = {}) {
+    if (!j.isArray() || j.size() < 3) return fallback;
+    return {j[0].asFloat(), j[1].asFloat(), j[2].asFloat()};
+}
+
+std::string stemOf(const std::string& path) { return fs::path(path).stem().string(); }
+
+// Flat-shaded triangle soup -> MeshData with feature edges.
+MeshData meshFromTriangles(const std::vector<Vec3>& tri) {
+    MeshData m;
+    m.vertices.reserve(tri.size());
+    m.indices.reserve(tri.size());
+    for (std::size_t i = 0; i + 2 < tri.size(); i += 3) {
+        const Vec3 n = normalize(cross(tri[i + 1] - tri[i], tri[i + 2] - tri[i]));
+        for (int k = 0; k < 3; ++k) {
+            m.indices.push_back(static_cast<std::uint32_t>(m.vertices.size()));
+            m.vertices.push_back({tri[i + static_cast<std::size_t>(k)], n});
+        }
+    }
+    m.computeFeatureEdges();
+    return m;
+}
+
+template <typename F>
+void forEachWorldTriangle(const Scene& scene, F&& f) {
+    for (const Body& b : scene.bodies()) {
+        if (!b.visible) continue;
+        const auto& v = b.mesh.vertices;
+        const auto& idx = b.mesh.indices;
+        for (std::size_t i = 0; i + 2 < idx.size(); i += 3)
+            f(b, v[idx[i]].position + b.offset, v[idx[i + 1]].position + b.offset, v[idx[i + 2]].position + b.offset);
+    }
+}
+
+void appendF32(std::string& s, float v) {
+    char b[4];
+    std::memcpy(b, &v, 4);
+    s.append(b, 4);
+}
+
+// ---------------------------------------------------------------------------
+// DXF helpers
+
+struct DxfPair {
+    int code;
+    std::string value;
+};
+
+std::string trimmed(std::string s) {
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ' || s.back() == '\t')) s.pop_back();
+    std::size_t i = 0;
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+    return s.substr(i);
+}
+
+void dxfPair(std::string& out, int code, const std::string& value) {
+    out += std::to_string(code);
+    out += '\n';
+    out += value;
+    out += '\n';
+}
+
+std::string num(float v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.6f", static_cast<double>(v));
+    return buf;
+}
+
+void dxfPoint(std::string& out, int base, Vec2 p) {
+    dxfPair(out, base, num(p.x));
+    dxfPair(out, base + 10, num(p.y));
+    dxfPair(out, base + 20, "0.0");
+}
+
+void dxfPolyline(std::string& out, const std::string& layer, const std::vector<Vec2>& pts, bool closed) {
+    dxfPair(out, 0, "POLYLINE");
+    dxfPair(out, 8, layer);
+    dxfPair(out, 66, "1");
+    dxfPair(out, 70, closed ? "1" : "0");
+    dxfPoint(out, 10, {0, 0});
+    for (const Vec2& p : pts) {
+        dxfPair(out, 0, "VERTEX");
+        dxfPair(out, 8, layer);
+        dxfPoint(out, 10, p);
+    }
+    dxfPair(out, 0, "SEQEND");
+    dxfPair(out, 8, layer);
+}
+
+std::vector<Vec2> arcPoints(Vec2 c, float r, float a0Deg, float a1Deg) {
+    while (a1Deg <= a0Deg) a1Deg += 360.0f; // DXF arcs run counter-clockwise
+    const int seg = std::max(4, static_cast<int>(std::ceil((a1Deg - a0Deg) / 5.0f)));
+    std::vector<Vec2> pts;
+    for (int i = 0; i <= seg; ++i) {
+        const float a = radians(a0Deg + (a1Deg - a0Deg) * static_cast<float>(i) / static_cast<float>(seg));
+        pts.push_back({c.x + r * std::cos(a), c.y + r * std::sin(a)});
+    }
+    return pts;
+}
+
+} // namespace
+
+const char* planeKey(SketchPlane p) {
+    switch (p) {
+    case SketchPlane::Top: return "top";
+    case SketchPlane::Front: return "front";
+    case SketchPlane::Right: return "right";
+    }
+    return "top";
+}
+
+std::optional<SketchPlane> planeFromKey(const std::string& keyIn) {
+    std::string k = keyIn;
+    for (char& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (k == "top" || k == "xy") return SketchPlane::Top;
+    if (k == "front" || k == "xz") return SketchPlane::Front;
+    if (k == "right" || k == "yz") return SketchPlane::Right;
+    return std::nullopt;
+}
+
+FileKind fileKindOf(const std::string& path) {
+    const std::string e = lowerExt(path);
+    if (e == ".sicdm") return FileKind::Project;
+    if (e == ".stl") return FileKind::Stl;
+    if (e == ".obj") return FileKind::Obj;
+    if (e == ".dxf") return FileKind::Dxf;
+    if (e == ".svg") return FileKind::Svg;
+    if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".bmp" || e == ".tga" || e == ".gif" || e == ".psd" ||
+        e == ".hdr" || e == ".pnm" || e == ".ppm" || e == ".pgm")
+        return FileKind::Image;
+    return FileKind::Unknown;
+}
+
+const char* fileKindName(FileKind k) {
+    switch (k) {
+    case FileKind::Project: return "SI CDM project";
+    case FileKind::Stl: return "STL mesh";
+    case FileKind::Obj: return "OBJ mesh";
+    case FileKind::Dxf: return "DXF drawing";
+    case FileKind::Svg: return "SVG drawing";
+    case FileKind::Image: return "image";
+    case FileKind::Unknown: return "unknown";
+    }
+    return "unknown";
+}
+
+// ---------------------------------------------------------------------------
+// Project
+
+bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error) {
+    const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
+    Json doc = Json::object();
+    doc.set("format", "sicdm-project");
+    doc.set("version", 1);
+    doc.set("units", "mm");
+    doc.set("plane", planeKey(state.plane));
+
+    Json bodies = Json::array();
+    for (const Body& b : scene.bodies()) {
+        Json jb = Json::object();
+        jb.set("name", b.name);
+        jb.set("kind", b.kind);
+        Json params = Json::array();
+        for (float p : b.params) params.push(p);
+        jb.set("params", params);
+        jb.set("offset", vec3Json(b.offset));
+        jb.set("color", vec3Json(b.color));
+        jb.set("visible", b.visible);
+        if (!isPrimitiveKind(b.kind)) {
+            Json pos = Json::array(), nrm = Json::array(), idx = Json::array(), edges = Json::array();
+            for (const Vertex& v : b.mesh.vertices) {
+                pos.push(v.position.x).push(v.position.y).push(v.position.z);
+                nrm.push(v.normal.x).push(v.normal.y).push(v.normal.z);
+            }
+            for (std::uint32_t i : b.mesh.indices) idx.push(static_cast<double>(i));
+            for (const Vec3& e : b.mesh.edgeVertices) edges.push(e.x).push(e.y).push(e.z);
+            Json mesh = Json::object();
+            mesh.set("positions", pos).set("normals", nrm).set("indices", idx).set("edges", edges);
+            jb.set("mesh", mesh);
+        }
+        bodies.push(jb);
+    }
+    doc.set("bodies", bodies);
+
+    Json curves = Json::array();
+    for (const SketchCurve& c : scene.sketch().curves()) {
+        Json jc = Json::object();
+        jc.set("name", c.name).set("kind", curveKey(c.kind)).set("plane", planeKey(c.plane));
+        Json pts = Json::array();
+        for (const Vec2& p : c.pts) pts.push(Json(Json::Array{p.x, p.y}));
+        jc.set("points", pts).set("radius", c.radius).set("visible", c.visible);
+        curves.push(jc);
+    }
+    doc.set("sketch", curves);
+
+    Json images = Json::array();
+    for (const ImageRef& img : scene.images()) {
+        std::error_code ec;
+        std::string stored = img.path;
+        const fs::path rel = fs::relative(fs::absolute(img.path), projectDir, ec);
+        if (!ec && !rel.empty() && rel.string().rfind("..", 0) != 0) stored = rel.generic_string();
+        Json ji = Json::object();
+        ji.set("name", img.name).set("path", stored).set("plane", planeKey(img.plane));
+        ji.set("center", Json(Json::Array{img.center.x, img.center.y}));
+        ji.set("width", img.width).set("opacity", img.opacity).set("visible", img.visible);
+        images.push(ji);
+    }
+    doc.set("images", images);
+
+    return writeFile(path, doc.dump() + "\n", error);
+}
+
+bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std::string* error, std::string* warning) {
+    const auto text = readFile(path, error);
+    if (!text) return false;
+    std::string parseError;
+    const auto doc = Json::parse(*text, &parseError);
+    if (!doc || !doc->isObject()) {
+        setError(error, "Not a valid project file: " + parseError);
+        return false;
+    }
+    if ((*doc)["format"].asString() != "sicdm-project") {
+        setError(error, "Not an SI CDM project file");
+        return false;
+    }
+    if ((*doc)["version"].asInt() > 1) {
+        setError(error, "Project was saved by a newer version of SI CDM");
+        return false;
+    }
+
+    Scene loaded;
+    ProjectState st;
+    st.plane = planeFromKey((*doc)["plane"].asString()).value_or(SketchPlane::Top);
+
+    for (const Json& jb : (*doc)["bodies"].items()) {
+        std::vector<float> params;
+        for (const Json& p : jb["params"].items()) params.push_back(p.asFloat());
+        const std::string kind = jb["kind"].asString("mesh");
+        Body b;
+        if (isPrimitiveKind(kind)) {
+            b = makeBody(jb["name"].asString("Body"), kind, params);
+        } else {
+            const Json& m = jb["mesh"];
+            const auto& pos = m["positions"].items();
+            const auto& nrm = m["normals"].items();
+            for (std::size_t i = 0; i + 2 < pos.size(); i += 3) {
+                Vertex v;
+                v.position = {pos[i].asFloat(), pos[i + 1].asFloat(), pos[i + 2].asFloat()};
+                if (i + 2 < nrm.size()) v.normal = {nrm[i].asFloat(), nrm[i + 1].asFloat(), nrm[i + 2].asFloat()};
+                b.mesh.vertices.push_back(v);
+            }
+            for (const Json& i : m["indices"].items()) {
+                const int k = i.asInt(-1);
+                if (k < 0 || static_cast<std::size_t>(k) >= b.mesh.vertices.size()) {
+                    setError(error, "Corrupt mesh in body " + jb["name"].asString());
+                    return false;
+                }
+                b.mesh.indices.push_back(static_cast<std::uint32_t>(k));
+            }
+            b.mesh.indices.resize(b.mesh.indices.size() / 3 * 3);
+            const auto& e = m["edges"].items();
+            for (std::size_t i = 0; i + 2 < e.size(); i += 3)
+                b.mesh.edgeVertices.push_back({e[i].asFloat(), e[i + 1].asFloat(), e[i + 2].asFloat()});
+            b.name = jb["name"].asString("Mesh");
+            b.kind = "mesh";
+        }
+        b.offset = jsonVec3(jb["offset"]);
+        b.color = jsonVec3(jb["color"], b.color);
+        b.visible = jb["visible"].asBool(true);
+        loaded.add(std::move(b));
+    }
+
+    for (const Json& jc : (*doc)["sketch"].items()) {
+        const auto kind = curveFromKey(jc["kind"].asString());
+        if (!kind) continue;
+        SketchCurve c;
+        c.kind = *kind;
+        c.plane = planeFromKey(jc["plane"].asString()).value_or(SketchPlane::Top);
+        for (const Json& p : jc["points"].items()) c.pts.push_back({p[0].asFloat(), p[1].asFloat()});
+        c.radius = jc["radius"].asFloat();
+        c.name = jc["name"].asString();
+        c.visible = jc["visible"].asBool(true);
+        if (c.pts.empty()) continue;
+        loaded.sketch().add(std::move(c));
+    }
+
+    std::string missing;
+    const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
+    for (const Json& ji : (*doc)["images"].items()) {
+        ImageRef img;
+        img.name = ji["name"].asString("Image");
+        img.path = ji["path"].asString();
+        if (!img.path.empty() && fs::path(img.path).is_relative()) img.path = (projectDir / img.path).string();
+        img.plane = planeFromKey(ji["plane"].asString()).value_or(SketchPlane::Top);
+        img.center = {ji["center"][0].asFloat(), ji["center"][1].asFloat()};
+        img.width = std::max(ji["width"].asFloat(100.0f), 0.01f);
+        img.opacity = std::clamp(ji["opacity"].asFloat(0.6f), 0.0f, 1.0f);
+        img.visible = ji["visible"].asBool(true);
+        std::string imgErr;
+        if (!loadImagePixels(img, &imgErr)) missing += (missing.empty() ? "" : ", ") + img.name;
+        loaded.addImage(std::move(img));
+    }
+    if (warning) *warning = missing.empty() ? "" : "Images not found: " + missing;
+
+    scene.assign(std::move(loaded));
+    state = st;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Meshes
+
+bool exportStl(const Scene& scene, const std::string& path, std::string* error) {
+    std::string data(80, '\0');
+    const char header[] = "SI CDM binary STL (mm)";
+    std::memcpy(data.data(), header, sizeof(header) - 1);
+    std::uint32_t count = 0;
+    std::string tris;
+    forEachWorldTriangle(scene, [&](const Body&, const Vec3& a, const Vec3& b, const Vec3& c) {
+        const Vec3 n = normalize(cross(b - a, c - a));
+        for (const Vec3& v : {n, a, b, c}) {
+            appendF32(tris, v.x);
+            appendF32(tris, v.y);
+            appendF32(tris, v.z);
+        }
+        tris.append(2, '\0');
+        ++count;
+    });
+    if (count == 0) {
+        setError(error, "Nothing to export: no visible bodies");
+        return false;
+    }
+    char cnt[4];
+    std::memcpy(cnt, &count, 4);
+    data.append(cnt, 4);
+    data += tris;
+    return writeFile(path, data, error);
+}
+
+bool exportObj(const Scene& scene, const std::string& path, std::string* error) {
+    std::string out = "# SI CDM OBJ export (mm)\n";
+    std::size_t base = 1, written = 0;
+    char line[160];
+    for (const Body& b : scene.bodies()) {
+        if (!b.visible || b.mesh.indices.empty()) continue;
+        std::string name = b.name;
+        std::replace(name.begin(), name.end(), ' ', '_');
+        out += "o " + name + "\n";
+        for (const Vertex& v : b.mesh.vertices) {
+            const Vec3 p = v.position + b.offset;
+            std::snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", static_cast<double>(p.x), static_cast<double>(p.y),
+                          static_cast<double>(p.z));
+            out += line;
+        }
+        for (const Vertex& v : b.mesh.vertices) {
+            std::snprintf(line, sizeof(line), "vn %.6f %.6f %.6f\n", static_cast<double>(v.normal.x),
+                          static_cast<double>(v.normal.y), static_cast<double>(v.normal.z));
+            out += line;
+        }
+        const auto& idx = b.mesh.indices;
+        for (std::size_t i = 0; i + 2 < idx.size(); i += 3) {
+            const std::size_t a = base + idx[i], c1 = base + idx[i + 1], c2 = base + idx[i + 2];
+            std::snprintf(line, sizeof(line), "f %zu//%zu %zu//%zu %zu//%zu\n", a, a, c1, c1, c2, c2);
+            out += line;
+        }
+        base += b.mesh.vertices.size();
+        ++written;
+    }
+    if (written == 0) {
+        setError(error, "Nothing to export: no visible bodies");
+        return false;
+    }
+    return writeFile(path, out, error);
+}
+
+std::optional<Body> importMesh(const std::string& path, std::string* error) {
+    const FileKind kind = fileKindOf(path);
+    const auto data = readFile(path, error);
+    if (!data) return std::nullopt;
+    std::vector<Vec3> tri;
+
+    if (kind == FileKind::Stl) {
+        const std::string& d = *data;
+        std::uint32_t n = 0;
+        if (d.size() >= 84) std::memcpy(&n, d.data() + 80, 4);
+        const bool binary = d.size() >= 84 && 84ull + 50ull * n == d.size();
+        if (binary) {
+            tri.reserve(static_cast<std::size_t>(n) * 3);
+            for (std::uint32_t t = 0; t < n; ++t) {
+                const char* rec = d.data() + 84 + 50ull * t + 12; // skip normal
+                for (int k = 0; k < 3; ++k) {
+                    float v[3];
+                    std::memcpy(v, rec + 12 * k, 12);
+                    tri.push_back({v[0], v[1], v[2]});
+                }
+            }
+        } else {
+            std::istringstream in(d);
+            std::string word;
+            while (in >> word) {
+                if (word != "vertex") continue;
+                Vec3 v;
+                if (!(in >> v.x >> v.y >> v.z)) break;
+                tri.push_back(v);
+            }
+            tri.resize(tri.size() / 3 * 3);
+        }
+    } else if (kind == FileKind::Obj) {
+        std::vector<Vec3> pos;
+        std::istringstream in(*data);
+        std::string line;
+        while (std::getline(in, line)) {
+            std::istringstream ls(line);
+            std::string tag;
+            ls >> tag;
+            if (tag == "v") {
+                Vec3 v;
+                if (ls >> v.x >> v.y >> v.z) pos.push_back(v);
+            } else if (tag == "f") {
+                std::vector<Vec3> poly;
+                std::string tok;
+                while (ls >> tok) {
+                    const long k = std::strtol(tok.c_str(), nullptr, 10); // "a/b/c" -> a
+                    const long i = k < 0 ? static_cast<long>(pos.size()) + k : k - 1;
+                    if (i < 0 || static_cast<std::size_t>(i) >= pos.size()) {
+                        setError(error, "Bad face index in " + path);
+                        return std::nullopt;
+                    }
+                    poly.push_back(pos[static_cast<std::size_t>(i)]);
+                }
+                for (std::size_t j = 1; j + 1 < poly.size(); ++j) { // fan
+                    tri.push_back(poly[0]);
+                    tri.push_back(poly[j]);
+                    tri.push_back(poly[j + 1]);
+                }
+            }
+        }
+    } else {
+        setError(error, "Unsupported mesh format: " + lowerExt(path));
+        return std::nullopt;
+    }
+
+    if (tri.empty()) {
+        setError(error, "No triangles found in " + path);
+        return std::nullopt;
+    }
+    return meshBody(stemOf(path), meshFromTriangles(tri));
+}
+
+// ---------------------------------------------------------------------------
+// 2D drawings
+
+int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error) {
+    std::string out;
+    dxfPair(out, 0, "SECTION");
+    dxfPair(out, 2, "HEADER");
+    dxfPair(out, 9, "$ACADVER");
+    dxfPair(out, 1, "AC1009");
+    dxfPair(out, 9, "$INSUNITS");
+    dxfPair(out, 70, "4"); // millimetres
+    dxfPair(out, 0, "ENDSEC");
+    dxfPair(out, 0, "SECTION");
+    dxfPair(out, 2, "ENTITIES");
+    const std::string layer = std::string("SKETCH_") + planeKey(plane);
+    int count = 0;
+    for (const SketchCurve& c : scene.sketch().curves()) {
+        if (c.plane != plane || !c.visible || c.pts.empty()) continue;
+        switch (c.kind) {
+        case CurveKind::Point:
+            dxfPair(out, 0, "POINT");
+            dxfPair(out, 8, layer);
+            dxfPoint(out, 10, c.pts[0]);
+            break;
+        case CurveKind::Line:
+            if (c.pts.size() < 2) continue;
+            dxfPair(out, 0, "LINE");
+            dxfPair(out, 8, layer);
+            dxfPoint(out, 10, c.pts[0]);
+            dxfPoint(out, 11, c.pts[1]);
+            break;
+        case CurveKind::Circle:
+            dxfPair(out, 0, "CIRCLE");
+            dxfPair(out, 8, layer);
+            dxfPoint(out, 10, c.pts[0]);
+            dxfPair(out, 40, num(c.radius));
+            break;
+        case CurveKind::Polyline: dxfPolyline(out, layer, c.pts, false); break;
+        case CurveKind::Rectangle: {
+            if (c.pts.size() < 2) continue;
+            const Vec2 a = c.pts[0], b = c.pts[1];
+            dxfPolyline(out, layer, {a, {b.x, a.y}, b, {a.x, b.y}}, true);
+            break;
+        }
+        }
+        ++count;
+    }
+    dxfPair(out, 0, "ENDSEC");
+    dxfPair(out, 0, "EOF");
+    if (count == 0) {
+        setError(error, std::string("No sketch curves on the ") + planeKey(plane) + " plane to export");
+        return -1;
+    }
+    return writeFile(path, out, error) ? count : -1;
+}
+
+int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error) {
+    AABB b;
+    int count = 0;
+    for (const SketchCurve& c : scene.sketch().curves()) {
+        if (c.plane != plane || !c.visible || c.pts.empty()) continue;
+        ++count;
+        for (const Vec2& p : c.pts) b.expand(Vec3{p.x, p.y, 0});
+        if (c.kind == CurveKind::Circle) {
+            b.expand(Vec3{c.pts[0].x - c.radius, c.pts[0].y - c.radius, 0});
+            b.expand(Vec3{c.pts[0].x + c.radius, c.pts[0].y + c.radius, 0});
+        }
+    }
+    if (count == 0) {
+        setError(error, std::string("No sketch curves on the ") + planeKey(plane) + " plane to export");
+        return -1;
+    }
+    const float m = 5.0f;
+    const float x0 = b.min.x - m, y0 = b.min.y - m;
+    const float w = b.max.x - b.min.x + 2 * m, h = b.max.y - b.min.y + 2 * m;
+    char buf[256];
+    std::string out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    std::snprintf(buf, sizeof(buf),
+                  "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%.3fmm\" height=\"%.3fmm\" viewBox=\"%.3f %.3f %.3f %.3f\">\n",
+                  static_cast<double>(w), static_cast<double>(h), static_cast<double>(x0), static_cast<double>(-y0 - h),
+                  static_cast<double>(w), static_cast<double>(h));
+    out += buf;
+    // Sketch v points up; SVG y points down, so flip.
+    out += "<g transform=\"scale(1,-1)\" fill=\"none\" stroke=\"#000\" stroke-width=\"0.25\" stroke-linecap=\"round\">\n";
+    auto pts = [](const std::vector<Vec2>& v) {
+        std::string s;
+        char p[64];
+        for (const Vec2& q : v) {
+            std::snprintf(p, sizeof(p), "%.4f,%.4f ", static_cast<double>(q.x), static_cast<double>(q.y));
+            s += p;
+        }
+        return s;
+    };
+    for (const SketchCurve& c : scene.sketch().curves()) {
+        if (c.plane != plane || !c.visible || c.pts.empty()) continue;
+        switch (c.kind) {
+        case CurveKind::Point:
+            std::snprintf(buf, sizeof(buf), "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"0.5\" fill=\"#000\"/>\n",
+                          static_cast<double>(c.pts[0].x), static_cast<double>(c.pts[0].y));
+            break;
+        case CurveKind::Line:
+            if (c.pts.size() < 2) continue;
+            std::snprintf(buf, sizeof(buf), "<line x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\"/>\n",
+                          static_cast<double>(c.pts[0].x), static_cast<double>(c.pts[0].y),
+                          static_cast<double>(c.pts[1].x), static_cast<double>(c.pts[1].y));
+            break;
+        case CurveKind::Circle:
+            std::snprintf(buf, sizeof(buf), "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"%.4f\"/>\n",
+                          static_cast<double>(c.pts[0].x), static_cast<double>(c.pts[0].y),
+                          static_cast<double>(c.radius));
+            break;
+        case CurveKind::Polyline: out += "<polyline points=\"" + pts(c.pts) + "\"/>\n"; continue;
+        case CurveKind::Rectangle: {
+            if (c.pts.size() < 2) continue;
+            const Vec2 a = c.pts[0], q = c.pts[1];
+            out += "<polygon points=\"" + pts({a, {q.x, a.y}, q, {a.x, q.y}}) + "\"/>\n";
+            continue;
+        }
+        }
+        out += buf;
+    }
+    out += "</g>\n</svg>\n";
+    return writeFile(path, out, error) ? count : -1;
+}
+
+int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::string* error) {
+    const auto data = readFile(path, error);
+    if (!data) return -1;
+    std::vector<DxfPair> pairs;
+    {
+        std::istringstream in(*data);
+        std::string codeLine, valueLine;
+        while (std::getline(in, codeLine) && std::getline(in, valueLine)) {
+            char* end = nullptr;
+            const std::string c = trimmed(codeLine);
+            const long code = std::strtol(c.c_str(), &end, 10);
+            if (c.empty() || *end != '\0') {
+                setError(error, "Not an ASCII DXF file: " + path);
+                return -1;
+            }
+            pairs.push_back({static_cast<int>(code), trimmed(valueLine)});
+        }
+    }
+    auto f = [](const std::string& s) { return static_cast<float>(std::strtod(s.c_str(), nullptr)); };
+
+    int added = 0;
+    auto addCurve = [&](CurveKind k, std::vector<Vec2> pts, float r = 0.0f) {
+        if (pts.empty()) return;
+        SketchCurve c;
+        c.kind = k;
+        c.plane = plane;
+        c.pts = std::move(pts);
+        c.radius = r;
+        scene.sketch().add(std::move(c));
+        ++added;
+    };
+
+    // Walk entities: each starts at a code-0 pair.
+    std::size_t i = 0;
+    bool inEntities = false;
+    while (i < pairs.size()) {
+        if (pairs[i].code != 0) {
+            ++i;
+            continue;
+        }
+        const std::string type = pairs[i].value;
+        std::size_t j = i + 1;
+        while (j < pairs.size() && pairs[j].code != 0) ++j;
+        auto group = [&](int code, std::size_t nth = 0) -> const std::string* {
+            for (std::size_t k = i + 1; k < j; ++k)
+                if (pairs[k].code == code && nth-- == 0) return &pairs[k].value;
+            return nullptr;
+        };
+        auto g = [&](int code) { const std::string* v = group(code); return v ? f(*v) : 0.0f; };
+        if (type == "SECTION") {
+            const std::string* name = group(2);
+            inEntities = name && *name == "ENTITIES";
+        } else if (type == "ENDSEC") {
+            inEntities = false;
+        } else if (inEntities) {
+            if (type == "LINE") {
+                addCurve(CurveKind::Line, {{g(10), g(20)}, {g(11), g(21)}});
+            } else if (type == "CIRCLE") {
+                if (g(40) > 0) addCurve(CurveKind::Circle, {{g(10), g(20)}}, g(40));
+            } else if (type == "ARC") {
+                if (g(40) > 0) addCurve(CurveKind::Polyline, arcPoints({g(10), g(20)}, g(40), g(50), g(51)));
+            } else if (type == "POINT") {
+                addCurve(CurveKind::Point, {{g(10), g(20)}});
+            } else if (type == "LWPOLYLINE") {
+                std::vector<Vec2> pts;
+                for (std::size_t n = 0;; ++n) {
+                    const std::string* x = group(10, n);
+                    const std::string* y = group(20, n);
+                    if (!x || !y) break;
+                    pts.push_back({f(*x), f(*y)});
+                }
+                if ((static_cast<int>(g(70)) & 1) && !pts.empty()) pts.push_back(pts.front());
+                if (pts.size() >= 2) addCurve(CurveKind::Polyline, std::move(pts));
+            } else if (type == "POLYLINE") {
+                const bool closed = static_cast<int>(g(70)) & 1;
+                std::vector<Vec2> pts;
+                std::size_t k = j;
+                while (k < pairs.size() && pairs[k].code == 0 && pairs[k].value == "VERTEX") {
+                    std::size_t e = k + 1;
+                    Vec2 p{};
+                    while (e < pairs.size() && pairs[e].code != 0) {
+                        if (pairs[e].code == 10) p.x = f(pairs[e].value);
+                        if (pairs[e].code == 20) p.y = f(pairs[e].value);
+                        ++e;
+                    }
+                    pts.push_back(p);
+                    k = e;
+                }
+                if (closed && !pts.empty()) pts.push_back(pts.front());
+                if (pts.size() >= 2) addCurve(CurveKind::Polyline, std::move(pts));
+                j = k;
+            }
+        }
+        i = j;
+    }
+    if (added == 0) setError(error, "No supported entities (LINE, CIRCLE, ARC, POINT, POLYLINE) in " + path);
+    return added;
+}
+
+// ---------------------------------------------------------------------------
+// Images
+
+bool loadImagePixels(ImageRef& img, std::string* error) {
+    int w = 0, h = 0, n = 0;
+    unsigned char* px = stbi_load(img.path.c_str(), &w, &h, &n, 4);
+    if (!px) {
+        const char* why = stbi_failure_reason();
+        setError(error, "Cannot read image " + img.path + (why ? std::string(": ") + why : ""));
+        img.pixels.clear();
+        img.pixelWidth = img.pixelHeight = 0;
+        return false;
+    }
+    img.pixelWidth = w;
+    img.pixelHeight = h;
+    img.pixels.assign(px, px + static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4);
+    stbi_image_free(px);
+    return true;
+}
+
+std::optional<ImageRef> importImage(const std::string& path, SketchPlane plane, Vec2 center, std::string* error) {
+    ImageRef img;
+    img.path = fs::absolute(path).string();
+    img.name = fs::path(path).filename().string();
+    img.plane = plane;
+    img.center = center;
+    if (!loadImagePixels(img, error)) return std::nullopt;
+    img.width = std::min(static_cast<float>(img.pixelWidth) * 0.25f, 400.0f);
+    return img;
+}
+
+} // namespace sicdm

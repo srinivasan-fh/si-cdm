@@ -5,6 +5,10 @@ add_executable(sicdm_tests
     test_geometry.cpp
     test_picking.cpp
     test_tools.cpp
+    test_command.cpp
+    test_fileio.cpp
+    test_engine.cpp
+    test_mcp.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 sicdm_set_compile_options(sicdm_tests)

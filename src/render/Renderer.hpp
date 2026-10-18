@@ -49,7 +49,8 @@ public:
     }
 
     void render(const Scene& scene, const OrbitCamera& camera, const ViewportSettings& settings,
-                int framebufferWidth, int framebufferHeight, int selectedBody, int selectedCurve);
+                int framebufferWidth, int framebufferHeight, int selectedBody, int selectedCurve,
+                int selectedImage = -1);
 
 private:
     void drawBackground(const ViewportSettings& s);
@@ -57,12 +58,20 @@ private:
     void uploadSketch(const Sketch& sketch);
     void drawSketch(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s, int selected);
     void releaseMeshes();
+    void releaseImages();
+    void uploadImages(const Scene& scene);
+    void drawImages(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s, int selected);
+    GLuint m_imageShaderProgram() const noexcept { return m_imageShader.program(); }
 
     Shader m_background;
     Shader m_mesh;
     Shader m_lines;
     Shader m_grid;
     Shader m_sketchShader;
+    Shader m_imageShader;
+    std::vector<GLuint> m_imageTextures; // parallel to scene.images(); 0 = no pixels
+    std::uint64_t m_imageRevision = ~std::uint64_t{0};
+    GLuint m_outlineVao = 0, m_outlineVbo = 0;
 
     struct SketchRange {
         GLint first;

@@ -1,7 +1,10 @@
 #pragma once
 
 #include "core/Camera.hpp"
+#include "core/Document.hpp"
+#include "core/Mcp.hpp"
 #include "core/Scene.hpp"
+#include "app/McpHttpServer.hpp"
 #include "app/SketchController.hpp"
 #include "render/Renderer.hpp"
 #include "ui/LandingUI.hpp"
@@ -19,9 +22,12 @@ struct AppOptions {
     int height = 960;
     std::string screenshotPath; // when set: render a few frames, save PPM, exit
     bool start2D = false;       // open in the 2D drawing window
+    int mcpPort = 0;            // > 0: start the MCP HTTP server for AI agents
+    std::string openPath;       // project or file to open at startup
+    std::string executablePath; // argv[0], for MCP setup hints
 };
 
-class Application {
+class Application final : public ViewHost {
 public:
     explicit Application(AppOptions options);
     ~Application();
@@ -30,6 +36,20 @@ public:
     Application& operator=(const Application&) = delete;
 
     int run();
+
+    // ViewHost: window / camera control for commands and MCP.
+    void openWindow(bool drawing2D) override;
+    void standardView(StandardView v) override;
+    void planeChanged(SketchPlane p) override;
+    void fit() override;
+    void zoomStep(float steps) override;
+    void home() override;
+    void roll(float degrees, bool absolute) override;
+    void setProjection(Projection p) override;
+    void setDisplay(int mode) override;
+    void setGrid(std::optional<bool> on) override;
+    void setPanel(std::optional<bool> on) override;
+    std::string describe() const override;
 
 private:
     bool init();
@@ -42,11 +62,25 @@ private:
     void addCurve(SketchCurve curve);
     void setMode(ViewMode mode);
     void setPlane(SketchPlane plane);
+    int pickImage(float x, float y, Vec2* planePoint = nullptr) const;
+
+    // Command line / MCP plumbing.
+    void runCommandLine(const std::string& text);
+    void log(const std::string& text, int kind);
+    void syncToDoc();
+    void syncFromDoc();
+    void afterDocumentReplaced();
+    void updatePrompt();
+    void toggleMcp();
+    std::string handleMcp(const std::string& body);
+    std::uint64_t contentSignature() const; // changes whenever the saved content would
+    void updateTitle();
 
     // Each window keeps its own camera and display settings.
     OrbitCamera& camera() noexcept { return m_uiState.mode == ViewMode::Drawing2D ? m_cam2D : m_cam3D; }
     const OrbitCamera& camera() const noexcept { return m_uiState.mode == ViewMode::Drawing2D ? m_cam2D : m_cam3D; }
     ViewportSettings& viewport() noexcept { return m_uiState.mode == ViewMode::Drawing2D ? m_vp2D : m_vp3D; }
+    const ViewportSettings& viewport() const noexcept { return m_uiState.mode == ViewMode::Drawing2D ? m_vp2D : m_vp3D; }
     void setStatus(std::string message);
     void handleCommands(const UiCommands& cmd);
     bool saveScreenshot(const std::string& path) const;
@@ -58,7 +92,7 @@ private:
     GLFWwindow* m_window = nullptr;
     bool m_imguiReady = false;
 
-    Scene m_scene;
+    Document m_doc;
     OrbitCamera m_cam3D, m_cam2D;
     ViewportSettings m_vp3D, m_vp2D;
     bool m_2DReady = false;
@@ -69,15 +103,22 @@ private:
     UiState m_uiState;
 
     // Input state
-    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody };
+    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage };
     DragMode m_leftDrag = DragMode::None;
     DragMode m_otherDrag = DragMode::None; // right / middle button
     float m_pressX = 0, m_pressY = 0;
     float m_pendingScroll = 0;
     Vec3 m_movePlanePoint;
     Vec3 m_moveStartOffset;
+    Vec2 m_imageGrab{}, m_imageStart{};
 
-    int m_primitiveSerial = 0;
+    // MCP server (shared by the HTTP transport) and unsaved-change tracking.
+    std::unique_ptr<McpServer> m_mcp;
+    McpHttpServer m_mcpHttp;
+    std::uint64_t m_savedSignature = 0;
+    std::string m_shownTitle;
+    bool m_closeRequested = false;
+
     double m_statusUntil = 0.0;
 
     // On-demand rendering: CAD viewports only redraw when something changes.

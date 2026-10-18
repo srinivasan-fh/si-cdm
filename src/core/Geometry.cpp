@@ -1,6 +1,8 @@
 #include "core/Geometry.hpp"
 
 #include <algorithm>
+#include <map>
+#include <tuple>
 
 namespace sicdm {
 
@@ -34,6 +36,83 @@ void MeshData::append(const MeshData& o) {
     indices.reserve(indices.size() + o.indices.size());
     for (std::uint32_t i : o.indices) indices.push_back(base + i);
     edgeVertices.insert(edgeVertices.end(), o.edgeVertices.begin(), o.edgeVertices.end());
+}
+
+void MeshData::computeFeatureEdges(float angleDeg) {
+    // Weld coincident positions so faces that share an edge find each other.
+    std::map<std::tuple<long, long, long>, std::uint32_t> weld;
+    std::vector<Vec3> welded;
+    auto key = [](const Vec3& p) {
+        constexpr float q = 1e4f; // 0.1 micron
+        return std::make_tuple(std::lround(p.x * q), std::lround(p.y * q), std::lround(p.z * q));
+    };
+    std::vector<std::uint32_t> remap(vertices.size());
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        const auto k = key(vertices[i].position);
+        auto it = weld.find(k);
+        if (it == weld.end()) {
+            it = weld.emplace(k, static_cast<std::uint32_t>(welded.size())).first;
+            welded.push_back(vertices[i].position);
+        }
+        remap[i] = it->second;
+    }
+    struct EdgeFaces {
+        Vec3 n0{};
+        int count = 0;
+        bool sharp = false;
+    };
+    std::map<std::pair<std::uint32_t, std::uint32_t>, EdgeFaces> edges;
+    const float cosLimit = std::cos(radians(angleDeg));
+    for (std::size_t t = 0; t + 2 < indices.size(); t += 3) {
+        const std::uint32_t w[3] = {remap[indices[t]], remap[indices[t + 1]], remap[indices[t + 2]]};
+        const Vec3 n = normalize(cross(welded[w[1]] - welded[w[0]], welded[w[2]] - welded[w[0]]));
+        if (length(n) == 0.0f) continue;
+        for (int e = 0; e < 3; ++e) {
+            auto a = w[e], b = w[(e + 1) % 3];
+            if (a > b) std::swap(a, b);
+            EdgeFaces& ef = edges[{a, b}];
+            if (ef.count == 0) ef.n0 = n;
+            else if (dot(ef.n0, n) < cosLimit) ef.sharp = true;
+            ++ef.count;
+        }
+    }
+    edgeVertices.clear();
+    for (const auto& [e, ef] : edges)
+        if (ef.count == 1 || ef.sharp || ef.count > 2) {
+            edgeVertices.push_back(welded[e.first]);
+            edgeVertices.push_back(welded[e.second]);
+        }
+}
+
+bool isPrimitiveKind(const std::string& k) {
+    return k == "box" || k == "wedge" || k == "cylinder" || k == "tube" || k == "cone" || k == "sphere" ||
+           k == "torus" || k == "pyramid" || k == "prism";
+}
+
+MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
+    using namespace primitives;
+    auto need = [&](std::size_t n) { return p.size() >= n; };
+    auto positive = [&](std::size_t n) {
+        for (std::size_t i = 0; i < n; ++i)
+            if (!(p[i] > 0.0f)) return false;
+        return true;
+    };
+    if ((k == "box" || k == "wedge") && need(6)) {
+        const Vec3 lo{std::min(p[0], p[3]), std::min(p[1], p[4]), std::min(p[2], p[5])};
+        const Vec3 hi{std::max(p[0], p[3]), std::max(p[1], p[4]), std::max(p[2], p[5])};
+        if (hi.x - lo.x <= 0 || hi.y - lo.y <= 0 || hi.z - lo.z <= 0) return {};
+        return k == "box" ? box(lo, hi) : wedge(lo, hi);
+    }
+    if (k == "cylinder" && need(2) && positive(2)) return cylinder({0, 0, 0}, p[0], p[1]);
+    if (k == "tube" && need(3) && positive(3) && p[1] < p[0]) return tube({0, 0, 0}, p[0], p[1], p[2]);
+    if (k == "cone" && need(3) && p[0] > 0 && p[1] >= 0 && p[2] > 0) return cone({0, 0, 0}, p[0], p[1], p[2]);
+    if (k == "sphere" && need(1) && positive(1)) return sphere({0, 0, p[0]}, p[0]);
+    if (k == "torus" && need(2) && positive(2) && p[1] < p[0]) return torus({0, 0, p[1]}, p[0], p[1]);
+    if ((k == "pyramid" || k == "prism") && need(2) && positive(2)) {
+        const int sides = p.size() >= 3 ? std::clamp(static_cast<int>(p[2]), 3, 64) : (k == "prism" ? 6 : 4);
+        return k == "pyramid" ? pyramid({0, 0, 0}, p[0], p[1], sides) : prism({0, 0, 0}, p[0], p[1], sides);
+    }
+    return {};
 }
 
 namespace primitives {

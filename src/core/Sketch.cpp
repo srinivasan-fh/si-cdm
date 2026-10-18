@@ -2,7 +2,14 @@
 
 #include <cstdio>
 
+#include <atomic>
+
 namespace sicdm {
+
+std::uint64_t nextRevision() noexcept {
+    static std::atomic<std::uint64_t> counter{0};
+    return ++counter;
+}
 
 PlaneFrame planeFrame(SketchPlane plane) noexcept {
     switch (plane) {
@@ -99,15 +106,17 @@ std::string SketchCurve::measure() const {
 }
 
 SketchCurve& Sketch::add(SketchCurve c) {
-    if (c.name.empty()) c.name = std::string(curveKindName(c.kind)) + " " + std::to_string(++m_serial);
-    ++m_revision;
+    // Numbering continues past loaded curves so new names stay unique.
+    ++m_serial;
+    if (c.name.empty()) c.name = std::string(curveKindName(c.kind)) + " " + std::to_string(m_serial);
+    m_revision = nextRevision();
     return m_curves.emplace_back(std::move(c));
 }
 
 void Sketch::remove(std::size_t index) {
     if (index >= m_curves.size()) return;
     m_curves.erase(m_curves.begin() + static_cast<std::ptrdiff_t>(index));
-    ++m_revision;
+    m_revision = nextRevision();
 }
 
 AABB Sketch::bounds() const {

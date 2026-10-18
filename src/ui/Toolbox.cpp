@@ -20,6 +20,12 @@ ImU32 iconColor(ToolId id, bool active) {
 
 } // namespace
 
+bool commandModifierHeld() {
+    const ImGuiIO& io = ImGui::GetIO();
+    return io.KeyCtrl || io.KeySuper || ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl) ||
+           ImGui::IsKeyDown(ImGuiKey_LeftSuper) || ImGui::IsKeyDown(ImGuiKey_RightSuper);
+}
+
 Toolbox::Toolbox() : m_current(toolGroups().size(), 0) { setActive(ToolId::Select); }
 
 int Toolbox::groupOf(ToolId id) const {
@@ -41,7 +47,7 @@ void Toolbox::setActive(ToolId id) {
 
 void Toolbox::handleShortcuts() {
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard || io.KeyCtrl || io.KeySuper || io.KeyAlt) return;
+    if (io.WantCaptureKeyboard || commandModifierHeld() || io.KeyAlt) return;
     for (int i = 0; i < static_cast<int>(ToolId::Count); ++i) {
         const ToolInfo& info = toolInfo(static_cast<ToolId>(i));
         const char k = info.shortcut[0];

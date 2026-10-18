@@ -3,6 +3,7 @@
 #include "core/Camera.hpp"
 #include "core/Scene.hpp"
 #include "render/Renderer.hpp"
+#include "ui/FileDialog.hpp"
 #include "ui/Toolbox.hpp"
 #include "ui/ViewCube.hpp"
 
@@ -25,6 +26,27 @@ struct UiState {
     bool snapPoints = true;
     int selectedBody = -1;
     int selectedCurve = -1;
+    int selectedImage = -1;
+
+    // Command line: prompt for the current step, and the output log.
+    struct LogLine {
+        std::string text;
+        enum Kind { Input, Output, Error } kind = Output;
+    };
+    std::string commandPrompt = "Command:";
+    bool commandKeepsFocus = false; // a sketch tool is waiting for typed points
+    std::vector<LogLine> commandLog;
+
+    // Project / file.
+    std::string projectTitle = "Untitled";
+    std::string projectPath;
+    bool dirty = false;
+
+    // MCP server for AI agents (live app over HTTP).
+    bool mcpRunning = false;
+    int mcpPort = 8765;
+    std::string mcpError;
+    std::string mcpExecutable; // path of sicdm-mcp next to the app, for setup hints
     std::optional<Vec2> cursorPlane; // cursor on the sketch plane (mm), when known
     float frameMs = 0.0f;
     std::string statusMessage; // transient feedback (e.g. "Placed Block 1")
@@ -46,6 +68,8 @@ struct UiCommands {
     bool fit = false;
     bool toggleProjection = false;
     bool quit = false;
+    std::vector<std::string> commands; // command lines to run (command bar, File menu)
+    bool toggleMcp = false;
 };
 
 // Workbench chrome around the canvas: menu bar, options bar (tool options and
@@ -67,6 +91,11 @@ private:
     void drawDocumentTabs(UiCommands& cmd, const UiState& st);
     void drawRulers(const OrbitCamera& cam, const UiState& st);
     float drawModelTree(Scene& scene, UiState& st, float x, float top, float bottom); // returns width
+    void drawCommandBar(UiCommands& cmd, UiState& st);
+    void drawFileDialogs(UiCommands& cmd, UiState& st);
+    void drawMcpWindow(UiState& st);
+    void requestFile(int action, const UiState& st); // see FileAction
+    static int commandInputCallback(struct ImGuiInputTextCallbackData* data);
     void drawStatusBar(const Scene& scene, const OrbitCamera& cam, const UiState& st);
     void drawControlsWindow(UiState& st);
     void drawAboutWindow(UiState& st);
@@ -82,6 +111,24 @@ private:
     float m_tabsBottom = 0.0f;
     float m_statusHeight = 0.0f;
     ImVec2 m_canvasMin{}, m_canvasMax{};
+    float m_commandHeight = 0.0f;
+
+    // Command bar state.
+    char m_commandBuf[512] = "";
+    bool m_focusCommand = false;
+    bool m_showHistory = false;
+    double m_showRecentUntil = 0.0;
+    std::size_t m_seenLog = 0;
+    std::vector<std::string> m_recall; // previous inputs for Up / Down
+    int m_recallPos = -1;
+
+    // File menu.
+    enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport };
+    FileDialog m_fileDialog;
+    int m_fileAction = FileNone;
+    int m_confirmAction = FileNone; // New (-1) / Open waiting for "discard changes?"
+    bool m_confirmOpen = false;
+    bool m_showMcp = false;
 };
 
 } // namespace sicdm

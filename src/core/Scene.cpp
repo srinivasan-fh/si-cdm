@@ -2,6 +2,56 @@
 
 namespace sicdm {
 
+Body meshBody(std::string name, MeshData mesh, Vec3 color) {
+    Body b;
+    b.name = std::move(name);
+    b.mesh = std::move(mesh);
+    b.color = color;
+    return b;
+}
+
+Body makeBody(std::string name, std::string kind, std::vector<float> params, Vec3 offset, Vec3 color) {
+    Body b;
+    b.name = std::move(name);
+    b.mesh = buildPrimitive(kind, params);
+    b.kind = std::move(kind);
+    b.params = std::move(params);
+    b.offset = offset;
+    b.color = color;
+    return b;
+}
+
+std::array<Vec3, 4> ImageRef::corners() const noexcept {
+    const PlaneFrame f = planeFrame(plane);
+    const float hw = width * 0.5f, hh = height() * 0.5f;
+    return {f.toWorld({center.x - hw, center.y - hh}), f.toWorld({center.x + hw, center.y - hh}),
+            f.toWorld({center.x + hw, center.y + hh}), f.toWorld({center.x - hw, center.y + hh})};
+}
+
+void Scene::removeImage(std::size_t index) {
+    if (index >= m_images.size()) return;
+    m_images.erase(m_images.begin() + static_cast<std::ptrdiff_t>(index));
+    m_imageRevision = nextRevision();
+}
+
+void Scene::clear() {
+    m_bodies.clear();
+    m_images.clear();
+    m_sketch = Sketch{};
+    m_revision = nextRevision();
+    m_imageRevision = nextRevision();
+    m_sketch.touch();
+}
+
+void Scene::assign(Scene&& other) {
+    m_bodies = std::move(other.m_bodies);
+    m_images = std::move(other.m_images);
+    m_sketch = std::move(other.m_sketch);
+    m_revision = nextRevision();
+    m_imageRevision = nextRevision();
+    m_sketch.touch();
+}
+
 AABB Body::bounds() const noexcept {
     AABB b = mesh.bounds();
     if (b.valid()) {
@@ -14,7 +64,7 @@ AABB Body::bounds() const noexcept {
 void Scene::remove(std::size_t index) {
     if (index >= m_bodies.size()) return;
     m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(index));
-    ++m_revision;
+    m_revision = nextRevision();
 }
 
 std::optional<RayHit> Scene::raycast(const Ray& ray) const noexcept {
@@ -48,6 +98,9 @@ AABB Scene::bounds() const noexcept {
         if (b.visible) visible.expand(bb);
     }
     visible.expand(m_sketch.bounds());
+    for (const ImageRef& img : m_images)
+        if (img.visible)
+            for (const Vec3& c : img.corners()) visible.expand(c);
     return visible.valid() ? visible : all;
 }
 
@@ -63,23 +116,23 @@ Scene Scene::makeDemo() {
     Scene s;
 
     // Base plate 120 x 80 x 12 mm, sitting on the XY plane.
-    s.add({"Base Plate", box({-60, -40, 0}, {60, 40, 12}), {0.70f, 0.73f, 0.78f}});
+    s.add(makeBody("Base Plate", "box", {-60, -40, 0, 60, 40, 12}, {}, {0.70f, 0.73f, 0.78f}));
 
     // Central boss with bore.
-    s.add({"Bearing Boss", tube({0, 0, 12}, 22, 12, 30), {0.82f, 0.62f, 0.32f}});
+    s.add(makeBody("Bearing Boss", "tube", {22, 12, 30}, {0, 0, 12}, {0.82f, 0.62f, 0.32f}));
 
     // Upright web behind the boss.
-    s.add({"Support Web", box({-8, 22, 12}, {8, 40, 42}), {0.45f, 0.60f, 0.78f}});
+    s.add(makeBody("Support Web", "box", {-8, 22, 12, 8, 40, 42}, {}, {0.45f, 0.60f, 0.78f}));
 
     // Four mounting studs.
     const float sx = 46, sy = 28;
     const Vec3 studs[] = {{-sx, -sy, 12}, {sx, -sy, 12}, {sx, sy, 12}, {-sx, sy, 12}};
     MeshData studMesh;
     for (const Vec3& p : studs) studMesh.append(cylinder(p, 5, 8, 40));
-    s.add({"Mounting Studs", std::move(studMesh), {0.55f, 0.57f, 0.60f}});
+    s.add(meshBody("Mounting Studs", std::move(studMesh), {0.55f, 0.57f, 0.60f}));
 
     // Datum sphere as a probe target.
-    s.add({"Probe Datum", sphere({-40, 0, 20}, 8), {0.38f, 0.70f, 0.52f}});
+    s.add(makeBody("Probe Datum", "sphere", {8}, {-40, 0, 12}, {0.38f, 0.70f, 0.52f}));
 
     return s;
 }

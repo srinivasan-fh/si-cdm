@@ -32,3 +32,11 @@ jobs:
         run: ctest --preset release
       - name: Render landing page
         run: xvfb-run -a -s "-screen 0 1600x960x24" ./build/release/sicdm --size 1600 960 --screenshot landing.ppm
+      - name: MCP server smoke test (stdio)
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_solid","arguments":{"kind":"box","width":10,"depth":10,"height":10}}}' \
+            | ./build/release/sicdm-mcp | tee mcp.out
+          grep -q '"protocolVersion"' mcp.out
+          grep -q 'Created Block 1' mcp.out

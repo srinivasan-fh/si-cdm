@@ -9,8 +9,8 @@ namespace {
 
 Scene twoBoxes() {
     Scene s;
-    s.add({"near", primitives::box({-1, -1, 0}, {1, 1, 2})});
-    s.add({"far", primitives::box({-1, 9, 0}, {1, 11, 2})});
+    s.add(meshBody("near", primitives::box({-1, -1, 0}, {1, 1, 2})));
+    s.add(meshBody("far", primitives::box({-1, 9, 0}, {1, 11, 2})));
     return s;
 }
 
@@ -61,7 +61,7 @@ TEST_CASE("clicking the screen centre picks what the camera looks at") {
 TEST_CASE("add and remove bump the scene revision") {
     Scene s;
     const auto r0 = s.revision();
-    s.add({"a", primitives::box({0, 0, 0}, {1, 1, 1})});
+    s.add(meshBody("a", primitives::box({0, 0, 0}, {1, 1, 1})));
     CHECK(s.revision() != r0);
     const auto r1 = s.revision();
     s.remove(0);

@@ -7,7 +7,10 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include "core/Command.hpp"
+
 #include <algorithm>
+#include <filesystem>
 #include <chrono>
 #include <cmath>
 #include <iterator>
@@ -115,15 +118,15 @@ bool Application::init() {
     m_uiState.gpuName = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     m_uiState.glVersion = std::string("OpenGL ") + reinterpret_cast<const char*>(glGetString(GL_VERSION));
 
-    m_scene = Scene::makeDemo();
-    m_renderer->upload(m_scene);
+    m_doc.scene = Scene::makeDemo();
+    m_renderer->upload(m_doc.scene);
 
     int fbw = 0, fbh = 0;
     glfwGetFramebufferSize(m_window, &fbw, &fbh);
     m_aspect = fbh > 0 ? static_cast<float>(fbw) / static_cast<float>(fbh) : 1.0f;
     m_cam3D.setAspect(m_aspect);
     m_cam3D.setStandardView(StandardView::Isometric, false);
-    m_cam3D.fitToBounds(m_scene.bounds(), false);
+    m_cam3D.fitToBounds(m_doc.scene.bounds(), false);
     m_cam3D.zoom(-1.5f); // leave some breathing room on the landing page
 
     // 2D drawing window: flat drafting background, hidden-line bodies,
@@ -137,10 +140,40 @@ bool Application::init() {
     if (m_options.start2D) {
         setMode(ViewMode::Drawing2D);
     }
+
+    m_mcp = std::make_unique<McpServer>(m_doc, this);
+    std::error_code ec;
+    const std::filesystem::path exe = std::filesystem::absolute(m_options.executablePath, ec);
+    for (const char* name : {"sicdm-mcp", "sicdm-mcp.exe"}) {
+        const auto candidate = exe.parent_path() / name;
+        if (std::filesystem::exists(candidate, ec)) m_uiState.mcpExecutable = candidate.string();
+    }
+    if (m_options.mcpPort > 0) {
+        m_uiState.mcpPort = m_options.mcpPort;
+        toggleMcp();
+    }
+    glfwSetWindowCloseCallback(m_window, [](GLFWwindow* w) {
+        // Ask before discarding unsaved work; frame() shows the dialog.
+        auto* app = static_cast<Application*>(glfwGetWindowUserPointer(w));
+        if (app->m_doc.dirty) {
+            glfwSetWindowShouldClose(w, GLFW_FALSE);
+            app->m_closeRequested = true;
+            onEvent(w);
+        }
+    });
+
+    log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
+    if (!m_options.openPath.empty()) {
+        const FileKind kind = fileKindOf(m_options.openPath);
+        runCommandLine((kind == FileKind::Project ? "OPEN \"" : "IMPORT \"") + m_options.openPath + "\"");
+    }
+    m_savedSignature = contentSignature(); // the demo part counts as unmodified
+    updateTitle();
     return true;
 }
 
 void Application::shutdown() {
+    m_mcpHttp.stop();
     m_renderer.reset();
     if (m_imguiReady) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -173,9 +206,6 @@ constexpr float kDragThreshold = 4.0f; // pixels before a press becomes a drag
 constexpr float kPlaceSnap = 5.0f;     // mm grid snap when placing solids
 constexpr float kCurvePickPx = 6.0f;   // screen distance for picking sketch curves
 
-const Vec3 kPalette[] = {{0.72f, 0.75f, 0.80f}, {0.82f, 0.62f, 0.32f}, {0.45f, 0.60f, 0.78f},
-                         {0.38f, 0.70f, 0.52f}, {0.78f, 0.45f, 0.45f}, {0.65f, 0.55f, 0.80f}};
-
 float snap(float v, float step) { return std::round(v / step) * step; }
 
 StandardView planeView(SketchPlane p) {
@@ -195,24 +225,19 @@ float segmentDistance(ImVec2 p, ImVec2 a, ImVec2 b) {
     return std::hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
 }
 
-// Builds a default-sized primitive around the origin; Body::offset positions it.
-Body makePrimitive(ToolId tool, int serial) {
-    using namespace primitives;
-    Body b;
+// Tool rail solid -> parametric kind (see buildPrimitive()).
+const char* primitiveKind(ToolId tool) {
     switch (tool) {
-    case ToolId::Block: b.name = "Block"; b.mesh = box({-20, -20, 0}, {20, 20, 40}); break;
-    case ToolId::Wedge: b.name = "Wedge"; b.mesh = wedge({-20, -20, 0}, {20, 20, 30}); break;
-    case ToolId::Pyramid: b.name = "Pyramid"; b.mesh = pyramid({0, 0, 0}, 25, 35, 4); break;
-    case ToolId::Prism: b.name = "Prism"; b.mesh = prism({0, 0, 0}, 20, 40, 6); break;
-    case ToolId::Cylinder: b.name = "Cylinder"; b.mesh = cylinder({0, 0, 0}, 15, 40); break;
-    case ToolId::Cone: b.name = "Cone"; b.mesh = cone({0, 0, 0}, 20, 0, 40); break;
-    case ToolId::Sphere: b.name = "Sphere"; b.mesh = sphere({0, 0, 20}, 20); break;
-    case ToolId::Torus: b.name = "Torus"; b.mesh = torus({0, 0, 7}, 25, 7); break;
-    default: break;
+    case ToolId::Block: return "box";
+    case ToolId::Wedge: return "wedge";
+    case ToolId::Pyramid: return "pyramid";
+    case ToolId::Prism: return "prism";
+    case ToolId::Cylinder: return "cylinder";
+    case ToolId::Cone: return "cone";
+    case ToolId::Sphere: return "sphere";
+    case ToolId::Torus: return "torus";
+    default: return "box";
     }
-    b.name += " " + std::to_string(serial);
-    b.color = kPalette[static_cast<std::size_t>(serial) % std::size(kPalette)];
-    return b;
 }
 
 } // namespace
@@ -232,7 +257,7 @@ void Application::setMode(ViewMode mode) {
         m_cam2D.setAspect(m_aspect);
         m_cam2D.setProjection(Projection::Orthographic);
         m_cam2D.setStandardView(planeView(m_uiState.plane), false);
-        m_cam2D.fitToBounds(m_scene.bounds(), false);
+        m_cam2D.fitToBounds(m_doc.scene.bounds(), false);
         m_2DReady = true;
     }
     setStatus(mode == ViewMode::Drawing2D ? std::string("2D Drawing window: ") + planeName(m_uiState.plane)
@@ -243,22 +268,23 @@ void Application::setPlane(SketchPlane plane) {
     m_sketcher.cancel();
     const bool changed = plane != m_uiState.plane;
     m_uiState.plane = plane;
+    m_doc.state.plane = plane;
     m_vp2D.gridPlane = plane;
     if (m_2DReady && changed) {
         m_cam2D.setStandardView(planeView(plane), true);
-        m_cam2D.fitToBounds(m_scene.bounds(), true);
+        m_cam2D.fitToBounds(m_doc.scene.bounds(), true);
     }
     if (changed) setStatus(std::string("Sketch plane: ") + planeName(plane));
 }
 
 std::optional<RayHit> Application::pick(float x, float y) const {
     const ImGuiIO& io = ImGui::GetIO();
-    return m_scene.raycast(camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y));
+    return m_doc.scene.raycast(camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y));
 }
 
 int Application::pickCurve(float x, float y) const {
     const ImGuiIO& io = ImGui::GetIO();
-    const auto& curves = m_scene.sketch().curves();
+    const auto& curves = m_doc.scene.sketch().curves();
     int best = -1;
     float bestD = kCurvePickPx;
     for (std::size_t i = 0; i < curves.size(); ++i) {
@@ -281,10 +307,11 @@ int Application::pickCurve(float x, float y) const {
 }
 
 void Application::addCurve(SketchCurve curve) {
-    const SketchCurve& c = m_scene.sketch().add(std::move(curve));
-    m_uiState.selectedCurve = static_cast<int>(m_scene.sketch().curves().size()) - 1;
-    m_uiState.selectedBody = -1;
+    const SketchCurve& c = m_doc.scene.sketch().add(std::move(curve));
+    m_uiState.selectedCurve = static_cast<int>(m_doc.scene.sketch().curves().size()) - 1;
+    m_uiState.selectedBody = m_uiState.selectedImage = -1;
     setStatus("Added " + c.name + "  " + c.measure());
+    log("Added " + c.name + " on " + planeName(c.plane) + "  " + c.measure(), UiState::LogLine::Output);
 }
 
 void Application::onCanvasClick(float x, float y, bool doubleClick) {
@@ -302,14 +329,19 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         const int curve = tool == ToolId::Select ? pickCurve(x, y) : -1;
         if (curve >= 0) {
             m_uiState.selectedCurve = curve;
-            m_uiState.selectedBody = -1;
-            setStatus("Selected " + m_scene.sketch().curves()[static_cast<std::size_t>(curve)].name);
+            m_uiState.selectedBody = m_uiState.selectedImage = -1;
+            setStatus("Selected " + m_doc.scene.sketch().curves()[static_cast<std::size_t>(curve)].name);
             return;
         }
         const auto hit = pick(x, y);
         m_uiState.selectedBody = hit ? hit->body : -1;
-        m_uiState.selectedCurve = -1;
-        if (hit) setStatus("Selected " + m_scene.bodies()[static_cast<std::size_t>(hit->body)].name);
+        m_uiState.selectedCurve = m_uiState.selectedImage = -1;
+        if (hit) {
+            setStatus("Selected " + m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name);
+        } else if (const int img = pickImage(x, y); img >= 0) {
+            m_uiState.selectedImage = img;
+            setStatus("Selected " + m_doc.scene.images()[static_cast<std::size_t>(img)].name);
+        }
         return;
     }
 
@@ -336,14 +368,15 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
             const Vec2 q = f.toPlane(ray.at(t));
             at = f.toWorld({snap(q.x, kPlaceSnap), snap(q.y, kPlaceSnap)});
         }
-        Body body = makePrimitive(tool, ++m_primitiveSerial);
+        Body body = defaultPrimitive(primitiveKind(tool), ++m_doc.primitiveSerial);
         body.offset = at;
         char msg[160];
         std::snprintf(msg, sizeof(msg), "Placed %s at (%.0f, %.0f, %.0f) mm", body.name.c_str(), at.x, at.y, at.z);
-        m_scene.add(std::move(body));
-        m_uiState.selectedBody = static_cast<int>(m_scene.bodies().size()) - 1;
-        m_uiState.selectedCurve = -1;
+        m_doc.scene.add(std::move(body));
+        m_uiState.selectedBody = static_cast<int>(m_doc.scene.bodies().size()) - 1;
+        m_uiState.selectedCurve = m_uiState.selectedImage = -1;
         setStatus(msg);
+        log(msg, UiState::LogLine::Output);
         return;
     }
 
@@ -368,7 +401,7 @@ void Application::handleViewportInput() {
     if (onCanvas && io.MousePos.x > -1e30f) {
         const SnapOptions so{m_uiState.snapGrid, m_uiState.snapPoints};
         if (isSketchTool(tool)) {
-            if (m_sketcher.hover(m_scene, cam, m_uiState.plane, io.MousePos, io.DisplaySize, so, io.KeyShift))
+            if (m_sketcher.hover(m_doc.scene, cam, m_uiState.plane, io.MousePos, io.DisplaySize, so, io.KeyShift))
                 m_uiState.cursorPlane = m_sketcher.cursor();
         } else {
             const PlaneFrame f = planeFrame(m_uiState.plane);
@@ -400,12 +433,20 @@ void Application::handleViewportInput() {
         } else if (tool == ToolId::Zoom) {
             m_leftDrag = DragMode::Zoom;
         } else if (tool == ToolId::Move) {
+            Vec2 grab{};
             if (const auto hit = pick(mx, my)) {
                 m_leftDrag = DragMode::MoveBody;
                 m_uiState.selectedBody = hit->body;
-                m_uiState.selectedCurve = -1;
+                m_uiState.selectedCurve = m_uiState.selectedImage = -1;
                 m_movePlanePoint = hit->point;
-                m_moveStartOffset = m_scene.bodies()[static_cast<std::size_t>(hit->body)].offset;
+                m_moveStartOffset = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].offset;
+            } else if (const int img = pickImage(mx, my, &grab); img >= 0) {
+                // Images slide within their own plane.
+                m_leftDrag = DragMode::MoveImage;
+                m_uiState.selectedImage = img;
+                m_uiState.selectedBody = m_uiState.selectedCurve = -1;
+                m_imageGrab = grab;
+                m_imageStart = m_doc.scene.images()[static_cast<std::size_t>(img)].center;
             }
         }
     }
@@ -420,12 +461,24 @@ void Application::handleViewportInput() {
         case DragMode::MoveBody: {
             // Slide in the plane through the grab point, facing the camera.
             const int sel = m_uiState.selectedBody;
-            if (sel < 0 || sel >= static_cast<int>(m_scene.bodies().size())) break;
+            if (sel < 0 || sel >= static_cast<int>(m_doc.scene.bodies().size())) break;
             const Ray ray = cam.screenRay(mx, my, io.DisplaySize.x, wh);
             float t = 0.0f;
             if (intersectPlane(ray, m_movePlanePoint, cam.forward(), t))
-                m_scene.bodies()[static_cast<std::size_t>(sel)].offset =
+                m_doc.scene.bodies()[static_cast<std::size_t>(sel)].offset =
                     m_moveStartOffset + (ray.at(t) - m_movePlanePoint);
+            break;
+        }
+        case DragMode::MoveImage: {
+            const int sel = m_uiState.selectedImage;
+            if (sel < 0 || sel >= static_cast<int>(m_doc.scene.images().size())) break;
+            ImageRef& img = m_doc.scene.images()[static_cast<std::size_t>(sel)];
+            const PlaneFrame f = planeFrame(img.plane);
+            const Ray ray = cam.screenRay(mx, my, io.DisplaySize.x, wh);
+            const float d = dot(ray.dir, f.normal);
+            if (std::fabs(d) < 1e-4f) break;
+            const Vec2 q = f.toPlane(ray.at(dot(f.origin - ray.origin, f.normal) / d));
+            img.center = {m_imageStart.x + q.x - m_imageGrab.x, m_imageStart.y + q.y - m_imageGrab.y};
             break;
         }
         default: break;
@@ -450,7 +503,7 @@ void Application::handleViewportInput() {
     m_ui.toolbox().handleShortcuts();
     if (m_ui.toolbox().active() != before) m_sketcher.cancel();
 
-    const bool ctrl = io.KeyCtrl || io.KeySuper;
+    const bool ctrl = commandModifierHeld();
     UiCommands cmd;
     if (ImGui::IsKeyPressed(ImGuiKey_Tab, false))
         cmd.mode = is2D ? ViewMode::Model3D : ViewMode::Drawing2D;
@@ -461,6 +514,11 @@ void Application::handleViewportInput() {
     if (viewKey(ImGuiKey_0, ImGuiKey_Keypad0)) cmd.view = StandardView::Isometric;
     if (ImGui::IsKeyPressed(ImGuiKey_F)) cmd.fit = true;
     if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !ctrl) m_uiState.showModelTree = !m_uiState.showModelTree;
+    if (ctrl) { // Ctrl/Cmd + key belongs to the menus, not to single-key shortcuts
+        if (ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
+        handleCommands(cmd);
+        return;
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_P) && !is2D) cmd.toggleProjection = true;
     if (ImGui::IsKeyPressed(ImGuiKey_G)) viewport().showGrid = !viewport().showGrid;
     if (ImGui::IsKeyPressed(ImGuiKey_W) && !is2D)
@@ -472,19 +530,23 @@ void Application::handleViewportInput() {
             m_sketcher.cancel();
             setStatus("Drawing cancelled");
         } else {
-            m_uiState.selectedBody = m_uiState.selectedCurve = -1;
+            m_uiState.selectedBody = m_uiState.selectedCurve = m_uiState.selectedImage = -1;
         }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
-        auto& curves = m_scene.sketch().curves();
+        auto& curves = m_doc.scene.sketch().curves();
         if (m_uiState.selectedCurve >= 0 && m_uiState.selectedCurve < static_cast<int>(curves.size())) {
             setStatus("Deleted " + curves[static_cast<std::size_t>(m_uiState.selectedCurve)].name);
-            m_scene.sketch().remove(static_cast<std::size_t>(m_uiState.selectedCurve));
+            m_doc.scene.sketch().remove(static_cast<std::size_t>(m_uiState.selectedCurve));
             m_uiState.selectedCurve = -1;
-        } else if (m_uiState.selectedBody >= 0 && m_uiState.selectedBody < static_cast<int>(m_scene.bodies().size())) {
-            setStatus("Deleted " + m_scene.bodies()[static_cast<std::size_t>(m_uiState.selectedBody)].name);
-            m_scene.remove(static_cast<std::size_t>(m_uiState.selectedBody));
+        } else if (m_uiState.selectedBody >= 0 && m_uiState.selectedBody < static_cast<int>(m_doc.scene.bodies().size())) {
+            setStatus("Deleted " + m_doc.scene.bodies()[static_cast<std::size_t>(m_uiState.selectedBody)].name);
+            m_doc.scene.remove(static_cast<std::size_t>(m_uiState.selectedBody));
             m_uiState.selectedBody = -1;
+        } else if (m_uiState.selectedImage >= 0 && m_uiState.selectedImage < static_cast<int>(m_doc.scene.images().size())) {
+            setStatus("Deleted " + m_doc.scene.images()[static_cast<std::size_t>(m_uiState.selectedImage)].name);
+            m_doc.scene.removeImage(static_cast<std::size_t>(m_uiState.selectedImage));
+            m_uiState.selectedImage = -1;
         }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
@@ -519,13 +581,21 @@ void Application::handleCommands(const UiCommands& cmd) {
     if ((cmd.orbitDelta.x != 0.0f || cmd.orbitDelta.y != 0.0f) && !is2D) m_cam3D.orbit(cmd.orbitDelta.x, cmd.orbitDelta.y);
     if (cmd.home) {
         m_cam3D.setStandardView(StandardView::Isometric, false);
-        m_cam3D.fitToBounds(m_scene.bounds());
+        m_cam3D.fitToBounds(m_doc.scene.bounds());
     }
-    if (cmd.fit) camera().fitToBounds(m_scene.bounds());
+    if (cmd.fit) camera().fitToBounds(m_doc.scene.bounds());
     if (cmd.toggleProjection && !is2D)
         m_cam3D.setProjection(m_cam3D.projection() == Projection::Perspective ? Projection::Orthographic
                                                                                : Projection::Perspective);
-    if (cmd.quit) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+    if (cmd.quit) {
+        glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+        if (m_doc.dirty) { // same question as closing the window
+            glfwSetWindowShouldClose(m_window, GLFW_FALSE);
+            m_closeRequested = true;
+        }
+    }
+    if (cmd.toggleMcp) toggleMcp();
+    for (const std::string& line : cmd.commands) runCommandLine(line);
 }
 
 void Application::frame(float dt) {
@@ -533,9 +603,46 @@ void Application::frame(float dt) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
+    // AI agents (MCP over HTTP) run on the main thread, between frames.
+    if (m_mcpHttp.poll([this](const std::string& body) { return handleMcp(body); }) > 0)
+        m_framesToRender = std::max(m_framesToRender, 3);
+
     handleViewportInput();
-    const UiCommands cmd = m_ui.draw(m_scene, camera(), viewport(), m_uiState);
+    updatePrompt();
+    const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
+
+    // Unsaved changes: compare what would be saved with the last save.
+    m_doc.dirty = contentSignature() != m_savedSignature;
+    m_uiState.dirty = m_doc.dirty;
+    updateTitle();
+
+    if (m_closeRequested) {
+        ImGui::OpenPopup("Quit SI CDM?");
+        m_closeRequested = false;
+    }
+    if (ImGui::BeginPopupModal("Quit SI CDM?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("%s has unsaved changes.", m_uiState.projectTitle.c_str());
+        ImGui::Spacing();
+        const bool canSave = !m_doc.path.empty();
+        if (!canSave) ImGui::BeginDisabled();
+        if (ImGui::Button("Save and Quit", {130, 0})) {
+            runCommandLine("SAVE");
+            if (!m_doc.dirty) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+            ImGui::CloseCurrentPopup();
+        }
+        if (!canSave) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Quit Without Saving", {160, 0})) {
+            m_doc.dirty = false;
+            glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (!canSave) ImGui::TextDisabled("Not saved yet: use File > Save As first.");
+        ImGui::EndPopup();
+    }
     const bool anim3D = m_cam3D.update(dt);
     const bool anim2D = m_cam2D.update(dt);
     if (anim3D || anim2D) m_framesToRender = std::max(m_framesToRender, 2);
@@ -560,7 +667,7 @@ void Application::frame(float dt) {
     if (ImGui::IsAnyItemActive() || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
         m_framesToRender = std::max(m_framesToRender, 2);
     if (!m_uiState.statusMessage.empty() && glfwGetTime() > m_statusUntil) m_uiState.statusMessage.clear();
-    m_renderer->sync(m_scene);
+    m_renderer->sync(m_doc.scene);
 
     int fbw = 0, fbh = 0;
     glfwGetFramebufferSize(m_window, &fbw, &fbh);
@@ -568,11 +675,264 @@ void Application::frame(float dt) {
         m_aspect = static_cast<float>(fbw) / static_cast<float>(fbh);
         m_cam3D.setAspect(m_aspect);
         m_cam2D.setAspect(m_aspect);
-        m_renderer->render(m_scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve);
+        m_renderer->render(m_doc.scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve,
+                           m_uiState.selectedImage);
     }
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+// ---------------------------------------------------------------------------
+// Command line, MCP and document plumbing
+
+int Application::pickImage(float x, float y, Vec2* planePoint) const {
+    const ImGuiIO& io = ImGui::GetIO();
+    const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+    int best = -1;
+    float bestT = 1e30f;
+    const auto& images = m_doc.scene.images();
+    for (std::size_t i = 0; i < images.size(); ++i) {
+        const ImageRef& img = images[i];
+        if (!img.visible) continue;
+        const PlaneFrame f = planeFrame(img.plane);
+        const float d = dot(ray.dir, f.normal);
+        if (std::fabs(d) < 1e-5f) continue;
+        const float t = dot(f.origin - ray.origin, f.normal) / d; // planes are two-sided
+        const Vec2 q = f.toPlane(ray.at(t));
+        if (std::fabs(q.x - img.center.x) <= img.width * 0.5f && std::fabs(q.y - img.center.y) <= img.height() * 0.5f &&
+            t < bestT) {
+            bestT = t;
+            best = static_cast<int>(i);
+            if (planePoint) *planePoint = q;
+        }
+    }
+    return best;
+}
+
+void Application::log(const std::string& text, int kind) {
+    auto& l = m_uiState.commandLog;
+    l.push_back({text, static_cast<UiState::LogLine::Kind>(kind)});
+    if (l.size() > 500) l.erase(l.begin(), l.begin() + 100);
+}
+
+void Application::syncToDoc() {
+    m_doc.selectedBody = m_uiState.selectedBody;
+    m_doc.selectedCurve = m_uiState.selectedCurve;
+    m_doc.selectedImage = m_uiState.selectedImage;
+    m_doc.state.plane = m_uiState.plane;
+    m_doc.snapGrid = m_uiState.snapGrid;
+    m_doc.snapPoints = m_uiState.snapPoints;
+}
+
+void Application::syncFromDoc() {
+    m_uiState.selectedBody = m_doc.selectedBody;
+    m_uiState.selectedCurve = m_doc.selectedCurve;
+    m_uiState.selectedImage = m_doc.selectedImage;
+    m_uiState.snapGrid = m_doc.snapGrid;
+    m_uiState.snapPoints = m_doc.snapPoints;
+    if (m_doc.state.plane != m_uiState.plane) setPlane(m_doc.state.plane);
+}
+
+void Application::afterDocumentReplaced() {
+    // New or opened document: reframe both windows and forget stale state.
+    m_sketcher.cancel();
+    m_leftDrag = m_otherDrag = DragMode::None;
+    m_cam3D.resetRoll(false);
+    m_cam3D.setStandardView(StandardView::Isometric, false);
+    if (m_doc.scene.bounds().valid()) m_cam3D.fitToBounds(m_doc.scene.bounds(), false);
+    m_2DReady = false;
+    if (m_uiState.mode == ViewMode::Drawing2D) {
+        m_uiState.mode = ViewMode::Model3D;
+        setMode(ViewMode::Drawing2D);
+    }
+    m_vp2D.gridPlane = m_doc.state.plane;
+    m_uiState.plane = m_doc.state.plane;
+}
+
+void Application::runCommandLine(const std::string& raw) {
+    std::string text = raw;
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.pop_back();
+    const ToolId tool = m_ui.toolbox().active();
+
+    // While a sketch tool is active, coordinates feed the drawing (AutoCAD style).
+    if (isSketchTool(tool)) {
+        if (text.empty()) {
+            if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
+            return;
+        }
+        std::optional<Vec2> p;
+        if (const auto in = parsePointInput(text)) p = in->resolve(m_sketcher.lastPoint().value_or(Vec2{}));
+        else if (const auto r = parseNumber(text); r && tool == ToolId::Circle && m_sketcher.stage() == 1 && *r > 0)
+            p = Vec2{m_sketcher.lastPoint()->x + *r, m_sketcher.lastPoint()->y}; // typed radius
+        if (p) {
+            log(text, UiState::LogLine::Input);
+            if (auto c = m_sketcher.typedPoint(tool, m_uiState.plane, *p)) addCurve(std::move(*c));
+            return;
+        }
+    }
+    if (text.empty()) return;
+
+    log(text, UiState::LogLine::Input);
+    syncToDoc();
+    const CommandOutput out = executeCommand(m_doc, text, this);
+    syncFromDoc();
+    if (out.clearHistory) m_uiState.commandLog.clear();
+    for (const std::string& l : out.lines) log(l, out.ok ? UiState::LogLine::Output : UiState::LogLine::Error);
+    if (!out.lines.empty()) setStatus(out.lines.back());
+    if (out.documentReplaced) afterDocumentReplaced();
+    if (!m_doc.dirty) m_savedSignature = contentSignature(); // SAVE / OPEN / NEW
+    m_framesToRender = std::max(m_framesToRender, 3);
+}
+
+std::string Application::handleMcp(const std::string& body) {
+    syncToDoc();
+    std::string reply = m_mcp->handle(body);
+    syncFromDoc();
+    if (m_mcp->takeDocumentReplaced()) afterDocumentReplaced();
+    if (m_mcp->takeDocumentChanged()) log("AI agent updated the model", UiState::LogLine::Output);
+    if (!m_doc.dirty) m_savedSignature = contentSignature(); // SAVE / OPEN / NEW, or nothing changed
+    return reply;
+}
+
+void Application::toggleMcp() {
+    if (m_mcpHttp.running()) {
+        m_mcpHttp.stop();
+        m_uiState.mcpRunning = false;
+        log("MCP server stopped", UiState::LogLine::Output);
+        return;
+    }
+    std::string err;
+    if (m_mcpHttp.start(m_uiState.mcpPort, [] { glfwPostEmptyEvent(); }, &err)) {
+        m_uiState.mcpRunning = true;
+        m_uiState.mcpError.clear();
+        log("MCP server for AI agents: http://127.0.0.1:" + std::to_string(m_uiState.mcpPort) + "/mcp",
+            UiState::LogLine::Output);
+    } else {
+        m_uiState.mcpRunning = false;
+        m_uiState.mcpError = err;
+        log(err, UiState::LogLine::Error);
+    }
+}
+
+std::uint64_t Application::contentSignature() const {
+    // FNV-1a over everything a project file stores.
+    std::uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](const void* data, std::size_t n) {
+        const auto* p = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < n; ++i) h = (h ^ p[i]) * 1099511628211ull;
+    };
+    auto mixStr = [&](const std::string& s) { mix(s.data(), s.size()); };
+    const Scene& s = m_doc.scene;
+    const std::size_t counts[3] = {s.bodies().size(), s.sketch().curves().size(), s.images().size()};
+    mix(counts, sizeof(counts));
+    for (const Body& b : s.bodies()) {
+        mixStr(b.name);
+        mixStr(b.kind);
+        mix(b.params.data(), b.params.size() * sizeof(float));
+        mix(&b.offset, sizeof(b.offset));
+        mix(&b.color, sizeof(b.color));
+        mix(&b.visible, sizeof(b.visible));
+        const std::size_t tris = b.mesh.indices.size();
+        mix(&tris, sizeof(tris));
+    }
+    for (const SketchCurve& c : s.sketch().curves()) {
+        mixStr(c.name);
+        mix(c.pts.data(), c.pts.size() * sizeof(Vec2));
+        mix(&c.radius, sizeof(c.radius));
+        mix(&c.visible, sizeof(c.visible));
+        mix(&c.plane, sizeof(c.plane));
+    }
+    for (const ImageRef& i : s.images()) {
+        mixStr(i.name);
+        mixStr(i.path);
+        mix(&i.center, sizeof(i.center));
+        mix(&i.width, sizeof(i.width));
+        mix(&i.opacity, sizeof(i.opacity));
+        mix(&i.visible, sizeof(i.visible));
+    }
+    mix(&m_doc.state.plane, sizeof(m_doc.state.plane));
+    return h;
+}
+
+void Application::updateTitle() {
+    m_uiState.projectPath = m_doc.path;
+    m_uiState.projectTitle = m_doc.title();
+    const std::string title = m_uiState.projectTitle + "  —  SI CDM";
+    if (title != m_shownTitle) {
+        glfwSetWindowTitle(m_window, title.c_str());
+        m_shownTitle = title;
+    }
+}
+
+void Application::updatePrompt() {
+    const ToolId tool = m_ui.toolbox().active();
+    const int stage = m_sketcher.stage();
+    std::string p = "Command:";
+    switch (tool) {
+    case ToolId::Point: p = "POINT  location (x,y):"; break;
+    case ToolId::Line: p = stage == 0 ? "LINE  first point (x,y):" : "LINE  end point (x,y | @dx,dy | @len<deg):"; break;
+    case ToolId::Polyline:
+        p = stage == 0 ? "PLINE  first point (x,y):" : "PLINE  next point, or Enter to finish:";
+        break;
+    case ToolId::Rectangle: p = stage == 0 ? "RECT  first corner (x,y):" : "RECT  opposite corner (x,y | @w,h):"; break;
+    case ToolId::Circle: p = stage == 0 ? "CIRCLE  centre (x,y):" : "CIRCLE  radius or point:"; break;
+    default: break;
+    }
+    m_uiState.commandPrompt = p;
+    m_uiState.commandKeepsFocus = isSketchTool(tool);
+}
+
+// ViewHost --------------------------------------------------------------------
+
+void Application::openWindow(bool drawing2D) { setMode(drawing2D ? ViewMode::Drawing2D : ViewMode::Model3D); }
+
+void Application::standardView(StandardView v) {
+    UiCommands c;
+    c.view = v;
+    handleCommands(c);
+}
+
+void Application::planeChanged(SketchPlane p) { setPlane(p); }
+
+void Application::fit() { camera().fitToBounds(m_doc.scene.bounds()); }
+
+void Application::zoomStep(float steps) { camera().zoom(steps); }
+
+void Application::home() {
+    UiCommands c;
+    c.home = true;
+    c.mode = ViewMode::Model3D;
+    handleCommands(c);
+}
+
+void Application::roll(float degrees, bool absolute) {
+    if (absolute) m_cam3D.resetRoll();
+    else m_cam3D.rollView(radians(degrees));
+}
+
+void Application::setProjection(Projection p) { m_cam3D.setProjection(p); }
+
+void Application::setDisplay(int mode) { m_vp3D.displayMode = static_cast<DisplayMode>(std::clamp(mode, 0, 3)); }
+
+void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.value_or(!viewport().showGrid); }
+
+void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
+
+std::string Application::describe() const {
+    const OrbitCamera& c = camera();
+    static const char* kDisplay[] = {"shaded", "shaded+edges", "wireframe", "hidden line"};
+    char buf[320];
+    std::snprintf(buf, sizeof(buf),
+                  "Window: %s   plane: %s   camera target (%.1f, %.1f, %.1f) distance %.1f yaw %.1f pitch %.1f "
+                  "roll %.1f   %s   display: %s   grid %s",
+                  m_uiState.mode == ViewMode::Drawing2D ? "2D Drawing" : "3D Model", planeName(m_uiState.plane),
+                  static_cast<double>(c.target().x), static_cast<double>(c.target().y), static_cast<double>(c.target().z),
+                  static_cast<double>(c.distance()), static_cast<double>(degrees(c.yaw())),
+                  static_cast<double>(degrees(c.pitch())), static_cast<double>(degrees(c.roll())),
+                  c.projection() == Projection::Perspective ? "perspective" : "orthographic",
+                  kDisplay[static_cast<int>(m_vp3D.displayMode)], viewport().showGrid ? "on" : "off");
+    return buf;
 }
 
 bool Application::saveScreenshot(const std::string& path) const {

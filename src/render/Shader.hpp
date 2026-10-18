@@ -21,6 +21,7 @@ public:
 
     bool valid() const noexcept { return m_program != 0; }
     void bind() const noexcept { glUseProgram(m_program); }
+    GLuint program() const noexcept { return m_program; }
 
     void set(const char* name, float v) const noexcept;
     void set(const char* name, const Vec2& v) const noexcept;

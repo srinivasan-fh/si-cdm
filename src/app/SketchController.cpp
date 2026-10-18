@@ -137,6 +137,18 @@ std::optional<SketchCurve> SketchController::click(ToolId tool, bool doubleClick
     }
 }
 
+std::optional<SketchCurve> SketchController::typedPoint(ToolId tool, SketchPlane plane, Vec2 p) {
+    if (plane != m_plane) {
+        m_points.clear();
+        m_plane = plane;
+    }
+    m_hover = p;
+    m_hasHover = true;
+    // Typing the first point of a polyline again closes it, like clicking it.
+    m_snappedToPoint = tool == ToolId::Polyline && m_points.size() >= 2 && dist(p, m_points[0]) < 1e-6f;
+    return click(tool, false);
+}
+
 std::optional<SketchCurve> SketchController::finish() {
     if (m_points.size() < 2) {
         m_points.clear();

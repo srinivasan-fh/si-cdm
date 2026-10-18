@@ -26,17 +26,34 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CompilerOptions)
 
 # ---------------------------------------------------------------------------
+# stb_image (single header, public domain / MIT) is vendored in third_party/stb
+# at commit 2c980bb59875b0d32144a71867fbdebb2f77cd20, for reference-image import.
+
+# ---------------------------------------------------------------------------
 # sicdm_core: platform-independent kernel (math, camera, geometry, scene).
 # No windowing or GPU dependencies so it can be unit tested headless.
 add_library(sicdm_core STATIC
     src/core/Camera.cpp
     src/core/Geometry.cpp
     src/core/Scene.cpp
+    src/core/Command.cpp
+    src/core/CommandEngine.cpp
+    src/core/FileIO.cpp
+    src/core/Json.cpp
+    src/core/Mcp.cpp
+    src/core/StbImage.cpp
     src/core/Sketch.cpp
     src/ui/Tools.cpp
 )
 target_include_directories(sicdm_core PUBLIC src)
+target_include_directories(sicdm_core SYSTEM PRIVATE third_party/stb)
 sicdm_set_compile_options(sicdm_core)
+
+# sicdm-mcp: headless MCP server over stdio (no window, no GPU).
+add_executable(sicdm_mcp tools/sicdm_mcp.cpp)
+set_target_properties(sicdm_mcp PROPERTIES OUTPUT_NAME "sicdm-mcp")
+target_link_libraries(sicdm_mcp PRIVATE sicdm_core)
+sicdm_set_compile_options(sicdm_mcp)
 
 # ---------------------------------------------------------------------------
 if(SICDM_BUILD_APP)
@@ -45,9 +62,11 @@ if(SICDM_BUILD_APP)
     set(SICDM_APP_SOURCES
         src/main.cpp
         src/app/Application.cpp
+        src/app/McpHttpServer.cpp
         src/app/SketchController.cpp
         src/render/Renderer.cpp
         src/render/Shader.cpp
+        src/ui/FileDialog.cpp
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
         src/ui/ToolIcons.cpp
@@ -78,7 +97,8 @@ if(SICDM_BUILD_APP)
     endif()
 
     target_compile_definitions(sicdm PRIVATE SICDM_VERSION="${PROJECT_VERSION}")
-    target_link_libraries(sicdm PRIVATE sicdm_core sicdm_imgui glfw OpenGL::GL)
+    find_package(Threads REQUIRED)
+    target_link_libraries(sicdm PRIVATE sicdm_core sicdm_imgui glfw OpenGL::GL Threads::Threads)
     sicdm_set_compile_options(sicdm)
 
     if(CMAKE_GENERATOR STREQUAL "Xcode")

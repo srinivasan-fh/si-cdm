@@ -8,6 +8,11 @@
 
 namespace sicdm {
 
+// Process-wide, strictly increasing change stamp. Scenes, sketches and images
+// take a fresh one on every change, so a stamp never repeats even when one
+// document replaces another (GPU caches compare stamps).
+std::uint64_t nextRevision() noexcept;
+
 // Principal sketch planes. Each maps to the matching 2D drawing view.
 enum class SketchPlane { Top, Front, Right };
 
@@ -59,13 +64,13 @@ public:
 
     // Bumped on add/remove/visibility edits that change GPU buffers.
     std::uint64_t revision() const noexcept { return m_revision; }
-    void touch() noexcept { ++m_revision; }
+    void touch() noexcept { m_revision = nextRevision(); }
 
     AABB bounds() const;
 
 private:
     std::vector<SketchCurve> m_curves;
-    std::uint64_t m_revision = 0;
+    std::uint64_t m_revision = nextRevision();
     int m_serial = 0;
 };
 

@@ -31,6 +31,15 @@ public:
     // Enter: completes an open polyline.
     std::optional<SketchCurve> finish();
 
+    // Exact point typed on the command line (plane coordinates, mm).
+    std::optional<SketchCurve> typedPoint(ToolId tool, SketchPlane plane, Vec2 p);
+
+    // Points placed so far for the curve in progress, and the last of them.
+    int stage() const noexcept { return static_cast<int>(m_points.size()); }
+    std::optional<Vec2> lastPoint() const noexcept {
+        return m_points.empty() ? std::nullopt : std::optional<Vec2>(m_points.back());
+    }
+
     void cancel() { m_points.clear(); }
     bool busy() const noexcept { return !m_points.empty(); }
 
