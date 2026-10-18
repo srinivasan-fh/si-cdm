@@ -4,23 +4,19 @@ A high-performance CAD / CAM desktop application written in C++20.
 
 ![Landing page](docs/landing.png)
 
-## Build on macOS (Xcode)
+## Run
 
-Requires Xcode 15+ and CMake 3.24+ (`brew install cmake`).
-
-```bash
-./scripts/generate-xcode.sh
-```
-
-This creates `build/xcode/SICDM.xcodeproj` and opens it. Select the **sicdm** scheme and press ⌘R.
-
-## Build on Linux
+Requires CMake 3.24+ (`brew install cmake`) and, on macOS, Xcode 15+.
 
 ```bash
-cmake --preset release
-cmake --build --preset release -j
-./build/release/sicdm
+./run.sh            # build (Release) and launch the app
+./run.sh debug      # build (Debug) and launch
+./run.sh test       # build and run the unit tests
+./run.sh xcode      # generate build/xcode/SICDM.xcodeproj and open it in Xcode (macOS)
+./run.sh clean      # delete the build folder
 ```
+
+In Xcode, select the **sicdm** scheme and press ⌘R.
 
 ## Controls
 
