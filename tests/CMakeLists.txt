@@ -3,6 +3,8 @@ add_executable(sicdm_tests
     test_math.cpp
     test_camera.cpp
     test_geometry.cpp
+    test_picking.cpp
+    test_tools.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 sicdm_set_compile_options(sicdm_tests)

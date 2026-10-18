@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <utility>
 
 namespace sicdm {
 
@@ -199,5 +200,60 @@ struct AABB {
     Vec3 center() const noexcept { return (min + max) * 0.5f; }
     float radius() const noexcept { return length(max - min) * 0.5f; }
 };
+
+// ---------------------------------------------------------------------------
+struct Ray {
+    Vec3 origin;
+    Vec3 dir; // normalised
+
+    Vec3 at(float t) const noexcept { return origin + dir * t; }
+};
+
+// Ray / plane intersection; returns false when parallel or behind the origin.
+inline bool intersectPlane(const Ray& r, const Vec3& point, const Vec3& normal, float& t) noexcept {
+    const float d = dot(r.dir, normal);
+    if (std::fabs(d) < 1e-8f) return false;
+    t = dot(point - r.origin, normal) / d;
+    return t >= 0.0f;
+}
+
+// Moller-Trumbore ray / triangle test (double-sided).
+inline bool intersectTriangle(const Ray& r, const Vec3& a, const Vec3& b, const Vec3& c, float& t) noexcept {
+    const Vec3 e1 = b - a, e2 = c - a;
+    const Vec3 p = cross(r.dir, e2);
+    const float det = dot(e1, p);
+    if (std::fabs(det) < 1e-12f) return false;
+    const float inv = 1.0f / det;
+    const Vec3 s = r.origin - a;
+    const float u = dot(s, p) * inv;
+    if (u < 0.0f || u > 1.0f) return false;
+    const Vec3 q = cross(s, e1);
+    const float v = dot(r.dir, q) * inv;
+    if (v < 0.0f || u + v > 1.0f) return false;
+    t = dot(e2, q) * inv;
+    return t > 0.0f;
+}
+
+// Slab test; returns entry distance in `t`.
+inline bool intersectAABB(const Ray& r, const AABB& b, float& t) noexcept {
+    float tmin = 0.0f, tmax = 1e30f;
+    const float o[3] = {r.origin.x, r.origin.y, r.origin.z};
+    const float d[3] = {r.dir.x, r.dir.y, r.dir.z};
+    const float lo[3] = {b.min.x, b.min.y, b.min.z};
+    const float hi[3] = {b.max.x, b.max.y, b.max.z};
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(d[i]) < 1e-12f) {
+            if (o[i] < lo[i] || o[i] > hi[i]) return false;
+            continue;
+        }
+        float t0 = (lo[i] - o[i]) / d[i], t1 = (hi[i] - o[i]) / d[i];
+        if (t0 > t1) std::swap(t0, t1);
+        tmin = std::max(tmin, t0);
+        tmax = std::min(tmax, t1);
+        if (tmin > tmax) return false;
+    }
+    t = tmin;
+    return true;
+}
 
 } // namespace sicdm

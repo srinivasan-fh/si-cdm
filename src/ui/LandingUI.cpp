@@ -49,6 +49,11 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     drawMenuBar(cmd, cam, vp, st);
     drawToolbar(cmd, cam, vp);
     drawStatusBar(scene, cam, st);
+    {
+        const ImGuiViewport* mv = ImGui::GetMainViewport();
+        m_toolboxWidth = m_toolbox.draw(mv->WorkPos.y + m_toolbarHeight,
+                                        mv->WorkPos.y + mv->WorkSize.y - m_statusHeight);
+    }
     if (st.showModelTree) drawModelTree(scene, st);
     drawTriad(cmd, cam);
     if (st.showWelcome) drawWelcome(st);
@@ -168,7 +173,7 @@ void LandingUI::drawModelTree(Scene& scene, UiState& st) {
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     const float top = mv->WorkPos.y + m_toolbarHeight + 8.0f;
     const float height = mv->WorkSize.y - m_toolbarHeight - m_statusHeight - 16.0f;
-    ImGui::SetNextWindowPos({mv->WorkPos.x + 8.0f, top}, ImGuiCond_Always);
+    ImGui::SetNextWindowPos({mv->WorkPos.x + m_toolboxWidth + 8.0f, top}, ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints({200, 200}, {600, height});
     ImGui::SetNextWindowSize({260, std::min(height, 520.0f)}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.88f);
@@ -251,8 +256,9 @@ void LandingUI::drawWelcome(UiState& st) {
         ImGui::TextDisabled("No recent documents");
 
         ImGui::SeparatorText("Navigate the canvas");
-        ImGui::BulletText("Orbit: left drag    Pan: middle or Shift + left drag");
+        ImGui::BulletText("Orbit: right drag   Pan: middle or Shift + left drag");
         ImGui::BulletText("Zoom: scroll wheel  Fit: F    Views: 1 / 3 / 7 / 0");
+        ImGui::BulletText("Tools on the left: pick a solid, click the grid to place it");
         ImGui::Spacing();
         if (ImGui::Button("Explore the demo part")) st.showWelcome = false;
     }
@@ -270,10 +276,15 @@ void LandingUI::drawStatusBar(const Scene& scene, const OrbitCamera& cam, const 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::Begin("##status", nullptr, flags);
     const Vec3 t = cam.target();
-    ImGui::Text("Ready");
-    ImGui::SameLine(120);
-    ImGui::TextDisabled("Units: mm   |   Bodies: %zu   Triangles: %zu   |   Target (%.1f, %.1f, %.1f)   Dist %.1f",
-                        scene.bodies().size(), scene.triangleCount(), t.x, t.y, t.z, cam.distance());
+    const ToolInfo& tool = toolInfo(m_toolbox.active());
+    ImGui::Text("%s", tool.name);
+    ImGui::SameLine();
+    if (!st.statusMessage.empty()) ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "%s", st.statusMessage.c_str());
+    else if (tool.available) ImGui::TextDisabled("%s", tool.description);
+    else ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "planned for a later milestone");
+    ImGui::SameLine(560);
+    ImGui::TextDisabled("|  mm  |  Bodies %zu  Tris %zu  |  Target (%.0f, %.0f, %.0f)", scene.bodies().size(),
+                        scene.triangleCount(), t.x, t.y, t.z);
     char perf[64];
     std::snprintf(perf, sizeof(perf), "%.2f ms  |  %s", st.frameMs, st.glVersion.c_str());
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(perf).x - 12.0f);
@@ -342,9 +353,9 @@ void LandingUI::drawControlsWindow(UiState& st) {
     if (ImGui::Begin("Viewport Controls", &st.showControls, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
             const char* rows[][2] = {
-                {"Left drag", "Orbit"},
+                {"Left drag (empty space)", "Orbit"},
+                {"Right drag", "Orbit (any tool)"},
                 {"Middle drag / Shift + left drag", "Pan"},
-                {"Right drag", "Pan"},
                 {"Scroll", "Zoom"},
                 {"F", "Zoom to fit"},
                 {"1 / 3 / 7 / 0", "Front / Right / Top / Iso"},
@@ -353,6 +364,9 @@ void LandingUI::drawControlsWindow(UiState& st) {
                 {"W", "Cycle display mode"},
                 {"G", "Toggle grid"},
                 {"Esc", "Clear selection"},
+                {"Delete / Backspace", "Delete selected body"},
+                {"V  S  O  H  Z", "Move / Select / Orbit / Pan / Zoom tools"},
+                {"B  Y", "Block / Cylinder tools (Shift cycles the slot)"},
             };
             for (const auto& r : rows) {
                 ImGui::TableNextRow();

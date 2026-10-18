@@ -39,6 +39,11 @@ public:
     // Uploads all scene bodies. Call again if geometry changes.
     void upload(const Scene& scene);
 
+    // Re-uploads only when bodies were added or removed since the last upload.
+    void sync(const Scene& scene) {
+        if (scene.revision() != m_uploadedRevision) upload(scene);
+    }
+
     void render(const Scene& scene, const OrbitCamera& camera, const ViewportSettings& settings,
                 int framebufferWidth, int framebufferHeight, int selectedBody);
 
@@ -54,6 +59,7 @@ private:
 
     GLuint m_emptyVao = 0;
     std::vector<GpuMesh> m_meshes;
+    std::uint64_t m_uploadedRevision = ~std::uint64_t{0};
 };
 
 } // namespace sicdm

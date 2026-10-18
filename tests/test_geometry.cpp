@@ -36,6 +36,25 @@ TEST_CASE("cylinder, tube and sphere wind outward") {
     CHECK(windingMatchesNormals(primitives::sphere({1, 2, 3}, 2, 24, 12)));
 }
 
+TEST_CASE("cone, torus, wedge, pyramid and prism wind outward") {
+    CHECK(windingMatchesNormals(primitives::cone({0, 0, 0}, 2, 0, 4, 32)));
+    CHECK(windingMatchesNormals(primitives::cone({0, 0, 0}, 3, 1, 4, 32)));
+    CHECK(windingMatchesNormals(primitives::torus({0, 0, 0}, 5, 1, 32, 16)));
+    CHECK(windingMatchesNormals(primitives::wedge({0, 0, 0}, {4, 2, 3})));
+    CHECK(windingMatchesNormals(primitives::pyramid({0, 0, 0}, 2, 3, 4)));
+    CHECK(windingMatchesNormals(primitives::prism({0, 0, 0}, 2, 3, 6)));
+}
+
+TEST_CASE("primitive sizes match their parameters") {
+    const AABB w = primitives::wedge({0, 0, 0}, {4, 2, 3}).bounds();
+    CHECK_NEAR(w.max.x, 4, 1e-5);
+    CHECK_NEAR(w.max.z, 3, 1e-5);
+    const AABB t = primitives::torus({0, 0, 0}, 5, 1).bounds();
+    CHECK_NEAR(t.max.x, 6, 1e-4);
+    CHECK_NEAR(t.max.z, 1, 1e-4);
+    CHECK(primitives::prism({0, 0, 0}, 2, 3, 6).edgeVertices.size() > 0);
+}
+
 TEST_CASE("append offsets indices") {
     MeshData m = primitives::box({0, 0, 0}, {1, 1, 1});
     const std::size_t v = m.vertices.size();

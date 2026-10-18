@@ -32,6 +32,7 @@ add_library(sicdm_core STATIC
     src/core/Camera.cpp
     src/core/Geometry.cpp
     src/core/Scene.cpp
+    src/ui/Tools.cpp
 )
 target_include_directories(sicdm_core PUBLIC src)
 sicdm_set_compile_options(sicdm_core)
@@ -46,6 +47,8 @@ if(SICDM_BUILD_APP)
         src/render/Renderer.cpp
         src/render/Shader.cpp
         src/ui/LandingUI.cpp
+        src/ui/Toolbox.cpp
+        src/ui/ToolIcons.cpp
     )
 
     if(APPLE)

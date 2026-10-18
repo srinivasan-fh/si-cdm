@@ -6,6 +6,7 @@
 #include "ui/LandingUI.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 
 struct GLFWwindow;
@@ -33,6 +34,9 @@ private:
     void shutdown();
     void frame(float dt);
     void handleViewportInput();
+    void onCanvasClick(float x, float y);
+    std::optional<RayHit> pick(float x, float y) const;
+    void setStatus(std::string message);
     void handleCommands(const UiCommands& cmd);
     bool saveScreenshot(const std::string& path) const;
 
@@ -51,9 +55,16 @@ private:
     UiState m_uiState;
 
     // Input state
-    double m_lastX = 0, m_lastY = 0;
+    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody };
+    DragMode m_leftDrag = DragMode::None;
+    DragMode m_otherDrag = DragMode::None; // right / middle button
+    float m_pressX = 0, m_pressY = 0;
     float m_pendingScroll = 0;
-    bool m_dragging = false;
+    Vec3 m_movePlanePoint;
+    Vec3 m_moveStartOffset;
+
+    int m_primitiveSerial = 0;
+    double m_statusUntil = 0.0;
 
     // On-demand rendering: CAD viewports only redraw when something changes.
     int m_framesToRender = 3;

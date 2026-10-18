@@ -3,6 +3,7 @@
 #include "core/Camera.hpp"
 #include "core/Scene.hpp"
 #include "render/Renderer.hpp"
+#include "ui/Toolbox.hpp"
 
 #include <optional>
 #include <string>
@@ -17,6 +18,7 @@ struct UiState {
     bool showAbout = false;
     int selectedBody = -1;
     float frameMs = 0.0f;
+    std::string statusMessage; // transient feedback (e.g. "Placed Block 1")
     std::string gpuName;
     std::string glVersion;
 };
@@ -35,6 +37,8 @@ class LandingUI {
 public:
     UiCommands draw(Scene& scene, const OrbitCamera& camera, ViewportSettings& viewport, UiState& state);
 
+    Toolbox& toolbox() noexcept { return m_toolbox; }
+
 private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawToolbar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp);
@@ -45,6 +49,8 @@ private:
     void drawControlsWindow(UiState& st);
     void drawAboutWindow(UiState& st);
 
+    Toolbox m_toolbox;
+    float m_toolboxWidth = 0.0f;
     float m_menuHeight = 0.0f;
     float m_toolbarHeight = 0.0f;
     float m_statusHeight = 0.0f;

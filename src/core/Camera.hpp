@@ -42,6 +42,9 @@ public:
     Vec3 right() const noexcept;
     Vec3 up() const noexcept;
 
+    // World-space ray through a point in window coordinates (origin top-left).
+    Ray screenRay(float x, float y, float width, float height) const noexcept;
+
     Mat4 view() const noexcept;
     Mat4 projectionMatrix() const noexcept;
     Mat4 viewProjection() const noexcept { return projectionMatrix() * view(); }

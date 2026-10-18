@@ -2,10 +2,48 @@
 
 namespace sicdm {
 
+AABB Body::bounds() const noexcept {
+    AABB b = mesh.bounds();
+    if (b.valid()) {
+        b.min += offset;
+        b.max += offset;
+    }
+    return b;
+}
+
+void Scene::remove(std::size_t index) {
+    if (index >= m_bodies.size()) return;
+    m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(index));
+    ++m_revision;
+}
+
+std::optional<RayHit> Scene::raycast(const Ray& ray) const noexcept {
+    std::optional<RayHit> best;
+    for (std::size_t i = 0; i < m_bodies.size(); ++i) {
+        const Body& b = m_bodies[i];
+        if (!b.visible) continue;
+        float tBox = 0.0f;
+        if (!intersectAABB(ray, b.bounds(), tBox)) continue;
+        if (best && tBox > best->t) continue;
+
+        // Test in the body's local frame.
+        const Ray local{ray.origin - b.offset, ray.dir};
+        const auto& v = b.mesh.vertices;
+        const auto& idx = b.mesh.indices;
+        for (std::size_t k = 0; k + 2 < idx.size(); k += 3) {
+            float t = 0.0f;
+            if (intersectTriangle(local, v[idx[k]].position, v[idx[k + 1]].position, v[idx[k + 2]].position, t) &&
+                (!best || t < best->t))
+                best = RayHit{static_cast<int>(i), t, ray.at(t)};
+        }
+    }
+    return best;
+}
+
 AABB Scene::bounds() const noexcept {
     AABB visible, all;
     for (const Body& b : m_bodies) {
-        const AABB bb = b.mesh.bounds();
+        const AABB bb = b.bounds();
         all.expand(bb);
         if (b.visible) visible.expand(bb);
     }

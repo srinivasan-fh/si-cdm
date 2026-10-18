@@ -65,6 +65,19 @@ Mat4 OrbitCamera::projectionMatrix() const noexcept {
     return orthographic(-halfW, halfW, -halfH, halfH, -farPlane(), farPlane());
 }
 
+Ray OrbitCamera::screenRay(float x, float y, float width, float height) const noexcept {
+    const float nx = width > 0.0f ? 2.0f * x / width - 1.0f : 0.0f;
+    const float ny = height > 0.0f ? 1.0f - 2.0f * y / height : 0.0f;
+    const float halfH = std::tan(m_fovY * 0.5f);
+    const float halfW = halfH * m_aspect;
+    if (m_projection == Projection::Perspective)
+        return {position(), normalize(forward() + right() * (nx * halfW) + up() * (ny * halfH))};
+
+    // Orthographic: parallel rays, started well behind the eye.
+    const Vec3 offset = right() * (nx * halfW * m_distance) + up() * (ny * halfH * m_distance);
+    return {position() + offset - forward() * (farPlane() * 0.5f), forward()};
+}
+
 void OrbitCamera::orbit(float dx, float dy) noexcept {
     m_animT = 1.0f;
     m_yaw = wrapAngle(m_yaw - dx * kOrbitSpeed);

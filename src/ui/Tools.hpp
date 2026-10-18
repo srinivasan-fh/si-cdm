@@ -1,0 +1,56 @@
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <span>
+
+namespace sicdm {
+
+enum class ToolId {
+    // Navigate & select
+    Move, Select, BoxSelect, LassoSelect, Orbit, Pan, Zoom,
+    // I. 2D sketches & profiles
+    Point, Line, Polyline, Arc, Conic, Circle, Ellipse, Rectangle, Slot, Polygon, Spline,
+    // II. 3D solid primitives
+    Block, Wedge, Pyramid, Prism, Cylinder, Cone, Sphere, Torus,
+    // III. Form features
+    Extrude, Revolve, Sweep, Loft, Helix, Rib,
+    // IV. Analytical & synthetic surfaces
+    PlaneSurface, TabulatedCylinder, RuledSurface, BSplinePatch, CoonsPatch, GordonSurface,
+    // V. Class-A & aerodynamic
+    ClassANurbs, OffsetSurface, BlendedFillet, TwistedAirfoil, TubercleWing,
+    // VI. Generative
+    TopologyOptimized, TpmsLattice,
+    // VII. Mesh data
+    MeshImport, PointCloud, SubD,
+    Count
+};
+
+enum class ToolCategory { Navigate, Sketch, Solid, Feature, Surface, ClassA, Generative, Mesh };
+
+struct ToolInfo {
+    ToolId id;
+    ToolCategory category;
+    const char* name;
+    const char* shortcut;    // single key, "" for none
+    const char* description; // tooltip
+    bool available;          // implemented in this build
+};
+
+const ToolInfo& toolInfo(ToolId id);
+
+// A slot in the tool rail. Related tools share a slot (like Photoshop):
+// the slot shows the last-used tool and a flyout lists the rest.
+struct ToolGroup {
+    ToolCategory category;
+    std::span<const ToolId> tools;
+};
+
+std::span<const ToolGroup> toolGroups();
+
+const char* categoryName(ToolCategory c);
+
+// True for tools that place a 3D primitive with a click.
+bool isPrimitiveTool(ToolId id);
+
+} // namespace sicdm

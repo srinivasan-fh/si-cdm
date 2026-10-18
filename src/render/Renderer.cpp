@@ -35,12 +35,13 @@ constexpr const char* kMeshVS = R"(#version 410 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 uniform mat4 uViewProj;
+uniform vec3 uOffset;
 out vec3 vWorldPos;
 out vec3 vNormal;
 void main() {
-    vWorldPos = aPos;
+    vWorldPos = aPos + uOffset;
     vNormal = aNormal;
-    gl_Position = uViewProj * vec4(aPos, 1.0);
+    gl_Position = uViewProj * vec4(vWorldPos, 1.0);
 }
 )";
 
@@ -80,7 +81,8 @@ void main() {
 constexpr const char* kLinesVS = R"(#version 410 core
 layout(location = 0) in vec3 aPos;
 uniform mat4 uViewProj;
-void main() { gl_Position = uViewProj * vec4(aPos, 1.0); }
+uniform vec3 uOffset;
+void main() { gl_Position = uViewProj * vec4(aPos + uOffset, 1.0); }
 )";
 
 constexpr const char* kLinesFS = R"(#version 410 core
@@ -216,6 +218,7 @@ void Renderer::upload(const Scene& scene) {
     releaseMeshes();
     m_meshes.reserve(scene.bodies().size());
     for (const Body& b : scene.bodies()) m_meshes.push_back(uploadMesh(b.mesh));
+    m_uploadedRevision = scene.revision();
 }
 
 void Renderer::drawBackground(const ViewportSettings& s) {
@@ -281,6 +284,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         for (std::size_t i = 0; i < count; ++i) {
             if (!bodies[i].visible) continue;
             m_mesh.set("uColor", bodies[i].color);
+            m_mesh.set("uOffset", bodies[i].offset);
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
             glBindVertexArray(m_meshes[i].vao);
             glDrawElements(GL_TRIANGLES, m_meshes[i].indexCount, GL_UNSIGNED_INT, nullptr);
@@ -296,6 +300,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         for (std::size_t i = 0; i < count; ++i) {
             if (!bodies[i].visible) continue;
             const bool sel = static_cast<int>(i) == selectedBody;
+            m_lines.set("uOffset", bodies[i].offset);
             if (wire) {
                 const Vec3 c = sel ? Vec3{0.35f, 0.70f, 1.0f} : bodies[i].color;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
