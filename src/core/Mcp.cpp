@@ -17,6 +17,8 @@ constexpr const char* kInstructions =
     "(parametric solids or imported meshes), 2D sketch curves on the Top (XY), Front (XZ) or Right (YZ) "
     "plane, and reference images on those planes. Call get_scene first to see what exists. "
     "Sketch coordinates are 2D in the plane: Top u=X v=Y, Front u=X v=Z, Right u=Y v=Z. "
+    "To make solids from sketches, draw a closed curve (rectangle, circle, closed polyline) with create_sketch, "
+    "then call extrude with its name and a distance. "
     "Use run_command for anything not covered by a dedicated tool (call list_commands for the syntax).";
 
 Json errorReply(const Json& id, int code, const std::string& message) {
@@ -145,6 +147,15 @@ Json McpServer::toolDefinitions() {
         p.set("color", numberArray(3, "Optional [r,g,b] in 0..1"));
         tools.push(tool("create_solid", "Create a parametric 3D solid. Bases sit at position.z and are centred on x,y.",
                         p, {"kind"}));
+    }
+    {
+        Json p = Json::object();
+        p.set("profile", prop("string", "Name of a closed sketch curve: rectangle, circle or closed polyline"));
+        p.set("distance", prop("number", "Depth in mm along the sketch-plane normal (negative = other side)"));
+        p.set("symmetric", prop("boolean", "Extrude half the distance to each side of the plane"));
+        p.set("keep_sketch", prop("boolean", "Keep the profile curve visible (default: hidden after extruding)"));
+        p.set("name", prop("string", "Optional name for the new body"));
+        tools.push(tool("extrude", "Extrude a closed 2D sketch curve into a 3D solid.", p, {"profile", "distance"}));
     }
     {
         Json p = Json::object();
@@ -385,6 +396,20 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return textResult("Nothing named '" + target + "' (see get_scene)", true);
     }
     if (name == "delete") return runLine("ERASE " + a["name"].asString());
+    if (name == "extrude") {
+        if (!a["profile"].isString() || !a["distance"].isNumber())
+            return textResult("extrude needs 'profile' (curve name) and 'distance'", true);
+        std::string line = "EXTRUDE " + a["profile"].asString() + " " + num(a["distance"].asNumber());
+        if (a["symmetric"].asBool()) line += " SYMMETRIC";
+        if (a["keep_sketch"].asBool()) line += " KEEP";
+        Json r = runLine(line);
+        if (!r["isError"].asBool() && a["name"].isString() && !a["name"].asString().empty() &&
+            !m_doc.scene.bodies().empty()) {
+            m_doc.scene.bodies().back().name = a["name"].asString();
+            r = textResult(r["content"][0]["text"].asString() + " (named " + a["name"].asString() + ")", false);
+        }
+        return r;
+    }
     if (name == "set_view") {
         std::string log;
         auto step = [&](const std::string& line) {

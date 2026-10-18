@@ -1,5 +1,6 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
+#include "core/Extrude.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -280,6 +281,57 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         doc.selectedCurve = doc.selectedImage = -1;
         markChanged(doc);
         out.say("Created " + doc.scene.bodies().back().name + fmt(" at (%.1f, %.1f, %.1f)", o.x, o.y, o.z));
+        return out;
+    }
+
+    // ---- Features ---------------------------------------------------------
+    if (cmd == "EXTRUDE") {
+        bool symmetric = false, keep = false;
+        std::optional<float> distance;
+        std::vector<std::string> nameWords;
+        for (const std::string& w : a) {
+            const std::string l = lower(w);
+            if (l == "symmetric" || l == "sym" || l == "both") symmetric = true;
+            else if (l == "keep") keep = true;
+            else nameWords.push_back(w);
+        }
+        // The last number is the distance; earlier words (numbers too) name the curve, e.g. "Circle 2 20".
+        if (!nameWords.empty()) {
+            distance = parseNumber(nameWords.back());
+            if (distance) nameWords.pop_back();
+        }
+        if (!distance) return usage();
+        if (*distance == 0.0f) return out.fail("Distance must not be zero");
+        int index = doc.selectedCurve;
+        if (!nameWords.empty()) {
+            index = findCurve(doc, joinArgs(nameWords));
+            if (index < 0) return out.fail("No sketch curve named " + joinArgs(nameWords));
+        }
+        auto& curves = doc.scene.sketch().curves();
+        if (index < 0 || index >= static_cast<int>(curves.size()))
+            return out.fail("Select a closed sketch curve (rectangle, circle or closed polyline) or give its name");
+        SketchCurve& c = curves[static_cast<std::size_t>(index)];
+        std::string why;
+        const auto profile = profileFromCurve(c, &why);
+        if (!profile) return out.fail("Cannot extrude: " + why);
+        Body b = defaultPrimitive("box", ++doc.primitiveSerial); // name / colour series
+        b.name = "Extrude " + std::to_string(doc.primitiveSerial);
+        b.kind = "extrude";
+        b.params = extrudeParams(*profile, c.plane, *distance, symmetric);
+        b.mesh = buildExtrusion(b.params);
+        if (b.mesh.indices.empty()) return out.fail("Extrusion failed for " + c.name);
+        b.offset = {};
+        const std::string profileName = c.name;
+        if (!keep) { // the sketch is consumed, as in most CAD tools (show it again in the Model panel)
+            c.visible = false;
+            doc.scene.sketch().touch();
+        }
+        doc.scene.add(std::move(b));
+        doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+        doc.selectedCurve = doc.selectedImage = -1;
+        markChanged(doc);
+        out.say("Extruded " + profileName + fmt(symmetric ? " %.2f mm symmetric" : " %.2f mm", *distance) + " -> " +
+                doc.scene.bodies().back().name);
         return out;
     }
 

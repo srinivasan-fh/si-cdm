@@ -38,7 +38,10 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::Sphere, C::Solid, "Sphere", "", "Round shape for ball-and-socket joints. Click to place.", true},
     {T::Torus, C::Solid, "Torus", "", "Doughnut shape for O-rings, seals and circular sweeps. Click to place.", true},
 
-    {T::Extrude, C::Feature, "Extrude", "E", "Push a 2D profile linearly into brackets, beams and blocks.", false},
+    {T::Extrude, C::Feature, "Extrude", "E",
+     "Push a closed 2D profile linearly into brackets, beams and blocks. Click a rectangle, circle or closed "
+     "polyline, drag or type the depth, click to finish.",
+     true},
     {T::Revolve, C::Feature, "Revolve", "", "Spin a profile around an axis to form wheels, gears and pulleys.", false},
     {T::Sweep, C::Feature, "Sweep", "", "Push a profile along a curved path for pipes, wiring and springs.", false},
     {T::Loft, C::Feature, "Loft", "", "Morph smoothly between 2D shapes for ducting and air intakes.", false},

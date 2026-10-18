@@ -64,6 +64,14 @@ private:
     void setPlane(SketchPlane plane);
     int pickImage(float x, float y, Vec2* planePoint = nullptr) const;
 
+    // Extrude tool.
+    int pickProfile(float x, float y) const; // closed curve under or around the cursor
+    void beginExtrude(int curve);
+    void updateExtrudeFromMouse();
+    void applyExtrude();
+    void cancelExtrude();
+    void drawExtrudePreview() const;
+
     // Command line / MCP plumbing.
     void runCommandLine(const std::string& text);
     void log(const std::string& text, int kind);
@@ -111,6 +119,10 @@ private:
     Vec3 m_movePlanePoint;
     Vec3 m_moveStartOffset;
     Vec2 m_imageGrab{}, m_imageStart{};
+
+    int m_extrudeCurve = -1;   // profile being extruded
+    float m_extrudeAnchorDist = 0.0f;
+    float m_extrudeAnchorX = 0.0f, m_extrudeAnchorY = 0.0f;
 
     // MCP server (shared by the HTTP transport) and unsaved-change tracking.
     std::unique_ptr<McpServer> m_mcp;

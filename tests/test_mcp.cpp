@@ -103,3 +103,17 @@ TEST_CASE("MCP file tools save, export and reopen") {
     CHECK(!tool(s, "import_file", R"({"path":")" + (dir / "ball.stl").string() + R"("})")["isError"].asBool());
     CHECK(d.scene.bodies().size() == 2);
 }
+
+TEST_CASE("MCP extrude tool") {
+    Document d;
+    McpServer s(d, nullptr);
+    tool(s, "create_sketch", R"({"kind":"circle","points":[[0,0]],"radius":6})");
+    Json r = tool(s, "extrude", R"({"profile":"Circle 1","distance":25,"name":"Shaft"})");
+    CHECK(!r["isError"].asBool());
+    CHECK(d.scene.bodies().size() == 1 && d.scene.bodies()[0].name == "Shaft");
+    CHECK(tool(s, "extrude", R"({"profile":"Circle 1"})")["isError"].asBool());
+    bool listed = false;
+    const Json list = call(s, 9, "tools/list");
+    for (const Json& t : list["result"]["tools"].items()) listed = listed || t["name"].asString() == "extrude";
+    CHECK(listed);
+}

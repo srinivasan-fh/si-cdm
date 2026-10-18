@@ -8,6 +8,7 @@
 #include <imgui_impl_opengl3.h>
 
 #include "core/Command.hpp"
+#include "core/Extrude.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -324,6 +325,17 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         return;
     }
 
+    if (tool == ToolId::Extrude) {
+        if (m_extrudeCurve >= 0) {
+            applyExtrude(); // second click confirms the depth
+            return;
+        }
+        const int curve = pickProfile(x, y);
+        if (curve < 0) setStatus("Click a closed sketch curve: rectangle, circle or closed polyline");
+        else beginExtrude(curve);
+        return;
+    }
+
     if (tool == ToolId::Select || tool == ToolId::Move) {
         // Sketch curves are thin, so they win over the bodies behind them.
         const int curve = tool == ToolId::Select ? pickCurve(x, y) : -1;
@@ -410,6 +422,13 @@ void Application::handleViewportInput() {
             if (std::fabs(d) > 0.05f) m_uiState.cursorPlane = f.toPlane(r.at(dot(f.origin - r.origin, f.normal) / d));
         }
     }
+
+    // Extrude: the profile must still exist and the tool still be active.
+    if (m_extrudeCurve >= 0 &&
+        (tool != ToolId::Extrude || m_extrudeCurve >= static_cast<int>(m_doc.scene.sketch().curves().size())))
+        cancelExtrude();
+    if (m_extrudeCurve >= 0 && onCanvas && m_otherDrag == DragMode::None && m_leftDrag == DragMode::None)
+        updateExtrudeFromMouse();
 
     // Right drag orbits (3D) / pans (2D); middle drag pans; any tool.
     if (onCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) m_otherDrag = orbitOrPan;
@@ -523,10 +542,15 @@ void Application::handleViewportInput() {
     if (ImGui::IsKeyPressed(ImGuiKey_G)) viewport().showGrid = !viewport().showGrid;
     if (ImGui::IsKeyPressed(ImGuiKey_W) && !is2D)
         m_vp3D.displayMode = static_cast<DisplayMode>((static_cast<int>(m_vp3D.displayMode) + 1) % 4);
-    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
-        if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+        if (m_extrudeCurve >= 0) applyExtrude();
+        else if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        if (m_sketcher.busy()) {
+        if (m_extrudeCurve >= 0) {
+            cancelExtrude();
+            setStatus("Extrude cancelled");
+        } else if (m_sketcher.busy()) {
             m_sketcher.cancel();
             setStatus("Drawing cancelled");
         } else {
@@ -595,6 +619,8 @@ void Application::handleCommands(const UiCommands& cmd) {
         }
     }
     if (cmd.toggleMcp) toggleMcp();
+    if (cmd.applyExtrude) applyExtrude();
+    if (cmd.cancelExtrude) cancelExtrude();
     for (const std::string& line : cmd.commands) runCommandLine(line);
 }
 
@@ -662,6 +688,8 @@ void Application::frame(float dt) {
             fg->AddLine({m.x, m.y + 3}, {m.x, m.y + 12}, c);
         }
     }
+    if (m_extrudeCurve >= 0) drawExtrudePreview();
+
     // Held widgets (a long press on a tool slot) need frames to time out, and a
     // newly opened popup needs a second frame to size itself before it shows.
     if (ImGui::IsAnyItemActive() || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
@@ -737,6 +765,7 @@ void Application::syncFromDoc() {
 void Application::afterDocumentReplaced() {
     // New or opened document: reframe both windows and forget stale state.
     m_sketcher.cancel();
+    cancelExtrude();
     m_leftDrag = m_otherDrag = DragMode::None;
     m_cam3D.resetRoll(false);
     m_cam3D.setStandardView(StandardView::Isometric, false);
@@ -768,6 +797,19 @@ void Application::runCommandLine(const std::string& raw) {
         if (p) {
             log(text, UiState::LogLine::Input);
             if (auto c = m_sketcher.typedPoint(tool, m_uiState.plane, *p)) addCurve(std::move(*c));
+            return;
+        }
+    }
+    // Extrude waiting for a depth: a number applies it.
+    if (tool == ToolId::Extrude && m_extrudeCurve >= 0) {
+        if (text.empty()) {
+            applyExtrude();
+            return;
+        }
+        if (const auto d = parseNumber(text)) {
+            log(text, UiState::LogLine::Input);
+            m_uiState.extrudeDistance = *d;
+            applyExtrude();
             return;
         }
     }
@@ -877,10 +919,187 @@ void Application::updatePrompt() {
         break;
     case ToolId::Rectangle: p = stage == 0 ? "RECT  first corner (x,y):" : "RECT  opposite corner (x,y | @w,h):"; break;
     case ToolId::Circle: p = stage == 0 ? "CIRCLE  centre (x,y):" : "CIRCLE  radius or point:"; break;
+    case ToolId::Extrude:
+        p = m_extrudeCurve < 0 ? "EXTRUDE  pick a closed profile:" : "EXTRUDE  depth (mm), drag or type; click / Enter:";
+        break;
     default: break;
     }
     m_uiState.commandPrompt = p;
-    m_uiState.commandKeepsFocus = isSketchTool(tool);
+    m_uiState.commandKeepsFocus = isSketchTool(tool) || (tool == ToolId::Extrude && m_extrudeCurve >= 0);
+}
+
+// Extrude ---------------------------------------------------------------------
+
+namespace {
+
+// Representative point and outline of a profile, in world space at depth w.
+Vec2 profileCentre(const Profile& p) {
+    if (p.kind == Profile::Kind::Circle) return p.center;
+    Vec2 c{};
+    for (const Vec2& q : p.points) c = {c.x + q.x, c.y + q.y};
+    return {c.x / static_cast<float>(p.points.size()), c.y / static_cast<float>(p.points.size())};
+}
+
+std::vector<Vec2> profileOutline(const Profile& p) {
+    if (p.kind != Profile::Kind::Circle) return p.points;
+    std::vector<Vec2> pts;
+    for (int i = 0; i < 64; ++i) {
+        const float a = 2.0f * kPi * static_cast<float>(i) / 64.0f;
+        pts.push_back({p.center.x + p.radius * std::cos(a), p.center.y + p.radius * std::sin(a)});
+    }
+    return pts;
+}
+
+} // namespace
+
+int Application::pickProfile(float x, float y) const {
+    if (const int c = pickCurve(x, y); c >= 0) return c; // on the outline
+    // Inside a closed profile: the smallest one containing the cursor wins (holes before outlines).
+    const ImGuiIO& io = ImGui::GetIO();
+    const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+    const auto& curves = m_doc.scene.sketch().curves();
+    int best = -1;
+    float bestArea = 1e30f;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        if (!curves[i].visible) continue;
+        const auto p = profileFromCurve(curves[i]);
+        if (!p) continue;
+        const PlaneFrame f = planeFrame(curves[i].plane);
+        const float d = dot(ray.dir, f.normal);
+        if (std::fabs(d) < 1e-5f) continue;
+        const Vec2 q = f.toPlane(ray.at(dot(f.origin - ray.origin, f.normal) / d));
+        bool inside = false;
+        float area = 0.0f;
+        if (p->kind == Profile::Kind::Circle) {
+            inside = std::hypot(q.x - p->center.x, q.y - p->center.y) <= p->radius;
+            area = kPi * p->radius * p->radius;
+        } else {
+            const auto& v = p->points;
+            for (std::size_t a = 0, b = v.size() - 1; a < v.size(); b = a++) // even-odd rule
+                if ((v[a].y > q.y) != (v[b].y > q.y) &&
+                    q.x < (v[b].x - v[a].x) * (q.y - v[a].y) / (v[b].y - v[a].y) + v[a].x)
+                    inside = !inside;
+            area = std::fabs(signedArea(v));
+        }
+        if (inside && area < bestArea) {
+            bestArea = area;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+void Application::beginExtrude(int curve) {
+    const SketchCurve& c = m_doc.scene.sketch().curves()[static_cast<std::size_t>(curve)];
+    std::string why;
+    if (!profileFromCurve(c, &why)) {
+        setStatus("Cannot extrude: " + why);
+        log("Cannot extrude: " + why, UiState::LogLine::Error);
+        return;
+    }
+    m_extrudeCurve = curve;
+    m_uiState.selectedCurve = curve;
+    m_uiState.selectedBody = m_uiState.selectedImage = -1;
+    m_uiState.extrudeProfileName = c.name;
+    m_uiState.extrudeLive = true;
+    const ImGuiIO& io = ImGui::GetIO();
+    m_extrudeAnchorX = io.MousePos.x;
+    m_extrudeAnchorY = io.MousePos.y;
+    m_extrudeAnchorDist = m_uiState.extrudeDistance;
+    setStatus("Extruding " + c.name + ": drag or type the depth, click or Enter to finish");
+}
+
+void Application::updateExtrudeFromMouse() {
+    if (!m_uiState.extrudeLive) return;
+    const auto& curves = m_doc.scene.sketch().curves();
+    const SketchCurve& c = curves[static_cast<std::size_t>(m_extrudeCurve)];
+    const auto profile = profileFromCurve(c);
+    if (!profile) return;
+    const ImGuiIO& io = ImGui::GetIO();
+    const PlaneFrame f = planeFrame(c.plane);
+    const Vec3 base = f.toWorld(profileCentre(*profile));
+    // Screen direction of the plane normal; if it points at the viewer (2D window),
+    // vertical mouse motion sets the depth instead.
+    const float probe = std::max(camera().distance() * 0.1f, 1.0f);
+    const auto s0 = projectToScreen(camera(), base, io.DisplaySize);
+    const auto s1 = projectToScreen(camera(), base + f.normal * probe, io.DisplaySize);
+    const float mx = io.MousePos.x - m_extrudeAnchorX, my = io.MousePos.y - m_extrudeAnchorY;
+    float d = m_extrudeAnchorDist;
+    if (s0 && s1 && std::hypot(s1->x - s0->x, s1->y - s0->y) > 12.0f) {
+        const float dx = s1->x - s0->x, dy = s1->y - s0->y, len = std::hypot(dx, dy);
+        d += (mx * dx + my * dy) / len * (probe / len);
+    } else {
+        d += -my * camera().worldPerPixel(io.DisplaySize.y);
+    }
+    m_uiState.extrudeDistance = std::round(d * 2.0f) * 0.5f; // 0.5 mm steps
+}
+
+void Application::applyExtrude() {
+    if (m_extrudeCurve < 0) return;
+    const auto& curves = m_doc.scene.sketch().curves();
+    if (m_extrudeCurve >= static_cast<int>(curves.size())) {
+        cancelExtrude();
+        return;
+    }
+    if (m_uiState.extrudeDistance == 0.0f) {
+        setStatus("Depth must not be zero");
+        return;
+    }
+    char depth[32];
+    std::snprintf(depth, sizeof(depth), "%g", static_cast<double>(m_uiState.extrudeDistance));
+    std::string line = "EXTRUDE \"" + curves[static_cast<std::size_t>(m_extrudeCurve)].name + "\" " + depth;
+    if (m_uiState.extrudeSymmetric) line += " SYMMETRIC";
+    if (m_uiState.extrudeKeepSketch) line += " KEEP";
+    m_uiState.selectedCurve = m_extrudeCurve;
+    cancelExtrude();
+    runCommandLine(line);
+}
+
+void Application::cancelExtrude() {
+    m_extrudeCurve = -1;
+    m_uiState.extrudeProfileName.clear();
+}
+
+void Application::drawExtrudePreview() const {
+    const auto& curves = m_doc.scene.sketch().curves();
+    if (m_extrudeCurve < 0 || m_extrudeCurve >= static_cast<int>(curves.size())) return;
+    const SketchCurve& c = curves[static_cast<std::size_t>(m_extrudeCurve)];
+    const auto profile = profileFromCurve(c);
+    if (!profile) return;
+    const PlaneFrame f = planeFrame(c.plane);
+    const float d = m_uiState.extrudeDistance;
+    const float w0 = m_uiState.extrudeSymmetric ? -std::fabs(d) * 0.5f : std::min(0.0f, d);
+    const float w1 = m_uiState.extrudeSymmetric ? std::fabs(d) * 0.5f : std::max(0.0f, d);
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    const ImU32 col = IM_COL32(255, 190, 90, 230), faint = IM_COL32(255, 190, 90, 120);
+    auto scr = [&](Vec2 q, float w) { return projectToScreen(camera(), f.toWorld(q) + f.normal * w, io.DisplaySize); };
+    const std::vector<Vec2> outline = profileOutline(*profile);
+    const std::size_t n = outline.size();
+    for (float w : {w0, w1})
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto a = scr(outline[i], w), b = scr(outline[(i + 1) % n], w);
+            if (a && b) dl->AddLine(*a, *b, w == w1 ? col : faint, 2.0f);
+        }
+    const std::size_t step = std::max<std::size_t>(1, n / 8);
+    for (std::size_t i = 0; i < n; i += step) {
+        const auto a = scr(outline[i], w0), b = scr(outline[i], w1);
+        if (a && b) dl->AddLine(*a, *b, faint, 1.5f);
+    }
+    // Depth arrow from the profile centre, with the value.
+    const Vec2 ctr = profileCentre(*profile);
+    const auto a = scr(ctr, 0.0f), b = scr(ctr, m_uiState.extrudeSymmetric ? w1 : d);
+    if (a && b) {
+        dl->AddLine(*a, *b, col, 2.0f);
+        dl->AddCircleFilled(*b, 4.0f, col);
+    }
+    char label[64];
+    std::snprintf(label, sizeof(label), m_uiState.extrudeSymmetric ? "D %.1f mm (symmetric)" : "D %.1f mm",
+                  static_cast<double>(d));
+    const ImVec2 at{io.MousePos.x + 16, io.MousePos.y + 14};
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    dl->AddRectFilled({at.x - 4, at.y - 2}, {at.x + ts.x + 4, at.y + ts.y + 2}, IM_COL32(20, 22, 28, 220), 3.0f);
+    dl->AddText(at, IM_COL32(240, 240, 240, 255), label);
 }
 
 // ViewHost --------------------------------------------------------------------

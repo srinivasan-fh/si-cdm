@@ -1,5 +1,7 @@
 #include "core/Geometry.hpp"
 
+#include "core/Extrude.hpp"
+
 #include <algorithm>
 #include <map>
 #include <tuple>
@@ -86,11 +88,12 @@ void MeshData::computeFeatureEdges(float angleDeg) {
 
 bool isPrimitiveKind(const std::string& k) {
     return k == "box" || k == "wedge" || k == "cylinder" || k == "tube" || k == "cone" || k == "sphere" ||
-           k == "torus" || k == "pyramid" || k == "prism";
+           k == "torus" || k == "pyramid" || k == "prism" || k == "extrude";
 }
 
 MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
     using namespace primitives;
+    if (k == "extrude") return buildExtrusion(p);
     auto need = [&](std::size_t n) { return p.size() >= n; };
     auto positive = [&](std::size_t n) {
         for (std::size_t i = 0; i < n; ++i)

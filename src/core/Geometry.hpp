@@ -34,6 +34,7 @@ struct MeshData {
 //   box, wedge: x0 y0 z0 x1 y1 z1     cylinder: r h      tube: R r h
 //   cone: r0 r1 h    sphere: r (rests on z=0)    torus: R r (rests on z=0)
 //   pyramid, prism: r h sides         mesh: none (triangles stored as-is)
+//   extrude: see extrudeParams() (sketch plane, depth range, profile)
 bool isPrimitiveKind(const std::string& kind);
 // Returns an empty mesh for unknown kinds or bad parameter counts.
 MeshData buildPrimitive(const std::string& kind, const std::vector<float>& params);

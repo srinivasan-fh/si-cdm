@@ -52,7 +52,13 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
   Enter / double-click finishes a polyline, Esc cancels.
 - **3D solids:** Block (B), Wedge, Pyramid, Prism, Cylinder (Y), Cone, Sphere, Torus.
   Pick one and click the grid or a face to place it.
-- **Planned:** the remaining 2D tools, form features, surfaces, Class-A, generative and mesh tools
+- **Extrude (E):** turns a closed sketch profile (rectangle, circle or closed polyline, concave shapes
+  included) into a solid along its plane's normal. Click the profile (its outline or anywhere inside),
+  drag to set the depth with a live preview — or type it in the options bar or command line — then
+  click or press Enter. Options: symmetric (both sides of the plane), keep sketch visible. Negative
+  depths go the other way. The profile is hidden after extruding (show it again in the Model panel).
+  Extrusions are parametric: they save and reopen as features.
+- **Planned:** the remaining 2D tools, other form features (revolve, sweep, loft…), surfaces, Class-A, generative and mesh tools
   are in the rail with descriptions and will be enabled in later milestones.
 
 Shift + a tool key cycles through that slot's tools.
@@ -66,6 +72,7 @@ shows the history. Type `HELP` for the full list.
 ```text
 LINE 0,0 @50,0 @0,30          RECT 0,0 @40,20          CIRCLE 10,10 5        PLINE 0,0 10,0 10,10 CLOSE
 BOX 40 30 20 @10,0,5          CYLINDER 10 30           SPHERE 8              TORUS 20 4
+EXTRUDE 15                    EXTRUDE "Circle 2" 20 SYMMETRIC KEEP
 SELECT Block 1   MOVE 0,0,10   ERASE        VIEW FRONT   2D RIGHT   3D   ROLL 90   DISPLAY HIDDEN
 IMPORT "plans/scan.jpg" WIDTH 150 @0,0      EXPORT part.stl      SAVE project.sicdm      OPEN project.sicdm
 ```
@@ -90,7 +97,7 @@ centre and opacity in the Model panel, or drag it with the Move tool.
 ## AI agents (MCP)
 
 SI CDM includes a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents can read
-and edit the 2D and 3D model. Tools: `get_scene`, `create_sketch`, `create_solid`, `modify`, `delete`,
+and edit the 2D and 3D model. Tools: `get_scene`, `create_sketch`, `create_solid`, `extrude`, `modify`, `delete`,
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

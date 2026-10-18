@@ -35,6 +35,13 @@ struct UiState {
     };
     std::string commandPrompt = "Command:";
     bool commandKeepsFocus = false; // a sketch tool is waiting for typed points
+
+    // Extrude tool options.
+    float extrudeDistance = 20.0f;
+    bool extrudeSymmetric = false;
+    bool extrudeKeepSketch = false;
+    bool extrudeLive = true;          // mouse drag sets the distance (off once typed)
+    std::string extrudeProfileName;   // empty until a profile is picked
     std::vector<LogLine> commandLog;
 
     // Project / file.
@@ -70,6 +77,8 @@ struct UiCommands {
     bool quit = false;
     std::vector<std::string> commands; // command lines to run (command bar, File menu)
     bool toggleMcp = false;
+    bool applyExtrude = false;
+    bool cancelExtrude = false;
 };
 
 // Workbench chrome around the canvas: menu bar, options bar (tool options and

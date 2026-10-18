@@ -307,6 +307,28 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::SameLine();
         ImGui::TextDisabled(tool.id == ToolId::Polyline ? "Enter / double-click to finish  ·  Esc cancels"
                                                         : "Shift: horizontal / vertical  ·  Esc cancels");
+    } else if (tool.id == ToolId::Extrude) {
+        ImGui::TextDisabled("Distance");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::DragFloat("##extdist", &st.extrudeDistance, 0.5f, -10000.0f, 10000.0f, "%.1f mm"))
+            st.extrudeLive = false; // typed / dragged in the field: stop following the mouse
+        ImGui::SameLine();
+        ImGui::Checkbox("Symmetric", &st.extrudeSymmetric);
+        ImGui::SameLine();
+        ImGui::Checkbox("Keep sketch", &st.extrudeKeepSketch);
+        ImGui::SameLine();
+        if (st.extrudeProfileName.empty()) {
+            ImGui::TextDisabled("Click a closed profile: rectangle, circle or closed polyline");
+        } else {
+            ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "%s", st.extrudeProfileName.c_str());
+            ImGui::SameLine();
+            if (ImGui::Button("Apply")) cmd.applyExtrude = true;
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) cmd.cancelExtrude = true;
+            ImGui::SameLine();
+            ImGui::TextDisabled("drag, type the depth, click or Enter");
+        }
     } else if (isPrimitiveTool(tool.id)) {
         ImGui::TextDisabled(is2D ? "Click to place on the %s plane (5 mm snap)" : "Click the grid or a face to place (5 mm snap)",
                             shortPlaneName(st.plane));
@@ -944,7 +966,7 @@ void LandingUI::drawMcpWindow(UiState& st) {
     ImGui::SameLine();
     if (ImGui::SmallButton("Copy##json")) ImGui::SetClipboardText(json.c_str());
     ImGui::Spacing();
-    ImGui::TextDisabled("Tools: get_scene, create_sketch, create_solid, modify, delete, set_view, run_command,");
+    ImGui::TextDisabled("Tools: get_scene, create_sketch, create_solid, extrude, modify, delete, set_view, run_command,");
     ImGui::TextDisabled("       open/save/new_project, import_file, export_file, list_commands");
     ImGui::End();
 }
@@ -976,6 +998,7 @@ void LandingUI::drawControlsWindow(UiState& st) {
                 {"V  S  O  H  Z", "Move / Select / Orbit / Pan / Zoom tools"},
                 {"L  C  R", "Line / Circle / Rectangle sketch tools"},
                 {"B  Y", "Block / Cylinder tools (Shift cycles the slot)"},
+                {"E", "Extrude: click a closed profile, drag or type the depth"},
             };
             for (const auto& r : rows) {
                 ImGui::TableNextRow();

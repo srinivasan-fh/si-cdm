@@ -24,6 +24,9 @@ constexpr CommandSpec kCommands[] = {
     {"WEDGE", "WE", "WEDGE w d h [@x,y,z]", "Right-angled wedge"},
     {"PYRAMID", "PYR", "PYRAMID r h [sides] [@x,y,z]", "Regular pyramid"},
     {"PRISM", "", "PRISM r h [sides] [@x,y,z]", "Regular prism (default hexagon)"},
+    // Features
+    {"EXTRUDE", "EXT", "EXTRUDE [curve] distance [SYMMETRIC] [KEEP]",
+     "Extrude a closed sketch curve (selected or named) into a solid along its plane normal"},
     // Files
     {"NEW", "", "NEW", "Start an empty project"},
     {"OPEN", "", "OPEN path.sicdm", "Open a project"},

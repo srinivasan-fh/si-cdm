@@ -37,6 +37,7 @@ add_library(sicdm_core STATIC
     src/core/Geometry.cpp
     src/core/Scene.cpp
     src/core/Command.cpp
+    src/core/Extrude.cpp
     src/core/CommandEngine.cpp
     src/core/FileIO.cpp
     src/core/Json.cpp

@@ -119,3 +119,44 @@ TEST_CASE("view commands need a window when headless; HELP and LIST work") {
     CHECK(run(d, "").ok);
     CHECK(run(d, "clear").clearHistory);
 }
+
+TEST_CASE("EXTRUDE turns a selected or named profile into a solid") {
+    Document d;
+    CHECK(run(d, "rect 0,0 @40,20").ok);
+    auto o = run(d, "extrude 15"); // selected curve
+    CHECK(o.ok);
+    CHECK(d.scene.bodies().size() == 1);
+    const Body& b = d.scene.bodies()[0];
+    CHECK(b.kind == "extrude");
+    CHECK_NEAR(b.bounds().max.z, 15, 1e-4);
+    CHECK(!d.scene.sketch().curves()[0].visible); // consumed
+    CHECK(d.selectedBody == 0);
+
+    CHECK(run(d, "plane front").ok);
+    CHECK(run(d, "circle 0,10 5").ok);
+    CHECK(run(d, "extrude Circle 2 20 symmetric keep").ok);
+    const Body& c = d.scene.bodies()[1];
+    CHECK_NEAR(c.bounds().min.y, -10, 1e-3);
+    CHECK_NEAR(c.bounds().max.y, 10, 1e-3);
+    CHECK(d.scene.sketch().curves()[1].visible);
+
+    CHECK(run(d, "line 0,0 10,10").ok);
+    CHECK(!run(d, "extrude 5").ok);       // open curve
+    CHECK(!run(d, "extrude ghost 5").ok); // unknown name
+    CHECK(!run(d, "extrude").ok);         // no distance
+    CHECK(!run(d, "select none").lines.empty());
+    CHECK(!run(d, "extrude 0").ok);
+}
+
+TEST_CASE("extruded bodies survive save and reopen") {
+    Document d;
+    run(d, "pline 0,0 30,0 30,10 10,10 10,30 0,30 close");
+    CHECK(run(d, "extrude 8").ok);
+    const std::string path = tmpPath("extrude_project.sicdm");
+    CHECK(run(d, ("save " + path).c_str()).ok);
+    Document e;
+    CHECK(run(e, ("open " + path).c_str()).ok);
+    CHECK(e.scene.bodies().size() == 1);
+    CHECK(e.scene.bodies()[0].kind == "extrude");
+    CHECK(e.scene.bodies()[0].mesh.indices.size() == d.scene.bodies()[0].mesh.indices.size());
+}
