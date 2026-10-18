@@ -176,7 +176,7 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
-        p.set("window", enumProp({"2d", "3d"}, "2D Drawing window or 3D Model window"));
+        p.set("window", enumProp({"2d", "3d", "simulation"}, "2D Drawing, 3D Model or Simulation window"));
         p.set("plane", enumProp({"top", "front", "right"}, "Sketch / drawing plane"));
         p.set("view", enumProp({"top", "bottom", "front", "back", "left", "right", "iso"}, "Standard view (3D)"));
         p.set("projection", enumProp({"perspective", "orthographic"}, "3D projection"));
@@ -184,6 +184,39 @@ Json McpServer::toolDefinitions() {
         p.set("roll", prop("number", "Roll the 3D view by degrees (0 levels it)"));
         p.set("fit", prop("boolean", "Zoom to fit everything"));
         tools.push(tool("set_view", "Change the window, plane, camera view or display mode of the app.", p, {}));
+    }
+    {
+        Json p = Json::object();
+        p.set("kind", enumProp({"circular", "linear"}, "circular: rotation about an axis; linear: travel along a direction"));
+        p.set("name", prop("string", "Motion name; an existing motion with this name is updated"));
+        Json bodies = Json::object();
+        bodies.set("type", "array").set("items", prop("string", "Body name")).set("description",
+            "Bodies moved by it; [\"*\"] = all. Bodies in several motions chain them in list order (first = outermost), "
+            "e.g. a linear 'Drive' on all bodies listed before a circular 'Wheel spin' on the wheels");
+        p.set("bodies", bodies);
+        p.set("axis", numberArray(3, "Rotation axis / travel direction [x,y,z] (default Z for circular, X for linear)"));
+        p.set("origin", numberArray(3, "Point on the rotation axis [x,y,z] (default: centre of the bodies)"));
+        p.set("speed", prop("number", "deg/s (circular) or mm/s (linear); negative reverses"));
+        p.set("rpm", prop("number", "Circular speed in revolutions per minute (instead of speed)"));
+        p.set("range", prop("number", "Sweep in degrees / stroke in mm; 0 = unlimited"));
+        p.set("mode", enumProp({"continuous", "loop", "oscillate", "once"}, "Behaviour at the end of the range"));
+        p.set("start", prop("number", "Delay before it starts (s)"));
+        p.set("enabled", prop("boolean", "Enable or disable the motion"));
+        tools.push(tool("create_motion",
+                        "Add or update a circular or linear motion of bodies, played by the Simulation window.", p,
+                        {"kind"}));
+        Json d = Json::object();
+        d.set("name", prop("string", "Motion to delete"));
+        tools.push(tool("delete_motion", "Delete a motion.", d, {"name"}));
+        Json s = Json::object();
+        s.set("action", enumProp({"open", "play", "pause", "stop", "seek", "speed", "duration", "poses", "axes", "paths"},
+                                 "open the Simulation window, control playback, or get body poses at a time"));
+        s.set("time", prop("number", "seconds, for seek and poses"));
+        s.set("value", prop("number", "speed factor (speed), seconds (duration), 1/0 (axes, paths)"));
+        tools.push(tool("simulate",
+                        "Run the motion simulation. 'poses' works headless too and reports every motion value and "
+                        "moving body position at 'time'.",
+                        s, {"action"}));
     }
     {
         Json p = Json::object();
@@ -256,6 +289,19 @@ Json McpServer::sceneJson() const {
         images.push(ji);
     }
     s.set("images", images);
+
+    Json motions = Json::array();
+    for (const Motion& m : m_doc.scene.motions()) {
+        Json jm = Json::object();
+        Json targets = Json::array();
+        for (const std::string& b : m.bodies) targets.push(b);
+        jm.set("name", m.name).set("kind", motionKindKey(m.kind)).set("bodies", targets);
+        jm.set("axis", vec3(m.axis)).set("origin", vec3(m.origin)).set("speed", m.speed);
+        jm.set("speed_unit", m.rateUnit()).set("range", m.range).set("mode", motionModeKey(m.mode));
+        jm.set("start", m.start).set("enabled", m.enabled);
+        motions.push(jm);
+    }
+    s.set("motions", motions);
     s.set("view", m_view ? m_view->describe() : std::string("headless (no window)"));
     return s;
 }
@@ -419,7 +465,10 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         };
         bool ok = true;
         if (a["plane"].isString()) ok = step("PLANE " + a["plane"].asString()) && ok;
-        if (a["window"].isString()) ok = step(a["window"].asString() == "2d" ? "2D" : "3D") && ok;
+        if (a["window"].isString()) {
+            const std::string w = a["window"].asString();
+            ok = step(w == "2d" ? "2D" : w == "simulation" ? "SIM" : "3D") && ok;
+        }
         if (a["view"].isString()) ok = step("VIEW " + a["view"].asString()) && ok;
         if (a["projection"].isString()) ok = step(a["projection"].asString() == "orthographic" ? "ORTHO" : "PERSP") && ok;
         if (a["display"].isString()) ok = step("DISPLAY " + a["display"].asString()) && ok;
@@ -427,6 +476,50 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["fit"].asBool()) ok = step("FIT") && ok;
         if (log.empty()) return textResult("Nothing to change", true);
         return textResult(log, !ok);
+    }
+    if (name == "create_motion") {
+        const std::string kind = a["kind"].asString();
+        if (kind != "circular" && kind != "linear") return textResult("kind must be circular or linear", true);
+        std::string line = kind == "circular" ? "MOTION CIRCULAR" : "MOTION LINEAR";
+        if (a["name"].isString() && !a["name"].asString().empty()) line += " NAME " + quote(a["name"].asString());
+        auto vec = [&](const char* key) {
+            const Json& v = a[key];
+            return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber());
+        };
+        if (a["axis"].isArray()) line += " AXIS " + vec("axis");
+        if (a["origin"].isArray()) line += " AT " + vec("origin");
+        if (a["speed"].isNumber()) line += " SPEED " + num(a["speed"].asNumber());
+        if (a["rpm"].isNumber()) line += " RPM " + num(a["rpm"].asNumber());
+        if (a["range"].isNumber()) line += " RANGE " + num(a["range"].asNumber());
+        if (a["mode"].isString()) line += " MODE " + a["mode"].asString();
+        if (a["start"].isNumber()) line += " START " + num(a["start"].asNumber());
+        if (a["bodies"].isArray() && a["bodies"].size() > 0) {
+            line += " BODIES";
+            for (const Json& b : a["bodies"].items()) line += " " + quote(b.asString() == "*" ? "ALL" : b.asString());
+        }
+        Json r = runLine(line);
+        if (!r["isError"].asBool() && a["enabled"].isBool() && !m_doc.scene.motions().empty()) {
+            // The motion just added or updated is the one with that name (or the newest).
+            std::string target = m_doc.scene.motions().back().name;
+            if (a["name"].isString())
+                for (const Motion& m : m_doc.scene.motions())
+                    if (m.name == a["name"].asString()) target = m.name;
+            runLine(std::string(a["enabled"].asBool() ? "MOTION ON " : "MOTION OFF ") + target);
+        }
+        return r;
+    }
+    if (name == "delete_motion") return runLine("MOTION DELETE " + a["name"].asString());
+    if (name == "simulate") {
+        const std::string act = a["action"].asString();
+        const std::string t = num(a["time"].asNumber());
+        const std::string v = num(a["value"].asNumber());
+        if (act == "poses") return runLine("SIM AT " + t);
+        if (act == "seek") return runLine("SIM TIME " + t);
+        if (act == "speed" || act == "duration") return runLine("SIM " + toUpper(act) + " " + v);
+        if (act == "axes" || act == "paths")
+            return runLine("SIM " + toUpper(act) + (a["value"].isNumber() ? (a["value"].asNumber() != 0 ? " ON" : " OFF") : ""));
+        if (act == "open" || act == "play" || act == "pause" || act == "stop") return runLine("SIM " + toUpper(act));
+        return textResult("unknown action", true);
     }
     if (name == "save_project")
         return runLine(a["path"].isString() ? "SAVE " + quote(a["path"].asString()) : std::string("SAVE"));

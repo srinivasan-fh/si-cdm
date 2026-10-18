@@ -32,7 +32,7 @@ command line, `FILES` lists the tabs, `FILES 2` or `FILES part` switches, `CLOSE
 
 ## View windows
 
-The top bar of the canvas switches between two windows of the active file (also `Tab`):
+The top bar of the canvas switches between three windows of the active file (also `Tab`; Simulation is described below):
 
 - **3D Model** – perspective / orthographic model view with Shaded, Shaded + Edges, Wireframe and
   Hidden Line display.
@@ -48,6 +48,41 @@ and the ◀ ▶ arrows by the projection badge (turn 90° around Z). The badge s
 right-click for more views, including Level View to reset the roll. Picking a face, edge or corner
 always comes back level. In the 2D window its faces pick
 the drawing plane; edges and corners open the 3D window at that angle.
+
+## Simulation window (motion control)
+
+![Simulation window](docs/simulation.png)
+
+The third window, **Simulation** (top bar, *View → Simulation Window* or `Shift + Tab`), plays motions
+of the 3D model without changing it — Stop puts every body back where it was modelled.
+
+- **Circular motion:** rotation about an axis (X / Y / Z or any direction) through a point, in deg/s
+  (or rpm). The axis point defaults to the centre of the moved bodies, so a wheel spins about its hub.
+- **Linear motion:** travel along a direction in mm/s.
+- **Range & mode:** an optional sweep (deg) or stroke (mm) with Continuous, Loop, Oscillate (back and
+  forth) or Once; a start delay; negative speeds reverse. Each motion can be switched on and off.
+- **Chained motions:** a body in several motions gets them in list order, the first outermost — e.g. a
+  linear *Drive* on all bodies listed before a circular *Wheel spin* on the wheels carries the spinning
+  wheels along.
+- **Playback** (options bar): rewind, play / pause (`Space`), stop, a timeline to scrub (`←` / `→` step
+  1/30 s, `Home` rewinds), speed 0.1×–10× and loop. The length follows the motions or is set by hand.
+- **Real-time axes:** live X / Y / Z triads on the moving parts and the selection, the rotation axes
+  with a turning arrow and travel arrows with live values, optional paths, and a digital readout of
+  the selected body — position X Y Z, rotation A B C and their velocities.
+- **Motion Study panel** (right): add motions for the selected body (or all), edit every parameter
+  live, add / remove bodies.
+
+Motions are saved in the project. On the command line:
+
+```text
+MOTION LINEAR Drive DIR X SPEED 20 STROKE 200 OSC BODIES ALL
+MOTION CIRCLE "Wheel spin" AXIS Y RPM 30 BODIES "Wheel 1" "Wheel 2"
+MOTION CIRCLE Turntable AXIS Z AT 0,0,0 SPEED -45 RANGE 90 ONCE START 2
+MOTION   MOTION OFF Drive   MOTION DELETE Drive
+SIM PLAY   SIM PAUSE   SIM STOP   SIM TIME 2.5   SIM SPEED 2   SIM DURATION 12   SIM AXES OFF   SIM AT 3
+```
+
+`SIM AT t` (also headless) reports every motion value and moving body position at time t.
 
 ## Tools (left rail)
 
@@ -107,13 +142,14 @@ centre and opacity in the Model panel, or drag it with the Move tool.
 ## AI agents (MCP)
 
 SI CDM includes a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents can read
-and edit the 2D and 3D model. Tools: `get_scene`, `create_sketch`, `create_solid`, `extrude`, `modify`, `delete`,
+and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`, `create_solid`, `extrude`, `modify`, `delete`,
+`create_motion`, `delete_motion`, `simulate` (play / pause / seek, or body poses at a time — headless too),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 
 - **Live app (HTTP):** enable *AI → MCP Server* or start with `--mcp-port 8765`, then
   `claude mcp add --transport http si-cdm http://127.0.0.1:8765/mcp`. The agent drives the open
-  window (views, 2D/3D switch and file tabs included: `run_command` with `FILES`, `CLOSE`). Listens on localhost only.
+  window (views, 2D / 3D / Simulation switch and file tabs included: `run_command` with `FILES`, `CLOSE`). Listens on localhost only.
 - **Headless (stdio):** `sicdm-mcp [project.sicdm]` works on files without a window:
   `claude mcp add si-cdm-files -- /path/to/build/release/sicdm-mcp`.
 
@@ -121,7 +157,8 @@ and edit the 2D and 3D model. Tools: `get_scene`, `create_sketch`, `create_solid
 
 ## Controls
 
-- `Tab`: switch 2D Drawing / 3D Model window
+- `Tab`: switch 2D Drawing / 3D Model window; `Shift + Tab`: Simulation window
+- Simulation: `Space` play / pause, `←` / `→` step, `Home` rewind
 - `Ctrl + Tab` / `Ctrl + Shift + Tab`: next / previous file tab; `Ctrl/⌘ W`: close the file tab
 - `Space`: command line
 - Right drag (or left drag on empty space): orbit in 3D, pan in 2D

@@ -120,6 +120,48 @@ CommandOutput addCurve(Document& doc, SketchCurve c) {
     return out;
 }
 
+std::optional<Vec3> axisFromWord(const std::string& w) {
+    const std::string s = lower(w);
+    if (s == "x" || s == "+x") return Vec3{1, 0, 0};
+    if (s == "y" || s == "+y") return Vec3{0, 1, 0};
+    if (s == "z" || s == "+z") return Vec3{0, 0, 1};
+    if (s == "-x") return Vec3{-1, 0, 0};
+    if (s == "-y") return Vec3{0, -1, 0};
+    if (s == "-z") return Vec3{0, 0, -1};
+    const auto v = parseVec3(w);
+    if (v && length(*v) > 1e-6f) return v;
+    return std::nullopt;
+}
+
+int findMotion(const Document& d, const std::string& name) {
+    for (std::size_t i = 0; i < d.scene.motions().size(); ++i)
+        if (iequal(d.scene.motions()[i].name, name)) return static_cast<int>(i);
+    return -1;
+}
+
+std::string vecText(const Vec3& v) { return fmt("(%.1f, %.1f, %.1f)", v.x, v.y, v.z); }
+
+// Poses of the moving bodies and the motion values at time t.
+std::vector<std::string> describePoses(const Document& doc, float t) {
+    std::vector<std::string> lines;
+    lines.push_back(fmt("t = %.3f s", t));
+    for (const Motion& m : doc.scene.motions()) {
+        if (!m.enabled) continue;
+        lines.push_back("  " + m.name + "  " + fmt("%.2f ", motionValue(m, t)) + m.unit() + "  " +
+                        fmt("%.2f ", motionRate(m, t)) + m.rateUnit());
+    }
+    const std::vector<Mat4> tf = motionTransforms(doc.scene, t);
+    for (std::size_t i = 0; i < doc.scene.bodies().size(); ++i) {
+        if (!isMoving(doc.scene, i)) continue;
+        const Body& b = doc.scene.bodies()[i];
+        const Vec3 c = tf[i].transformPoint(b.bounds().center());
+        const Vec3 x = tf[i].transformDir({1, 0, 0});
+        const float heading = degrees(std::atan2(x.y, x.x));
+        lines.push_back("  " + b.name + "  centre " + vecText(c) + " mm" + fmt("  x-axis heading %.1f deg", heading));
+    }
+    return lines;
+}
+
 CommandOutput needView(ViewHost* view, const char* what) {
     CommandOutput out;
     if (!view) out.fail(std::string(what) + " needs the app window (not available headless)");
@@ -367,6 +409,166 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         if (!warn.empty()) out.say(warn);
         return out;
     }
+    // ---- Motion & simulation ----------------------------------------------
+    if (cmd == "MOTION") {
+        auto& motions = doc.scene.motions();
+        if (a.empty() || iequal(a[0], "list")) {
+            if (motions.empty()) out.say("No motions. Example: MOTION CIRCLE \"Spin\" AXIS Z SPEED 90 BODIES ALL");
+            for (const Motion& m : motions) out.say(describeMotion(m));
+            return out;
+        }
+        const std::string sub = lower(a[0]);
+        if (sub == "delete" || sub == "erase" || sub == "on" || sub == "off" || sub == "clear") {
+            if (sub == "clear") {
+                motions.clear();
+                markChanged(doc);
+                out.say("All motions removed");
+                return out;
+            }
+            if (a.size() < 2) return usage();
+            const int i = findMotion(doc, joinArgs(a, 1));
+            if (i < 0) return out.fail("No motion named " + joinArgs(a, 1));
+            Motion& m = motions[static_cast<std::size_t>(i)];
+            const std::string name = m.name;
+            if (sub == "on" || sub == "off") m.enabled = sub == "on";
+            else motions.erase(motions.begin() + i);
+            markChanged(doc);
+            out.say((sub == "delete" || sub == "erase" ? "Deleted " : sub == "on" ? "Enabled " : "Disabled ") + name);
+            return out;
+        }
+        const auto kind = motionKindFromKey(a[0]);
+        if (!kind) return usage();
+
+        // Options; a motion that already has the name is updated, keeping what is not given.
+        std::optional<std::string> name;
+        std::optional<Vec3> axis, origin;
+        std::optional<float> speed, range, start;
+        std::optional<MotionMode> mode;
+        std::optional<std::vector<std::string>> targets;
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            const bool hasNext = i + 1 < a.size();
+            auto num = [&](std::optional<float>& dst) {
+                const auto v = hasNext ? parseNumber(a[i + 1]) : std::nullopt;
+                if (v) dst = *v, ++i;
+                return v.has_value();
+            };
+            if (k == "axis" || k == "dir" || k == "direction") {
+                if (!hasNext || !(axis = axisFromWord(a[i + 1]))) return out.fail("AXIS needs X, Y, Z, -X... or x,y,z");
+                ++i;
+            } else if (k == "at" || k == "origin" || k == "center" || k == "centre") {
+                if (!hasNext || !(origin = parseVec3(a[i + 1]))) return out.fail("AT needs x,y,z");
+                ++i;
+            } else if (k == "speed" || k == "rate" || k == "rpm") {
+                if (!num(speed)) return out.fail("SPEED needs a number");
+                if (k == "rpm") *speed *= 6.0f; // rev/min -> deg/s
+            } else if (k == "range" || k == "stroke" || k == "sweep" || k == "travel") {
+                if (!num(range) || *range < 0.0f) return out.fail("RANGE needs a positive number");
+            } else if (k == "start" || k == "delay") {
+                if (!num(start) || *start < 0.0f) return out.fail("START needs seconds >= 0");
+            } else if (k == "mode") {
+                if (!hasNext || !(mode = motionModeFromKey(a[i + 1]))) return out.fail("MODE: CONT, LOOP, OSC or ONCE");
+                ++i;
+            } else if (motionModeFromKey(k)) {
+                mode = motionModeFromKey(k);
+            } else if (k == "bodies" || k == "body" || k == "on") {
+                targets = std::vector<std::string>(a.begin() + static_cast<std::ptrdiff_t>(i + 1), a.end());
+                break;
+            } else if (k == "name" && hasNext) {
+                name = a[++i];
+            } else if (!name) {
+                name = a[i];
+            } else {
+                return out.fail("Unexpected '" + a[i] + "'.  " + spec->usage);
+            }
+        }
+
+        Motion m;
+        const int existing = name ? findMotion(doc, *name) : -1;
+        if (existing >= 0) m = motions[static_cast<std::size_t>(existing)];
+        else {
+            m.speed = *kind == MotionKind::Circular ? 90.0f : 20.0f;
+            m.axis = *kind == MotionKind::Circular ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
+            int n = 1;
+            const char* base = *kind == MotionKind::Circular ? "Circular " : "Linear ";
+            while (findMotion(doc, base + std::to_string(n)) >= 0) ++n;
+            m.name = name.value_or(base + std::to_string(n));
+        }
+        m.kind = *kind;
+        if (targets) {
+            m.bodies.clear();
+            for (const std::string& t : *targets) {
+                if (iequal(t, "all") || t == "*") {
+                    m.bodies = {"*"};
+                    break;
+                }
+                const int b = findBody(doc, t);
+                if (b < 0) return out.fail("No body named " + t + " (quote names with spaces)");
+                m.bodies.push_back(doc.scene.bodies()[static_cast<std::size_t>(b)].name);
+            }
+        }
+        if (m.bodies.empty()) {
+            const int sel = doc.selectedBody;
+            if (sel < 0 || sel >= static_cast<int>(doc.scene.bodies().size()))
+                return out.fail("Select a body first, or add BODIES name... | ALL");
+            m.bodies = {doc.scene.bodies()[static_cast<std::size_t>(sel)].name};
+        }
+        if (axis) m.axis = normalize(*axis);
+        if (speed) m.speed = *speed;
+        if (range) m.range = *range;
+        if (mode) m.mode = *mode;
+        if (range && *range > 0.0f && !mode && m.mode == MotionMode::Continuous) m.mode = MotionMode::Oscillate;
+        if (start) m.start = *start;
+        if (origin) m.origin = *origin;
+        else if (existing < 0 && m.kind == MotionKind::Circular) {
+            // Default axis position: centre of the moved bodies (a wheel spins about its hub).
+            AABB box;
+            for (const Body& b : doc.scene.bodies())
+                if (m.moves(b.name)) box.expand(b.bounds());
+            if (box.valid()) m.origin = box.center();
+        }
+        if (existing >= 0) motions[static_cast<std::size_t>(existing)] = m;
+        else motions.push_back(m);
+        markChanged(doc);
+        out.say((existing >= 0 ? "Updated " : "Added ") + describeMotion(m));
+        return out;
+    }
+    if (cmd == "SIM") {
+        const std::string sub = a.empty() ? "open" : lower(a[0]);
+        auto value = [&](float fallback) -> std::optional<float> {
+            if (a.size() < 2) return fallback;
+            if (const auto on = onOff({a[1]})) return *on ? 1.0f : 0.0f;
+            return parseNumber(a[1]);
+        };
+        if (sub == "at" || sub == "poses" || sub == "pose") {
+            const auto t = value(0.0f);
+            if (!t || *t < 0.0f) return out.fail("Usage: SIM AT seconds");
+            for (std::string& l : describePoses(doc, *t)) out.say(std::move(l));
+            return out;
+        }
+        if (sub == "duration" || sub == "length") {
+            const auto d = value(0.0f);
+            if (!d || *d < 0.0f) return out.fail("Usage: SIM DURATION seconds (0 = automatic)");
+            doc.state.simDuration = *d;
+            markChanged(doc);
+            out.say(*d > 0.0f ? fmt("Simulation length %.2f s", *d)
+                              : fmt("Simulation length automatic (%.2f s)", suggestedDuration(doc.scene)));
+            return out;
+        }
+        static const char* kActions[] = {"open", "play", "pause", "toggle", "stop", "reset", "time", "seek",
+                                         "speed", "axes", "paths"};
+        if (std::find(std::begin(kActions), std::end(kActions), sub) == std::end(kActions)) return usage();
+        const bool needsValue = sub == "time" || sub == "seek" || sub == "speed";
+        const auto v = value(sub == "axes" || sub == "paths" ? -1.0f : 0.0f); // -1 toggles
+        if (!v || (needsValue && a.size() < 2)) return usage();
+        if (auto o = needView(view, "SIM"); !o.ok) return o;
+        std::string reply;
+        if (!view->simulation(sub == "seek" ? "time" : sub == "reset" ? "stop" : sub, *v, &reply))
+            return out.fail(reply.empty() ? "Simulation not available" : reply);
+        out.say(reply);
+        return out;
+    }
+
     if (cmd == "FILES") {
         if (a.empty()) {
             const auto tabs = view ? view->fileTabs() : std::vector<std::string>{};

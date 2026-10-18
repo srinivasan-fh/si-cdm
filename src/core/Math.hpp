@@ -119,6 +119,23 @@ inline Mat4 scale(const Vec3& s) noexcept {
     return r;
 }
 
+// Rotation by `angleRad` around the unit vector `axis` (right-hand rule, Rodrigues).
+inline Mat4 rotateAxis(const Vec3& axis, float angleRad) noexcept {
+    const Vec3 a = normalize(axis);
+    const float c = std::cos(angleRad), s = std::sin(angleRad), k = 1.0f - c;
+    Mat4 r = Mat4::identity();
+    r.m[0][0] = c + a.x * a.x * k;
+    r.m[0][1] = a.y * a.x * k + a.z * s;
+    r.m[0][2] = a.z * a.x * k - a.y * s;
+    r.m[1][0] = a.x * a.y * k - a.z * s;
+    r.m[1][1] = c + a.y * a.y * k;
+    r.m[1][2] = a.z * a.y * k + a.x * s;
+    r.m[2][0] = a.x * a.z * k + a.y * s;
+    r.m[2][1] = a.y * a.z * k - a.x * s;
+    r.m[2][2] = c + a.z * a.z * k;
+    return r;
+}
+
 // View matrix looking from `eye` to `target` with `up` hint.
 inline Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up) noexcept {
     const Vec3 f = normalize(target - eye);

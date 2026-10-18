@@ -79,6 +79,16 @@ void icon2D(ImDrawList* dl, ImVec2 c, ImU32 col) {
     dl->AddLine({c.x - 1, c.y - 3}, {c.x + 4, c.y + 3}, col, 1.2f);
 }
 
+void iconSim(ImDrawList* dl, ImVec2 c, ImU32 col) {
+    // Orbiting part around an axis with a motion arrow.
+    dl->AddLine({c.x, c.y - 8}, {c.x, c.y + 8}, col, 1.2f);
+    dl->PathArcTo({c.x, c.y}, 6.5f, kPi * 0.15f, kPi * 1.65f, 16);
+    dl->PathStroke(col, 0, 1.4f);
+    const ImVec2 tip{c.x + 6.5f * std::cos(kPi * 1.65f), c.y + 6.5f * std::sin(kPi * 1.65f)};
+    dl->AddTriangleFilled({tip.x + 3.5f, tip.y + 0.5f}, {tip.x - 1.0f, tip.y - 3.0f}, {tip.x - 0.5f, tip.y + 3.0f}, col);
+    dl->AddCircleFilled({c.x + 6.2f, c.y + 2.0f}, 2.0f, col);
+}
+
 void icon3D(ImDrawList* dl, ImVec2 c, ImU32 col) {
     // Isometric cube.
     const ImVec2 t{c.x, c.y - 7}, l{c.x - 6, c.y - 3.5f}, r{c.x + 6, c.y - 3.5f}, m{c.x, c.y};
@@ -112,10 +122,12 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     m_leftDockWidth = m_toolboxWidth;
     if (st.showModelTree) m_leftDockWidth += drawModelTree(scene, st, mv->WorkPos.x + m_toolboxWidth, railTop, bottom);
     drawFileTabs(cmd, st);
+    // The Simulation window docks the motion study on the right.
+    const float rightDock = st.mode == ViewMode::Simulation ? drawMotionPanel(scene, cmd, st, m_tabsBottom, bottom) : 0.0f;
 
     const bool is2D = st.mode == ViewMode::Drawing2D;
     m_canvasMin = {mv->WorkPos.x + m_leftDockWidth + (is2D ? kRulerSize : 0.0f), m_tabsBottom + (is2D ? kRulerSize : 0.0f)};
-    m_canvasMax = {mv->WorkPos.x + mv->WorkSize.x, bottom};
+    m_canvasMax = {mv->WorkPos.x + mv->WorkSize.x - rightDock, bottom};
     if (is2D) drawRulers(cam, st);
 
     const ViewCubeResult vc = m_viewCube.draw(cam, {m_canvasMax.x - 10.0f, m_canvasMax.y - 10.0f}, is2D);
@@ -171,7 +183,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-        if (ImGui::MenuItem("3D Model Window", "Tab", !is2D)) cmd.mode = ViewMode::Model3D;
+        if (ImGui::MenuItem("3D Model Window", "Tab", st.mode == ViewMode::Model3D)) cmd.mode = ViewMode::Model3D;
+        if (ImGui::MenuItem("Simulation Window", "Shift+Tab", st.mode == ViewMode::Simulation)) cmd.mode = ViewMode::Simulation;
         if (ImGui::BeginMenu("2D Drawing Window")) {
             for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right})
                 if (ImGui::MenuItem(planeName(p), nullptr, is2D && st.plane == p)) {
@@ -290,9 +303,11 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     }
     divider();
 
-    // Tool options.
+    // Tool options (the Simulation window shows playback instead).
     ImGui::AlignTextToFramePadding();
-    if (isSketchTool(tool.id)) {
+    if (st.mode == ViewMode::Simulation) {
+        drawSimTransport(st);
+    } else if (isSketchTool(tool.id)) {
         ImGui::TextDisabled("Plane");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(110);
@@ -350,11 +365,18 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     const float right = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
     ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, right - m_rightGroupWidth));
     const float groupStart = ImGui::GetCursorScreenPos().x;
-    if (segment("2D Drawing", is2D, 128.0f, ImDrawFlags_RoundCornersLeft, icon2D) && !is2D) cmd.mode = ViewMode::Drawing2D;
+    const bool isSim = st.mode == ViewMode::Simulation;
+    if (segment("2D Drawing", is2D, 118.0f, ImDrawFlags_RoundCornersLeft, icon2D) && !is2D) cmd.mode = ViewMode::Drawing2D;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("2D drawing window: plan view of the %s plane  [Tab]", shortPlaneName(st.plane));
     ImGui::SameLine(0, 2);
-    if (segment("3D Model", !is2D, 128.0f, ImDrawFlags_RoundCornersRight, icon3D) && is2D) cmd.mode = ViewMode::Model3D;
+    if (segment("3D Model", st.mode == ViewMode::Model3D, 110.0f, ImDrawFlags_RoundCornersNone, icon3D) &&
+        st.mode != ViewMode::Model3D)
+        cmd.mode = ViewMode::Model3D;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D model window  [Tab]");
+    ImGui::SameLine(0, 2);
+    if (segment("Simulation", isSim, 118.0f, ImDrawFlags_RoundCornersRight, iconSim) && !isSim)
+        cmd.mode = ViewMode::Simulation;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Simulation window: circular and linear motion, live axes  [Shift+Tab]");
     divider();
 
     if (is2D) {
@@ -447,7 +469,9 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
             if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) requestClose(cmd, st, static_cast<int>(i));
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
                 ImGui::SetTooltip("%s\n%s window%s", f.path.empty() ? "Not saved yet" : f.path.c_str(),
-                                  f.mode == ViewMode::Drawing2D ? "2D Drawing" : "3D Model",
+                                  f.mode == ViewMode::Drawing2D   ? "2D Drawing"
+                                  : f.mode == ViewMode::Simulation ? "Simulation"
+                                                                   : "3D Model",
                                   f.dirty ? "\nUnsaved changes" : "");
             }
             if (selected) {
@@ -709,7 +733,7 @@ void LandingUI::drawStatusBar(const Scene& scene, const OrbitCamera& cam, const 
     else
         ImGui::TextDisabled("%s     --      %s     --   mm", uName, vName);
     ImGui::SameLine();
-    ImGui::TextDisabled("|  %s  |  Bodies %zu  Curves %zu  Images %zu", st.mode == ViewMode::Drawing2D ? "2D Drawing" : "3D Model",
+    ImGui::TextDisabled("|  %s  |  Bodies %zu  Curves %zu  Images %zu", st.mode == ViewMode::Drawing2D ? "2D Drawing" : st.mode == ViewMode::Simulation ? "Simulation" : "3D Model",
                         scene.bodies().size(), scene.sketch().curves().size(), scene.images().size());
     if (st.mcpRunning) {
         ImGui::SameLine();
@@ -778,7 +802,8 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
     // Shortcuts: Space jumps to the command line; Ctrl/Cmd + N O S I E for files
     // (these also work while typing in the command line, but not in dialogs).
     const bool mod = commandModifierHeld();
-    if (!io.WantCaptureKeyboard && !mod && ImGui::IsKeyPressed(ImGuiKey_Space, false)) m_focusCommand = true;
+    if (!io.WantCaptureKeyboard && !mod && ImGui::IsKeyPressed(ImGuiKey_Space, false) && st.mode != ViewMode::Simulation)
+        m_focusCommand = true; // (Space plays / pauses in the Simulation window)
     if (mod && !m_fileDialog.isOpen() && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
         if (ImGui::IsKeyPressed(ImGuiKey_N, false)) requestFile(-1, st);
         if (mod && ImGui::IsKeyPressed(ImGuiKey_O, false)) requestFile(FileOpen, st);
@@ -826,7 +851,10 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
     }
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.13f, 0.14f, 0.17f, 1.0f});
     const bool submitted = ImGui::InputTextWithHint(
-        "##command", "Type a command (HELP for the list, Tab completes, Space to focus) or x,y coordinates",
+        "##command",
+        st.mode == ViewMode::Simulation
+            ? "Type a command (SIM PLAY, MOTION ..., HELP; click here to type; Space plays / pauses the simulation)"
+            : "Type a command (HELP for the list, Tab completes, Space to focus) or x,y coordinates",
         m_commandBuf, sizeof(m_commandBuf),
         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion |
             ImGuiInputTextFlags_CallbackHistory,
@@ -1033,6 +1061,9 @@ void LandingUI::drawControlsWindow(UiState& st) {
         if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
             const char* rows[][2] = {
                 {"Tab", "Switch 2D Drawing / 3D Model window"},
+                {"Shift + Tab", "Simulation window"},
+                {"Space (Simulation)", "Play / pause"},
+                {"Home / Left / Right (Simulation)", "Rewind / step back / step forward"},
                 {"Ctrl + Tab / Shift", "Next / previous file tab"},
                 {"Ctrl + W", "Close the file tab"},
                 {"ViewCube click", "Face / edge / corner view (26 views)"},
@@ -1081,6 +1112,311 @@ void LandingUI::drawAboutWindow(UiState& st) {
         ImGui::Text("Dear ImGui %s", IMGUI_VERSION);
     }
     ImGui::End();
+}
+
+
+// ---------------------------------------------------------------------------
+// Simulation window
+
+namespace {
+
+// Rotation of a rigid transform as A (about X), B (about Y), C (about Z) in degrees, ZYX order.
+Vec3 eulerABC(const Mat4& t) {
+    const float r20 = std::clamp(t.m[0][2], -1.0f, 1.0f);
+    return {degrees(std::atan2(t.m[1][2], t.m[2][2])), degrees(-std::asin(r20)), degrees(std::atan2(t.m[0][1], t.m[0][0]))};
+}
+
+std::string quotedName(const std::string& s) { return "\"" + s + "\""; }
+
+const ImVec4 kMotionColors[] = {{1.00f, 0.66f, 0.28f, 1}, {0.45f, 0.80f, 1.00f, 1}, {0.60f, 0.90f, 0.45f, 1},
+                                {0.95f, 0.50f, 0.75f, 1}, {0.85f, 0.80f, 0.40f, 1}, {0.70f, 0.60f, 1.00f, 1}};
+
+} // namespace
+
+ImVec4 motionColor(std::size_t i) { return kMotionColors[i % (sizeof(kMotionColors) / sizeof(kMotionColors[0]))]; }
+
+void LandingUI::drawSimTransport(UiState& st) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float fh = ImGui::GetFrameHeight();
+    auto iconButton = [&](const char* id, const char* tip, auto&& icon, bool on = false) {
+        ImGui::InvisibleButton(id, {fh + 6, fh});
+        const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+        const bool hov = ImGui::IsItemHovered();
+        dl->AddRectFilled(lo, hi, on ? kAccent : hov ? IM_COL32(58, 64, 76, 255) : IM_COL32(40, 44, 52, 255), 4.0f);
+        icon(ImVec2{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, IM_COL32(230, 232, 238, 255));
+        if (hov) ImGui::SetTooltip("%s", tip);
+        ImGui::SameLine(0, 4);
+        return ImGui::IsItemClicked();
+    };
+    if (iconButton("##rewind", "Rewind to 0 s  [Home]", [&](ImVec2 c, ImU32 col) {
+            dl->AddRectFilled({c.x - 6, c.y - 5}, {c.x - 4, c.y + 5}, col);
+            dl->AddTriangleFilled({c.x + 5, c.y - 5}, {c.x + 5, c.y + 5}, {c.x - 3, c.y}, col);
+        }))
+        st.simTime = 0.0f;
+    if (iconButton("##play", st.simPlaying ? "Pause  [Space]" : "Play  [Space]",
+                   [&](ImVec2 c, ImU32 col) {
+                       if (st.simPlaying) {
+                           dl->AddRectFilled({c.x - 5, c.y - 5}, {c.x - 1.5f, c.y + 5}, col);
+                           dl->AddRectFilled({c.x + 1.5f, c.y - 5}, {c.x + 5, c.y + 5}, col);
+                       } else {
+                           dl->AddTriangleFilled({c.x - 4, c.y - 6}, {c.x - 4, c.y + 6}, {c.x + 6, c.y}, col);
+                       }
+                   },
+                   st.simPlaying)) {
+        if (!st.simPlaying && st.simTime >= st.simDuration - 1e-4f) st.simTime = 0.0f; // replay from the start
+        st.simPlaying = !st.simPlaying;
+    }
+    if (iconButton("##stop", "Stop: back to the modelled positions", [&](ImVec2 c, ImU32 col) {
+            dl->AddRectFilled({c.x - 5, c.y - 5}, {c.x + 5, c.y + 5}, col, 1.0f);
+        })) {
+        st.simPlaying = false;
+        st.simTime = 0.0f;
+    }
+    ImGui::SetNextItemWidth(230);
+    char label[48];
+    std::snprintf(label, sizeof(label), "t = %.2f / %.1f s", static_cast<double>(st.simTime),
+                  static_cast<double>(st.simDuration));
+    ImGui::SliderFloat("##simtime", &st.simTime, 0.0f, st.simDuration, label, ImGuiSliderFlags_NoRoundToFormat);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scrub the timeline  [Left / Right step 1/30 s]");
+    ImGui::SameLine();
+    static const float kSpeeds[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 10.0f};
+    char speed[16];
+    std::snprintf(speed, sizeof(speed), "%gx", static_cast<double>(st.simSpeed));
+    ImGui::SetNextItemWidth(70);
+    if (ImGui::BeginCombo("##simspeed", speed)) {
+        for (float s : kSpeeds) {
+            std::snprintf(speed, sizeof(speed), "%gx", static_cast<double>(s));
+            if (ImGui::Selectable(speed, s == st.simSpeed)) st.simSpeed = s;
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback speed (1x = real time)");
+    ImGui::SameLine();
+    ImGui::Checkbox("Loop", &st.simLoop);
+}
+
+float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom) {
+    const ImGuiViewport* mv = ImGui::GetMainViewport();
+    constexpr float kWidth = 340.0f;
+    ImGui::SetNextWindowPos({mv->WorkPos.x + mv->WorkSize.x - kWidth, top});
+    ImGui::SetNextWindowSize({kWidth, bottom - top});
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
+                                       ImGuiWindowFlags_NoBringToFrontOnFocus;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::Begin("##motionstudy", nullptr, flags);
+    ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "MOTION STUDY");
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu motion%s", scene.motions().size(), scene.motions().size() == 1 ? "" : "s");
+
+    const auto& bodies = scene.bodies();
+    const bool hasSel = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(bodies.size());
+    const std::string targets = hasSel ? std::string() : " BODIES ALL";
+    if (ImGui::Button("+ Circular", {150, 0})) cmd.commands.push_back("MOTION CIRCULAR" + targets);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Rotate %s about an axis (deg/s)", hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name.c_str() : "all bodies");
+    ImGui::SameLine();
+    if (ImGui::Button("+ Linear", {150, 0})) cmd.commands.push_back("MOTION LINEAR" + targets);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Move %s along a direction (mm/s)", hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name.c_str() : "all bodies");
+    ImGui::TextDisabled(hasSel ? "Moves the selected body" : "Moves all bodies (select one to target it)");
+
+    ImGui::SeparatorText("Show");
+    ImGui::Checkbox("Real-time axes", &st.simAxes);
+    ImGui::SameLine(170);
+    ImGui::Checkbox("Motion axes", &st.simMotionAxes);
+    ImGui::Checkbox("Paths", &st.simPaths);
+    ImGui::SameLine(170);
+    ImGui::Checkbox("Readout", &st.simReadout);
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Length");
+        ImGui::SameLine();
+        bool automatic = st.simDurationSetting <= 0.0f;
+        if (ImGui::Checkbox("Auto", &automatic))
+            cmd.commands.push_back(automatic ? "SIM DURATION 0" : "SIM DURATION " + std::to_string(st.simDuration));
+        ImGui::SameLine();
+        float d = st.simDuration;
+        ImGui::SetNextItemWidth(110);
+        if (automatic) ImGui::BeginDisabled();
+        if (ImGui::DragFloat("##simlen", &d, 0.1f, 0.1f, 3600.0f, "%.1f s") && d > 0.05f) {
+            char line[48];
+            std::snprintf(line, sizeof(line), "SIM DURATION %.3f", static_cast<double>(d));
+            cmd.commands.push_back(line);
+        }
+        if (automatic) ImGui::EndDisabled();
+    }
+
+    ImGui::SeparatorText("Motions");
+    auto& motions = scene.motions();
+    const float readoutH = st.simReadout ? 190.0f : 0.0f;
+    ImGui::BeginChild("##motions", {0, -readoutH}, ImGuiChildFlags_None);
+    if (motions.empty()) {
+        ImGui::TextWrapped("No motions yet. Select a body, add a Circular (rotation) or Linear (travel) motion, "
+                           "then press Play.");
+        ImGui::Spacing();
+        ImGui::TextDisabled("Command line:");
+        ImGui::TextWrapped("MOTION LINEAR Drive DIR X SPEED 20 BODIES ALL");
+        ImGui::TextWrapped("MOTION CIRCLE Spin AXIS Y RPM 30 BODIES \"Wheel 1\"");
+    }
+    int remove = -1;
+    for (std::size_t i = 0; i < motions.size(); ++i) {
+        Motion& m = motions[i];
+        ImGui::PushID(static_cast<int>(i));
+        const ImVec4 col = motionColor(i);
+        ImGui::PushStyleColor(ImGuiCol_Text, m.enabled ? col : ImVec4{0.5f, 0.5f, 0.55f, 1});
+        const std::string header = std::string(m.kind == MotionKind::Circular ? "@  " : "->  ") + m.name + "###hdr";
+        const bool open = ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        ImGui::PopStyleColor();
+        if (open) {
+            ImGui::Checkbox("##on", &m.enabled);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enabled");
+            ImGui::SameLine();
+            char name[96];
+            std::snprintf(name, sizeof(name), "%s", m.name.c_str());
+            ImGui::SetNextItemWidth(180);
+            if (ImGui::InputText("##name", name, sizeof(name)) && name[0]) m.name = name;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete")) remove = static_cast<int>(i);
+
+            int kind = m.kind == MotionKind::Circular ? 0 : 1;
+            if (ImGui::RadioButton("Circular", &kind, 0)) m.kind = MotionKind::Circular;
+            ImGui::SameLine();
+            if (ImGui::RadioButton("Linear", &kind, 1)) m.kind = MotionKind::Linear;
+
+            // Moved bodies.
+            ImGui::TextDisabled("Bodies");
+            for (std::size_t b = 0; b < m.bodies.size(); ++b) {
+                ImGui::PushID(static_cast<int>(b));
+                ImGui::BulletText("%s", m.bodies[b] == "*" ? "All bodies" : m.bodies[b].c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x") && m.bodies.size() > 1) {
+                    m.bodies.erase(m.bodies.begin() + static_cast<std::ptrdiff_t>(b));
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+            if (hasSel) {
+                const std::string& sel = bodies[static_cast<std::size_t>(st.selectedBody)].name;
+                if (!m.moves(sel) && ImGui::SmallButton(("+ " + sel).c_str())) {
+                    if (m.bodies.size() == 1 && m.bodies[0] == "*") m.bodies.clear();
+                    m.bodies.push_back(sel);
+                }
+                ImGui::SameLine();
+            }
+            if (!(m.bodies.size() == 1 && m.bodies[0] == "*") && ImGui::SmallButton("All bodies")) m.bodies = {"*"};
+
+            // Axis / direction.
+            ImGui::TextDisabled(m.kind == MotionKind::Circular ? "Axis" : "Direction");
+            ImGui::SameLine(90);
+            const Vec3 presets[] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+            const char* names[] = {"X", "Y", "Z"};
+            for (int k = 0; k < 3; ++k) {
+                const bool on = std::fabs(m.axis.x - presets[k].x) < 1e-4f && std::fabs(m.axis.y - presets[k].y) < 1e-4f &&
+                                std::fabs(m.axis.z - presets[k].z) < 1e-4f;
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kAccent));
+                if (ImGui::SmallButton(names[k])) m.axis = presets[k];
+                if (on) ImGui::PopStyleColor();
+                ImGui::SameLine();
+            }
+            if (ImGui::SmallButton("Flip")) m.axis = m.axis * -1.0f;
+            ImGui::SetNextItemWidth(-1);
+            ImGui::DragFloat3("##axis", &m.axis.x, 0.01f, -1.0f, 1.0f, "%.2f");
+            if (m.kind == MotionKind::Circular) {
+                ImGui::TextDisabled("Through");
+                ImGui::SameLine(90);
+                if (ImGui::SmallButton("Centre of bodies")) {
+                    AABB box;
+                    for (const Body& b : bodies)
+                        if (m.moves(b.name)) box.expand(b.bounds());
+                    if (box.valid()) m.origin = box.center();
+                }
+                ImGui::SetNextItemWidth(-1);
+                ImGui::DragFloat3("##origin", &m.origin.x, 0.5f, 0, 0, "%.1f mm");
+            }
+
+            // Speed, range, mode, delay.
+            ImGui::TextDisabled("Speed");
+            ImGui::SameLine(90);
+            ImGui::SetNextItemWidth(130);
+            ImGui::DragFloat("##speed", &m.speed, m.kind == MotionKind::Circular ? 1.0f : 0.5f, -100000.0f, 100000.0f,
+                             m.kind == MotionKind::Circular ? "%.1f deg/s" : "%.1f mm/s");
+            if (m.kind == MotionKind::Circular) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%.1f rpm", static_cast<double>(m.speed / 6.0f));
+            }
+            ImGui::TextDisabled(m.kind == MotionKind::Circular ? "Sweep" : "Stroke");
+            ImGui::SameLine(90);
+            ImGui::SetNextItemWidth(110);
+            ImGui::DragFloat("##range", &m.range, m.kind == MotionKind::Circular ? 1.0f : 0.5f, 0.0f, 1e6f,
+                             m.range <= 0.0f ? "unlimited" : (m.kind == MotionKind::Circular ? "%.1f deg" : "%.1f mm"));
+            m.range = std::max(m.range, 0.0f);
+            ImGui::SameLine();
+            int mode = static_cast<int>(m.mode);
+            ImGui::SetNextItemWidth(-1);
+            if (m.range <= 0.0f) ImGui::BeginDisabled();
+            if (ImGui::Combo("##mode", &mode, "Continuous\0Loop\0Oscillate\0Once\0")) m.mode = static_cast<MotionMode>(mode);
+            if (m.range <= 0.0f) ImGui::EndDisabled();
+            ImGui::TextDisabled("Start");
+            ImGui::SameLine(90);
+            ImGui::SetNextItemWidth(110);
+            ImGui::DragFloat("##start", &m.start, 0.05f, 0.0f, 3600.0f, "%.2f s");
+            m.start = std::max(m.start, 0.0f);
+
+            // Live value.
+            ImGui::TextDisabled("Now");
+            ImGui::SameLine(90);
+            ImGui::TextColored(col, "%.2f %s   %.1f %s", static_cast<double>(motionValue(m, st.simTime)), m.unit(),
+                               static_cast<double>(motionRate(m, st.simTime)), m.rateUnit());
+            ImGui::Spacing();
+        }
+        ImGui::PopID();
+    }
+    if (remove >= 0) cmd.commands.push_back("MOTION DELETE " + quotedName(motions[static_cast<std::size_t>(remove)].name));
+    ImGui::EndChild();
+
+    // Real-time axes: digital readout of the selected (or first moving) body.
+    if (st.simReadout) {
+        ImGui::SeparatorText("Real-time axes");
+        int body = hasSel ? st.selectedBody : -1;
+        for (std::size_t i = 0; i < bodies.size() && body < 0; ++i)
+            if (isMoving(scene, i)) body = static_cast<int>(i);
+        if (body < 0) {
+            ImGui::TextDisabled("Add a motion to read the moving axes.");
+        } else {
+            const Body& b = bodies[static_cast<std::size_t>(body)];
+            const float t = st.simTime, h = 1.0f / 120.0f;
+            const Mat4 now = motionTransforms(scene, t)[static_cast<std::size_t>(body)];
+            const Mat4 next = motionTransforms(scene, t + h)[static_cast<std::size_t>(body)];
+            const Vec3 c0 = b.bounds().center();
+            const Vec3 p = now.transformPoint(c0), v = (next.transformPoint(c0) - p) * (1.0f / h);
+            const Vec3 r = eulerABC(now), r1 = eulerABC(next);
+            auto wrap = [](float d) { return d > 180.0f ? d - 360.0f : d < -180.0f ? d + 360.0f : d; };
+            const Vec3 w{wrap(r1.x - r.x) / h, wrap(r1.y - r.y) / h, wrap(r1.z - r.z) / h};
+            ImGui::Text("%s%s", b.name.c_str(), isMoving(scene, static_cast<std::size_t>(body)) ? "" : "  (static)");
+            if (ImGui::BeginTable("##dro", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+                const ImVec4 axisCol[] = {{0.95f, 0.40f, 0.40f, 1}, {0.45f, 0.85f, 0.45f, 1}, {0.45f, 0.65f, 1.00f, 1}};
+                const char* lin[] = {"X", "Y", "Z"};
+                const char* rot[] = {"A", "B", "C"};
+                const float pv[] = {p.x, p.y, p.z}, vv[] = {v.x, v.y, v.z}, rv[] = {r.x, r.y, r.z}, wv[] = {w.x, w.y, w.z};
+                for (int k = 0; k < 3; ++k) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(axisCol[k], "%s %9.2f", lin[k], static_cast<double>(pv[k]));
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(axisCol[k], "%s %8.2f", rot[k], static_cast<double>(rv[k]));
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("%7.1f  %6.1f", static_cast<double>(vv[k]), static_cast<double>(wv[k]));
+                }
+                ImGui::EndTable();
+            }
+            ImGui::TextDisabled("mm  ·  deg  ·  mm/s, deg/s   |v| %.1f mm/s", static_cast<double>(length(v)));
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    return kWidth;
 }
 
 } // namespace sicdm

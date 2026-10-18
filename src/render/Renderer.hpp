@@ -50,7 +50,7 @@ public:
 
     void render(const Scene& scene, const OrbitCamera& camera, const ViewportSettings& settings,
                 int framebufferWidth, int framebufferHeight, int selectedBody, int selectedCurve,
-                int selectedImage = -1);
+                int selectedImage = -1, const std::vector<Mat4>* motion = nullptr); // motion: per-body transforms
 
 private:
     void drawBackground(const ViewportSettings& s);

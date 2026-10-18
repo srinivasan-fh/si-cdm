@@ -12,8 +12,11 @@
 
 namespace sicdm {
 
-// The two view windows of a document.
-enum class ViewMode { Model3D, Drawing2D };
+// The view windows of a document.
+enum class ViewMode { Model3D, Drawing2D, Simulation };
+
+// Colour of the i-th motion (panel, axes and paths share it).
+ImVec4 motionColor(std::size_t i);
 
 // Per-frame state the UI displays.
 struct UiState {
@@ -43,6 +46,18 @@ struct UiState {
     bool extrudeLive = true;          // mouse drag sets the distance (off once typed)
     std::string extrudeProfileName;   // empty until a profile is picked
     std::vector<LogLine> commandLog;
+
+    // Simulation window: playback and what to show while bodies move.
+    float simTime = 0.0f;      // s
+    bool simPlaying = false;
+    float simSpeed = 1.0f;     // playback factor
+    bool simLoop = true;       // restart at the end of the timeline
+    float simDuration = 10.0f; // effective timeline length (s)
+    float simDurationSetting = 0.0f; // saved length; 0 = automatic
+    bool simAxes = true;       // real-time axis triads on moving bodies
+    bool simMotionAxes = true; // rotation axes / travel arrows
+    bool simPaths = false;     // trails of the moving bodies
+    bool simReadout = true;    // live axis readout on the canvas
 
     // Project / file.
     std::string projectTitle = "Untitled";
@@ -116,6 +131,8 @@ private:
     void requestClose(UiCommands& cmd, const UiState& st, int index);
     void drawRulers(const OrbitCamera& cam, const UiState& st);
     float drawModelTree(Scene& scene, UiState& st, float x, float top, float bottom); // returns width
+    float drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom); // returns width
+    void drawSimTransport(UiState& st);
     void drawCommandBar(UiCommands& cmd, UiState& st);
     void drawFileDialogs(UiCommands& cmd, UiState& st);
     void drawMcpWindow(UiState& st);

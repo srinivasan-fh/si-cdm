@@ -288,6 +288,20 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     }
     doc.set("images", images);
 
+    Json motions = Json::array();
+    for (const Motion& m : scene.motions()) {
+        Json jm = Json::object();
+        Json targets = Json::array();
+        for (const std::string& b : m.bodies) targets.push(b);
+        jm.set("name", m.name).set("kind", motionKindKey(m.kind)).set("bodies", targets);
+        jm.set("axis", vec3Json(m.axis)).set("origin", vec3Json(m.origin));
+        jm.set("speed", m.speed).set("range", m.range).set("mode", motionModeKey(m.mode));
+        jm.set("start", m.start).set("enabled", m.enabled);
+        motions.push(jm);
+    }
+    doc.set("motions", motions);
+    if (state.simDuration > 0.0f) doc.set("simulation_duration", state.simDuration);
+
     return writeFile(path, doc.dump() + "\n", error);
 }
 
@@ -382,6 +396,22 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         loaded.addImage(std::move(img));
     }
     if (warning) *warning = missing.empty() ? "" : "Images not found: " + missing;
+
+    for (const Json& jm : (*doc)["motions"].items()) {
+        Motion m;
+        m.name = jm["name"].asString("Motion");
+        m.kind = motionKindFromKey(jm["kind"].asString()).value_or(MotionKind::Circular);
+        for (const Json& b : jm["bodies"].items()) m.bodies.push_back(b.asString());
+        m.axis = jsonVec3(jm["axis"], {0, 0, 1});
+        m.origin = jsonVec3(jm["origin"]);
+        m.speed = jm["speed"].asFloat(m.speed);
+        m.range = std::max(jm["range"].asFloat(), 0.0f);
+        m.mode = motionModeFromKey(jm["mode"].asString()).value_or(MotionMode::Continuous);
+        m.start = std::max(jm["start"].asFloat(), 0.0f);
+        m.enabled = jm["enabled"].asBool(true);
+        loaded.motions().push_back(std::move(m));
+    }
+    st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);
 
     scene.assign(std::move(loaded));
     state = st;

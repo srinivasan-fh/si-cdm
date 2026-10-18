@@ -23,6 +23,7 @@ const char* fileKindName(FileKind k);
 // Document-level state saved alongside the scene.
 struct ProjectState {
     SketchPlane plane = SketchPlane::Top;
+    float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
 };
 
 bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error);

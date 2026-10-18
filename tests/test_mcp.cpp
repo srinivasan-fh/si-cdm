@@ -117,3 +117,30 @@ TEST_CASE("MCP extrude tool") {
     for (const Json& t : list["result"]["tools"].items()) listed = listed || t["name"].asString() == "extrude";
     CHECK(listed);
 }
+
+TEST_CASE("MCP motion tools add motions and report poses headless") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "create_solid", R"({"kind":"box","width":40,"depth":20,"height":10,"name":"Chassis"})")["isError"].asBool());
+    CHECK(!tool(s, "create_solid", R"({"kind":"cylinder","radius":5,"height":4,"name":"Front wheel"})")["isError"].asBool());
+    Json r = tool(s, "create_motion", R"({"kind":"linear","name":"Drive","bodies":["*"],"axis":[1,0,0],"speed":10})");
+    CHECK(!r["isError"].asBool());
+    r = tool(s, "create_motion", R"({"kind":"circular","name":"Wheel spin","bodies":["Front wheel"],"axis":[0,1,0],"rpm":60,"enabled":false})");
+    CHECK(!r["isError"].asBool());
+    CHECK(d.scene.motions().size() == 2);
+    CHECK_NEAR(d.scene.motions()[1].speed, 360, 1e-4);
+    CHECK(!d.scene.motions()[1].enabled);
+    CHECK(tool(s, "create_motion", R"({"kind":"spiral"})")["isError"].asBool());
+    CHECK(tool(s, "create_motion", R"({"kind":"linear","bodies":["Nobody"]})")["isError"].asBool());
+
+    const Json sc = tool(s, "get_scene", "{}")["structuredContent"];
+    CHECK(sc["motions"].size() == 2);
+    CHECK(sc["motions"][0]["kind"].asString() == "linear");
+
+    r = tool(s, "simulate", R"({"action":"poses","time":2})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("20.00 mm") != std::string::npos);
+    CHECK(tool(s, "simulate", R"({"action":"play"})")["isError"].asBool()); // needs the app window
+    CHECK(!tool(s, "delete_motion", R"({"name":"Wheel spin"})")["isError"].asBool());
+    CHECK(d.scene.motions().size() == 1);
+}

@@ -37,6 +37,7 @@ void Scene::removeImage(std::size_t index) {
 void Scene::clear() {
     m_bodies.clear();
     m_images.clear();
+    m_motions.clear();
     m_sketch = Sketch{};
     m_revision = nextRevision();
     m_imageRevision = nextRevision();
@@ -46,6 +47,7 @@ void Scene::clear() {
 void Scene::assign(Scene&& other) {
     m_bodies = std::move(other.m_bodies);
     m_images = std::move(other.m_images);
+    m_motions = std::move(other.m_motions);
     m_sketch = std::move(other.m_sketch);
     m_revision = nextRevision();
     m_imageRevision = nextRevision();
@@ -67,17 +69,23 @@ void Scene::remove(std::size_t index) {
     m_revision = nextRevision();
 }
 
-std::optional<RayHit> Scene::raycast(const Ray& ray) const noexcept {
+std::optional<RayHit> Scene::raycast(const Ray& ray, const std::vector<Mat4>* transforms) const noexcept {
     std::optional<RayHit> best;
     for (std::size_t i = 0; i < m_bodies.size(); ++i) {
         const Body& b = m_bodies[i];
         if (!b.visible) continue;
+        // Moved body: bring the ray into its modelled position (rigid, so t is unchanged).
+        Ray r = ray;
+        if (transforms && i < transforms->size()) {
+            const Mat4 inv = inverse((*transforms)[i]);
+            r = Ray{inv.transformPoint(ray.origin), inv.transformDir(ray.dir)};
+        }
         float tBox = 0.0f;
-        if (!intersectAABB(ray, b.bounds(), tBox)) continue;
+        if (!intersectAABB(r, b.bounds(), tBox)) continue;
         if (best && tBox > best->t) continue;
 
         // Test in the body's local frame.
-        const Ray local{ray.origin - b.offset, ray.dir};
+        const Ray local{r.origin - b.offset, r.dir};
         const auto& v = b.mesh.vertices;
         const auto& idx = b.mesh.indices;
         for (std::size_t k = 0; k + 2 < idx.size(); k += 3) {

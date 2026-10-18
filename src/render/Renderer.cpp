@@ -35,12 +35,12 @@ constexpr const char* kMeshVS = R"(#version 410 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 uniform mat4 uViewProj;
-uniform vec3 uOffset;
+uniform mat4 uModel; // body offset and simulated motion (rigid)
 out vec3 vWorldPos;
 out vec3 vNormal;
 void main() {
-    vWorldPos = aPos + uOffset;
-    vNormal = aNormal;
+    vWorldPos = (uModel * vec4(aPos, 1.0)).xyz;
+    vNormal = mat3(uModel) * aNormal;
     gl_Position = uViewProj * vec4(vWorldPos, 1.0);
 }
 )";
@@ -98,8 +98,8 @@ void main() {
 constexpr const char* kLinesVS = R"(#version 410 core
 layout(location = 0) in vec3 aPos;
 uniform mat4 uViewProj;
-uniform vec3 uOffset;
-void main() { gl_Position = uViewProj * vec4(aPos + uOffset, 1.0); }
+uniform mat4 uModel;
+void main() { gl_Position = uViewProj * uModel * vec4(aPos, 1.0); }
 )";
 
 constexpr const char* kLinesFS = R"(#version 410 core
@@ -478,7 +478,8 @@ void Renderer::drawGrid(const OrbitCamera& cam, const ViewportSettings& s) {
 }
 
 void Renderer::render(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s,
-                      int fbWidth, int fbHeight, int selectedBody, int selectedCurve, int selectedImage) {
+                      int fbWidth, int fbHeight, int selectedBody, int selectedCurve, int selectedImage,
+                      const std::vector<Mat4>* motion) {
     glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(s.backgroundBottom.x, s.backgroundBottom.y, s.backgroundBottom.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -493,6 +494,10 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     const Mat4 vp = cam.viewProjection();
     const auto& bodies = scene.bodies();
     const std::size_t count = std::min(bodies.size(), m_meshes.size());
+    auto model = [&](std::size_t i) {
+        const Mat4 at = translate(bodies[i].offset);
+        return motion && i < motion->size() ? (*motion)[i] * at : at;
+    };
 
     // Solid pass, pushed back slightly so edges win the depth test.
     const bool hidden = s.displayMode == DisplayMode::HiddenLine;
@@ -512,7 +517,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         for (std::size_t i = 0; i < count; ++i) {
             if (!bodies[i].visible) continue;
             m_mesh.set("uColor", bodies[i].color);
-            m_mesh.set("uOffset", bodies[i].offset);
+            m_mesh.set("uModel", model(i));
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
             glBindVertexArray(m_meshes[i].vao);
             glDrawElements(GL_TRIANGLES, m_meshes[i].indexCount, GL_UNSIGNED_INT, nullptr);
@@ -528,7 +533,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         for (std::size_t i = 0; i < count; ++i) {
             if (!bodies[i].visible) continue;
             const bool sel = static_cast<int>(i) == selectedBody;
-            m_lines.set("uOffset", bodies[i].offset);
+            m_lines.set("uModel", model(i));
             if (wire) {
                 const Vec3 c = sel ? Vec3{0.35f, 0.70f, 1.0f} : bodies[i].color;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});

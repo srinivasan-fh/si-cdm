@@ -56,6 +56,14 @@ public:
     // active (the current file stays open in its tab). It returns true when `path`
     // is already open and its tab was activated instead, so there is nothing to load.
     virtual bool prepareDocument(const std::string& path) { (void)path; return false; }
+    // Simulation window: "open", "play", "pause", "toggle", "stop", "time", "speed",
+    // "axes", "paths" (value: seconds, factor or 0/1). False when headless.
+    virtual bool simulation(const std::string& action, float value, std::string* reply) {
+        (void)action;
+        (void)value;
+        (void)reply;
+        return false;
+    }
     virtual std::vector<std::string> fileTabs() const { return {}; } // "> " marks the active one
     virtual bool switchFile(const std::string& which, std::string* error) {
         *error = "Only one document is open";

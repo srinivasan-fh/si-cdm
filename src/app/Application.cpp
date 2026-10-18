@@ -261,8 +261,13 @@ void Application::setMode(ViewMode mode) {
     m_leftDrag = m_otherDrag = DragMode::None;
     m_uiState.mode = mode;
     if (mode == ViewMode::Drawing2D && !m_2DReady) init2DCamera();
-    setStatus(mode == ViewMode::Drawing2D ? std::string("2D Drawing window: ") + planeName(m_uiState.plane)
-                                          : std::string("3D Model window"));
+    if (mode != ViewMode::Simulation) m_uiState.simPlaying = false; // leaving the simulation pauses it
+    if (mode == ViewMode::Simulation)
+        setStatus(m_doc.scene.motions().empty() ? "Simulation window: add a Circular or Linear motion on the right"
+                                                : "Simulation window: Space plays / pauses");
+    else
+        setStatus(mode == ViewMode::Drawing2D ? std::string("2D Drawing window: ") + planeName(m_uiState.plane)
+                                              : std::string("3D Model window"));
 }
 
 void Application::init2DCamera() {
@@ -289,7 +294,8 @@ void Application::setPlane(SketchPlane plane) {
 
 std::optional<RayHit> Application::pick(float x, float y) const {
     const ImGuiIO& io = ImGui::GetIO();
-    return m_doc.scene.raycast(camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y));
+    return m_doc.scene.raycast(camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y),
+                               simulating() && !m_simTransforms.empty() ? &m_simTransforms : nullptr);
 }
 
 int Application::pickCurve(float x, float y) const {
@@ -325,7 +331,19 @@ void Application::addCurve(SketchCurve curve) {
 }
 
 void Application::onCanvasClick(float x, float y, bool doubleClick) {
-    const ToolId tool = m_ui.toolbox().active();
+    ToolId tool = m_ui.toolbox().active();
+    if (simulating()) { // the simulation shows motion; modelling tools work in the 2D / 3D windows
+        if (tool != ToolId::Select && tool != ToolId::Move && tool != ToolId::Orbit && tool != ToolId::Pan &&
+            tool != ToolId::Zoom)
+            setStatus(std::string(toolInfo(tool).name) + " works in the 2D / 3D windows; clicks select here");
+        tool = ToolId::Select;
+        const auto hit = pick(x, y);
+        m_uiState.selectedBody = hit ? hit->body : -1;
+        m_uiState.selectedCurve = m_uiState.selectedImage = -1;
+        if (hit) setStatus("Selected " + m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name);
+        (void)doubleClick;
+        return;
+    }
     const ToolInfo& info = toolInfo(tool);
     const bool is2D = m_uiState.mode == ViewMode::Drawing2D;
 
@@ -412,7 +430,9 @@ void Application::handleViewportInput() {
     const float wh = io.DisplaySize.y;
     const bool onCanvas = !io.WantCaptureMouse;
     const bool is2D = m_uiState.mode == ViewMode::Drawing2D;
-    const ToolId tool = m_ui.toolbox().active();
+    ToolId tool = m_ui.toolbox().active();
+    // Simulation: only navigation; every other tool selects.
+    if (simulating() && tool != ToolId::Orbit && tool != ToolId::Pan && tool != ToolId::Zoom) tool = ToolId::Select;
     OrbitCamera& cam = camera();
     // In the 2D window the view never tilts: every "orbit" gesture pans.
     const DragMode orbitOrPan = is2D ? DragMode::Pan : DragMode::Orbit;
@@ -533,8 +553,19 @@ void Application::handleViewportInput() {
 
     const bool ctrl = commandModifierHeld();
     UiCommands cmd;
-    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !ctrl)
-        cmd.mode = is2D ? ViewMode::Model3D : ViewMode::Drawing2D;
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !ctrl) {
+        if (io.KeyShift) cmd.mode = simulating() ? ViewMode::Model3D : ViewMode::Simulation;
+        else cmd.mode = is2D ? ViewMode::Model3D : simulating() ? ViewMode::Model3D : ViewMode::Drawing2D;
+    }
+    if (simulating() && !ctrl) { // playback keys
+        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+            if (!m_uiState.simPlaying && m_uiState.simTime >= m_uiState.simDuration - 1e-4f) m_uiState.simTime = 0.0f;
+            m_uiState.simPlaying = !m_uiState.simPlaying;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) m_uiState.simTime = 0.0f;
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) m_uiState.simTime = std::max(m_uiState.simTime - 1.0f / 30.0f, 0.0f);
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) m_uiState.simTime += 1.0f / 30.0f;
+    }
     auto viewKey = [&](ImGuiKey a, ImGuiKey b) { return ImGui::IsKeyPressed(a) || ImGui::IsKeyPressed(b); };
     if (viewKey(ImGuiKey_1, ImGuiKey_Keypad1)) cmd.view = ctrl ? StandardView::Back : StandardView::Front;
     if (viewKey(ImGuiKey_3, ImGuiKey_Keypad3)) cmd.view = ctrl ? StandardView::Left : StandardView::Right;
@@ -648,6 +679,7 @@ void Application::frame(float dt) {
     if (m_mcpHttp.poll([this](const std::string& body) { return handleMcp(body); }) > 0)
         m_framesToRender = std::max(m_framesToRender, 3);
 
+    advanceSimulation(dt);
     handleViewportInput();
     updatePrompt();
     refreshFileTabs();
@@ -697,7 +729,7 @@ void Application::frame(float dt) {
 
     // Sketch preview and crosshair, drawn over the canvas.
     const ImGuiIO& io = ImGui::GetIO();
-    if (isSketchTool(m_ui.toolbox().active()) && !io.WantCaptureMouse) {
+    if (isSketchTool(m_ui.toolbox().active()) && !io.WantCaptureMouse && !simulating()) {
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         m_sketcher.drawOverlay(fg, camera(), io.DisplaySize, m_ui.toolbox().active());
         if (m_uiState.cursorPlane) {
@@ -711,6 +743,10 @@ void Application::frame(float dt) {
         }
     }
     if (m_extrudeCurve >= 0) drawExtrudePreview();
+    if (simulating()) {
+        m_simTransforms = motionTransforms(m_doc.scene, m_uiState.simTime); // after scrubbing / panel edits
+        drawSimulationOverlay();
+    }
 
     // Held widgets (a long press on a tool slot) need frames to time out, and a
     // newly opened popup needs a second frame to size itself before it shows.
@@ -726,7 +762,7 @@ void Application::frame(float dt) {
         m_cam3D.setAspect(m_aspect);
         m_cam2D.setAspect(m_aspect);
         m_renderer->render(m_doc.scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve,
-                           m_uiState.selectedImage);
+                           m_uiState.selectedImage, simulating() ? &m_simTransforms : nullptr);
     }
 
     ImGui::Render();
@@ -918,7 +954,16 @@ std::uint64_t Application::signatureOf(const Document& doc) {
         mix(&i.opacity, sizeof(i.opacity));
         mix(&i.visible, sizeof(i.visible));
     }
+    for (const Motion& m : s.motions()) {
+        mixStr(m.name);
+        for (const std::string& b : m.bodies) mixStr(b);
+        const float f[] = {m.axis.x, m.axis.y, m.axis.z, m.origin.x, m.origin.y, m.origin.z, m.speed, m.range, m.start};
+        mix(f, sizeof(f));
+        const int e[] = {static_cast<int>(m.kind), static_cast<int>(m.mode), m.enabled ? 1 : 0};
+        mix(e, sizeof(e));
+    }
     mix(&doc.state.plane, sizeof(doc.state.plane));
+    mix(&doc.state.simDuration, sizeof(doc.state.simDuration));
     return h;
 }
 
@@ -1142,6 +1187,8 @@ void Application::parkActiveFile() {
     t.ready2D = m_2DReady;
     t.savedSignature = m_savedSignature;
     t.mode = m_uiState.mode;
+    t.simTime = m_uiState.simTime;
+    m_uiState.simPlaying = false;
 }
 
 void Application::loadFile(int index) {
@@ -1156,6 +1203,7 @@ void Application::loadFile(int index) {
     m_2DReady = t.ready2D;
     m_savedSignature = t.savedSignature;
     m_uiState.mode = t.mode;
+    m_uiState.simTime = t.simTime;
     m_uiState.plane = m_doc.state.plane;
     m_uiState.selectedBody = m_doc.selectedBody;
     m_uiState.selectedCurve = m_doc.selectedCurve;
@@ -1172,7 +1220,9 @@ void Application::activateFile(int index) {
     parkActiveFile();
     loadFile(index);
     updateTitle();
-    setStatus(m_doc.displayName() + (m_uiState.mode == ViewMode::Drawing2D ? "  -  2D Drawing" : "  -  3D Model"));
+    setStatus(m_doc.displayName() + (m_uiState.mode == ViewMode::Drawing2D   ? "  -  2D Drawing"
+                                     : m_uiState.mode == ViewMode::Simulation ? "  -  Simulation"
+                                                                              : "  -  3D Model"));
     m_framesToRender = std::max(m_framesToRender, 3);
 }
 
@@ -1334,6 +1384,261 @@ bool Application::closeFile(bool discard, std::string* error) {
 
 void Application::openWindow(bool drawing2D) { setMode(drawing2D ? ViewMode::Drawing2D : ViewMode::Model3D); }
 
+// Simulation ------------------------------------------------------------------
+
+void Application::advanceSimulation(float dt) {
+    UiState& st = m_uiState;
+    st.simDurationSetting = m_doc.state.simDuration;
+    st.simDuration = m_doc.state.simDuration > 0.0f ? m_doc.state.simDuration : suggestedDuration(m_doc.scene);
+    st.simTime = std::max(st.simTime, 0.0f);
+    if (!simulating()) {
+        m_simTransforms.clear();
+        return;
+    }
+    if (st.simPlaying) {
+        st.simTime += dt * st.simSpeed;
+        if (st.simTime >= st.simDuration) {
+            if (st.simLoop) st.simTime = std::fmod(st.simTime, st.simDuration);
+            else {
+                st.simTime = st.simDuration;
+                st.simPlaying = false;
+            }
+        }
+        m_framesToRender = std::max(m_framesToRender, 2); // keep animating
+    }
+    m_simTransforms = motionTransforms(m_doc.scene, st.simTime);
+}
+
+namespace {
+
+// Point on a circle around `axis` through `c`, radius r, at angle a.
+Vec3 ringPoint(const Vec3& c, const Vec3& axis, float r, float a) {
+    const Vec3 n = normalize(axis);
+    const Vec3 u = normalize(std::fabs(n.z) < 0.9f ? cross(n, Vec3{0, 0, 1}) : cross(n, Vec3{1, 0, 0}));
+    const Vec3 v = cross(n, u);
+    return c + (u * std::cos(a) + v * std::sin(a)) * r;
+}
+
+ImU32 toU32(ImVec4 c, float alpha = 1.0f) { return ImGui::ColorConvertFloat4ToU32({c.x, c.y, c.z, c.w * alpha}); }
+
+} // namespace
+
+void Application::drawSimulationOverlay() const {
+    const ImGuiIO& io = ImGui::GetIO();
+    const OrbitCamera& cam = m_cam3D;
+    const Scene& scene = m_doc.scene;
+    const UiState& st = m_uiState;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList(); // under the panels, over the 3D view
+    dl->PushClipRect(m_ui.canvasMin(), m_ui.canvasMax(), true);
+    auto scr = [&](const Vec3& p) { return projectToScreen(cam, p, io.DisplaySize); };
+    auto line = [&](const Vec3& a, const Vec3& b, ImU32 c, float w) {
+        const auto sa = scr(a), sb = scr(b);
+        if (sa && sb) dl->AddLine(*sa, *sb, c, w);
+    };
+    auto label = [&](const Vec3& at, ImU32 c, const char* text) {
+        if (const auto s = scr(at)) {
+            const ImVec2 ts = ImGui::CalcTextSize(text);
+            dl->AddRectFilled({s->x + 6, s->y - 2}, {s->x + 12 + ts.x, s->y + ts.y + 2}, IM_COL32(16, 18, 24, 190), 3.0f);
+            dl->AddText({s->x + 9, s->y}, c, text);
+        }
+    };
+    const float wpp = cam.worldPerPixel(io.DisplaySize.y);
+    const auto& bodies = scene.bodies();
+    const auto& motions = scene.motions();
+    const float t = st.simTime;
+
+    // Bodies a motion moves: a representative body and the centre of the group.
+    struct Group {
+        int body = -1;
+        Vec3 centre;
+        float radius = 0;
+    };
+    std::vector<Group> groups(motions.size());
+    for (std::size_t k = 0; k < motions.size(); ++k) {
+        AABB box;
+        for (std::size_t i = 0; i < bodies.size(); ++i)
+            if (motions[k].moves(bodies[i].name)) {
+                if (groups[k].body < 0) groups[k].body = static_cast<int>(i);
+                box.expand(bodies[i].bounds());
+            }
+        if (box.valid()) {
+            groups[k].centre = box.center();
+            groups[k].radius = box.radius();
+        }
+    }
+
+    // Paths: where each motion's group centre (and the selected body) has been.
+    if (st.simPaths) {
+        auto trail = [&](std::size_t body, const Vec3& p, ImU32 c) {
+            constexpr int kSamples = 96;
+            const float t0 = std::max(0.0f, t - std::min(t, st.simDuration));
+            std::optional<ImVec2> prev;
+            for (int s = 0; s <= kSamples; ++s) {
+                const float ts = t0 + (t - t0) * static_cast<float>(s) / kSamples;
+                const auto q = scr(bodyMotionTransform(scene, body, ts).transformPoint(p));
+                if (q && prev) dl->AddLine(*prev, *q, c, 1.5f);
+                prev = q;
+            }
+        };
+        for (std::size_t k = 0; k < motions.size(); ++k)
+            if (motions[k].enabled && groups[k].body >= 0)
+                trail(static_cast<std::size_t>(groups[k].body), groups[k].centre, toU32(motionColor(k), 0.75f));
+        if (st.selectedBody >= 0 && static_cast<std::size_t>(st.selectedBody) < bodies.size())
+            trail(static_cast<std::size_t>(st.selectedBody), bodies[static_cast<std::size_t>(st.selectedBody)].bounds().center(),
+                  IM_COL32(255, 255, 255, 170));
+    }
+
+    // Motion axes: rotation axes with a turning arrow, travel arrows.
+    if (st.simMotionAxes) {
+        for (std::size_t k = 0; k < motions.size(); ++k) {
+            const Motion& m = motions[k];
+            if (!m.enabled || groups[k].body < 0 || length(m.axis) < 1e-6f) continue;
+            const ImU32 c = toU32(motionColor(k));
+            const Mat4 outer = bodyMotionTransform(scene, static_cast<std::size_t>(groups[k].body), t, k);
+            const Vec3 dir = normalize(outer.transformDir(m.axis));
+            const float r = std::max(groups[k].radius * 0.6f, 24.0f * wpp);
+            char text[96];
+            std::snprintf(text, sizeof(text), "%s  %.1f %s  %.0f %s", m.name.c_str(), static_cast<double>(motionValue(m, t)),
+                          m.unit(), static_cast<double>(motionRate(m, t)), m.rateUnit());
+            if (m.kind == MotionKind::Circular) {
+                const Vec3 o = outer.transformPoint(m.origin);
+                const float len = r * 1.6f;
+                for (int d = -6; d < 6; d += 2) // dashed axis line
+                    line(o + dir * (len * static_cast<float>(d) / 6.0f), o + dir * (len * static_cast<float>(d + 1) / 6.0f), c, 2.0f);
+                // Arc arrow turning with the motion.
+                const float base = radians(motionValue(m, t));
+                const float sign = motionRate(m, t) < 0.0f ? -1.0f : 1.0f;
+                std::optional<ImVec2> prev;
+                constexpr int kArc = 28;
+                for (int s = 0; s <= kArc; ++s) {
+                    const float a = base + sign * 1.5f * kPi * static_cast<float>(s) / kArc;
+                    const auto q = scr(ringPoint(o, dir, r, a));
+                    if (q && prev) dl->AddLine(*prev, *q, c, 2.0f);
+                    prev = q;
+                }
+                const float aEnd = base + sign * 1.5f * kPi;
+                const auto tip = scr(ringPoint(o, dir, r, aEnd));
+                const auto back = scr(ringPoint(o, dir, r, aEnd - sign * 0.25f));
+                if (tip && back) {
+                    const ImVec2 d{tip->x - back->x, tip->y - back->y};
+                    const float l = std::max(std::hypot(d.x, d.y), 1e-3f);
+                    const ImVec2 u{d.x / l, d.y / l}, n{-u.y, u.x};
+                    dl->AddTriangleFilled({tip->x + u.x * 4, tip->y + u.y * 4},
+                                          {tip->x - u.x * 8 + n.x * 5, tip->y - u.y * 8 + n.y * 5},
+                                          {tip->x - u.x * 8 - n.x * 5, tip->y - u.y * 8 - n.y * 5}, c);
+                }
+                label(o + dir * len, c, text);
+            } else {
+                const Mat4 full = bodyMotionTransform(scene, static_cast<std::size_t>(groups[k].body), t);
+                const Vec3 p = full.transformPoint(groups[k].centre);
+                const float rate = motionRate(m, t);
+                const float sign = (rate != 0.0f ? rate : m.speed) < 0.0f ? -1.0f : 1.0f; // current direction
+                const Vec3 end = p + dir * (sign * r * 1.4f);
+                line(p, end, c, 2.5f);
+                const auto se = scr(end), sp = scr(p);
+                if (se && sp) {
+                    const ImVec2 d{se->x - sp->x, se->y - sp->y};
+                    const float l = std::max(std::hypot(d.x, d.y), 1e-3f);
+                    const ImVec2 u{d.x / l, d.y / l}, n{-u.y, u.x};
+                    dl->AddTriangleFilled({se->x + u.x * 6, se->y + u.y * 6},
+                                          {se->x - u.x * 7 + n.x * 6, se->y - u.y * 7 + n.y * 6},
+                                          {se->x - u.x * 7 - n.x * 6, se->y - u.y * 7 - n.y * 6}, c);
+                }
+                label(end, c, text);
+            }
+        }
+    }
+
+    // Real-time axes: the moving X / Y / Z of each motion group and of the selection.
+    if (st.simAxes) {
+        auto triad = [&](std::size_t body, const Vec3& p, float size, bool strong) {
+            const Mat4 tf = bodyMotionTransform(scene, body, t);
+            const Vec3 o = tf.transformPoint(p);
+            const ImU32 cols[] = {IM_COL32(240, 80, 80, 255), IM_COL32(90, 210, 90, 255), IM_COL32(90, 140, 255, 255)};
+            const char* names[] = {"X", "Y", "Z"};
+            const Vec3 axes[] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+            for (int a = 0; a < 3; ++a) {
+                const Vec3 e = o + normalize(tf.transformDir(axes[a])) * size;
+                line(o, e, cols[a], strong ? 3.0f : 2.0f);
+                if (const auto s = scr(e)) dl->AddText({s->x + 3, s->y - 7}, cols[a], names[a]);
+            }
+            if (const auto s = scr(o)) dl->AddCircleFilled(*s, strong ? 4.0f : 3.0f, IM_COL32(255, 255, 255, 230));
+        };
+        for (std::size_t k = 0; k < motions.size(); ++k)
+            if (motions[k].enabled && groups[k].body >= 0)
+                triad(static_cast<std::size_t>(groups[k].body), groups[k].centre,
+                      std::max(groups[k].radius * 0.45f, 30.0f * wpp), false);
+        if (st.selectedBody >= 0 && static_cast<std::size_t>(st.selectedBody) < bodies.size()) {
+            const Body& b = bodies[static_cast<std::size_t>(st.selectedBody)];
+            triad(static_cast<std::size_t>(st.selectedBody), b.bounds().center(), std::max(b.bounds().radius() * 0.8f, 36.0f * wpp),
+                  true);
+        }
+    }
+
+    // Clock in the corner of the canvas.
+    if (st.simReadout) {
+        char clock[96];
+        std::snprintf(clock, sizeof(clock), "%s  t = %.2f s   %gx%s", st.simPlaying ? "PLAYING" : "PAUSED",
+                      static_cast<double>(t), static_cast<double>(st.simSpeed), st.simLoop ? "   loop" : "");
+        const ImVec2 at{m_ui.canvasMin().x + 14, m_ui.canvasMin().y + 12};
+        const ImVec2 ts = ImGui::CalcTextSize(clock);
+        dl->AddRectFilled({at.x - 8, at.y - 6}, {at.x + ts.x + 8, at.y + ts.y + 6}, IM_COL32(16, 18, 24, 200), 5.0f);
+        dl->AddText(at, st.simPlaying ? IM_COL32(120, 220, 140, 255) : IM_COL32(230, 200, 120, 255), clock);
+        // Progress bar under the clock.
+        const float frac = st.simDuration > 0 ? std::clamp(t / st.simDuration, 0.0f, 1.0f) : 0.0f;
+        dl->AddRectFilled({at.x - 8, at.y + ts.y + 6}, {at.x - 8 + (ts.x + 16) * frac, at.y + ts.y + 8},
+                          IM_COL32(90, 160, 255, 255));
+        if (motions.empty())
+            dl->AddText({at.x, at.y + ts.y + 16}, IM_COL32(200, 205, 215, 220),
+                        "No motions: add a Circular or Linear motion in the Motion Study panel");
+    }
+    dl->PopClipRect();
+}
+
+std::string Application::simStatus() const {
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "Simulation %s at %gx, t = %.2f / %.2f s%s", m_uiState.simPlaying ? "playing" : "paused",
+                  static_cast<double>(m_uiState.simSpeed), static_cast<double>(m_uiState.simTime),
+                  static_cast<double>(m_uiState.simDuration), m_uiState.simLoop ? ", looping" : "");
+    return buf;
+}
+
+bool Application::simulation(const std::string& action, float value, std::string* reply) {
+    UiState& st = m_uiState;
+    if (action == "open" || action == "play" || action == "toggle") setMode(ViewMode::Simulation);
+    if (action == "play") {
+        if (st.simTime >= st.simDuration - 1e-4f) st.simTime = 0.0f;
+        st.simPlaying = true;
+    } else if (action == "pause") {
+        st.simPlaying = false;
+    } else if (action == "toggle") {
+        st.simPlaying = !st.simPlaying;
+    } else if (action == "stop") {
+        st.simPlaying = false;
+        st.simTime = 0.0f;
+    } else if (action == "time") {
+        st.simTime = std::max(value, 0.0f);
+    } else if (action == "speed") {
+        if (value <= 0.0f) {
+            *reply = "Speed must be > 0";
+            return false;
+        }
+        st.simSpeed = value;
+    } else if (action == "axes" || action == "paths") {
+        bool& flag = action == "axes" ? st.simAxes : st.simPaths;
+        flag = value < 0.0f ? !flag : value != 0.0f;
+        *reply = std::string(action == "axes" ? "Real-time axes " : "Paths ") + (flag ? "on" : "off");
+        return true;
+    } else if (action != "open") {
+        *reply = "Unknown simulation action " + action;
+        return false;
+    }
+    advanceSimulation(0.0f);
+    *reply = simStatus();
+    m_framesToRender = std::max(m_framesToRender, 3);
+    return true;
+}
+
 void Application::standardView(StandardView v) {
     UiCommands c;
     c.view = v;
@@ -1373,7 +1678,10 @@ std::string Application::describe() const {
     std::snprintf(buf, sizeof(buf),
                   "Window: %s   plane: %s   camera target (%.1f, %.1f, %.1f) distance %.1f yaw %.1f pitch %.1f "
                   "roll %.1f   %s   display: %s   grid %s",
-                  m_uiState.mode == ViewMode::Drawing2D ? "2D Drawing" : "3D Model", planeName(m_uiState.plane),
+                  m_uiState.mode == ViewMode::Drawing2D   ? "2D Drawing"
+                  : m_uiState.mode == ViewMode::Simulation ? "Simulation"
+                                                           : "3D Model",
+                  planeName(m_uiState.plane),
                   static_cast<double>(c.target().x), static_cast<double>(c.target().y), static_cast<double>(c.target().z),
                   static_cast<double>(c.distance()), static_cast<double>(degrees(c.yaw())),
                   static_cast<double>(degrees(c.pitch())), static_cast<double>(degrees(c.roll())),

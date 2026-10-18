@@ -38,6 +38,12 @@ constexpr CommandSpec kCommands[] = {
     {"IMPORT", "IMP", "IMPORT path [@x,y] [WIDTH mm]",
      "STL/OBJ as a body, DXF onto the sketch plane, PNG/JPG/... as a reference image"},
     {"EXPORT", "EXP", "EXPORT path.stl|.obj|.dxf|.svg", "STL/OBJ of visible bodies; DXF/SVG of the sketch plane"},
+    // Motion & simulation
+    {"MOTION", "MOT MOTIONS", "MOTION CIRCLE|LINEAR [name] [AXIS X|Y|Z|x,y,z] [AT x,y,z] [SPEED v] [RANGE r] "
+     "[MODE CONT|LOOP|OSC|ONCE] [START s] [BODIES name... | ALL]  |  MOTION DELETE|ON|OFF name  |  MOTION",
+     "Circular (deg/s about an axis) or linear (mm/s along a direction) motion of bodies; no args lists them"},
+    {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t]",
+     "Open the Simulation window and control playback; SIM AT t reports body poses at time t"},
     // Editing
     {"SELECT", "SEL", "SELECT name | NONE", "Select a body, curve or image by name"},
     {"ERASE", "E DEL DELETE", "ERASE [name]", "Delete the selection (or the named item)"},

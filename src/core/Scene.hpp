@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Geometry.hpp"
+#include "core/Motion.hpp"
 #include "core/Sketch.hpp"
 
 #include <array>
@@ -77,6 +78,10 @@ public:
     // Takes over another scene's content with fresh change stamps.
     void assign(Scene&& other);
 
+    // Motions played by the Simulation window (saved with the project).
+    std::vector<Motion>& motions() noexcept { return m_motions; }
+    const std::vector<Motion>& motions() const noexcept { return m_motions; }
+
     Sketch& sketch() noexcept { return m_sketch; }
     const Sketch& sketch() const noexcept { return m_sketch; }
 
@@ -89,8 +94,9 @@ public:
     // Bumped whenever bodies are added or removed (GPU buffers must be rebuilt).
     std::uint64_t revision() const noexcept { return m_revision; }
 
-    // Closest visible body hit by the ray, if any.
-    std::optional<RayHit> raycast(const Ray& ray) const noexcept;
+    // Closest visible body hit by the ray, if any. `transforms` (one rigid
+    // transform per body, e.g. from motionTransforms()) moves bodies first.
+    std::optional<RayHit> raycast(const Ray& ray, const std::vector<Mat4>* transforms = nullptr) const noexcept;
 
     // Bounds of visible bodies and sketch curves (or everything if none are visible).
     AABB bounds() const noexcept;
@@ -105,6 +111,7 @@ private:
     std::uint64_t m_revision = nextRevision();
     Sketch m_sketch;
     std::vector<ImageRef> m_images;
+    std::vector<Motion> m_motions;
     std::uint64_t m_imageRevision = nextRevision();
 };
 

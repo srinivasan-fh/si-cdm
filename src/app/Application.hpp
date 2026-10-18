@@ -51,6 +51,7 @@ public:
     void setGrid(std::optional<bool> on) override;
     void setPanel(std::optional<bool> on) override;
     std::string describe() const override;
+    bool simulation(const std::string& action, float value, std::string* reply) override;
 
     // ViewHost: file tabs.
     bool prepareDocument(const std::string& path) override;
@@ -79,6 +80,12 @@ private:
     void cancelExtrude();
     void drawExtrudePreview() const;
 
+    // Simulation window.
+    bool simulating() const noexcept { return m_uiState.mode == ViewMode::Simulation; }
+    void advanceSimulation(float dt);
+    void drawSimulationOverlay() const;
+    std::string simStatus() const;
+
     // Command line / MCP plumbing.
     void runCommandLine(const std::string& text);
     void log(const std::string& text, int kind);
@@ -104,6 +111,7 @@ private:
         bool ready2D = false;
         std::uint64_t savedSignature = 0;
         ViewMode mode = ViewMode::Model3D;
+        float simTime = 0.0f;
         bool demo = false; // the start-up demo part: Open replaces it while it is untouched
     };
     void parkActiveFile();
@@ -157,6 +165,8 @@ private:
     Vec3 m_movePlanePoint;
     Vec3 m_moveStartOffset;
     Vec2 m_imageGrab{}, m_imageStart{};
+
+    std::vector<Mat4> m_simTransforms; // per body, while the Simulation window shows motion
 
     int m_extrudeCurve = -1;   // profile being extruded
     float m_extrudeAnchorDist = 0.0f;
