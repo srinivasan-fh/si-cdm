@@ -18,9 +18,15 @@ public:
     void orbit(float dxPixels, float dyPixels) noexcept;
     void pan(float dxPixels, float dyPixels, float viewportHeight) noexcept;
     void zoom(float wheelSteps) noexcept;
+    // Zoom keeping the point under the cursor fixed on screen.
+    void zoomAt(float wheelSteps, float x, float y, float width, float height) noexcept;
 
     // --- framing ---
     void setStandardView(StandardView view, bool animate = true) noexcept;
+    // Look at the target from direction `towardsEye` (need not be normalised).
+    void setViewDirection(const Vec3& towardsEye, bool animate = true) noexcept;
+    // Turn the view around world Z (ViewCube rotate arrows).
+    void rotateAroundZ(float radians, bool animate = true) noexcept;
     void fitToBounds(const AABB& bounds, bool animate = true) noexcept;
 
     // Advances any running view transition; returns true while animating.
@@ -36,6 +42,9 @@ public:
     float yaw() const noexcept { return m_yaw; }
     float pitch() const noexcept { return m_pitch; }
     float fovY() const noexcept { return m_fovY; }
+
+    // World units per screen pixel at the target depth.
+    float worldPerPixel(float viewportHeight) const noexcept;
 
     Vec3 position() const noexcept;
     Vec3 forward() const noexcept;

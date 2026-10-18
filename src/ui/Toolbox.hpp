@@ -14,7 +14,8 @@ public:
     Toolbox();
 
     // Draws the rail between `top` and `bottom` (screen y). Returns its width.
-    float draw(float top, float bottom);
+    // In the 2D drawing window, 3D-only tools are dimmed.
+    float draw(float top, float bottom, bool drawing2D = false);
 
     ToolId active() const noexcept { return m_active; }
     void setActive(ToolId id);
@@ -30,6 +31,7 @@ private:
     ToolId m_active = ToolId::Orbit;
     std::vector<int> m_current; // per group: index of the tool shown in the slot
     bool m_twoColumns = true;
+    bool m_drawing2D = false;
     int m_pressedGroup = -1;
     double m_pressTime = 0.0;
 };

@@ -4,19 +4,29 @@
 #include "core/Scene.hpp"
 #include "render/Renderer.hpp"
 #include "ui/Toolbox.hpp"
+#include "ui/ViewCube.hpp"
 
 #include <optional>
 #include <string>
 
 namespace sicdm {
 
+// The two view windows of a document.
+enum class ViewMode { Model3D, Drawing2D };
+
 // Per-frame state the UI displays.
 struct UiState {
+    ViewMode mode = ViewMode::Model3D;
+    SketchPlane plane = SketchPlane::Top; // active sketch / drawing plane
     bool showWelcome = true;
     bool showModelTree = true;
     bool showControls = false;
     bool showAbout = false;
+    bool snapGrid = true;
+    bool snapPoints = true;
     int selectedBody = -1;
+    int selectedCurve = -1;
+    std::optional<Vec2> cursorPlane; // cursor on the sketch plane (mm), when known
     float frameMs = 0.0f;
     std::string statusMessage; // transient feedback (e.g. "Placed Block 1")
     std::string gpuName;
@@ -26,34 +36,51 @@ struct UiState {
 // Actions requested by the UI, applied by the application after drawing.
 struct UiCommands {
     std::optional<StandardView> view;
+    std::optional<Vec3> viewDirection;
+    std::optional<ViewMode> mode;
+    std::optional<SketchPlane> plane;
+    float rotateZ = 0.0f;
+    Vec2 orbitDelta{};
+    bool home = false;
     bool fit = false;
     bool toggleProjection = false;
     bool quit = false;
 };
 
-// Landing page of the workbench: menu bar, view toolbar, model tree,
-// welcome card, navigation triad and status bar around the 3D canvas.
+// Workbench chrome around the canvas: menu bar, options bar (tool options and
+// the 2D / 3D window switch), document tabs, rulers, tool rail, model tree,
+// ViewCube, welcome card and status bar.
 class LandingUI {
 public:
     UiCommands draw(Scene& scene, const OrbitCamera& camera, ViewportSettings& viewport, UiState& state);
 
     Toolbox& toolbox() noexcept { return m_toolbox; }
 
+    // Canvas area (inside the chrome) in window coordinates, valid after draw().
+    ImVec2 canvasMin() const noexcept { return m_canvasMin; }
+    ImVec2 canvasMax() const noexcept { return m_canvasMax; }
+
 private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
-    void drawToolbar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp);
+    void drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
+    void drawDocumentTabs(UiCommands& cmd, const UiState& st);
+    void drawRulers(const OrbitCamera& cam, const UiState& st);
     void drawModelTree(Scene& scene, UiState& st);
     void drawWelcome(UiState& st);
     void drawStatusBar(const Scene& scene, const OrbitCamera& cam, const UiState& st);
-    void drawTriad(UiCommands& cmd, const OrbitCamera& cam);
     void drawControlsWindow(UiState& st);
     void drawAboutWindow(UiState& st);
 
     Toolbox m_toolbox;
+    ViewCube m_viewCube;
+    std::optional<ViewMode> m_tabMode; // tab the tab bar currently shows
     float m_toolboxWidth = 0.0f;
     float m_menuHeight = 0.0f;
-    float m_toolbarHeight = 0.0f;
+    float m_optionsHeight = 0.0f;
+    float m_rightGroupWidth = 560.0f;
+    float m_tabsBottom = 0.0f;
     float m_statusHeight = 0.0f;
+    ImVec2 m_canvasMin{}, m_canvasMax{};
 };
 
 } // namespace sicdm

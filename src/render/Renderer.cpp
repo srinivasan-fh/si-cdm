@@ -53,11 +53,28 @@ uniform vec3 uCamPos;
 uniform vec3 uCamRight;
 uniform vec3 uCamUp;
 uniform float uHighlight;
+uniform vec3 uCamDir;     // view direction (used for orthographic views)
+uniform float uOrtho;
+uniform float uHiddenLine;
+uniform vec3 uPaper;      // hidden-line face fill
+uniform vec3 uInk;        // hidden-line silhouette colour
 out vec4 fragColor;
 void main() {
     vec3 N = normalize(vNormal);
-    vec3 V = normalize(uCamPos - vWorldPos);
+    vec3 V = uOrtho > 0.5 ? -uCamDir : normalize(uCamPos - vWorldPos);
     if (!gl_FrontFacing) N = -N;
+
+    if (uHiddenLine > 0.5) {
+        // Faces become paper (hiding what is behind them); curved silhouettes
+        // are drawn where the surface turns edge-on to the viewer.
+        float ndv = abs(dot(N, V));
+        float w = max(fwidth(ndv) * 2.5, 1e-4);
+        float rim = 1.0 - smoothstep(0.0, w, ndv);
+        vec3 ink = mix(uInk, vec3(0.35, 0.70, 1.00), uHighlight);
+        vec3 paper = mix(uPaper, vec3(0.16, 0.24, 0.36), uHighlight * 0.6);
+        fragColor = vec4(mix(paper, ink, rim), 1.0);
+        return;
+    }
 
     // Headlight slightly above-left of the eye plus a cool fill light.
     vec3 L1 = normalize(V + 0.35 * uCamUp - 0.25 * uCamRight);
@@ -91,25 +108,50 @@ out vec4 fragColor;
 void main() { fragColor = uColor; }
 )";
 
+constexpr const char* kSketchVS = R"(#version 410 core
+layout(location = 0) in vec3 aPos;
+uniform mat4 uViewProj;
+uniform float uPointSize;
+void main() {
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+    gl_PointSize = uPointSize;
+}
+)";
+
+constexpr const char* kSketchFS = R"(#version 410 core
+uniform vec4 uColor;
+uniform float uRound;
+out vec4 fragColor;
+void main() {
+    if (uRound > 0.5 && length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
+    fragColor = uColor;
+}
+)";
+
 constexpr const char* kGridVS = R"(#version 410 core
 uniform mat4 uViewProj;
-uniform vec3 uCenter;
+uniform vec2 uCenter;   // patch centre in plane coordinates
 uniform float uExtent;
-out vec3 vWorldPos;
+uniform vec3 uAxisU;
+uniform vec3 uAxisV;
+out vec2 vPlanePos;
 void main() {
     const vec2 corners[6] = vec2[](vec2(-1,-1), vec2(1,-1), vec2(1,1),
                                    vec2(-1,-1), vec2(1,1), vec2(-1,1));
-    vec3 p = vec3(uCenter.xy + corners[gl_VertexID] * uExtent, 0.0);
-    vWorldPos = p;
-    gl_Position = uViewProj * vec4(p, 1.0);
+    vec2 p = uCenter + corners[gl_VertexID] * uExtent;
+    vPlanePos = p;
+    gl_Position = uViewProj * vec4(uAxisU * p.x + uAxisV * p.y, 1.0);
 }
 )";
 
 constexpr const char* kGridFS = R"(#version 410 core
-in vec3 vWorldPos;
-uniform vec3 uCenter;
+in vec2 vPlanePos;
+uniform vec2 uCenter;
 uniform float uExtent;
 uniform float uLevel;   // log10 of the minor spacing (fractional)
+uniform vec3 uColorU;   // colour of the u axis line (v == 0)
+uniform vec3 uColorV;   // colour of the v axis line (u == 0)
+uniform float uStrength;
 out vec4 fragColor;
 
 float lineMask(vec2 p, float spacing, float widthPx) {
@@ -120,7 +162,7 @@ float lineMask(vec2 p, float spacing, float widthPx) {
 }
 
 void main() {
-    vec2 p = vWorldPos.xy;
+    vec2 p = vPlanePos;
     float lvl = floor(uLevel);
     float blend = fract(uLevel);
     float minor = pow(10.0, lvl);
@@ -131,16 +173,16 @@ void main() {
     a = max(a, lineMask(p, major * 10.0, 1.4) * 0.55);
     vec3 col = vec3(0.62, 0.66, 0.72);
 
-    // World axes on the plane: X red (y == 0), Y green (x == 0).
+    // World axes lying in the plane.
     vec2 fw = fwidth(p);
     float ax = 1.0 - min(abs(p.y) / (fw.y * 1.6), 1.0);
     float ay = 1.0 - min(abs(p.x) / (fw.x * 1.6), 1.0);
-    col = mix(col, vec3(0.90, 0.30, 0.30), ax);
-    col = mix(col, vec3(0.40, 0.80, 0.35), ay);
-    a = max(a, max(ax, ay) * 0.9);
+    col = mix(col, uColorU, ax);
+    col = mix(col, uColorV, ay);
+    a = max(a * uStrength, max(ax, ay) * 0.9);
 
     // Fade towards the edge of the patch so it reads as infinite.
-    float r = length(p - uCenter.xy) / uExtent;
+    float r = length(p - uCenter) / uExtent;
     a *= 1.0 - smoothstep(0.35, 1.0, r);
     if (a <= 0.002) discard;
     fragColor = vec4(col, a);
@@ -190,17 +232,27 @@ Renderer::Renderer()
     : m_background(kBackgroundVS, kBackgroundFS),
       m_mesh(kMeshVS, kMeshFS),
       m_lines(kLinesVS, kLinesFS),
-      m_grid(kGridVS, kGridFS) {
+      m_grid(kGridVS, kGridFS),
+      m_sketchShader(kSketchVS, kSketchFS) {
     glGenVertexArrays(1, &m_emptyVao);
+    glGenVertexArrays(1, &m_sketchVao);
+    glGenBuffers(1, &m_sketchVbo);
+    glBindVertexArray(m_sketchVao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_sketchVbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vec3), nullptr);
+    glBindVertexArray(0);
 }
 
 Renderer::~Renderer() {
     releaseMeshes();
     if (m_emptyVao) glDeleteVertexArrays(1, &m_emptyVao);
+    if (m_sketchVao) glDeleteVertexArrays(1, &m_sketchVao);
+    if (m_sketchVbo) glDeleteBuffers(1, &m_sketchVbo);
 }
 
 bool Renderer::valid() const noexcept {
-    return m_background.valid() && m_mesh.valid() && m_lines.valid() && m_grid.valid();
+    return m_background.valid() && m_mesh.valid() && m_lines.valid() && m_grid.valid() && m_sketchShader.valid();
 }
 
 void Renderer::releaseMeshes() {
@@ -221,6 +273,45 @@ void Renderer::upload(const Scene& scene) {
     m_uploadedRevision = scene.revision();
 }
 
+void Renderer::uploadSketch(const Sketch& sketch) {
+    std::vector<Vec3> verts;
+    m_sketchRanges.clear();
+    for (const SketchCurve& c : sketch.curves()) {
+        const std::vector<Vec3> strip = c.worldStrip();
+        m_sketchRanges.push_back({static_cast<GLint>(verts.size()), static_cast<GLsizei>(strip.size()),
+                                  c.kind == CurveKind::Point});
+        verts.insert(verts.end(), strip.begin(), strip.end());
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, m_sketchVbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(Vec3)), verts.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    m_sketchRevision = sketch.revision();
+}
+
+void Renderer::drawSketch(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s, int selected) {
+    const auto& curves = scene.sketch().curves();
+    const std::size_t n = std::min(curves.size(), m_sketchRanges.size());
+    if (n == 0) return;
+
+    // The active drawing plane shows sketches on top; in 3D they respect depth.
+    if (s.sketchOnTop) glDisable(GL_DEPTH_TEST);
+    glEnable(GL_PROGRAM_POINT_SIZE);
+    m_sketchShader.bind();
+    m_sketchShader.set("uViewProj", cam.viewProjection());
+    glBindVertexArray(m_sketchVao);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!curves[i].visible) continue;
+        const SketchRange& r = m_sketchRanges[i];
+        const Vec3 c = static_cast<int>(i) == selected ? Vec3{0.35f, 0.72f, 1.0f} : s.sketchColor;
+        m_sketchShader.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
+        m_sketchShader.set("uRound", r.point ? 1.0f : 0.0f);
+        m_sketchShader.set("uPointSize", r.point ? 7.0f : 1.0f);
+        glDrawArrays(r.point ? GL_POINTS : GL_LINE_STRIP, r.first, r.count);
+    }
+    glDisable(GL_PROGRAM_POINT_SIZE);
+    glEnable(GL_DEPTH_TEST);
+}
+
 void Renderer::drawBackground(const ViewportSettings& s) {
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
@@ -233,7 +324,7 @@ void Renderer::drawBackground(const ViewportSettings& s) {
     glEnable(GL_DEPTH_TEST);
 }
 
-void Renderer::drawGrid(const OrbitCamera& cam) {
+void Renderer::drawGrid(const OrbitCamera& cam, const ViewportSettings& s) {
     // Pick a spacing that keeps ~10-100 minor cells across the view.
     const float viewSize = cam.distance() * std::tan(cam.fovY() * 0.5f) * 2.0f;
     const float level = std::log10(std::max(viewSize / 20.0f, 1e-4f));
@@ -245,9 +336,22 @@ void Renderer::drawGrid(const OrbitCamera& cam) {
 
     m_grid.bind();
     m_grid.set("uViewProj", cam.viewProjection());
-    m_grid.set("uCenter", Vec3{cam.target().x, cam.target().y, 0.0f});
+    const PlaneFrame f = planeFrame(s.gridPlane);
+    const Vec2 c = f.toPlane(cam.target());
+    // Axis line colours follow the world axis they lie along (X red, Y green, Z blue).
+    auto axisColor = [](const Vec3& a) {
+        if (std::fabs(a.x) > 0.5f) return Vec3{0.90f, 0.30f, 0.30f};
+        if (std::fabs(a.y) > 0.5f) return Vec3{0.40f, 0.80f, 0.35f};
+        return Vec3{0.35f, 0.55f, 0.95f};
+    };
+    m_grid.set("uCenter", c);
     m_grid.set("uExtent", extent);
     m_grid.set("uLevel", level);
+    m_grid.set("uAxisU", f.u);
+    m_grid.set("uAxisV", f.v);
+    m_grid.set("uColorU", axisColor(f.u));
+    m_grid.set("uColorV", axisColor(f.v));
+    m_grid.set("uStrength", s.gridStrength);
     glBindVertexArray(m_emptyVao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
@@ -256,7 +360,7 @@ void Renderer::drawGrid(const OrbitCamera& cam) {
 }
 
 void Renderer::render(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s,
-                      int fbWidth, int fbHeight, int selectedBody) {
+                      int fbWidth, int fbHeight, int selectedBody, int selectedCurve) {
     glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(s.backgroundBottom.x, s.backgroundBottom.y, s.backgroundBottom.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -273,11 +377,17 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     const std::size_t count = std::min(bodies.size(), m_meshes.size());
 
     // Solid pass, pushed back slightly so edges win the depth test.
+    const bool hidden = s.displayMode == DisplayMode::HiddenLine;
     if (s.displayMode != DisplayMode::Wireframe) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         m_mesh.bind();
         m_mesh.set("uViewProj", vp);
+        m_mesh.set("uHiddenLine", hidden ? 1.0f : 0.0f);
+        m_mesh.set("uPaper", s.backgroundBottom);
+        m_mesh.set("uInk", s.edgeColor);
+        m_mesh.set("uOrtho", cam.projection() == Projection::Orthographic ? 1.0f : 0.0f);
+        m_mesh.set("uCamDir", cam.forward());
         m_mesh.set("uCamPos", cam.position());
         m_mesh.set("uCamRight", cam.right());
         m_mesh.set("uCamUp", cam.up());
@@ -309,7 +419,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                 glDrawElements(GL_TRIANGLES, m_meshes[i].indexCount, GL_UNSIGNED_INT, nullptr);
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             } else if (m_meshes[i].edgeVao) {
-                const Vec3 c = sel ? Vec3{0.10f, 0.45f, 0.95f} : s.edgeColor;
+                const Vec3 c = sel ? (hidden ? Vec3{0.35f, 0.70f, 1.0f} : Vec3{0.10f, 0.45f, 0.95f}) : s.edgeColor;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
                 glBindVertexArray(m_meshes[i].edgeVao);
                 glDrawArrays(GL_LINES, 0, m_meshes[i].edgeVertexCount);
@@ -317,7 +427,9 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         }
     }
 
-    if (s.showGrid) drawGrid(cam);
+    if (s.showGrid) drawGrid(cam, s);
+    if (scene.sketch().revision() != m_sketchRevision) uploadSketch(scene.sketch());
+    drawSketch(scene, cam, s, selectedCurve);
 
     glBindVertexArray(0);
     glUseProgram(0);

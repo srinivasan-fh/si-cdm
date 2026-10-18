@@ -87,14 +87,31 @@ void OrbitCamera::orbit(float dx, float dy) noexcept {
 void OrbitCamera::pan(float dx, float dy, float viewportHeight) noexcept {
     m_animT = 1.0f;
     if (viewportHeight <= 0.0f) return;
-    // World units per pixel at the target depth.
-    const float worldPerPixel = 2.0f * m_distance * std::tan(m_fovY * 0.5f) / viewportHeight;
-    m_target += (right() * -dx + up() * dy) * worldPerPixel;
+    m_target += (right() * -dx + up() * dy) * worldPerPixel(viewportHeight);
 }
 
 void OrbitCamera::zoom(float steps) noexcept {
     m_animT = 1.0f;
     m_distance = std::clamp(m_distance * std::pow(kZoomFactor, steps), kMinDistance, kMaxDistance);
+}
+
+void OrbitCamera::zoomAt(float steps, float x, float y, float w, float h) noexcept {
+    // Point under the cursor on the plane through the target facing the camera.
+    auto underCursor = [&](Vec3& out) {
+        const Ray r = screenRay(x, y, w, h);
+        float t = 0.0f;
+        if (!intersectPlane(r, m_target, forward(), t)) return false;
+        out = r.at(t);
+        return true;
+    };
+    Vec3 before, after;
+    const bool ok = underCursor(before);
+    zoom(steps);
+    if (ok && underCursor(after)) m_target += before - after;
+}
+
+float OrbitCamera::worldPerPixel(float viewportHeight) const noexcept {
+    return viewportHeight > 0.0f ? 2.0f * m_distance * std::tan(m_fovY * 0.5f) / viewportHeight : 0.0f;
 }
 
 void OrbitCamera::setStandardView(StandardView v, bool animate) noexcept {
@@ -104,8 +121,9 @@ void OrbitCamera::setStandardView(StandardView v, bool animate) noexcept {
     case StandardView::Back:   to.yaw = kPi * 0.5f;  to.pitch = 0.0f; break;
     case StandardView::Right:  to.yaw = 0.0f;        to.pitch = 0.0f; break;  // looking along -X
     case StandardView::Left:   to.yaw = kPi;         to.pitch = 0.0f; break;
-    case StandardView::Top:    to.yaw = -kPi * 0.5f; to.pitch = kPitchLimit; break;
-    case StandardView::Bottom: to.yaw = -kPi * 0.5f; to.pitch = -kPitchLimit; break;
+    // Exactly plan-on: right() comes from yaw alone, so the view stays well defined.
+    case StandardView::Top:    to.yaw = -kPi * 0.5f; to.pitch = kPi * 0.5f; break;
+    case StandardView::Bottom: to.yaw = -kPi * 0.5f; to.pitch = -kPi * 0.5f; break;
     case StandardView::Isometric:
         to.yaw = -kPi * 0.25f;                       // from +X/-Y quadrant
         to.pitch = std::atan(1.0f / std::sqrt(2.0f)); // 35.264 deg
@@ -114,11 +132,30 @@ void OrbitCamera::setStandardView(StandardView v, bool animate) noexcept {
     startTransition(to, animate);
 }
 
+void OrbitCamera::setViewDirection(const Vec3& d, bool animate) noexcept {
+    const Vec3 n = normalize(d);
+    if (length(n) == 0.0f) return;
+    Pose to{m_target, m_yaw, m_pitch, m_distance};
+    const float horizontal = std::sqrt(n.x * n.x + n.y * n.y);
+    to.pitch = std::atan2(n.z, horizontal);
+    // Straight up/down keeps the current heading (Top shows X right, Y up from Front).
+    to.yaw = horizontal > 1e-5f ? std::atan2(n.y, n.x) : (m_pitch > kPitchLimit || m_pitch < -kPitchLimit ? m_yaw : -kPi * 0.5f);
+    startTransition(to, animate);
+}
+
+void OrbitCamera::rotateAroundZ(float rad, bool animate) noexcept {
+    Pose to{m_target, m_yaw + rad, m_pitch, m_distance};
+    startTransition(to, animate);
+}
+
 void OrbitCamera::fitToBounds(const AABB& bounds, bool animate) noexcept {
     if (!bounds.valid()) return;
     const float r = std::max(bounds.radius(), 1e-3f);
     const float halfFov = 0.5f * std::min(m_fovY, 2.0f * std::atan(std::tan(m_fovY * 0.5f) * m_aspect));
-    Pose to{bounds.center(), m_yaw, m_pitch, (r / std::sin(halfFov)) * 1.05f};
+    // Keep the orientation of a view change still in flight (e.g. Front, then Fit).
+    const bool animating = m_animT < 1.0f;
+    Pose to{bounds.center(), animating ? m_to.yaw : m_yaw, animating ? m_to.pitch : m_pitch,
+            (r / std::sin(halfFov)) * 1.05f};
     startTransition(to, animate);
 }
 

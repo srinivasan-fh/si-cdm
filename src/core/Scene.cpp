@@ -47,6 +47,7 @@ AABB Scene::bounds() const noexcept {
         all.expand(bb);
         if (b.visible) visible.expand(bb);
     }
+    visible.expand(m_sketch.bounds());
     return visible.valid() ? visible : all;
 }
 

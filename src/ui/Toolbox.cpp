@@ -57,7 +57,8 @@ void Toolbox::handleShortcuts() {
     }
 }
 
-float Toolbox::draw(float top, float bottom) {
+float Toolbox::draw(float top, float bottom, bool drawing2D) {
+    m_drawing2D = drawing2D;
     const int cols = m_twoColumns ? 2 : 1;
     const float width = kPad * 2.0f + kSlot * static_cast<float>(cols) + kGap * static_cast<float>(cols - 1);
 
@@ -113,7 +114,9 @@ void Toolbox::drawSlot(int gi, float size) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (isActive) dl->AddRectFilled(lo, hi, IM_COL32(52, 92, 150, 255), 4.0f);
     else if (hovered) dl->AddRectFilled(lo, hi, IM_COL32(62, 66, 76, 255), 4.0f);
-    drawToolIcon(dl, shown, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, size * 0.56f, iconColor(shown, isActive));
+    const bool dimmed = m_drawing2D && shown == ToolId::Orbit;
+    drawToolIcon(dl, shown, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, size * 0.56f,
+                 dimmed ? IM_COL32(95, 100, 110, 255) : iconColor(shown, isActive));
 
     const bool hasFlyout = group.tools.size() > 1;
     if (hasFlyout) // corner triangle, as in Photoshop
@@ -149,6 +152,7 @@ void Toolbox::drawSlot(int gi, float size) {
         ImGui::TextDisabled("%s", info.description);
         ImGui::PopTextWrapPos();
         if (!info.available) ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "Planned for a later milestone");
+        if (dimmed) ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "3D window only");
         if (hasFlyout) ImGui::TextDisabled("Right-click or hold for %zu more", group.tools.size() - 1);
         ImGui::EndTooltip();
     }

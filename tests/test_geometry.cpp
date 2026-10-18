@@ -69,3 +69,36 @@ TEST_CASE("demo scene is non-empty and sits on the XY plane") {
     CHECK(s.triangleCount() > 1000);
     CHECK_NEAR(s.bounds().min.z, 0, 1e-4);
 }
+
+TEST_CASE("sketch planes are right-handed and round-trip points") {
+    for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right}) {
+        const PlaneFrame f = planeFrame(p);
+        const Vec3 n = cross(f.u, f.v);
+        CHECK_NEAR(dot(n, f.normal), 1.0, 1e-6); // normal points towards the viewer
+        const Vec2 q = f.toPlane(f.toWorld({3, -4}));
+        CHECK_NEAR(q.x, 3, 1e-6);
+        CHECK_NEAR(q.y, -4, 1e-6);
+    }
+}
+
+TEST_CASE("sketch curves tessellate and measure") {
+    Sketch s;
+    SketchCurve r;
+    r.kind = CurveKind::Rectangle;
+    r.pts = {{0, 0}, {30, 20}};
+    s.add(r);
+    CHECK(s.curves()[0].worldStrip().size() == 5);
+    CHECK(s.curves()[0].measure() == "30.0 x 20.0");
+    CHECK(s.curves()[0].name == "Rectangle 1");
+    SketchCurve c;
+    c.kind = CurveKind::Circle;
+    c.plane = SketchPlane::Front;
+    c.pts = {{0, 10}};
+    c.radius = 5;
+    s.add(c);
+    const AABB b = s.bounds();
+    CHECK_NEAR(b.max.z, 15, 1e-4); // front plane: v is world Z
+    const auto rev = s.revision();
+    s.remove(0);
+    CHECK(s.revision() != rev);
+}

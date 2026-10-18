@@ -13,18 +13,18 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::Select, C::Navigate, "Select", "S", "Click a body to select it. Click empty space to clear.", true},
     {T::BoxSelect, C::Navigate, "Box Select", "", "Drag a rectangle to select everything inside it.", false},
     {T::LassoSelect, C::Navigate, "Lasso Select", "", "Draw a freehand loop to select what it encloses.", false},
-    {T::Orbit, C::Navigate, "Orbit", "O", "Left drag rotates the view around the target.", true},
+    {T::Orbit, C::Navigate, "Orbit", "O", "Left drag rotates the view around the target (3D window only).", true},
     {T::Pan, C::Navigate, "Pan", "H", "Left drag slides the view.", true},
     {T::Zoom, C::Navigate, "Zoom", "Z", "Left drag up or down to zoom.", true},
 
-    {T::Point, C::Sketch, "Point", "", "Zero-dimensional references for hole placements, centres and weld locations.", false},
-    {T::Line, C::Sketch, "Line", "L", "Straight segments defining edges, structural frames and linear boundaries.", false},
-    {T::Polyline, C::Sketch, "Polyline", "", "Connected lines and arcs acting as a single continuous path.", false},
+    {T::Point, C::Sketch, "Point", "", "Zero-dimensional references for hole placements, centres and weld locations. Click to place.", true},
+    {T::Line, C::Sketch, "Line", "L", "Straight segments defining edges, structural frames and linear boundaries. Click start, click end.", true},
+    {T::Polyline, C::Sketch, "Polyline", "", "Connected lines acting as a single continuous path. Click points; Enter, double-click or click the start to finish.", true},
     {T::Arc, C::Sketch, "Arc", "A", "Curved segments for smooth transitions, corners and circular paths.", false},
     {T::Conic, C::Sketch, "Conic Section", "", "Parabolas and hyperbolas for precise trajectory paths.", false},
-    {T::Circle, C::Sketch, "Circle", "C", "Closed circles for shafts, holes, fasteners and rotational axes.", false},
+    {T::Circle, C::Sketch, "Circle", "C", "Closed circles for shafts, holes, fasteners and rotational axes. Click centre, click radius.", true},
     {T::Ellipse, C::Sketch, "Ellipse", "", "Stretched circles for specialised fluid and structural profiles.", false},
-    {T::Rectangle, C::Sketch, "Rectangle", "R", "Four-sided enclosures for blocks, pockets and stock footprints.", false},
+    {T::Rectangle, C::Sketch, "Rectangle", "R", "Four-sided enclosures for blocks, pockets and stock footprints. Click two opposite corners.", true},
     {T::Slot, C::Sketch, "Slot", "", "Elongated tracks with rounded ends for sliding joints and fasteners.", false},
     {T::Polygon, C::Sketch, "Polygon", "", "Multi-sided shapes (hexagons) for bolts, nuts and sockets.", false},
     {T::Spline, C::Sketch, "Spline", "", "Flexible, mathematically controlled curves for organic and aerodynamic outlines.", false},
@@ -121,5 +121,10 @@ const char* categoryName(ToolCategory c) {
 }
 
 bool isPrimitiveTool(ToolId id) { return toolInfo(id).category == ToolCategory::Solid; }
+
+bool isSketchTool(ToolId id) {
+    return id == ToolId::Point || id == ToolId::Line || id == ToolId::Polyline || id == ToolId::Rectangle ||
+           id == ToolId::Circle;
+}
 
 } // namespace sicdm

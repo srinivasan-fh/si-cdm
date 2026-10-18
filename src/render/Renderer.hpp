@@ -8,7 +8,7 @@
 
 namespace sicdm {
 
-enum class DisplayMode { Shaded, ShadedWithEdges, Wireframe };
+enum class DisplayMode { Shaded, ShadedWithEdges, Wireframe, HiddenLine };
 
 struct ViewportSettings {
     DisplayMode displayMode = DisplayMode::ShadedWithEdges;
@@ -16,6 +16,10 @@ struct ViewportSettings {
     Vec3 backgroundTop{0.20f, 0.23f, 0.29f};
     Vec3 backgroundBottom{0.06f, 0.07f, 0.09f};
     Vec3 edgeColor{0.08f, 0.09f, 0.11f};
+    Vec3 sketchColor{1.0f, 0.66f, 0.28f};
+    SketchPlane gridPlane = SketchPlane::Top;
+    float gridStrength = 1.0f;
+    bool sketchOnTop = false; // draw sketch curves over bodies (2D drawing view)
 };
 
 // GPU-side copy of one body.
@@ -45,17 +49,29 @@ public:
     }
 
     void render(const Scene& scene, const OrbitCamera& camera, const ViewportSettings& settings,
-                int framebufferWidth, int framebufferHeight, int selectedBody);
+                int framebufferWidth, int framebufferHeight, int selectedBody, int selectedCurve);
 
 private:
     void drawBackground(const ViewportSettings& s);
-    void drawGrid(const OrbitCamera& cam);
+    void drawGrid(const OrbitCamera& cam, const ViewportSettings& s);
+    void uploadSketch(const Sketch& sketch);
+    void drawSketch(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s, int selected);
     void releaseMeshes();
 
     Shader m_background;
     Shader m_mesh;
     Shader m_lines;
     Shader m_grid;
+    Shader m_sketchShader;
+
+    struct SketchRange {
+        GLint first;
+        GLsizei count;
+        bool point;
+    };
+    GLuint m_sketchVao = 0, m_sketchVbo = 0;
+    std::vector<SketchRange> m_sketchRanges;
+    std::uint64_t m_sketchRevision = ~std::uint64_t{0};
 
     GLuint m_emptyVao = 0;
     std::vector<GpuMesh> m_meshes;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Geometry.hpp"
+#include "core/Sketch.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -30,6 +31,9 @@ public:
     std::vector<Body>& bodies() noexcept { return m_bodies; }
     const std::vector<Body>& bodies() const noexcept { return m_bodies; }
 
+    Sketch& sketch() noexcept { return m_sketch; }
+    const Sketch& sketch() const noexcept { return m_sketch; }
+
     Body& add(Body body) {
         ++m_revision;
         return m_bodies.emplace_back(std::move(body));
@@ -42,7 +46,7 @@ public:
     // Closest visible body hit by the ray, if any.
     std::optional<RayHit> raycast(const Ray& ray) const noexcept;
 
-    // Bounds of visible bodies (or all bodies if none are visible).
+    // Bounds of visible bodies and sketch curves (or everything if none are visible).
     AABB bounds() const noexcept;
 
     std::size_t triangleCount() const noexcept;
@@ -53,6 +57,7 @@ public:
 private:
     std::vector<Body> m_bodies;
     std::uint64_t m_revision = 0;
+    Sketch m_sketch;
 };
 
 } // namespace sicdm

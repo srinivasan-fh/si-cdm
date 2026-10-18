@@ -74,6 +74,7 @@ Shader& Shader::operator=(Shader&& o) noexcept {
 }
 
 void Shader::set(const char* n, float v) const noexcept { glUniform1f(location(n), v); }
+void Shader::set(const char* n, const Vec2& v) const noexcept { glUniform2f(location(n), v.x, v.y); }
 void Shader::set(const char* n, const Vec3& v) const noexcept { glUniform3f(location(n), v.x, v.y, v.z); }
 void Shader::set(const char* n, const Vec4& v) const noexcept { glUniform4f(location(n), v.x, v.y, v.z, v.w); }
 void Shader::set(const char* n, const Mat4& m) const noexcept { glUniformMatrix4fv(location(n), 1, GL_FALSE, m.data()); }

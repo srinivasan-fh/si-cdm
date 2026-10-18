@@ -23,6 +23,7 @@ public:
     void bind() const noexcept { glUseProgram(m_program); }
 
     void set(const char* name, float v) const noexcept;
+    void set(const char* name, const Vec2& v) const noexcept;
     void set(const char* name, const Vec3& v) const noexcept;
     void set(const char* name, const Vec4& v) const noexcept;
     void set(const char* name, const Mat4& m) const noexcept;

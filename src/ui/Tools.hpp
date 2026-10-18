@@ -53,4 +53,7 @@ const char* categoryName(ToolCategory c);
 // True for tools that place a 3D primitive with a click.
 bool isPrimitiveTool(ToolId id);
 
+// True for the 2D sketch tools that are implemented (draw on the active sketch plane).
+bool isSketchTool(ToolId id);
+
 } // namespace sicdm
