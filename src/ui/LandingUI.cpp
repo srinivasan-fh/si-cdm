@@ -103,15 +103,16 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     drawStatusBar(scene, cam, st);
     const float railTop = mv->WorkPos.y + m_optionsHeight;
     const float bottom = mv->WorkPos.y + mv->WorkSize.y - m_statusHeight;
-    m_toolboxWidth = m_toolbox.draw(railTop, bottom, st.mode == ViewMode::Drawing2D);
+    m_toolboxWidth = m_toolbox.draw(railTop, bottom, st.mode == ViewMode::Drawing2D, st.showModelTree);
+    // The Model panel docks beside the rail; tabs, rulers and canvas start after it.
+    m_leftDockWidth = m_toolboxWidth;
+    if (st.showModelTree) m_leftDockWidth += drawModelTree(scene, st, mv->WorkPos.x + m_toolboxWidth, railTop, bottom);
     drawDocumentTabs(cmd, st);
 
     const bool is2D = st.mode == ViewMode::Drawing2D;
-    m_canvasMin = {mv->WorkPos.x + m_toolboxWidth + (is2D ? kRulerSize : 0.0f), m_tabsBottom + (is2D ? kRulerSize : 0.0f)};
+    m_canvasMin = {mv->WorkPos.x + m_leftDockWidth + (is2D ? kRulerSize : 0.0f), m_tabsBottom + (is2D ? kRulerSize : 0.0f)};
     m_canvasMax = {mv->WorkPos.x + mv->WorkSize.x, bottom};
     if (is2D) drawRulers(cam, st);
-
-    if (st.showModelTree) drawModelTree(scene, st);
 
     const ViewCubeResult vc = m_viewCube.draw(cam, {m_canvasMax.x - 10.0f, m_canvasMax.y - 10.0f}, is2D);
     if (vc.viewDirection) cmd.viewDirection = vc.viewDirection;
@@ -182,7 +183,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         }
         ImGui::Separator();
         ImGui::MenuItem("Grid", "G", &vp.showGrid);
-        ImGui::MenuItem("Model Tree", nullptr, &st.showModelTree);
+        ImGui::MenuItem("Model Panel", "M", &st.showModelTree);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Design")) {
@@ -348,10 +349,10 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
 void LandingUI::drawDocumentTabs(UiCommands& cmd, const UiState& st) {
     // Each view window is a document tab, so switching feels like Photoshop.
     const ImGuiViewport* mv = ImGui::GetMainViewport();
-    const float x = mv->WorkPos.x + m_toolboxWidth;
+    const float x = mv->WorkPos.x + m_leftDockWidth;
     const float y = mv->WorkPos.y + m_optionsHeight;
     ImGui::SetNextWindowPos({x, y});
-    ImGui::SetNextWindowSize({mv->WorkSize.x - m_toolboxWidth, 0.0f});
+    ImGui::SetNextWindowSize({mv->WorkSize.x - m_leftDockWidth, 0.0f});
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
                                        ImGuiWindowFlags_AlwaysAutoResize;
@@ -459,15 +460,19 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
     dl->AddText(font, fs, {x0 + 2, y0 + 3}, text, "mm");
 }
 
-void LandingUI::drawModelTree(Scene& scene, UiState& st) {
-    const float top = m_canvasMin.y + 8.0f;
-    const float height = m_canvasMax.y - m_canvasMin.y - 16.0f;
-    ImGui::SetNextWindowPos({m_canvasMin.x + 8.0f, top}, ImGuiCond_Always);
-    ImGui::SetNextWindowSizeConstraints({200, 200}, {600, std::max(height, 200.0f)});
-    ImGui::SetNextWindowSize({270, std::min(height, 520.0f)}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowBgAlpha(0.88f);
-
-    if (ImGui::Begin("Model", &st.showModelTree, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse)) {
+float LandingUI::drawModelTree(Scene& scene, UiState& st, float x, float top, float bottom) {
+    // Docked full-height panel; only its right edge can be dragged to resize.
+    const float height = std::max(bottom - top, 100.0f);
+    ImGui::SetNextWindowPos({x, top}, ImGuiCond_Always);
+    ImGui::SetNextWindowSizeConstraints({200, height}, {440, height});
+    ImGui::SetNextWindowSize({260, height}, ImGuiCond_FirstUseEver);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+    const bool visible = ImGui::Begin("Model", &st.showModelTree, flags);
+    ImGui::PopStyleVar();
+    const float width = ImGui::GetWindowWidth();
+    if (visible) {
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
         if (ImGui::TreeNode("Demo Bracket  (Part)")) {
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
@@ -540,6 +545,7 @@ void LandingUI::drawModelTree(Scene& scene, UiState& st) {
         }
     }
     ImGui::End();
+    return width;
 }
 
 void LandingUI::drawStatusBar(const Scene& scene, const OrbitCamera& cam, const UiState& st) {
@@ -603,6 +609,7 @@ void LandingUI::drawControlsWindow(UiState& st) {
                 {"Enter", "Finish polyline"},
                 {"Esc", "Cancel drawing / clear selection"},
                 {"Delete / Backspace", "Delete selected body or curve"},
+                {"M", "Show / hide the Model panel"},
                 {"V  S  O  H  Z", "Move / Select / Orbit / Pan / Zoom tools"},
                 {"L  C  R", "Line / Circle / Rectangle sketch tools"},
                 {"B  Y", "Block / Cylinder tools (Shift cycles the slot)"},

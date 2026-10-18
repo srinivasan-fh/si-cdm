@@ -33,7 +33,7 @@ TEST_CASE("shortcuts are unique single letters") {
         CHECK(keys.insert(k[0]).second);
     }
     // Keys the viewport already uses.
-    for (char reserved : {'F', 'P', 'W', 'G', 'Q'}) CHECK(keys.count(reserved) == 0);
+    for (char reserved : {'F', 'P', 'W', 'G', 'Q', 'M'}) CHECK(keys.count(reserved) == 0);
 }
 
 TEST_CASE("solid primitives are available") {

@@ -18,7 +18,7 @@ enum class ViewMode { Model3D, Drawing2D };
 struct UiState {
     ViewMode mode = ViewMode::Model3D;
     SketchPlane plane = SketchPlane::Top; // active sketch / drawing plane
-    bool showModelTree = true;
+    bool showModelTree = false; // docked Model panel beside the tool rail
     bool showControls = false;
     bool showAbout = false;
     bool snapGrid = true;
@@ -66,7 +66,7 @@ private:
     void drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawDocumentTabs(UiCommands& cmd, const UiState& st);
     void drawRulers(const OrbitCamera& cam, const UiState& st);
-    void drawModelTree(Scene& scene, UiState& st);
+    float drawModelTree(Scene& scene, UiState& st, float x, float top, float bottom); // returns width
     void drawStatusBar(const Scene& scene, const OrbitCamera& cam, const UiState& st);
     void drawControlsWindow(UiState& st);
     void drawAboutWindow(UiState& st);
@@ -75,6 +75,7 @@ private:
     ViewCube m_viewCube;
     std::optional<ViewMode> m_tabMode; // tab the tab bar currently shows
     float m_toolboxWidth = 0.0f;
+    float m_leftDockWidth = 0.0f; // rail + docked Model panel
     float m_menuHeight = 0.0f;
     float m_optionsHeight = 0.0f;
     float m_rightGroupWidth = 560.0f;

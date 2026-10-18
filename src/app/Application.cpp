@@ -460,6 +460,7 @@ void Application::handleViewportInput() {
     if (viewKey(ImGuiKey_7, ImGuiKey_Keypad7)) cmd.view = ctrl ? StandardView::Bottom : StandardView::Top;
     if (viewKey(ImGuiKey_0, ImGuiKey_Keypad0)) cmd.view = StandardView::Isometric;
     if (ImGui::IsKeyPressed(ImGuiKey_F)) cmd.fit = true;
+    if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !ctrl) m_uiState.showModelTree = !m_uiState.showModelTree;
     if (ImGui::IsKeyPressed(ImGuiKey_P) && !is2D) cmd.toggleProjection = true;
     if (ImGui::IsKeyPressed(ImGuiKey_G)) viewport().showGrid = !viewport().showGrid;
     if (ImGui::IsKeyPressed(ImGuiKey_W) && !is2D)

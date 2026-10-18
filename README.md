@@ -42,6 +42,8 @@ the drawing plane; edges and corners open the 3D window at that angle.
 ## Tools (left rail)
 
 Photoshop-style tool rail. `<<` / `>>` switches between two columns and one.
+The tree button at the top of the rail (or `M`) shows the **Model panel**, docked beside the rail:
+bodies, sketches and properties of the selection. It is hidden by default; drag its right edge to resize.
 Slots with a small corner triangle hold several tools: right-click or hold to open the flyout.
 
 - **Navigate & select:** Move (V), Select (S), Orbit (O), Pan (H), Zoom (Z)

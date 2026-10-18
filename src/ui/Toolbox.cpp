@@ -57,7 +57,7 @@ void Toolbox::handleShortcuts() {
     }
 }
 
-float Toolbox::draw(float top, float bottom, bool drawing2D) {
+float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen) {
     m_drawing2D = drawing2D;
     const int cols = m_twoColumns ? 2 : 1;
     const float width = kPad * 2.0f + kSlot * static_cast<float>(cols) + kGap * static_cast<float>(cols - 1);
@@ -79,6 +79,27 @@ float Toolbox::draw(float top, float bottom, bool drawing2D) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(m_twoColumns ? "Single-column tools" : "Two-column tools");
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
+
+    // Model panel toggle: a tree icon that docks the panel beside the rail.
+    {
+        ImGui::InvisibleButton("##modelpanel", {width - kPad * 2.0f, 26.0f});
+        const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+        const bool hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) panelOpen = !panelOpen;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (panelOpen) dl->AddRectFilled(lo, hi, IM_COL32(52, 92, 150, 255), 4.0f);
+        else if (hovered) dl->AddRectFilled(lo, hi, IM_COL32(62, 66, 76, 255), 4.0f);
+        const ImU32 c = panelOpen ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 210, 218, 255);
+        const ImVec2 o{(lo.x + hi.x) * 0.5f - 7.0f, (lo.y + hi.y) * 0.5f - 6.0f};
+        // Root node + two indented children.
+        dl->AddRectFilled({o.x, o.y}, {o.x + 5, o.y + 3}, c);
+        dl->AddLine({o.x + 2, o.y + 3}, {o.x + 2, o.y + 11}, c);
+        dl->AddLine({o.x + 2, o.y + 6}, {o.x + 6, o.y + 6}, c);
+        dl->AddLine({o.x + 2, o.y + 11}, {o.x + 6, o.y + 11}, c);
+        dl->AddRectFilled({o.x + 7, o.y + 5}, {o.x + 14, o.y + 7.5f}, c);
+        dl->AddRectFilled({o.x + 7, o.y + 10}, {o.x + 14, o.y + 12.5f}, c);
+        if (hovered) ImGui::SetTooltip(panelOpen ? "Hide Model panel  (M)" : "Show Model panel  (M)");
+    }
 
     const auto groups = toolGroups();
     int col = 0;

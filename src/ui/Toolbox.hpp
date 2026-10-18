@@ -14,8 +14,9 @@ public:
     Toolbox();
 
     // Draws the rail between `top` and `bottom` (screen y). Returns its width.
-    // In the 2D drawing window, 3D-only tools are dimmed.
-    float draw(float top, float bottom, bool drawing2D = false);
+    // In the 2D drawing window, 3D-only tools are dimmed. `panelOpen` is the
+    // docked Model panel, toggled by the button at the top of the rail.
+    float draw(float top, float bottom, bool drawing2D, bool& panelOpen);
 
     ToolId active() const noexcept { return m_active; }
     void setActive(ToolId id);
