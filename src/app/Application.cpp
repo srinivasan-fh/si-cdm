@@ -135,7 +135,6 @@ bool Application::init() {
     m_vp2D.sketchOnTop = true;
 
     if (m_options.start2D) {
-        m_uiState.showWelcome = false;
         setMode(ViewMode::Drawing2D);
     }
     return true;

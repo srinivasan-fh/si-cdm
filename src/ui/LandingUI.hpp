@@ -18,7 +18,6 @@ enum class ViewMode { Model3D, Drawing2D };
 struct UiState {
     ViewMode mode = ViewMode::Model3D;
     SketchPlane plane = SketchPlane::Top; // active sketch / drawing plane
-    bool showWelcome = true;
     bool showModelTree = true;
     bool showControls = false;
     bool showAbout = false;
@@ -51,7 +50,7 @@ struct UiCommands {
 
 // Workbench chrome around the canvas: menu bar, options bar (tool options and
 // the 2D / 3D window switch), document tabs, rulers, tool rail, model tree,
-// ViewCube, welcome card and status bar.
+// ViewCube and status bar.
 class LandingUI {
 public:
     UiCommands draw(Scene& scene, const OrbitCamera& camera, ViewportSettings& viewport, UiState& state);
@@ -68,7 +67,6 @@ private:
     void drawDocumentTabs(UiCommands& cmd, const UiState& st);
     void drawRulers(const OrbitCamera& cam, const UiState& st);
     void drawModelTree(Scene& scene, UiState& st);
-    void drawWelcome(UiState& st);
     void drawStatusBar(const Scene& scene, const OrbitCamera& cam, const UiState& st);
     void drawControlsWindow(UiState& st);
     void drawAboutWindow(UiState& st);

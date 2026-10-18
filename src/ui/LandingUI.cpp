@@ -131,7 +131,6 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     cmd.resetRoll = cmd.resetRoll || vc.resetRoll;
     cmd.orbitDelta = vc.orbitDelta;
 
-    if (st.showWelcome) drawWelcome(st);
     if (st.showControls) drawControlsWindow(st);
     if (st.showAbout) drawAboutWindow(st);
     return cmd;
@@ -184,7 +183,6 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::Separator();
         ImGui::MenuItem("Grid", "G", &vp.showGrid);
         ImGui::MenuItem("Model Tree", nullptr, &st.showModelTree);
-        ImGui::MenuItem("Welcome", nullptr, &st.showWelcome);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Design")) {
@@ -231,16 +229,19 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float fh = ImGui::GetFrameHeight();
 
-    // Home: back to the welcome card.
+    // Home: isometric 3D view of the whole model.
     {
         ImGui::InvisibleButton("home", {fh, fh});
         const ImVec2 lo = ImGui::GetItemRectMin();
         const ImVec2 c{lo.x + fh * 0.5f, lo.y + fh * 0.5f + 1};
         if (ImGui::IsItemHovered()) {
             dl->AddRectFilled(lo, {lo.x + fh, lo.y + fh}, IM_COL32(58, 64, 76, 255), 4.0f);
-            ImGui::SetTooltip("Home");
+            ImGui::SetTooltip("Home view (3D isometric, fit all)");
         }
-        if (ImGui::IsItemClicked()) st.showWelcome = true;
+        if (ImGui::IsItemClicked()) {
+            cmd.home = true;
+            cmd.mode = ViewMode::Model3D;
+        }
         const ImU32 ic = IM_COL32(210, 214, 222, 255);
         dl->AddTriangleFilled({c.x - 8, c.y - 1}, {c.x, c.y - 8}, {c.x + 8, c.y - 1}, ic);
         dl->AddRectFilled({c.x - 6, c.y - 1}, {c.x + 6, c.y + 7}, ic);
@@ -537,48 +538,6 @@ void LandingUI::drawModelTree(Scene& scene, UiState& st) {
             ImGui::Text("Plane      %s", planeName(c.plane));
             ImGui::Text("Size (mm)  %s", c.measure().c_str());
         }
-    }
-    ImGui::End();
-}
-
-void LandingUI::drawWelcome(UiState& st) {
-    const ImVec2 size{460, 0};
-    ImGui::SetNextWindowPos({m_canvasMax.x - size.x - 16.0f, m_canvasMin.y + 12.0f}, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(size);
-    ImGui::SetNextWindowBgAlpha(0.92f);
-    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-                                       ImGuiWindowFlags_AlwaysAutoResize;
-    if (ImGui::Begin("Welcome to SI CDM", &st.showWelcome, flags)) {
-        ImGui::SetWindowFontScale(1.35f);
-        ImGui::TextUnformatted("CAD / CAM Workbench");
-        ImGui::SetWindowFontScale(1.0f);
-        ImGui::TextDisabled("High-performance C++ design and manufacturing");
-        ImGui::Spacing();
-        ImGui::SeparatorText("Start");
-
-        const ImVec2 btn{(size.x - ImGui::GetStyle().WindowPadding.x * 2 - ImGui::GetStyle().ItemSpacing.x) * 0.5f, 40};
-        ImGui::BeginDisabled();
-        ImGui::Button("New Part", btn);
-        ImGui::SameLine();
-        ImGui::Button("New Assembly", btn);
-        ImGui::Button("Open File...", btn);
-        ImGui::SameLine();
-        ImGui::Button("New CAM Setup", btn);
-        ImGui::EndDisabled();
-        ImGui::TextDisabled("Modelling and CAM commands arrive in upcoming milestones.");
-
-        ImGui::SeparatorText("Recent");
-        ImGui::TextDisabled("No recent documents");
-
-        ImGui::SeparatorText("Navigate the canvas");
-        ImGui::BulletText("2D Drawing / 3D Model switch in the top bar  [Tab]");
-        ImGui::BulletText("ViewCube (bottom right): click faces, edges, corners");
-        ImGui::BulletText("Orbit: right drag   Pan: middle or Shift + left drag");
-        ImGui::BulletText("Zoom: scroll wheel (at cursor)   Fit: F");
-        ImGui::BulletText("Tools on the left: draw sketches, place solids");
-        ImGui::Spacing();
-        if (ImGui::Button("Explore the demo part")) st.showWelcome = false;
     }
     ImGui::End();
 }
