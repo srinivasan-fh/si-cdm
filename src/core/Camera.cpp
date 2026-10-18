@@ -30,8 +30,12 @@ Vec3 OrbitCamera::forward() const noexcept {
     return -Vec3{cp * std::cos(m_yaw), cp * std::sin(m_yaw), std::sin(m_pitch)};
 }
 
+// Level (unrolled) camera axes; roll then turns both around forward().
 Vec3 OrbitCamera::right() const noexcept {
-    return {-std::sin(m_yaw), std::cos(m_yaw), 0.0f};
+    const Vec3 r0{-std::sin(m_yaw), std::cos(m_yaw), 0.0f};
+    if (m_roll == 0.0f) return r0;
+    const Vec3 u0 = cross(r0, forward());
+    return r0 * std::cos(m_roll) - u0 * std::sin(m_roll);
 }
 
 Vec3 OrbitCamera::up() const noexcept {
@@ -80,6 +84,14 @@ Ray OrbitCamera::screenRay(float x, float y, float width, float height) const no
 
 void OrbitCamera::orbit(float dx, float dy) noexcept {
     m_animT = 1.0f;
+    // Express the screen-space drag in the level frame so a rolled view still
+    // orbits the way the cursor moves.
+    if (m_roll != 0.0f) {
+        const float c = std::cos(m_roll), s = std::sin(m_roll);
+        const float lx = dx * c - dy * s, ly = dy * c + dx * s;
+        dx = lx;
+        dy = ly;
+    }
     m_yaw = wrapAngle(m_yaw - dx * kOrbitSpeed);
     m_pitch = std::clamp(m_pitch + dy * kOrbitSpeed, -kPitchLimit, kPitchLimit);
 }
@@ -144,7 +156,21 @@ void OrbitCamera::setViewDirection(const Vec3& d, bool animate) noexcept {
 }
 
 void OrbitCamera::rotateAroundZ(float rad, bool animate) noexcept {
-    Pose to{m_target, m_yaw + rad, m_pitch, m_distance};
+    Pose to{m_target, m_yaw + rad, m_pitch, m_distance, m_roll};
+    startTransition(to, animate);
+}
+
+void OrbitCamera::rollView(float rad, bool animate) noexcept {
+    // Chain presses made while a roll is still animating.
+    const bool animating = m_animT < 1.0f;
+    const float base = animating ? m_to.roll : m_roll;
+    Pose to{animating ? m_to.target : m_target, animating ? m_to.yaw : m_yaw, animating ? m_to.pitch : m_pitch,
+            animating ? m_to.distance : m_distance, base + rad};
+    startTransition(to, animate);
+}
+
+void OrbitCamera::resetRoll(bool animate) noexcept {
+    Pose to{m_target, m_yaw, m_pitch, m_distance, 0.0f};
     startTransition(to, animate);
 }
 
@@ -155,15 +181,16 @@ void OrbitCamera::fitToBounds(const AABB& bounds, bool animate) noexcept {
     // Keep the orientation of a view change still in flight (e.g. Front, then Fit).
     const bool animating = m_animT < 1.0f;
     Pose to{bounds.center(), animating ? m_to.yaw : m_yaw, animating ? m_to.pitch : m_pitch,
-            (r / std::sin(halfFov)) * 1.05f};
+            (r / std::sin(halfFov)) * 1.05f, animating ? m_to.roll : m_roll};
     startTransition(to, animate);
 }
 
 void OrbitCamera::startTransition(const Pose& to, bool animate) noexcept {
-    m_from = {m_target, m_yaw, m_pitch, m_distance};
+    m_from = {m_target, m_yaw, m_pitch, m_distance, m_roll};
     m_to = to;
-    // Take the short way round in yaw.
+    // Take the short way round in yaw and roll.
     m_to.yaw = m_from.yaw + wrapAngle(to.yaw - m_from.yaw);
+    m_to.roll = m_from.roll + wrapAngle(to.roll - m_from.roll);
     if (animate) {
         m_animT = 0.0f;
     } else {
@@ -177,6 +204,8 @@ void OrbitCamera::applyPose(const Pose& p) noexcept {
     m_yaw = wrapAngle(p.yaw);
     m_pitch = p.pitch;
     m_distance = p.distance;
+    m_roll = wrapAngle(p.roll);
+    if (std::fabs(m_roll) < 1e-6f) m_roll = 0.0f;
 }
 
 bool OrbitCamera::update(float dt) noexcept {
@@ -187,6 +216,7 @@ bool OrbitCamera::update(float dt) noexcept {
     p.target = lerp(m_from.target, m_to.target, t);
     p.yaw = lerp(m_from.yaw, m_to.yaw, t);
     p.pitch = lerp(m_from.pitch, m_to.pitch, t);
+    p.roll = lerp(m_from.roll, m_to.roll, t);
     // Interpolate distance in log space so zoom feels uniform.
     p.distance = std::exp(lerp(std::log(m_from.distance), std::log(m_to.distance), t));
     applyPose(p);

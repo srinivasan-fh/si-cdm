@@ -514,6 +514,8 @@ void Application::handleCommands(const UiCommands& cmd) {
     }
     if (cmd.viewDirection) m_cam3D.setViewDirection(*cmd.viewDirection);
     if (cmd.rotateZ != 0.0f) m_cam3D.rotateAroundZ(cmd.rotateZ);
+    if (cmd.roll != 0.0f && !is2D) m_cam3D.rollView(cmd.roll);
+    if (cmd.resetRoll) m_cam3D.resetRoll();
     if ((cmd.orbitDelta.x != 0.0f || cmd.orbitDelta.y != 0.0f) && !is2D) m_cam3D.orbit(cmd.orbitDelta.x, cmd.orbitDelta.y);
     if (cmd.home) {
         m_cam3D.setStandardView(StandardView::Isometric, false);

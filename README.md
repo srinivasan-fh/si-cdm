@@ -33,7 +33,10 @@ The top bar of the canvas switches between two windows (also via the document ta
 Each window keeps its own camera, so switching back and forth never loses your view.
 
 **ViewCube** (bottom right): click any face, edge or corner for one of 26 views, drag it to orbit,
-use Home and the 90° rotate arrows, and right-click for more views. In the 2D window its faces pick
+use Home, the roll arrows (top right: spin the view 90° around the viewing direction, Shift for 15°)
+and the ◀ ▶ arrows by the projection badge (turn 90° around Z). The badge shows the roll angle;
+right-click for more views, including Level View to reset the roll. Picking a face, edge or corner
+always comes back level. In the 2D window its faces pick
 the drawing plane; edges and corners open the 3D window at that angle.
 
 ## Tools (left rail)

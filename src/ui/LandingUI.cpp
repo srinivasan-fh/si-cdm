@@ -127,6 +127,8 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     cmd.fit = cmd.fit || vc.fit;
     cmd.toggleProjection = cmd.toggleProjection || vc.toggleProjection;
     cmd.rotateZ += vc.rotateZ;
+    cmd.roll += vc.roll;
+    cmd.resetRoll = cmd.resetRoll || vc.resetRoll;
     cmd.orbitDelta = vc.orbitDelta;
 
     if (st.showWelcome) drawWelcome(st);

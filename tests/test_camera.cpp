@@ -114,3 +114,42 @@ TEST_CASE("fit during a view transition keeps the new orientation") {
     while (cam.update(1.0f / 60.0f) && steps < 1000) ++steps;
     CHECK_NEAR(cam.forward().y, 1, 1e-4);
 }
+
+TEST_CASE("roll turns the camera around the view direction") {
+    OrbitCamera cam;
+    cam.setStandardView(StandardView::Front, false);
+    const Vec3 fwd = cam.forward();
+    cam.rollView(kPi * 0.5f, false); // picture turns counter-clockwise
+    CHECK_NEAR(dot(cam.forward(), fwd), 1.0, 1e-5);
+    CHECK_NEAR(cam.right().z, -1, 1e-4);
+    CHECK_NEAR(cam.up().x, 1, 1e-4);
+    CHECK_NEAR(dot(cam.right(), cam.up()), 0, 1e-5);
+    // The view matrix agrees: world +X now points up on screen.
+    CHECK_NEAR(cam.view().transformDir({1, 0, 0}).y, 1, 1e-4);
+}
+
+TEST_CASE("roll presses chain during the animation and standard views level out") {
+    OrbitCamera cam;
+    cam.setStandardView(StandardView::Front, false);
+    cam.rollView(kPi * 0.5f);
+    cam.rollView(kPi * 0.5f);
+    int steps = 0;
+    while (cam.update(1.0f / 60.0f) && steps < 1000) ++steps;
+    CHECK_NEAR(std::fabs(cam.roll()), kPi, 1e-4);
+    cam.setStandardView(StandardView::Isometric, false);
+    CHECK_NEAR(cam.roll(), 0, 1e-6);
+    cam.rollView(0.3f, false);
+    cam.resetRoll(false);
+    CHECK_NEAR(cam.roll(), 0, 1e-6);
+}
+
+TEST_CASE("rolled orbit follows the cursor") {
+    // With the picture rolled 90 degrees, a vertical drag spins around world Z.
+    OrbitCamera cam;
+    cam.setStandardView(StandardView::Front, false);
+    cam.rollView(kPi * 0.5f, false);
+    const float yaw = cam.yaw(), pitch = cam.pitch();
+    cam.orbit(0, 50);
+    CHECK(std::fabs(cam.yaw() - yaw) > 0.1f);
+    CHECK_NEAR(cam.pitch(), pitch, 1e-5);
+}

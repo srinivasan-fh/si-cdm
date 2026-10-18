@@ -17,7 +17,9 @@ struct ViewCubeResult {
     bool fit = false;
     bool toggleProjection = false;
     bool open3D = false;
-    float rotateZ = 0.0f;   // radians, from the rotate arrows
+    float rotateZ = 0.0f;   // radians, from the turn-around-Z arrows
+    float roll = 0.0f;      // radians, from the roll arrows (+ = counter-clockwise)
+    bool resetRoll = false;
     Vec2 orbitDelta{};      // pixels, from dragging the cube
 };
 

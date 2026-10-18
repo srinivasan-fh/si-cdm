@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <functional>
 #include <cmath>
 #include <string>
@@ -234,44 +235,85 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
         dl->AddRectFilled({c.x - 5, c.y - 1}, {c.x + 5, c.y + 6}, ic);
         dl->AddRectFilled({c.x - 1.5f, c.y + 2}, {c.x + 1.5f, c.y + 6}, IM_COL32(30, 32, 38, 255));
     }
+    const ImU32 iconCol = IM_COL32(200, 205, 214, 255);
+    const bool shift = ImGui::GetIO().KeyShift;
     if (!drawing2D) {
-        auto rotArrow = [&](const char* id, ImVec2 p, float dir, const char* tip) {
+        // Roll arrows (top-right): spin the picture around the viewing direction.
+        // dir = +1 counter-clockwise, -1 clockwise. Shift-click rolls 15 degrees.
+        auto rollArrow = [&](const char* id, ImVec2 p, float dir, const char* tip) {
             const bool hit = iconButton(id, p, bs, tip);
-            const ImVec2 c{p.x + bs * 0.5f, p.y + bs * 0.5f};
-            const float a0 = dir > 0 ? kPi * 1.15f : -kPi * 0.15f;
-            const float a1 = dir > 0 ? kPi * 1.85f : -kPi * 0.85f;
-            dl->PathArcTo(c, 6.0f, a0, a1, 12);
-            dl->PathStroke(IM_COL32(200, 205, 214, 255), ImDrawFlags_None, 1.8f);
-            const ImVec2 tip2{c.x + 6.0f * std::cos(a1), c.y + 6.0f * std::sin(a1)};
-            dl->AddTriangleFilled({tip2.x - 3.5f * dir, tip2.y - 3}, {tip2.x + 3.5f * dir, tip2.y}, {tip2.x - 1.5f * dir, tip2.y + 4},
-                                  IM_COL32(200, 205, 214, 255));
+            const ImVec2 c{p.x + bs * 0.5f, p.y + bs * 0.5f + 1.0f};
+            const float r = 6.0f;
+            // Screen angles grow clockwise (y down); sweep ~250 degrees.
+            const float a0 = dir > 0 ? -kPi * 0.05f : -kPi * 0.95f;
+            const float a1 = a0 - dir * kPi * 1.4f;
+            dl->PathArcTo(c, r, a0, a1, 16);
+            dl->PathStroke(iconCol, ImDrawFlags_None, 1.8f);
+            const ImVec2 tipPt{c.x + r * std::cos(a1), c.y + r * std::sin(a1)};
+            const ImVec2 t{dir * std::sin(a1), -dir * std::cos(a1)}; // travel direction at the tip
+            const ImVec2 n{std::cos(a1), std::sin(a1)};
+            dl->AddTriangleFilled({tipPt.x + t.x * 4.0f, tipPt.y + t.y * 4.0f},
+                                  {tipPt.x - t.x * 1.5f + n.x * 3.5f, tipPt.y - t.y * 1.5f + n.y * 3.5f},
+                                  {tipPt.x - t.x * 1.5f - n.x * 3.5f, tipPt.y - t.y * 1.5f - n.y * 3.5f}, iconCol);
             return hit;
         };
-        if (rotArrow("rotl", {origin.x + size.x - bs * 2 - 4, origin.y + 2}, -1.0f, "Rotate 90° left around Z"))
-            res.rotateZ = -kPi * 0.5f;
-        if (rotArrow("rotr", {origin.x + size.x - bs - 2, origin.y + 2}, 1.0f, "Rotate 90° right around Z"))
-            res.rotateZ = kPi * 0.5f;
+        const float step = shift ? kPi / 12.0f : kPi * 0.5f;
+        if (rollArrow("rollccw", {origin.x + size.x - bs * 2 - 4, origin.y + 2}, 1.0f,
+                      "Roll 90° counter-clockwise  (Shift: 15°)"))
+            res.roll = step;
+        if (rollArrow("rollcw", {origin.x + size.x - bs - 2, origin.y + 2}, -1.0f, "Roll 90° clockwise  (Shift: 15°)"))
+            res.roll = -step;
     }
 
-    // Projection badge under the cube.
+    // Projection badge under the cube, flanked by turn-around-Z arrows.
     {
-        const char* label = cam.projection() == Projection::Perspective ? "PERSP" : "ORTHO";
+        char label[32];
+        const float rollDeg = std::round(degrees(cam.roll()));
+        if (drawing2D) std::snprintf(label, sizeof(label), "PLAN");
+        else if (rollDeg != 0.0f)
+            std::snprintf(label, sizeof(label), "%s %+.0f°", cam.projection() == Projection::Perspective ? "PERSP" : "ORTHO",
+                          rollDeg);
+        else std::snprintf(label, sizeof(label), "%s", cam.projection() == Projection::Perspective ? "PERSP" : "ORTHO");
         const ImVec2 ts = ImGui::CalcTextSize(label);
         const ImVec2 p{center.x - ts.x * 0.5f - 4, origin.y + size.y - ts.y - 4};
         ImGui::SetCursorScreenPos(p);
         if (!drawing2D && ImGui::InvisibleButton("proj", {ts.x + 8, ts.y + 2})) res.toggleProjection = true;
         const bool hov = !drawing2D && ImGui::IsItemHovered();
-        if (hov) ImGui::SetTooltip("Toggle perspective / orthographic  [P]");
-        dl->AddText({p.x + 4, p.y + 1}, hov ? IM_COL32(255, 255, 255, 255) : IM_COL32(150, 156, 166, 255),
-                    drawing2D ? "PLAN" : label);
+        if (hov)
+            ImGui::SetTooltip(rollDeg != 0.0f ? "Toggle perspective / orthographic  [P]\nView rolled; right-click > Level View"
+                                              : "Toggle perspective / orthographic  [P]");
+        dl->AddText({p.x + 4, p.y + 1}, hov ? IM_COL32(255, 255, 255, 255) : IM_COL32(150, 156, 166, 255), label);
+
+        if (!drawing2D) {
+            auto turnArrow = [&](const char* id, float x, float dir, const char* tip) {
+                const float w = 14.0f;
+                const ImVec2 bp{x, p.y - 1};
+                ImGui::SetCursorScreenPos(bp);
+                ImGui::InvisibleButton(id, {w, ts.y + 4});
+                const bool h = ImGui::IsItemHovered();
+                if (h) ImGui::SetTooltip("%s", tip);
+                const ImVec2 c{bp.x + w * 0.5f, bp.y + (ts.y + 4) * 0.5f};
+                dl->AddTriangleFilled({c.x + 4 * dir, c.y}, {c.x - 3 * dir, c.y - 4}, {c.x - 3 * dir, c.y + 4},
+                                      h ? IM_COL32(255, 255, 255, 255) : iconCol);
+                return ImGui::IsItemClicked();
+            };
+            if (turnArrow("turnl", p.x - 16.0f, -1.0f, "Turn 90° around Z (left)")) res.rotateZ = -kPi * 0.5f;
+            if (turnArrow("turnr", p.x + ts.x + 10.0f, 1.0f, "Turn 90° around Z (right)")) res.rotateZ = kPi * 0.5f;
+        }
     }
 
     // Right-click menu: extra views.
     if (ImGui::BeginPopup("cubemenu")) {
         if (ImGui::MenuItem("Home View")) res.home = true;
         if (ImGui::MenuItem("Zoom to Fit", "F")) res.fit = true;
-        if (!drawing2D && ImGui::MenuItem("Orthographic", "P", cam.projection() == Projection::Orthographic))
-            res.toggleProjection = true;
+        if (!drawing2D) {
+            if (ImGui::MenuItem("Orthographic", "P", cam.projection() == Projection::Orthographic))
+                res.toggleProjection = true;
+            ImGui::Separator();
+            if (ImGui::MenuItem("Roll 90° Counter-clockwise")) res.roll = kPi * 0.5f;
+            if (ImGui::MenuItem("Roll 90° Clockwise")) res.roll = -kPi * 0.5f;
+            if (ImGui::MenuItem("Level View (reset roll)", nullptr, false, cam.roll() != 0.0f)) res.resetRoll = true;
+        }
         ImGui::Separator();
         ImGui::TextDisabled("2D Drawing window");
         for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right})

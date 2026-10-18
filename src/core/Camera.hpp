@@ -27,6 +27,10 @@ public:
     void setViewDirection(const Vec3& towardsEye, bool animate = true) noexcept;
     // Turn the view around world Z (ViewCube rotate arrows).
     void rotateAroundZ(float radians, bool animate = true) noexcept;
+    // Roll the view around the viewing direction (ViewCube roll arrows).
+    // Positive values turn the picture counter-clockwise on screen.
+    void rollView(float radians, bool animate = true) noexcept;
+    void resetRoll(bool animate = true) noexcept;
     void fitToBounds(const AABB& bounds, bool animate = true) noexcept;
 
     // Advances any running view transition; returns true while animating.
@@ -41,6 +45,7 @@ public:
     float distance() const noexcept { return m_distance; }
     float yaw() const noexcept { return m_yaw; }
     float pitch() const noexcept { return m_pitch; }
+    float roll() const noexcept { return m_roll; }
     float fovY() const noexcept { return m_fovY; }
 
     // World units per screen pixel at the target depth.
@@ -65,6 +70,7 @@ private:
     struct Pose {
         Vec3 target;
         float yaw = 0, pitch = 0, distance = 1;
+        float roll = 0; // standard views and view directions come back level
     };
 
     void startTransition(const Pose& to, bool animate) noexcept;
@@ -73,6 +79,7 @@ private:
     Vec3 m_target{0, 0, 0};
     float m_yaw = 0;
     float m_pitch = 0;
+    float m_roll = 0;
     float m_distance = 10.0f;
     float m_fovY = radians(40.0f);
     float m_aspect = 16.0f / 9.0f;

@@ -40,6 +40,8 @@ struct UiCommands {
     std::optional<ViewMode> mode;
     std::optional<SketchPlane> plane;
     float rotateZ = 0.0f;
+    float roll = 0.0f;
+    bool resetRoll = false;
     Vec2 orbitDelta{};
     bool home = false;
     bool fit = false;
