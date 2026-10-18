@@ -294,7 +294,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         Json targets = Json::array();
         for (const std::string& b : m.bodies) targets.push(b);
         jm.set("name", m.name).set("kind", motionKindKey(m.kind)).set("bodies", targets);
-        jm.set("axis", vec3Json(m.axis)).set("origin", vec3Json(m.origin));
+        jm.set("axis", vec3Json(m.axis)).set("origin", vec3Json(m.origin)).set("each_centre", m.eachCentre);
         jm.set("speed", m.speed).set("range", m.range).set("mode", motionModeKey(m.mode));
         jm.set("start", m.start).set("enabled", m.enabled);
         motions.push(jm);
@@ -404,6 +404,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         for (const Json& b : jm["bodies"].items()) m.bodies.push_back(b.asString());
         m.axis = jsonVec3(jm["axis"], {0, 0, 1});
         m.origin = jsonVec3(jm["origin"]);
+        m.eachCentre = jm["each_centre"].asBool(false);
         m.speed = jm["speed"].asFloat(m.speed);
         m.range = std::max(jm["range"].asFloat(), 0.0f);
         m.mode = motionModeFromKey(jm["mode"].asString()).value_or(MotionMode::Continuous);

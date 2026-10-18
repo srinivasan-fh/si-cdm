@@ -152,3 +152,22 @@ TEST_CASE("motions survive save and reopen") {
     CHECK(m.bodies.size() == 1 && m.bodies[0] == "*");
     CHECK_NEAR(st.simDuration, 12, 1e-5);
 }
+
+TEST_CASE("EACH turns every body about its own centre") {
+    Document d;
+    CHECK(run(d, "CYLINDER 5 4 @-20,0,0").ok);
+    CHECK(run(d, "CYLINDER 5 4 @20,0,0").ok);
+    CHECK(run(d, "MOTION CIRCLE Wheels AXIS Z SPEED 90 EACH BODIES ALL").ok);
+    REQUIRE(d.scene.motions().size() == 1);
+    CHECK(d.scene.motions()[0].eachCentre);
+    const auto tf = motionTransforms(d.scene, 1.0f);
+    for (std::size_t i = 0; i < 2; ++i) { // the hubs stay put
+        const Vec3 c = d.scene.bodies()[i].bounds().center();
+        const Vec3 p = tf[i].transformPoint(c);
+        CHECK_NEAR(p.x, c.x, 1e-4);
+        CHECK_NEAR(p.y, c.y, 1e-4);
+    }
+    CHECK_NEAR(bodyMotionTransform(d.scene, 1, 1.0f).transformPoint({25, 0, 2}).y, 5, 1e-4);
+    CHECK(run(d, "MOTION CIRCLE Wheels AT 0,0,0").ok); // an explicit axis point shares it again
+    CHECK(!d.scene.motions()[0].eachCentre);
+}

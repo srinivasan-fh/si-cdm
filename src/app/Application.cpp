@@ -957,7 +957,8 @@ std::uint64_t Application::signatureOf(const Document& doc) {
     for (const Motion& m : s.motions()) {
         mixStr(m.name);
         for (const std::string& b : m.bodies) mixStr(b);
-        const float f[] = {m.axis.x, m.axis.y, m.axis.z, m.origin.x, m.origin.y, m.origin.z, m.speed, m.range, m.start};
+        const float f[] = {m.axis.x, m.axis.y, m.axis.z, m.origin.x, m.origin.y, m.origin.z, m.speed, m.range, m.start,
+                           m.eachCentre ? 1.0f : 0.0f};
         mix(f, sizeof(f));
         const int e[] = {static_cast<int>(m.kind), static_cast<int>(m.mode), m.enabled ? 1 : 0};
         mix(e, sizeof(e));
@@ -1501,7 +1502,8 @@ void Application::drawSimulationOverlay() const {
             std::snprintf(text, sizeof(text), "%s  %.1f %s  %.0f %s", m.name.c_str(), static_cast<double>(motionValue(m, t)),
                           m.unit(), static_cast<double>(motionRate(m, t)), m.rateUnit());
             if (m.kind == MotionKind::Circular) {
-                const Vec3 o = outer.transformPoint(m.origin);
+                const Vec3 pivot = m.eachCentre ? bodies[static_cast<std::size_t>(groups[k].body)].bounds().center() : m.origin;
+                const Vec3 o = outer.transformPoint(pivot);
                 const float len = r * 1.6f;
                 for (int d = -6; d < 6; d += 2) // dashed axis line
                     line(o + dir * (len * static_cast<float>(d) / 6.0f), o + dir * (len * static_cast<float>(d + 1) / 6.0f), c, 2.0f);

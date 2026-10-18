@@ -57,12 +57,23 @@ float motionRate(const Motion& m, float t) noexcept {
     }
 }
 
-Mat4 motionMatrix(const Motion& m, float t) noexcept {
+Mat4 motionMatrix(const Motion& m, float t) noexcept { return motionMatrix(m, t, m.origin); }
+
+Mat4 motionMatrix(const Motion& m, float t, const Vec3& origin) noexcept {
     if (!m.enabled || length(m.axis) < 1e-9f) return Mat4::identity();
     const float v = motionValue(m, t);
     if (m.kind == MotionKind::Linear) return translate(normalize(m.axis) * v);
-    return translate(m.origin) * rotateAxis(m.axis, radians(v)) * translate(m.origin * -1.0f);
+    return translate(origin) * rotateAxis(m.axis, radians(v)) * translate(origin * -1.0f);
 }
+
+namespace {
+
+// Matrix of motion m for one body (its own centre when the motion asks for it).
+Mat4 matrixFor(const Motion& m, const Body& b, float t) {
+    return m.kind == MotionKind::Circular && m.eachCentre ? motionMatrix(m, t, b.bounds().center()) : motionMatrix(m, t);
+}
+
+} // namespace
 
 float motionCycle(const Motion& m) noexcept {
     if (!limited(m) || m.speed == 0.0f) return 0.0f;
@@ -77,7 +88,8 @@ std::vector<Mat4> motionTransforms(const Scene& scene, float t) {
         if (!m.enabled) continue;
         const Mat4 mm = motionMatrix(m, t);
         for (std::size_t i = 0; i < bodies.size(); ++i)
-            if (m.moves(bodies[i].name)) out[i] = out[i] * mm; // earlier motions stay outermost
+            if (m.moves(bodies[i].name))
+                out[i] = out[i] * (m.eachCentre ? matrixFor(m, bodies[i], t) : mm); // earlier motions stay outermost
     }
     return out;
 }
@@ -88,7 +100,7 @@ Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::siz
     const std::string& name = scene.bodies()[body].name;
     const auto& motions = scene.motions();
     for (std::size_t k = 0; k < motions.size() && k < before; ++k)
-        if (motions[k].enabled && motions[k].moves(name)) out = out * motionMatrix(motions[k], t);
+        if (motions[k].enabled && motions[k].moves(name)) out = out * matrixFor(motions[k], scene.bodies()[body], t);
     return out;
 }
 
@@ -139,7 +151,11 @@ std::optional<MotionMode> motionModeFromKey(std::string_view k) noexcept {
 std::string describeMotion(const Motion& m) {
     char buf[256];
     const Vec3 a = m.axis;
-    if (m.kind == MotionKind::Circular)
+    if (m.kind == MotionKind::Circular && m.eachCentre)
+        std::snprintf(buf, sizeof(buf), "%g deg/s about (%g, %g, %g) through each body's centre",
+                      static_cast<double>(m.speed), static_cast<double>(a.x), static_cast<double>(a.y),
+                      static_cast<double>(a.z));
+    else if (m.kind == MotionKind::Circular)
         std::snprintf(buf, sizeof(buf), "%g deg/s about (%g, %g, %g) through (%g, %g, %g)", static_cast<double>(m.speed),
                       static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z),
                       static_cast<double>(m.origin.x), static_cast<double>(m.origin.y), static_cast<double>(m.origin.z));

@@ -1324,6 +1324,10 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             ImGui::SetNextItemWidth(-1);
             ImGui::DragFloat3("##axis", &m.axis.x, 0.01f, -1.0f, 1.0f, "%.2f");
             if (m.kind == MotionKind::Circular) {
+                ImGui::Checkbox("Each body about its own centre", &m.eachCentre);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One motion spins every wheel about its own hub");
+            }
+            if (m.kind == MotionKind::Circular && !m.eachCentre) {
                 ImGui::TextDisabled("Through");
                 ImGui::SameLine(90);
                 if (ImGui::SmallButton("Centre of bodies")) {

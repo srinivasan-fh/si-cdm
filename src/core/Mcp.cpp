@@ -196,6 +196,7 @@ Json McpServer::toolDefinitions() {
         p.set("bodies", bodies);
         p.set("axis", numberArray(3, "Rotation axis / travel direction [x,y,z] (default Z for circular, X for linear)"));
         p.set("origin", numberArray(3, "Point on the rotation axis [x,y,z] (default: centre of the bodies)"));
+        p.set("each_centre", prop("boolean", "Circular: every body turns about its own centre (e.g. all wheels in one motion)"));
         p.set("speed", prop("number", "deg/s (circular) or mm/s (linear); negative reverses"));
         p.set("rpm", prop("number", "Circular speed in revolutions per minute (instead of speed)"));
         p.set("range", prop("number", "Sweep in degrees / stroke in mm; 0 = unlimited"));
@@ -296,7 +297,7 @@ Json McpServer::sceneJson() const {
         Json targets = Json::array();
         for (const std::string& b : m.bodies) targets.push(b);
         jm.set("name", m.name).set("kind", motionKindKey(m.kind)).set("bodies", targets);
-        jm.set("axis", vec3(m.axis)).set("origin", vec3(m.origin)).set("speed", m.speed);
+        jm.set("axis", vec3(m.axis)).set("origin", vec3(m.origin)).set("each_centre", m.eachCentre).set("speed", m.speed);
         jm.set("speed_unit", m.rateUnit()).set("range", m.range).set("mode", motionModeKey(m.mode));
         jm.set("start", m.start).set("enabled", m.enabled);
         motions.push(jm);
@@ -488,6 +489,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         };
         if (a["axis"].isArray()) line += " AXIS " + vec("axis");
         if (a["origin"].isArray()) line += " AT " + vec("origin");
+        if (a["each_centre"].isBool()) line += a["each_centre"].asBool() ? " EACH" : " SHARED";
         if (a["speed"].isNumber()) line += " SPEED " + num(a["speed"].asNumber());
         if (a["rpm"].isNumber()) line += " RPM " + num(a["rpm"].asNumber());
         if (a["range"].isNumber()) line += " RANGE " + num(a["range"].asNumber());

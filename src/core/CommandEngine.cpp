@@ -445,6 +445,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         std::optional<float> speed, range, start;
         std::optional<MotionMode> mode;
         std::optional<std::vector<std::string>> targets;
+        std::optional<bool> each; // EACH: every body turns about its own centre
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
             const bool hasNext = i + 1 < a.size();
@@ -469,6 +470,10 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
             } else if (k == "mode") {
                 if (!hasNext || !(mode = motionModeFromKey(a[i + 1]))) return out.fail("MODE: CONT, LOOP, OSC or ONCE");
                 ++i;
+            } else if (k == "each" || k == "own") {
+                each = true;
+            } else if (k == "shared" || k == "common") {
+                each = false;
             } else if (motionModeFromKey(k)) {
                 mode = motionModeFromKey(k);
             } else if (k == "bodies" || k == "body" || k == "on") {
@@ -519,7 +524,11 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         if (mode) m.mode = *mode;
         if (range && *range > 0.0f && !mode && m.mode == MotionMode::Continuous) m.mode = MotionMode::Oscillate;
         if (start) m.start = *start;
-        if (origin) m.origin = *origin;
+        if (each) m.eachCentre = *each;
+        if (origin) {
+            m.origin = *origin;
+            if (!each) m.eachCentre = false;
+        }
         else if (existing < 0 && m.kind == MotionKind::Circular) {
             // Default axis position: centre of the moved bodies (a wheel spins about its hub).
             AABB box;

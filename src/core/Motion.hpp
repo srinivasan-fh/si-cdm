@@ -31,6 +31,7 @@ struct Motion {
     std::vector<std::string> bodies; // moved bodies by name; "*" moves every body
     Vec3 axis{0, 0, 1};              // rotation axis / travel direction
     Vec3 origin{};                   // point on the rotation axis (circular)
+    bool eachCentre = false;         // circular: every body turns about its own centre (wheels)
     float speed = 90.0f;             // deg/s (circular) or mm/s (linear); negative reverses
     float range = 0.0f;              // sweep (deg) / stroke (mm); 0 = unlimited
     MotionMode mode = MotionMode::Continuous;
@@ -47,6 +48,8 @@ float motionValue(const Motion& m, float t) noexcept;
 float motionRate(const Motion& m, float t) noexcept;
 // World transform the motion applies at time t.
 Mat4 motionMatrix(const Motion& m, float t) noexcept;
+// The same with the rotation axis through `origin` instead of m.origin.
+Mat4 motionMatrix(const Motion& m, float t, const Vec3& origin) noexcept;
 // Seconds for one full cycle (loop / oscillate / once); 0 for unlimited motions.
 float motionCycle(const Motion& m) noexcept;
 
