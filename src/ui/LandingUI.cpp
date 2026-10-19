@@ -97,6 +97,36 @@ void propertyRow(const char* label, const char* fmt, ...) {
     va_end(args);
 }
 
+// Editor for one library parameter: a list for choices, a drag field otherwise.
+bool paramEditor(const LibraryParam& p, float& value) {
+    ImGui::SetNextItemWidth(-1);
+    ImGui::PushID(p.key);
+    bool changed = false;
+    if (p.choices) {
+        std::vector<std::string> names;
+        std::string list = std::string(p.choices) + "|";
+        for (std::size_t at = 0, bar; (bar = list.find('|', at)) != std::string::npos; at = bar + 1)
+            names.push_back(list.substr(at, bar - at));
+        const int cur = std::clamp(static_cast<int>(value), 0, static_cast<int>(names.size()) - 1);
+        if (ImGui::BeginCombo("##v", names[static_cast<std::size_t>(cur)].c_str())) {
+            for (int i = 0; i < static_cast<int>(names.size()); ++i)
+                if (ImGui::Selectable(names[static_cast<std::size_t>(i)].c_str(), i == cur)) {
+                    value = static_cast<float>(i);
+                    changed = true;
+                }
+            ImGui::EndCombo();
+        }
+    } else {
+        char fmt[32];
+        std::snprintf(fmt, sizeof(fmt), p.integer ? "%%.0f %s" : "%%.2f %s", p.unit);
+        const float speed = p.integer ? 0.1f : std::max((p.max - p.min) / 400.0f, 0.01f);
+        changed = ImGui::DragFloat("##v", &value, speed, p.min, p.max, fmt, ImGuiSliderFlags_AlwaysClamp);
+        if (p.integer) value = std::round(value);
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 bool beginPropertyGrid(const char* id) {
     if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingFixedFit)) return false;
     ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, 82.0f);
@@ -810,6 +840,48 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 ImGui::ColorEdit3("##colour", &b.color.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                 ImGui::EndTable();
             }
+            // Library part parameters (a motor housing shows its rotor's shafts), rebuilt live.
+            Body* part = &b;
+            if (partParams(b.kind, b.params).empty() && !b.component.empty())
+                for (Body& other : scene.bodies())
+                    if (other.component == b.component && other.kind == "motor_rotor") part = &other;
+            const std::vector<LibraryParam> schema = partParams(part->kind, part->params);
+            if (!schema.empty()) {
+                theme::caption(part->kind == "motor_rotor" ? (part->params.empty() || part->params[0] < 1.5f ? "Shaft" : "Horn")
+                                                           : "Parameters");
+                std::vector<float> values = withDefaults(part->kind, part->params);
+                bool changed = false;
+                if (beginPropertyGrid("##partparams")) {
+                    std::vector<std::size_t> order; // choice lists (Shafts, Teeth style) first
+                    for (std::size_t i = 0; i < schema.size(); ++i)
+                        if (schema[i].choices) order.push_back(i);
+                    for (std::size_t i = 0; i < schema.size(); ++i)
+                        if (!schema[i].choices) order.push_back(i);
+                    for (std::size_t i : order) {
+                        if (!(schema[i].min < schema[i].max)) continue; // fixed (e.g. motor style)
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextColored(theme::vec(theme::kTextDim), "%s", schema[i].label);
+                        ImGui::TableNextColumn();
+                        const bool off = std::string(schema[i].key) == "rear_length" && values.size() > 2 && values[2] < 1.5f;
+                        if (off) ImGui::BeginDisabled();
+                        changed = paramEditor(schema[i], values[i]) || changed;
+                        if (off) ImGui::EndDisabled();
+                    }
+                    ImGui::EndTable();
+                }
+                if (changed) {
+                    const std::vector<float> before = part->params;
+                    part->params = values;
+                    part->rebuild();
+                    if (part->mesh.indices.empty()) { // keep the last valid shape
+                        part->params = before;
+                        part->rebuild();
+                    }
+                    scene.touchBodies();
+                }
+            }
         } else if (st.selectedCurve >= 0 && st.selectedCurve < static_cast<int>(scene.sketch().curves().size())) {
             const SketchCurve& c = scene.sketch().curves()[static_cast<std::size_t>(st.selectedCurve)];
             ImGui::Spacing();
@@ -1478,14 +1550,12 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
             ImGui::AlignTextToFramePadding();
             ImGui::TextColored(theme::vec(theme::kTextDim), "%s", p.label);
             ImGui::TableNextColumn();
-            ImGui::SetNextItemWidth(-1);
-            ImGui::PushID(p.key);
-            char fmt[32];
-            std::snprintf(fmt, sizeof(fmt), p.integer ? "%%.0f %s" : "%%.2f %s", p.unit);
-            const float speed = p.integer ? 0.1f : std::max((p.max - p.min) / 400.0f, 0.01f);
-            ImGui::DragFloat("##v", &it->second, speed, p.min, p.max, fmt, ImGuiSliderFlags_AlwaysClamp);
-            if (p.integer) it->second = std::round(it->second);
-            ImGui::PopID();
+            // Rear shaft only matters for a dual-shaft motor.
+            const auto shafts = values.find("shafts");
+            const bool off = std::string(p.key) == "rear_length" && shafts != values.end() && shafts->second < 1.5f;
+            if (off) ImGui::BeginDisabled();
+            paramEditor(p, it->second);
+            if (off) ImGui::EndDisabled();
         }
         ImGui::EndTable();
     }

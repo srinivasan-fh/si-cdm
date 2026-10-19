@@ -50,6 +50,8 @@ constexpr CommandSpec kCommands[] = {
     // Library
     {"PART", "INSERT LIBRARY PARTS", "PART name [NAME n] [@x,y,z] [parameter value]...",
      "Insert a library component: motors, gears, racks, gear trains (PART alone lists them)"},
+    {"PARAM", "PARAMS PARAMETERS", "PARAM [name] [key value]...",
+     "Edit a placed library part: motor shafts (SHAFTS NONE|SINGLE|DUAL, SHAFT_LENGTH...), gear teeth...; no values lists them"},
     {"SCALE", "SC RESIZE", "SCALE [name] factor | SCALE [name] TO size",
      "Resize a body, or a whole library component with its motions"},
     // Editing

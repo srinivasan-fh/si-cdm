@@ -237,3 +237,66 @@ TEST_CASE("library components survive save and reopen") {
     CHECK_NEAR(mesh->ratio, -0.5, 1e-6);
     CHECK_NEAR(motion(s, "Stepper Motor 1 Drive")->step, 1.8, 1e-6);
 }
+
+TEST_CASE("motor shafts: none, single or dual, with configurable lengths") {
+    auto rotor = [](std::vector<float> p) { return buildLibraryPart("motor_rotor", p).bounds(); };
+    // Stepper: boss face at z = 42, rear face at z = 0.
+    const AABB single = rotor({1, 30, 1, 15, 5, 1});
+    CHECK_NEAR(single.max.z, 72, 1e-3);
+    CHECK_NEAR(single.min.z, 42, 1e-3);
+    const AABB dual = rotor({1, 30, 2, 20, 5, 0});
+    CHECK_NEAR(dual.min.z, -20, 1e-3);
+    CHECK_NEAR(dual.max.z, 72, 1e-3);
+    CHECK_NEAR(dual.max.y - dual.min.y, 5, 0.05); // plain shaft (no coupler), 5 mm; the D-flat is on +X
+    const AABB none = rotor({1, 30, 0, 20, 5, 1});
+    CHECK(none.max.z < 44.0f);
+    // Old projects stored only the style: defaults fill in (DC: 14 mm shaft from z = 32).
+    CHECK_NEAR(rotor({0}).max.z, 46, 1e-3);
+    for (float horn : {0.0f, 1.0f, 2.0f, 3.0f}) CHECK(!buildLibraryPart("motor_rotor", {2, horn}).indices.empty());
+    CHECK(withDefaults("motor_rotor", {1}).size() == 6);
+    CHECK(partParams("motor_rotor", {2}).size() == 2);
+}
+
+TEST_CASE("PART takes shaft options; PARAM edits them after placing") {
+    Document d;
+    REQUIRE(run(d, "PART STEPPER SHAFTS DUAL SHAFT_LENGTH 40 REAR_LENGTH 25 SHAFT_DIA 8 FITTING PLAIN").ok);
+    const Body* r = body(d.scene, "Stepper Motor 1 Rotor");
+    REQUIRE(r && r->params.size() == 6);
+    CHECK_NEAR(r->params[1], 40, 1e-6);
+    CHECK_NEAR(r->params[2], 2, 1e-6);
+    CHECK_NEAR(r->params[4], 8, 1e-6);
+    CHECK_NEAR(r->bounds().min.z, -25, 1e-3);
+    CHECK(!run(d, "PART DCMOTOR SHAFTS TRIPLE").ok);
+    CHECK(!run(d, "PART DCMOTOR SHAFT_LENGTH -3").ok);
+    REQUIRE(run(d, "PART SERVO HORN CROSS").ok);
+    CHECK(run(d, "PART SERVO HORN SINGLE_ARM").ok);
+    CHECK_NEAR(body(d.scene, "Servo Motor 1 Rotor")->params[1], 2, 1e-6);
+
+    // Edit through the housing name: the rotor changes.
+    REQUIRE(run(d, "PARAM \"Stepper Motor 1\" SHAFTS SINGLE SHAFT_LENGTH 10").ok);
+    r = body(d.scene, "Stepper Motor 1 Rotor");
+    CHECK_NEAR(r->params[2], 1, 1e-6);
+    CHECK_NEAR(r->bounds().min.z, 42, 1e-3);
+    CHECK_NEAR(r->bounds().max.z, 52, 1e-3);
+    CHECK(run(d, "PARAM \"Stepper Motor 1\"").lines.size() == 6); // header + 5 parameters
+    CHECK(!run(d, "PARAM \"Stepper Motor 1\" COLOUR 3").ok);
+    CHECK(!run(d, "PARAM \"Stepper Motor 1\" SHAFT_DIA 0").ok);
+    // Gears too, and scaled parts keep their scale.
+    REQUIRE(run(d, "PART SPUR NAME G TEETH 20").ok);
+    REQUIRE(run(d, "SCALE G 2").ok);
+    REQUIRE(run(d, "PARAM G TEETH 30").ok);
+    const Body* g = body(d.scene, "G");
+    CHECK_NEAR(g->bounds().max.x - g->bounds().min.x, 2 * 2 * (30 + 2), 0.3);
+    REQUIRE(run(d, "BOX 5 5 5").ok);
+    CHECK(!run(d, "PARAM TEETH 3").ok); // plain bodies have no parameters
+
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_shaft_test.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene s;
+    ProjectState st;
+    REQUIRE(loadProject(s, st, path, &err, nullptr));
+    const Body* lr = body(s, "Stepper Motor 1 Rotor");
+    REQUIRE(lr);
+    CHECK_NEAR(lr->bounds().max.z, 52, 1e-3);
+}

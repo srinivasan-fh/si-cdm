@@ -25,7 +25,8 @@ struct Body;
 //   rack:          module teeth width height                   (teeth along X, pointing +Y, pitch line y = 0)
 //   worm:          module starts length phase                  (axis along X)
 //   dc_motor, stepper_motor, servo_motor: none (housing, shaft along +Z through the origin)
-//   motor_rotor:   style (0 DC shaft + coupler, 1 stepper shaft + coupler, 2 servo horn)
+//   motor_rotor:   style (0 DC, 1 stepper): style shaft_length shafts rear_length shaft_dia fitting
+//                  style 2 (servo): style horn            (see partParams())
 bool isLibraryKind(const std::string& kind);
 MeshData buildLibraryPart(const std::string& kind, const std::vector<float>& params);
 
@@ -41,7 +42,14 @@ struct LibraryParam {
     float min, max;
     const char* unit;  // "mm", "deg", "rpm", "" ...
     bool integer = false;
+    const char* choices = nullptr; // "None|Single|Dual": value is the index (shown as a list)
 };
+
+// Editable parameters of a placed library body (index = position in Body::params),
+// e.g. a motor rotor's shafts and lengths or a gear's teeth. Empty for other kinds.
+std::vector<LibraryParam> partParams(const std::string& kind, const std::vector<float>& params);
+// The full parameter list of a body, missing trailing values filled with defaults.
+std::vector<float> withDefaults(const std::string& kind, std::vector<float> params);
 
 struct LibraryItem {
     const char* key;      // "dc_motor", "spur_gear", ...

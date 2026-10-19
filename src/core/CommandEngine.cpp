@@ -163,6 +163,36 @@ std::vector<std::string> describePoses(const Document& doc, float t) {
     return lines;
 }
 
+// A parameter value: a number, or one of the parameter's choices by name ("dual").
+std::optional<float> paramValue(const LibraryParam& p, const std::string& word) {
+    if (p.choices) {
+        std::string w; // "single_arm", "Single-Arm" -> "singlearm"
+        for (char c : word)
+            if (c != '_' && c != '-' && c != ' ') w += c;
+        std::string list = std::string(p.choices) + "|";
+        int index = 0;
+        for (std::size_t at = 0, bar; (bar = list.find('|', at)) != std::string::npos; at = bar + 1, ++index) {
+            std::string choice = list.substr(at, bar - at);
+            std::string compact;
+            for (char c : choice)
+                if (c != ' ') compact += c;
+            if (iequal(choice, word) || iequal(compact, w)) return static_cast<float>(index);
+        }
+    }
+    const auto v = parseNumber(word);
+    if (!v || *v < p.min || *v > p.max) return std::nullopt;
+    return p.integer ? std::round(*v) : *v;
+}
+
+std::string paramRange(const LibraryParam& p) {
+    if (p.choices) {
+        std::string c = p.choices;
+        std::replace(c.begin(), c.end(), '|', '/');
+        return c;
+    }
+    return fmt("%g to %g", p.min, p.max) + (p.unit[0] ? std::string(" ") + p.unit : std::string());
+}
+
 CommandOutput needView(ViewHost* view, const char* what) {
     CommandOutput out;
     if (!view) out.fail(std::string(what) + " needs the app window (not available headless)");
@@ -638,10 +668,8 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
             for (const LibraryParam& p : item->params)
                 if (k == p.key) param = &p;
             if (param) {
-                const auto v = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
-                if (!v) return out.fail(std::string(param->label) + " needs a number");
-                if (*v < param->min || *v > param->max)
-                    return out.fail(std::string(param->label) + fmt(" must be %g to %g", param->min, param->max));
+                const auto v = i + 1 < a.size() ? paramValue(*param, a[i + 1]) : std::nullopt;
+                if (!v) return out.fail(std::string(param->label) + ": " + paramRange(*param));
                 values[param->key] = *v;
                 ++i;
             } else if (name.empty()) {
@@ -688,6 +716,74 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
                 (c.motions.empty() ? std::string()
                                    : ", " + std::to_string(c.motions.size()) + (c.motions.size() == 1 ? " motion" : " motions")) +
                 ")");
+        return out;
+    }
+    if (cmd == "PARAM") {
+        // PARAM [name] [key value]...: edit a placed library part (motor shafts, gear teeth...).
+        auto& bodies = doc.scene.bodies();
+        std::size_t first = 0;
+        int bi = -1;
+        if (!a.empty()) {
+            bi = findBody(doc, a[0]);
+            if (bi >= 0) first = 1;
+        }
+        if (bi < 0) bi = doc.selectedBody;
+        if (bi < 0 || bi >= static_cast<int>(bodies.size()))
+            return out.fail(a.empty() ? "Select a library part first, or give its name" : "No body named " + a[0]);
+        // A motor housing edits its rotor (the shafts live there).
+        if (partParams(bodies[static_cast<std::size_t>(bi)].kind, bodies[static_cast<std::size_t>(bi)].params).empty() &&
+            !bodies[static_cast<std::size_t>(bi)].component.empty())
+            for (std::size_t i = 0; i < bodies.size(); ++i)
+                if (bodies[i].component == bodies[static_cast<std::size_t>(bi)].component && bodies[i].kind == "motor_rotor")
+                    bi = static_cast<int>(i);
+        Body& b = bodies[static_cast<std::size_t>(bi)];
+        const std::vector<LibraryParam> schema = partParams(b.kind, b.params);
+        if (schema.empty()) return out.fail(b.name + " has no editable parameters (library parts only)");
+        std::vector<float> params = withDefaults(b.kind, b.params);
+        auto shown = [](const LibraryParam& p) { return p.min < p.max; };
+        if (first >= a.size()) {
+            out.say(b.name + " (" + b.kind + "):");
+            for (std::size_t i = 0; i < schema.size(); ++i) {
+                if (!shown(schema[i])) continue;
+                std::string value = fmt("%g", params[i]);
+                if (schema[i].choices) {
+                    std::string list = std::string(schema[i].choices) + "|";
+                    std::size_t at = 0;
+                    for (int k = 0; k < static_cast<int>(params[i]); ++k) at = list.find('|', at) + 1;
+                    value = list.substr(at, list.find('|', at) - at);
+                }
+                out.say("  " + toUpper(schema[i].key) + "  " + value + "   (" + paramRange(schema[i]) + ")");
+            }
+            return out;
+        }
+        std::string changed;
+        for (std::size_t i = first; i < a.size(); i += 2) {
+            const std::string k = lower(a[i]);
+            std::size_t idx = schema.size();
+            for (std::size_t j = 0; j < schema.size(); ++j)
+                if (k == schema[j].key && shown(schema[j])) idx = j;
+            if (idx == schema.size()) {
+                std::string keys;
+                for (const LibraryParam& p : schema)
+                    if (shown(p)) keys += std::string(keys.empty() ? "" : ", ") + toUpper(p.key);
+                return out.fail("Unknown parameter '" + a[i] + "' for " + b.name + " (" + keys + ")");
+            }
+            const auto v = i + 1 < a.size() ? paramValue(schema[idx], a[i + 1]) : std::nullopt;
+            if (!v) return out.fail(std::string(schema[idx].label) + ": " + paramRange(schema[idx]));
+            params[idx] = *v;
+            changed += (changed.empty() ? "" : ", ") + lower(schema[idx].key) + " " + a[i + 1];
+        }
+        const std::vector<float> before = b.params;
+        b.params = params;
+        b.rebuild();
+        if (b.mesh.indices.empty()) {
+            b.params = before;
+            b.rebuild();
+            return out.fail("Those values do not make a valid part");
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        out.say("Updated " + b.name + ": " + changed);
         return out;
     }
     if (cmd == "SCALE") {

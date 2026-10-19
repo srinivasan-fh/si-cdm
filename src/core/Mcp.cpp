@@ -169,6 +169,11 @@ Json McpServer::toolDefinitions() {
         p.set("width", prop("number", "Image width (mm)"));
         p.set("opacity", prop("number", "Image opacity 0..1"));
         p.set("scale", prop("number", "Body: size factor (a library component scales as a whole, with its motions)"));
+        Json params = Json::object();
+        params.set("type", "object").set("description",
+            "Library part parameters, e.g. {\"shafts\": \"dual\", \"shaft_length\": 30, \"rear_length\": 12} for a "
+            "motor (name the motor or its rotor) or {\"teeth\": 32} for a gear; see the PARAM command");
+        p.set("params", params);
         tools.push(tool("modify", "Move, rename, recolour, show/hide a body, curve or image.", p, {"name"}));
     }
     {
@@ -436,6 +441,18 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             const Json& j = a[key];
             return Vec3{j[0].asFloat(), j[1].asFloat(), j[2].asFloat()};
         };
+        if (a["params"].isObject() && !a["params"].members().empty()) {
+            std::string line = "PARAM " + quote(target);
+            for (const auto& [k, v] : a["params"].members()) {
+                if (!v.isNumber() && !v.isString()) return textResult("parameter '" + k + "' must be a number or a choice name", true);
+                line += " " + k + " " + (v.isNumber() ? num(v.asNumber()) : quote(v.asString()));
+            }
+            const Json r = runLine(line);
+            if (r["isError"].asBool()) return r;
+            bool other = a["scale"].isNumber() || a["position"].isArray() || a["move_by"].isArray() || a["rename"].isString() ||
+                         a["visible"].isBool() || a["color"].isArray();
+            if (!other) return r;
+        }
         if (a["scale"].isNumber()) {
             if (a["scale"].asNumber() <= 0) return textResult("scale must be > 0", true);
             for (Body& b : bodies)

@@ -162,3 +162,14 @@ TEST_CASE("MCP library tools insert, list and scale parts") {
     const Json sc = tool(s, "get_scene", "{}")["structuredContent"];
     CHECK(sc["bodies"][1]["component"].asString() == "X Axis");
 }
+
+TEST_CASE("MCP modify edits library part parameters") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "insert_part", R"({"part":"dc_motor","name":"M"})")["isError"].asBool());
+    Json r = tool(s, "modify", R"({"name":"M","params":{"shafts":"dual","rear_length":12,"shaft_length":20}})");
+    CHECK(!r["isError"].asBool());
+    CHECK_NEAR(d.scene.bodies()[1].params[2], 2, 1e-6);
+    CHECK_NEAR(d.scene.bodies()[1].params[3], 12, 1e-6);
+    CHECK(tool(s, "modify", R"({"name":"M","params":{"shafts":"many"}})")["isError"].asBool());
+}

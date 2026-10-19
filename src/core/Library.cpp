@@ -330,24 +330,60 @@ MeshData servoMotor() {
     return m;
 }
 
-MeshData motorRotor(int style) {
-    if (style == 0) { // DC: 3 mm shaft + coupler
-        MeshData m = dShaft(1.5f, 32.0f, 46.0f);
-        m.append(coupler(4.0f, 39.0f, 45.0f));
+MeshData servoHorn(int horn) {
+    MeshData m = cylinderAt(0, 0, 2.5f, 38.0f, 41.0f, 24); // spline
+    m.append(cylinderAt(0, 0, 4.5f, 41.0f, 45.0f, 32));   // hub
+    auto arm = [&](float angle, float from, float to) {
+        MeshData a = boxOf({from, -3.0f, 41.0f}, {to, 3.0f, 43.5f});
+        a.append(cylinderAt(to, 0, 3.0f, 41.0f, 43.5f, 24));
+        for (float x = to - 3.0f; x > std::max(from, 4.0f) + 1.0f; x -= 4.0f) a.append(cylinderAt(x, 0, 0.7f, 43.5f, 43.8f, 12));
+        a.transform(rotateAxis({0, 0, 1}, angle));
+        m.append(a);
+    };
+    switch (std::clamp(horn, 0, 3)) {
+    case 0: arm(0.0f, -4.0f, 17.0f); break;                                    // single arm
+    case 1: arm(0.0f, 0.0f, 16.0f); arm(kPi, 0.0f, 16.0f); break;              // double arm
+    case 2: for (int i = 0; i < 4; ++i) arm(kPi * 0.5f * static_cast<float>(i), 0.0f, 13.0f); break; // cross
+    default:                                                                  // disc with holes
+        m.append(cylinderAt(0, 0, 11.0f, 41.0f, 43.0f, 64));
+        for (int i = 0; i < 8; ++i) {
+            const float a = 2.0f * kPi * static_cast<float>(i) / 8.0f;
+            m.append(cylinderAt(8.0f * std::cos(a), 8.0f * std::sin(a), 0.8f, 43.0f, 43.3f, 12));
+        }
+        m.append(boxOf({8.5f, -0.8f, 43.0f}, {10.5f, 0.8f, 43.4f})); // index mark
+        break;
+    }
+    return m;
+}
+
+// DC / stepper rotor: front shaft (optional coupler), optional rear shaft, or a
+// flush output disc when the motor has no shaft.
+MeshData motorRotor(const std::vector<float>& raw) {
+    const std::vector<float> p = withDefaults("motor_rotor", raw);
+    const int style = std::clamp(static_cast<int>(p[0]), 0, 2);
+    if (style == 2) return servoHorn(static_cast<int>(p[1]));
+    const float front = style == 0 ? 32.0f : 42.0f; // face of the bearing boss
+    const float back = style == 0 ? -3.0f : 0.0f;   // rear face of the housing
+    const float len = std::max(p[1], 0.5f);
+    const int shafts = std::clamp(static_cast<int>(std::lround(p[2])), 0, 2);
+    const float rearLen = std::max(p[3], 0.5f);
+    const float r = std::max(p[4], 0.2f) * 0.5f;
+    const bool fitting = p[5] >= 0.5f;
+    if (shafts == 0) {
+        // No shaft: a flush output disc with an index mark shows the rotation.
+        MeshData m = cylinderAt(0, 0, std::max(r * 1.8f, 2.0f), front, front + 0.8f, 32);
+        const float w = std::max(r * 0.35f, 0.4f);
+        m.append(boxOf({std::max(r * 0.6f, 0.6f), -w, front + 0.8f}, {std::max(r * 1.7f, 1.9f), w, front + 1.2f}));
         return m;
     }
-    if (style == 1) { // stepper: 5 mm D-shaft + coupler
-        MeshData m = dShaft(2.5f, 42.0f, 66.0f);
-        m.append(coupler(6.5f, 56.0f, 66.0f));
-        return m;
+    MeshData m = dShaft(r, front, front + len);
+    if (fitting && len > 3.0f) {
+        const float cr = std::max(r * 2.6f, r + 2.5f);
+        const float cl = std::min(len * 0.45f, 2.0f * cr);
+        const float top = front + len - std::min(0.5f, len * 0.05f);
+        m.append(coupler(cr, top - cl, top));
     }
-    // Servo: spline + two-arm horn.
-    MeshData m = cylinderAt(0, 0, 2.5f, 38.0f, 41.0f, 24);
-    m.append(cylinderAt(0, 0, 4.5f, 41.0f, 45.0f, 32));
-    m.append(boxOf({-16.0f, -3.0f, 41.0f}, {16.0f, 3.0f, 43.5f}));
-    m.append(cylinderAt(-16.0f, 0, 3.0f, 41.0f, 43.5f, 24));
-    m.append(cylinderAt(16.0f, 0, 3.0f, 41.0f, 43.5f, 24));
-    for (float x : {-13.0f, -9.0f, 9.0f, 13.0f}) m.append(cylinderAt(x, 0, 0.7f, 43.5f, 43.8f, 12)); // horn holes
+    if (shafts == 2) m.append(dShaft(r, back - rearLen, back));
     return m;
 }
 
@@ -413,8 +449,50 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "dc_motor") m = dcMotor();
     else if (k == "stepper_motor") m = stepperMotor();
     else if (k == "servo_motor") m = servoMotor();
-    else if (k == "motor_rotor") m = motorRotor(p.empty() ? 0 : std::clamp(static_cast<int>(p[0]), 0, 2));
+    else if (k == "motor_rotor") m = motorRotor(p);
     return m;
+}
+
+// ---------------------------------------------------------------------------
+// Parameters of placed parts
+
+std::vector<LibraryParam> partParams(const std::string& k, const std::vector<float>& p) {
+    auto fixed = [](const char* key, float v) { return LibraryParam{key, key, v, v, v, ""}; }; // shown nowhere
+    const LibraryParam module{"module", "Module", 2.0f, 0.2f, 20.0f, "mm"};
+    const LibraryParam teeth{"teeth", "Teeth", 20.0f, 4.0f, 400.0f, "", true};
+    const LibraryParam width{"width", "Face width", 10.0f, 0.5f, 500.0f, "mm"};
+    const LibraryParam bore{"bore", "Bore radius", 4.0f, 0.0f, 500.0f, "mm"};
+    const LibraryParam phase{"phase", "Tooth phase", 0.0f, -360.0f, 360.0f, "deg"};
+    if (k == "motor_rotor") {
+        const int style = p.empty() ? 0 : std::clamp(static_cast<int>(p[0]), 0, 2);
+        if (style == 2)
+            return {fixed("style", 2.0f), {"horn", "Horn", 1.0f, 0.0f, 3.0f, "", true, "Single arm|Double arm|Cross|Disc"}};
+        const bool dc = style == 0;
+        return {fixed("style", static_cast<float>(style)),
+                {"shaft_length", "Shaft length", dc ? 14.0f : 24.0f, 0.5f, 500.0f, "mm"},
+                {"shafts", "Shafts", 1.0f, 0.0f, 2.0f, "", true, "None|Single|Dual"},
+                {"rear_length", "Rear shaft", dc ? 10.0f : 15.0f, 0.5f, 500.0f, "mm"},
+                {"shaft_dia", "Shaft diameter", dc ? 3.0f : 5.0f, 0.4f, 60.0f, "mm"},
+                {"fitting", "Shaft end", 1.0f, 0.0f, 1.0f, "", true, "Plain|Coupler"}};
+    }
+    if (k == "gear")
+        return {module, teeth, width, bore, {"helix", "Helix angle", 0.0f, -45.0f, 45.0f, "deg"},
+                {"style", "Tooth form", 0.0f, 0.0f, 2.0f, "", true, "Spur|Helical|Herringbone"}, phase};
+    if (k == "ring_gear") return {module, {"teeth", "Teeth", 48.0f, 12.0f, 400.0f, "", true}, width,
+                                  {"rim", "Rim thickness", 6.0f, 0.5f, 200.0f, "mm"}, phase};
+    if (k == "bevel_gear") return {module, teeth, {"face", "Face width", 8.0f, 0.5f, 200.0f, "mm"},
+                                   {"cone", "Pitch cone", 45.0f, 5.0f, 85.0f, "deg"}, bore, phase};
+    if (k == "rack") return {module, {"teeth", "Teeth", 20.0f, 1.0f, 500.0f, "", true}, width,
+                             {"height", "Bar height", 8.0f, 0.5f, 500.0f, "mm"}};
+    if (k == "worm") return {module, {"starts", "Starts", 1.0f, 1.0f, 8.0f, "", true},
+                             {"length", "Length", 40.0f, 2.0f, 2000.0f, "mm"}, phase};
+    return {};
+}
+
+std::vector<float> withDefaults(const std::string& kind, std::vector<float> params) {
+    const std::vector<LibraryParam> schema = partParams(kind, params);
+    for (std::size_t i = params.size(); i < schema.size(); ++i) params.push_back(schema[i].value);
+    return params;
 }
 
 // ---------------------------------------------------------------------------
@@ -428,14 +506,22 @@ const std::vector<LibraryItem>& libraryItems() {
         const LibraryParam bore{"bore", "Bore radius", 4.0f, 0.0f, 500.0f, "mm"};
         auto teeth = [](float v, float lo = 6.0f) { return LibraryParam{"teeth", "Teeth", v, lo, 300.0f, "", true}; };
         auto rpm = [](float v) { return LibraryParam{"rpm", "Speed", v, -6000.0f, 6000.0f, "rpm"}; };
+        const LibraryParam shafts{"shafts", "Shafts", 1.0f, 0.0f, 2.0f, "", true, "None|Single|Dual"};
+        const LibraryParam fitting{"fitting", "Shaft end", 1.0f, 0.0f, 1.0f, "", true, "Plain|Coupler"};
         return std::vector<LibraryItem>{
-            {"dc_motor", "DCMOTOR DC", "DC Motor", "Motors", "28 mm brushed motor, 3 mm shaft; spins 360 deg",
-             {size, rpm(120.0f)}},
+            {"dc_motor", "DCMOTOR DC", "DC Motor", "Motors", "28 mm brushed motor; single or dual shaft; spins 360 deg",
+             {size, rpm(120.0f), shafts, {"shaft_length", "Shaft length", 14.0f, 0.5f, 500.0f, "mm"},
+              {"rear_length", "Rear shaft", 10.0f, 0.5f, 500.0f, "mm"},
+              {"shaft_dia", "Shaft diameter", 3.0f, 0.4f, 60.0f, "mm"}, fitting}},
             {"stepper_motor", "STEPPER NEMA17 STEP", "Stepper Motor", "Motors",
-             "NEMA 17, 5 mm shaft, 1.8 deg steps; spins 360 deg",
-             {size, rpm(30.0f), {"step", "Step angle", 1.8f, 0.0f, 90.0f, "deg"}}},
-            {"servo_motor", "SERVO", "Servo Motor", "Motors", "Standard servo with a two-arm horn; turns 360 deg",
-             {size, rpm(60.0f), {"sweep", "Sweep", 360.0f, 1.0f, 360.0f, "deg"}}},
+             "NEMA 17, 1.8 deg steps; single or dual shaft; spins 360 deg",
+             {size, rpm(30.0f), {"step", "Step angle", 1.8f, 0.0f, 90.0f, "deg"}, shafts,
+              {"shaft_length", "Shaft length", 24.0f, 0.5f, 500.0f, "mm"},
+              {"rear_length", "Rear shaft", 15.0f, 0.5f, 500.0f, "mm"},
+              {"shaft_dia", "Shaft diameter", 5.0f, 0.4f, 60.0f, "mm"}, fitting}},
+            {"servo_motor", "SERVO", "Servo Motor", "Motors", "Standard servo with a horn; turns 360 deg",
+             {size, rpm(60.0f), {"sweep", "Sweep", 360.0f, 1.0f, 360.0f, "deg"},
+              {"horn", "Horn", 1.0f, 0.0f, 3.0f, "", true, "Single arm|Double arm|Cross|Disc"}}},
             {"spur_gear", "SPUR GEAR", "Spur Gear", "Gears", "Straight involute teeth, 20 deg pressure angle",
              {module, teeth(20.0f), width, bore}},
             {"helical_gear", "HELICAL", "Helical Gear", "Gears", "Teeth on a helix: smoother, quieter mesh",
@@ -567,8 +653,10 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
         const int style = key == "dc_motor" ? 0 : key == "stepper_motor" ? 1 : 2;
         const Vec3 housingColor = style == 0 ? kSteel : style == 1 ? kBlack : kServoBlue;
         c.bodies.push_back(part(name, key, {}, o, housingColor, name, s));
-        c.bodies.push_back(part(rotor, "motor_rotor", {static_cast<float>(style)}, o, style == 2 ? Vec3{0.92f, 0.92f, 0.90f} : kSteel,
-                                name, s));
+        std::vector<float> rotorParams{static_cast<float>(style)};
+        if (style == 2) rotorParams.push_back(v("horn"));
+        else rotorParams.insert(rotorParams.end(), {v("shaft_length"), v("shafts"), v("rear_length"), v("shaft_dia"), v("fitting")});
+        c.bodies.push_back(part(rotor, "motor_rotor", rotorParams, o, style == 2 ? Vec3{0.92f, 0.92f, 0.90f} : kSteel, name, s));
         Motion m = spin(name + " Drive", {rotor}, o, v("rpm"));
         if (style == 1) m.step = v("step");
         if (style == 2 && v("sweep") < 359.5f) { // positional servo: back and forth over the sweep

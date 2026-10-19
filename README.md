@@ -114,6 +114,11 @@ parametric: they save as parameters and rebuild exactly when the project opens.
 - **Motors** are two bodies, a fixed housing and a rotor (shaft with coupler, or servo horn), and come
   with a **360° circular motion** on the rotor (speed in rpm, Loop 0–360°). Steppers move in 1.8°
   steps; a servo with a sweep under 360° swings back and forth.
+- **Shafts:** DC and stepper motors have *Shafts* (None / Single / Dual), *Shaft length*, *Rear shaft*
+  length (dual), *Shaft diameter* and *Shaft end* (plain or with a coupler). Servos choose a *Horn*
+  (single arm, double arm, cross, disc). Set them before inserting, or afterwards: select the motor and
+  edit *Properties → Shaft* (live), or `PARAM "Stepper Motor 1" SHAFTS DUAL REAR_LENGTH 20`. Gears and
+  racks are editable the same way (teeth, module, width, bore...).
 - **Scalable:** every motor (and any body) has a **Size** factor, set in the Library before inserting,
   or afterwards in *Properties → Scale* or with `SCALE`. A component scales as a whole: its bodies,
   their spacing and its motions.
@@ -125,6 +130,8 @@ parametric: they save as parameters and rebuild exactly when the project opens.
 ```text
 PART                              (lists the library)
 PART DCMOTOR SIZE 1.5 RPM 60      PART STEPPER @100,0,0 RPM 30 STEP 1.8      PART SERVO NAME Pan SWEEP 180
+PART STEPPER SHAFTS DUAL SHAFT_LENGTH 30 REAR_LENGTH 20 SHAFT_DIA 8 FITTING PLAIN      PART SERVO HORN DISC
+PARAM "DC Motor 1" SHAFTS NONE      PARAM "Spur Gear 1" TEETH 32      PARAM "Stepper Motor 1"   (lists them)
 PART SPUR MODULE 2 TEETH 24 WIDTH 10 BORE 4      PART HELICAL TEETH 30 HELIX 20      PART RACK TEETH 40
 PART GEARPAIR TEETH1 16 TEETH2 48      PART PLANETARY SUN_TEETH 18 PLANET_TEETH 18      PART WORMDRIVE
 SCALE "DC Motor 1" 2      SCALE "Gear Pair 1 Driver" TO 1
