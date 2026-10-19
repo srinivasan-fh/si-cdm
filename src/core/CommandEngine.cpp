@@ -166,18 +166,24 @@ std::vector<std::string> describePoses(const Document& doc, float t) {
 // A parameter value: a number, or one of the parameter's choices by name ("dual").
 std::optional<float> paramValue(const LibraryParam& p, const std::string& word) {
     if (p.choices) {
-        std::string w; // "single_arm", "Single-Arm" -> "singlearm"
-        for (char c : word)
-            if (c != '_' && c != '-' && c != ' ') w += c;
+        // Letters and digits only, lower case: "Timing (GT2)" -> "timinggt2", "V-belt" -> "vbelt".
+        auto key = [](const std::string& t) {
+            std::string k;
+            for (char c : t)
+                if (std::isalnum(static_cast<unsigned char>(c))) k += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return k;
+        };
+        const std::string w = key(word);
+        std::vector<std::string> names;
         std::string list = std::string(p.choices) + "|";
-        int index = 0;
-        for (std::size_t at = 0, bar; (bar = list.find('|', at)) != std::string::npos; at = bar + 1, ++index) {
-            std::string choice = list.substr(at, bar - at);
-            std::string compact;
-            for (char c : choice)
-                if (c != ' ') compact += c;
-            if (iequal(choice, word) || iequal(compact, w)) return static_cast<float>(index);
-        }
+        for (std::size_t at = 0, bar; (bar = list.find('|', at)) != std::string::npos; at = bar + 1)
+            names.push_back(key(list.substr(at, bar - at)));
+        for (std::size_t i = 0; i < names.size(); ++i)
+            if (!w.empty() && names[i] == w) return static_cast<float>(i);
+        int match = -1; // a unique prefix also works: TIMING, V, OFF
+        for (std::size_t i = 0; i < names.size(); ++i)
+            if (!w.empty() && names[i].rfind(w, 0) == 0) match = match < 0 ? static_cast<int>(i) : -2;
+        if (match >= 0) return static_cast<float>(match);
     }
     const auto v = parseNumber(word);
     if (!v || *v < p.min || *v > p.max) return std::nullopt;

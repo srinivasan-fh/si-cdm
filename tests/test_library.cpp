@@ -333,3 +333,72 @@ TEST_CASE("electric car motors: horizontal shaft axis, shaft options, scaling") 
     CHECK_NEAR(motion(d.scene, "Foot Drive")->origin.z, 85, 1e-3);
     CHECK_NEAR(body(d.scene, "Foot Rotor")->bounds().max.x, 0.5 * (132 + 120), 1e-2);
 }
+
+TEST_CASE("wheels and tyres stand on the ground and roll along +X") {
+    Document d;
+    REQUIRE(run(d, "PART CARWHEEL NAME W @0,0,0 DIAMETER 600 WIDTH 200 RIM_DIA 400").ok);
+    const Body* tyreBody = body(d.scene, "W Tyre");
+    const Body* rim = body(d.scene, "W Rim");
+    REQUIRE(tyreBody && rim);
+    CHECK_NEAR(tyreBody->bounds().min.z, 0, 0.05);   // on the ground
+    CHECK_NEAR(tyreBody->bounds().max.z, 600, 0.05);
+    CHECK(rim->bounds().max.z < 600.0f);            // rim inside the tyre
+    const Motion* spinM = motion(d.scene, "W Spin");
+    REQUIRE(spinM);
+    CHECK_NEAR(spinM->axis.y, 1, 1e-6);
+    CHECK_NEAR(spinM->origin.z, 300, 1e-3);
+    // Positive rotation rolls the top of the wheel toward +X.
+    const Vec3 top = motionMatrix(*spinM, 0.1f).transformPoint({0, 0, 600});
+    CHECK(top.x > 0.0f);
+    for (const char* part : {"ROBOTWHEEL", "CASTER", "OMNI", "MECANUM", "TYRE TREAD OFF", "TYRE TREAD SLICK"}) {
+        Document e;
+        CHECK(run(e, std::string("PART ") + part + " @0,0,0").ok);
+        AABB box;
+        for (const Body& b : e.scene.bodies()) {
+            CHECK(!b.mesh.indices.empty());
+            box.expand(b.bounds());
+        }
+        if (box.min.z < -0.01f) std::fprintf(stderr, "  %s dips to z = %g\n", part, static_cast<double>(box.min.z));
+        CHECK(box.min.z > -0.01f);
+    }
+    CHECK(run(d, "PART ROBOTWHEEL RPM 0 NAME Free").ok);
+    CHECK(motion(d.scene, "Free Spin") == nullptr); // rpm 0: no motion
+}
+
+TEST_CASE("sprockets, steel chain and belts") {
+    // Sprocket outline between root and tip; teeth stand proud of the pitch circle.
+    const MeshData sp = buildLibraryPart("sprocket", {12.7f, 18, 7, 6});
+    REQUIRE(!sp.indices.empty());
+    CHECK(watertight(buildLibraryPart("sprocket", {12.7f, 18, 7, 0})));
+    const float R = 12.7f / (2.0f * std::sin(kPi / 18.0f));
+    CHECK(sp.bounds().max.x > R);
+    CHECK(sp.bounds().max.x < 12.7f * (0.6f + 1.0f / std::tan(kPi / 18.0f)) * 0.5f + 0.01f);
+
+    const MeshData chain = buildLibraryPart("chain", {12.7f, 10});
+    CHECK_NEAR(chain.bounds().max.x - chain.bounds().min.x, 12.7f * 10 + 2 * 12.7f * 0.47f, 0.05);
+    CHECK(chain.bounds().min.z > -0.01f);
+
+    Document d;
+    REQUIRE(run(d, "PART CHAINDRIVE TEETH1 12 TEETH2 36 RPM 10").ok);
+    const Motion* driven = motion(d.scene, "Chain Drive 1 Driven Chain");
+    REQUIRE(driven);
+    CHECK_NEAR(driven->ratio, 12.0f / 36.0f, 1e-6); // same direction, slower
+    CHECK(body(d.scene, "Chain Drive 1 Chain") != nullptr);
+
+    for (const char* t : {"V", "TIMING", "FLAT"}) {
+        Document b;
+        REQUIRE(run(b, std::string("PART BELTDRIVE TYPE ") + t + " DIA1 40 DIA2 120").ok);
+        const Motion* m = motion(b.scene, "Belt Drive 1 Driven Belt");
+        REQUIRE(m);
+        CHECK(m->ratio > 0.25f && m->ratio < 0.45f); // about 40 / 120
+        const Body* belt = body(b.scene, "Belt Drive 1 Belt");
+        REQUIRE(belt);
+        CHECK(!belt->mesh.indices.empty());
+    }
+    CHECK(run(d, "PART PULLEY TYPE TIMING").ok);
+    CHECK(run(d, "PART BELT TYPE V-BELT DIA1 50 DIA2 80").ok);
+    CHECK(run(d, "PART ORING INNER_DIA 30 SECTION 3").ok);
+    CHECK(!run(d, "PART PULLEY TYPE ROUND").ok);
+    REQUIRE(run(d, "PARAM \"Pulley 1\" TYPE FLAT DIAMETER 80").ok);
+    CHECK_NEAR(body(d.scene, "Pulley 1")->bounds().max.x - body(d.scene, "Pulley 1")->bounds().min.x, 80, 0.5);
+}

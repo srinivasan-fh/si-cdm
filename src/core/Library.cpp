@@ -595,6 +595,407 @@ MeshData motorRotor(const std::vector<float>& raw) {
     return m;
 }
 
+// ---------------------------------------------------------------------------
+// Wheels and tyres (axis along +Y, standing on z = 0, centre at z = radius;
+// positive rotation about +Y rolls toward +X), chains and belts (axis +Z).
+
+// Surface of revolution about the local Y axis of a closed (r, y) profile.
+MeshData latheY(std::vector<Vec2> prof, int seg) {
+    if (signedArea(prof) < 0.0f) std::reverse(prof.begin(), prof.end());
+    Builder b;
+    const std::size_t n = prof.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec2 a = prof[i], c = prof[(i + 1) % n];
+        const Vec2 nrm{c.y - a.y, -(c.x - a.x)}; // outward in the (r, y) plane
+        for (int k = 0; k < seg; ++k) {
+            const float f0 = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(seg);
+            const float f1 = 2.0f * kPi * static_cast<float>(k + 1) / static_cast<float>(seg);
+            const float fm = (f0 + f1) * 0.5f;
+            auto p = [](const Vec2& q, float f) { return Vec3{q.x * std::cos(f), q.y, q.x * std::sin(f)}; };
+            b.quad(p(a, f0), p(a, f1), p(c, f1), p(c, f0), {nrm.x * std::cos(fm), nrm.y, nrm.x * std::sin(fm)});
+        }
+    }
+    return b.finish(32.0f);
+}
+
+// Matrix taking local x / y / z to the given axes at `origin`.
+Mat4 frameOf(const Vec3& origin, const Vec3& ax, const Vec3& ay, const Vec3& az) {
+    Mat4 m = Mat4::identity();
+    const Vec3 cols[4] = {ax, ay, az, origin};
+    for (int c = 0; c < 4; ++c) {
+        m.m[c][0] = cols[c].x;
+        m.m[c][1] = cols[c].y;
+        m.m[c][2] = cols[c].z;
+    }
+    return m;
+}
+
+// Cylinder along +Y centred on y = 0.
+MeshData cylY(float r, float y0, float y1, int seg = 48) {
+    return latheY({{0.0f, y0}, {r, y0}, {r, y1}, {0.0f, y1}}, seg);
+}
+
+// Tyre: rounded carcass plus tread blocks. tread: 0 road, 1 off-road, 2 slick.
+MeshData tyre(float dia, float width, float rimDia, int tread) {
+    const float R = dia * 0.5f, ri = std::min(rimDia * 0.5f, R * 0.92f), hw = width * 0.5f;
+    const float td = tread == 2 ? 0.0f : std::max(R * (tread == 1 ? 0.045f : 0.028f), 0.4f);
+    const float R0 = R - td;
+    const float wall = R0 - ri, c = std::min(hw * 0.38f, wall * 0.35f);
+    std::vector<Vec2> prof{{ri, -hw * 0.82f}, {ri + wall * 0.3f, -hw * 0.98f}, {ri + wall * 0.62f, -hw}};
+    for (int s = 0; s <= 6; ++s) { // lower shoulder
+        const float t = -kPi * 0.5f + kPi * 0.5f * static_cast<float>(s) / 6.0f;
+        prof.push_back({R0 - c + c * std::cos(t), -hw + c + c * std::sin(t)});
+    }
+    for (int s = 0; s <= 6; ++s) { // upper shoulder
+        const float t = kPi * 0.5f * static_cast<float>(s) / 6.0f;
+        prof.push_back({R0 - c + c * std::cos(t), hw - c + c * std::sin(t)});
+    }
+    prof.push_back({ri + wall * 0.62f, hw});
+    prof.push_back({ri + wall * 0.3f, hw * 0.98f});
+    prof.push_back({ri, hw * 0.82f});
+    MeshData m = latheY(prof, 96);
+    if (td > 0.0f) {
+        const int n = std::clamp(static_cast<int>(2.0f * kPi * R / std::max(width * (tread == 1 ? 0.45f : 0.3f), 1.0f)), 12, 120);
+        const float len = 2.0f * kPi * R0 / static_cast<float>(n);
+        for (int k = 0; k < n; ++k) {
+            const float f = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(n);
+            auto block = [&](float y0, float y1, float l) {
+                // Flat block: its outer corners (not its middle) touch the tyre radius.
+                const float outer = std::sqrt(std::max(R * R - l * l * 0.25f, R0 * R0));
+                MeshData bl = boxOf({R0 - td * 0.6f, y0, -l * 0.5f}, {outer, y1, l * 0.5f});
+                bl.transform(rotateAxis({0, 1, 0}, f));
+                m.append(bl);
+            };
+            if (tread == 0) { // road: two rows of blocks either side of a centre groove
+                block(-hw + c * 0.7f, -hw * 0.08f, len * 0.62f);
+                block(hw * 0.08f, hw - c * 0.7f, len * 0.62f);
+            } else { // off-road: big lugs, alternating sides
+                const float s = k % 2 == 0 ? 1.0f : -1.0f;
+                block(std::min(s * hw * 0.95f, -s * hw * 0.15f), std::max(s * hw * 0.95f, -s * hw * 0.15f), len * 0.5f);
+            }
+        }
+    }
+    m.transform(translate({0, 0, R}));
+    return m;
+}
+
+// Alloy rim with spokes, hub and lug nuts (car wheel); y > 0 is the outer face.
+MeshData alloyRim(float rimDia, float width, int spokes) {
+    const float ri = rimDia * 0.5f, rw = width * 0.82f, h = rw * 0.5f;
+    const float lip = std::max(ri * 0.045f, 1.0f), wall = std::max(ri * 0.06f, 1.0f);
+    MeshData m = latheY({{ri - wall, -h}, {ri + lip, -h}, {ri + lip, -h + lip * 0.6f}, {ri, -h + lip * 0.8f},
+                         {ri, h - lip * 0.8f}, {ri + lip, h - lip * 0.6f}, {ri + lip, h}, {ri - wall, h}},
+                        96);
+    // Outer face toward -Y, the side the Front view looks at.
+    const float hub = ri * 0.22f, face = -(h - lip * 1.6f), depth = std::max(ri * 0.09f, 1.0f);
+    m.append(cylY(hub, face - depth * 0.3f, face + depth * 2.0f, 48));        // hub
+    m.append(cylY(hub * 0.45f, face - depth * 0.6f, face - depth * 0.3f, 32)); // centre cap
+    for (int k = 0; k < std::max(spokes, 2); ++k) {
+        const float f = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(std::max(spokes, 2));
+        MeshData sp = boxOf({hub * 0.8f, face, -ri * 0.07f}, {ri - wall * 0.5f, face + depth, ri * 0.07f});
+        sp.transform(rotateAxis({0, 1, 0}, f));
+        m.append(sp);
+    }
+    for (int k = 0; k < 5; ++k) { // lug nuts
+        const float f = 2.0f * kPi * static_cast<float>(k) / 5.0f + 0.3f;
+        MeshData nut = cylY(hub * 0.12f, face - depth * 0.7f, face - depth * 0.3f, 6);
+        nut.transform(translate({hub * 0.62f * std::cos(f), 0, hub * 0.62f * std::sin(f)}));
+        m.append(nut);
+    }
+    return m;
+}
+
+// Robot / caster wheel hub (plastic): rim, recessed web and a bore boss.
+MeshData wheelHub(float rimDia, float width, float bore) {
+    const float ri = rimDia * 0.5f, hw = width * 0.5f, br = std::clamp(bore * 0.5f, 0.3f, ri * 0.3f);
+    return latheY({{br, -hw * 0.9f}, {ri, -hw * 0.9f}, {ri, hw * 0.9f}, {ri * 0.82f, hw * 0.9f}, {ri * 0.78f, hw * 0.3f},
+                   {ri * 0.42f, hw * 0.3f}, {ri * 0.36f, hw * 1.15f}, {br, hw * 1.15f}},
+                  64);
+}
+
+// Swivel caster fork and top plate for a wheel of diameter D and width W.
+MeshData casterFork(float D, float W) {
+    const float R = D * 0.5f, t = std::max(D * 0.05f, 1.0f), gap = W * 0.5f + t * 0.6f;
+    const float top = D + t * 3.0f;
+    MeshData m = boxOf({-D * 0.55f, -D * 0.55f, top + t * 2.2f}, {D * 0.55f, D * 0.55f, top + t * 2.9f}); // plate
+    m.append(cylinderAt(0, 0, D * 0.22f, top + t, top + t * 2.2f, 32));                                     // swivel
+    m.append(boxOf({-D * 0.18f, -gap - t, top}, {D * 0.18f, gap + t, top + t}));                            // crown
+    for (float s : {-1.0f, 1.0f}) {
+        const float y0 = s > 0 ? gap : -gap - t, y1 = s > 0 ? gap + t : -gap;
+        m.append(boxOf({-D * 0.14f, y0, R - t}, {D * 0.14f, y1, top}));                                    // leg
+        MeshData axle = cylY(t * 0.9f, y0 - t * 0.4f, y1 + t * 0.4f, 16);                                 // axle nut
+        axle.transform(translate({0, 0, R}));
+        m.append(axle);
+    }
+    for (float x : {-1.0f, 1.0f})
+        for (float y : {-1.0f, 1.0f}) m.append(cylinderAt(x * D * 0.4f, y * D * 0.4f, t * 0.7f, top + t * 2.9f, top + t * 3.1f, 12));
+    return m;
+}
+
+// Roller along local Y whose outer surface follows the wheel's rolling circle:
+// its axis passes `rc` from the wheel axis, tilted so that axial offset s moves
+// s * c along the wheel's circumference (c = 1 tangential, cos 45 for mecanum).
+MeshData barrel(float R, float rc, float len, float c) {
+    std::vector<Vec2> prof{{0.0f, -len * 0.5f}};
+    const float minR = (R - rc) * 0.35f;
+    for (int s = 0; s <= 10; ++s) {
+        const float y = -len * 0.5f + len * static_cast<float>(s) / 10.0f;
+        prof.push_back({std::max(R - std::sqrt(rc * rc + y * y * c * c), minR), y});
+    }
+    prof.push_back({0.0f, len * 0.5f});
+    return latheY(prof, 20);
+}
+
+// Omni (style 0, two staggered rows of tangential rollers) or mecanum (style 1,
+// rollers at 45 deg) rollers around a wheel of diameter D, width W.
+MeshData wheelRollers(float D, float W, int count, int style) {
+    const float R = D * 0.5f;
+    MeshData m;
+    if (style == 0) {
+        const int n = std::max(count, 4);
+        const float rr = R * 0.17f, rc = R - rr;
+        const float len = 2.0f * kPi * rc / static_cast<float>(n) * 0.78f;
+        for (int row = 0; row < 2; ++row)
+            for (int k = 0; k < n; ++k) {
+                const float f = 2.0f * kPi * (static_cast<float>(k) + 0.5f * static_cast<float>(row)) / static_cast<float>(n);
+                const Vec3 rad{std::cos(f), 0, std::sin(f)}, tan{-std::sin(f), 0, std::cos(f)};
+                MeshData r = barrel(R, rc, len, 1.0f);
+                r.transform(frameOf(rad * rc + Vec3{0, (row == 0 ? -1.0f : 1.0f) * W * 0.25f, 0}, rad, tan, cross(rad, tan)));
+                m.append(r);
+            }
+    } else {
+        const int n = std::max(count, 5);
+        const float rr = R * 0.19f, rc = R - rr;
+        for (int k = 0; k < n; ++k) {
+            const float f = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(n);
+            const Vec3 rad{std::cos(f), 0, std::sin(f)}, tan{-std::sin(f), 0, std::cos(f)};
+            const Vec3 axis = normalize(tan + Vec3{0, 1, 0}); // 45 deg to the wheel axis
+            MeshData r = barrel(R, rc, W * 1.2f, std::sqrt(0.5f));
+            r.transform(frameOf(rad * rc, rad, axis, cross(rad, axis)));
+            m.append(r);
+        }
+    }
+    m.transform(translate({0, 0, R}));
+    return m;
+}
+
+// Hub plates for omni / mecanum wheels.
+MeshData rollerHub(float D, float W, int style) {
+    const float R = D * 0.5f, t = std::max(D * 0.04f, 0.8f);
+    MeshData m;
+    const float plate = style == 0 ? R * 0.74f : R * 0.72f;
+    for (float s : {-1.0f, 1.0f}) {
+        const float y = style == 0 ? s * W * 0.04f : s * (W * 0.5f + t * 0.5f);
+        m.append(cylY(plate, y - t * 0.5f, y + t * 0.5f, 48));
+    }
+    if (style == 0) m.append(cylY(plate * 0.92f, -W * 0.45f, W * 0.45f, 48)); // roller carrier
+    m.append(cylY(R * 0.22f, -W * 0.5f - t, W * 0.5f + t, 32));                // hub boss
+    m.transform(translate({0, 0, R}));
+    return m;
+}
+
+// Roller-chain sprocket (axis +Z, base z = 0): seats for rollers of the chain.
+std::vector<Vec2> sprocketOutline(float pitch, int teeth) {
+    const float half = kPi / static_cast<float>(teeth);
+    const float R = pitch / (2.0f * std::sin(half));                    // pitch radius
+    const float Ra = pitch * (0.6f + 1.0f / std::tan(half)) * 0.5f;     // tip radius
+    const float rs = pitch * 0.3125f * 1.01f;                           // roller seat
+    std::vector<Vec2> out;
+    const int per = 28;
+    for (int i = 0; i < teeth * per; ++i) {
+        const float th = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(teeth * per);
+        // Nearest gap centre (gaps sit between teeth; tooth 0 straddles +X).
+        const float k = std::round((th - half) / (2.0f * half));
+        const float gk = half + 2.0f * half * k;
+        const Vec2 c = polar(R, gk), d{std::cos(th), std::sin(th)};
+        const float b = d.x * c.x + d.y * c.y;
+        const float disc = rs * rs - (R * R - b * b);
+        float r = Ra;
+        // Flanks: from the seat edge, widen outward at 20 deg toward the tip.
+        const float off = std::fabs(th - gk) * R;                       // arc distance from the gap centre
+        const float flank = R - rs * 0.2f + (off - rs) / std::tan(radians(20.0f));
+        r = std::min(r, std::max(flank, R - rs));
+        if (disc > 0.0f) r = std::min(r, b - std::sqrt(disc));
+        out.push_back(polar(std::max(r, R - rs), th));
+    }
+    return out;
+}
+
+MeshData sprocket(float pitch, int teeth, float width, float bore) {
+    const std::vector<Vec2> outline = sprocketOutline(pitch, teeth);
+    const float R = pitch / (2.0f * std::sin(kPi / static_cast<float>(teeth)));
+    const std::vector<Vec2> inner = bore > 0.0f && bore < R * 0.6f ? circleLike(outline, bore) : std::vector<Vec2>{};
+    MeshData m = loft({{0.0f, inner, outline}, {width, inner, outline}});
+    if (R > pitch * 2.0f && !inner.empty()) m.append(primitives::tube({0, 0, width}, std::min(bore * 2.2f, R * 0.55f), bore, width * 0.8f, 48));
+    return m;
+}
+
+// Pulley (axis +Z, base z = 0). type 0 V-groove, 1 timing (GT2), 2 flat (crowned).
+MeshData pulley(int type, float dia, float width, float bore) {
+    const float R = dia * 0.5f, br = std::clamp(bore * 0.5f, 0.3f, R * 0.5f);
+    MeshData m;
+    if (type == 1) {
+        const int teeth = std::max(8, static_cast<int>(std::round(2.0f * kPi * R / 2.0f)));
+        const float R0 = 2.0f * static_cast<float>(teeth) / (2.0f * kPi) - 0.254f;
+        std::vector<Vec2> out;
+        const int per = 12;
+        for (int i = 0; i < teeth * per; ++i) {
+            const float th = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(teeth * per);
+            const float step = 2.0f * kPi / static_cast<float>(teeth);
+            const float g = std::round(th / step) * step;
+            const Vec2 c = polar(R0, g), d{std::cos(th), std::sin(th)};
+            const float b = d.x * c.x + d.y * c.y, rs = 0.555f;
+            const float disc = rs * rs - (R0 * R0 - b * b);
+            out.push_back(polar(disc > 0.0f ? std::min(R0, b - std::sqrt(disc)) : R0, th));
+        }
+        const float fl = std::max(width * 0.08f, 0.8f);
+        m = loft({{fl, circleLike(out, br), out}, {width - fl, circleLike(out, br), out}});
+        m.append(primitives::tube({0, 0, 0}, R0 + 1.2f, br, fl, 64));            // flanges
+        m.append(primitives::tube({0, 0, width - fl}, R0 + 1.2f, br, fl, 64));
+        m.append(primitives::tube({0, 0, -width * 0.5f}, std::max(R0 * 0.7f, br + 2.0f), br, width * 0.5f, 48)); // hub
+        return m;
+    }
+    std::vector<Vec2> prof;
+    if (type == 0) { // V groove (40 deg) in a disc
+        const float g = std::min(width * 0.36f, R * 0.35f);
+        prof = {{br, 0}, {R, 0}, {R, width * 0.5f - g}, {R - g * 1.4f, width * 0.5f - g * 0.25f},
+                {R - g * 1.4f, width * 0.5f + g * 0.25f}, {R, width * 0.5f + g}, {R, width}, {br, width}};
+    } else { // flat, crowned
+        prof = {{br, 0}, {R * 0.985f, 0}, {R, width * 0.5f}, {R * 0.985f, width}, {br, width}};
+    }
+    m = latheY(prof, 72);
+    m.transform(rotateAxis({1, 0, 0}, kPi * 0.5f)); // lathe axis Y -> Z
+    m.append(primitives::tube({0, 0, -width * 0.4f}, std::max(R * 0.32f, br + 2.0f), br, width * 0.4f, 48)); // hub
+    return m;
+}
+
+// Closed loop around two circles: centre 0 radius r1, centre (a, 0) radius r2,
+// counter-clockwise in XY, with outward normals.
+struct LoopPoint {
+    Vec2 p, n;
+};
+std::vector<LoopPoint> beltLoop(float r1, float r2, float a, int perTurn = 96) {
+    const float sb = std::clamp((r1 - r2) / a, -0.95f, 0.95f);
+    const float beta = std::asin(sb);
+    const float up = kPi * 0.5f - beta, lo = -up;
+    std::vector<LoopPoint> out;
+    auto arc = [&](Vec2 c, float r, float from, float to) {
+        const int n = std::max(4, static_cast<int>(static_cast<float>(perTurn) * (to - from) / (2.0f * kPi)));
+        for (int i = 0; i <= n; ++i) {
+            const float t = from + (to - from) * static_cast<float>(i) / static_cast<float>(n);
+            out.push_back({{c.x + r * std::cos(t), c.y + r * std::sin(t)}, {std::cos(t), std::sin(t)}});
+        }
+    };
+    arc({a, 0}, r2, lo, up);
+    arc({0, 0}, r1, up, lo + 2.0f * kPi);
+    return out;
+}
+
+float loopLength(const std::vector<LoopPoint>& l) {
+    float s = 0.0f;
+    for (std::size_t i = 0; i < l.size(); ++i) {
+        const Vec2 a = l[i].p, b = l[(i + 1) % l.size()].p;
+        s += std::hypot(b.x - a.x, b.y - a.y);
+    }
+    return s;
+}
+
+// Point at arc length s along the loop (with the direction of travel).
+LoopPoint loopAt(const std::vector<LoopPoint>& l, float s, Vec2* dir) {
+    for (std::size_t i = 0; i < l.size(); ++i) {
+        const Vec2 a = l[i].p, b = l[(i + 1) % l.size()].p;
+        const float seg = std::hypot(b.x - a.x, b.y - a.y);
+        if (s <= seg || i + 1 == l.size()) {
+            const float t = seg > 0.0f ? std::clamp(s / seg, 0.0f, 1.0f) : 0.0f;
+            if (dir) *dir = seg > 0.0f ? Vec2{(b.x - a.x) / seg, (b.y - a.y) / seg} : Vec2{1, 0};
+            return {{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t}, l[i].n};
+        }
+        s -= seg;
+    }
+    return l.front();
+}
+
+// Rubber belt swept around the loop; zc = height of the belt centre.
+// type 0 flat, 1 V (trapezoid), 2 timing (flat with teeth inside, 2 mm pitch).
+MeshData beltAround(const std::vector<LoopPoint>& loop, int type, float width, float thick, float zc) {
+    std::vector<Vec2> sec; // (outward u, height v), counter-clockwise
+    if (type == 1) sec = {{-thick * 0.5f, -width * 0.32f}, {thick * 0.5f, -width * 0.5f}, {thick * 0.5f, width * 0.5f}, {-thick * 0.5f, width * 0.32f}};
+    else sec = {{-thick * 0.5f, -width * 0.5f}, {thick * 0.5f, -width * 0.5f}, {thick * 0.5f, width * 0.5f}, {-thick * 0.5f, width * 0.5f}};
+    // Smooth normals: average the neighbouring segment directions.
+    const std::size_t n = loop.size();
+    std::vector<Vec2> nrm(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec2 a = loop[(i + n - 1) % n].p, b = loop[(i + 1) % n].p;
+        Vec2 t{b.x - a.x, b.y - a.y};
+        const float l = std::max(std::hypot(t.x, t.y), 1e-6f);
+        nrm[i] = {t.y / l, -t.x / l};
+    }
+    Builder b;
+    auto P = [&](std::size_t i, const Vec2& s) {
+        return Vec3{loop[i].p.x + nrm[i].x * s.x, loop[i].p.y + nrm[i].y * s.x, zc + s.y};
+    };
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t j = (i + 1) % n;
+        for (std::size_t k = 0; k < sec.size(); ++k) {
+            const Vec2 s0 = sec[k], s1 = sec[(k + 1) % sec.size()];
+            const Vec2 en{s1.y - s0.y, -(s1.x - s0.x)}; // outward of the section edge
+            const Vec2 nm{(nrm[i].x + nrm[j].x) * 0.5f, (nrm[i].y + nrm[j].y) * 0.5f};
+            b.quad(P(i, s0), P(j, s0), P(j, s1), P(i, s1), {nm.x * en.x, nm.y * en.x, en.y});
+        }
+    }
+    MeshData m = b.finish(40.0f);
+    if (type == 2) { // teeth on the inside every 2 mm
+        const float L = loopLength(loop);
+        const int teeth = std::max(4, static_cast<int>(L / 2.0f));
+        for (int k = 0; k < teeth; ++k) {
+            Vec2 d;
+            const LoopPoint q = loopAt(loop, L * static_cast<float>(k) / static_cast<float>(teeth), &d);
+            const Vec2 o{d.y, -d.x}; // outward (right of travel on a counter-clockwise loop)
+            MeshData tooth = boxOf({-0.5f, -thick * 0.5f - 0.75f, -width * 0.5f}, {0.5f, -thick * 0.5f + 0.1f, width * 0.5f});
+            tooth.transform(frameOf({q.p.x, q.p.y, zc}, {d.x, d.y, 0}, {o.x, o.y, 0}, {0, 0, 1}));
+            m.append(tooth);
+        }
+    }
+    return m;
+}
+
+// Steel roller chain along a loop (or straight when `loop` has two points):
+// pins every `pitch`, alternating inner and outer plates, rollers.
+MeshData chainAlong(const std::vector<Vec2>& pins, bool closed, float pitch, float zc) {
+    const float rr = pitch * 0.312f, wi = pitch * 0.625f * 0.5f, tp = pitch * 0.12f, ph = pitch * 0.47f;
+    MeshData m;
+    const std::size_t n = pins.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec2 c = pins[i];
+        m.append(cylinderAt(c.x, c.y, rr, zc - wi, zc + wi, 20));                             // roller
+        m.append(cylinderAt(c.x, c.y, pitch * 0.156f, zc - wi - 2.0f * tp - pitch * 0.05f, zc + wi + 2.0f * tp + pitch * 0.05f, 12)); // pin
+        if (!closed && i + 1 == n) break;
+        const Vec2 d = pins[(i + 1) % n];
+        const float ang = std::atan2(d.y - c.y, d.x - c.x);
+        std::vector<Vec2> plate;
+        for (int s = 0; s <= 10; ++s) {
+            const Vec2 q = polar(ph, ang + kPi * 0.5f + kPi * static_cast<float>(s) / 10.0f);
+            plate.push_back({c.x + q.x, c.y + q.y});
+        }
+        for (int s = 0; s <= 10; ++s) {
+            const Vec2 q = polar(ph, ang - kPi * 0.5f + kPi * static_cast<float>(s) / 10.0f);
+            plate.push_back({d.x + q.x, d.y + q.y});
+        }
+        const float z0 = i % 2 == 0 ? wi : wi + tp; // inner / outer plates
+        m.append(prismOf(plate, zc + z0, zc + z0 + tp));
+        m.append(prismOf(plate, zc - z0 - tp, zc - z0));
+    }
+    return m;
+}
+
+std::vector<Vec2> pinsAround(const std::vector<LoopPoint>& loop, float pitch) {
+    const float L = loopLength(loop);
+    const int n = std::max(4, static_cast<int>(std::round(L / pitch)));
+    std::vector<Vec2> pins;
+    for (int k = 0; k < n; ++k) pins.push_back(loopAt(loop, L * static_cast<float>(k) / static_cast<float>(n), nullptr).p);
+    return pins;
+}
+
 bool validGear(const std::vector<float>& p, std::size_t n) {
     return p.size() >= n && p[0] > 0.0f && p[1] >= 4.0f && p[1] <= 400.0f && p[2] > 0.0f;
 }
@@ -644,7 +1045,10 @@ std::vector<Vec2> gearOutline(float m, int z, float phase, float addendum, float
 
 bool isLibraryKind(const std::string& k) {
     return k == "gear" || k == "ring_gear" || k == "bevel_gear" || k == "rack" || k == "worm" || k == "dc_motor" ||
-           k == "stepper_motor" || k == "servo_motor" || k == "ev_motor" || k == "ev_flange_motor" || k == "motor_rotor";
+           k == "stepper_motor" || k == "servo_motor" || k == "ev_motor" || k == "ev_flange_motor" || k == "motor_rotor" ||
+           k == "tyre" || k == "alloy_rim" || k == "wheel_hub" || k == "caster_fork" || k == "wheel_rollers" ||
+           k == "roller_hub" || k == "sprocket" || k == "pulley" || k == "chain" || k == "chain_loop" || k == "belt" ||
+           k == "o_ring";
 }
 
 MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
@@ -653,6 +1057,38 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "bevel_gear" && validGear(p, 4)) return bevelGear(p);
     if (k == "rack" && validGear(p, 3)) return rack(p);
     if (k == "worm" && p.size() >= 3 && p[0] > 0.0f && p[1] >= 1.0f && p[2] > 0.0f) return worm(p);
+    auto at = [&](std::size_t i) { return i < p.size() ? p[i] : 0.0f; };
+    auto ok = [&](std::size_t n) {
+        if (p.size() < n) return false;
+        for (std::size_t i = 0; i < n; ++i)
+            if (!(p[i] > 0.0f) && !(k == "pulley" && i == 0) && !(k == "tyre" && i == 3)) return false;
+        return true;
+    };
+    if (k == "tyre" && ok(3)) return tyre(p[0], p[1], p[2], static_cast<int>(at(3)));
+    if (k == "alloy_rim" && ok(4)) {
+        MeshData m = alloyRim(p[0], p[1], static_cast<int>(p[2]));
+        m.transform(translate({0, 0, p[3] * 0.5f}));
+        return m;
+    }
+    if (k == "wheel_hub" && ok(4)) {
+        MeshData m = wheelHub(p[0], p[1], p[2]);
+        m.transform(translate({0, 0, p[3] * 0.5f}));
+        return m;
+    }
+    if (k == "caster_fork" && ok(2)) return casterFork(p[0], p[1]);
+    if (k == "wheel_rollers" && ok(3)) return wheelRollers(p[0], p[1], static_cast<int>(p[2]), static_cast<int>(at(3)));
+    if (k == "roller_hub" && ok(2)) return rollerHub(p[0], p[1], static_cast<int>(at(2)));
+    if (k == "sprocket" && ok(3) && p[1] >= 6.0f) return sprocket(p[0], static_cast<int>(p[1]), p[2], at(3));
+    if (k == "pulley" && p.size() >= 3 && p[1] > 0.0f && p[2] > 0.0f) return pulley(static_cast<int>(p[0]), p[1], p[2], at(3));
+    if (k == "chain" && ok(2)) {
+        std::vector<Vec2> pins;
+        for (int i = 0; i <= std::max(1, static_cast<int>(p[1])); ++i) pins.push_back({p[0] * static_cast<float>(i), 0.0f});
+        return chainAlong(pins, false, p[0], p[0] * 0.62f);
+    }
+    if (k == "chain_loop" && ok(4)) return chainAlong(pinsAround(beltLoop(p[1], p[2], p[3], 360), p[0]), true, p[0], at(4));
+    if (k == "belt" && p.size() >= 6 && p[1] > 0.0f && p[2] > 0.0f && p[3] > 0.0f && p[4] > 0.0f && p[5] > 0.0f)
+        return beltAround(beltLoop(p[1], p[2], p[3]), static_cast<int>(p[0]), p[4], p[5], at(6));
+    if (k == "o_ring" && ok(2)) return primitives::torus({0, 0, p[1] * 0.5f}, p[0] * 0.5f + p[1] * 0.5f, p[1] * 0.5f, 96, 24);
     MeshData m;
     if (k == "dc_motor") m = dcMotor();
     else if (k == "stepper_motor") m = stepperMotor();
@@ -699,6 +1135,19 @@ std::vector<LibraryParam> partParams(const std::string& k, const std::vector<flo
                 {"shaft_dia", "Shaft diameter", dc ? 3.0f : 5.0f, 0.4f, 60.0f, "mm"},
                 {"fitting", "Shaft end", 1.0f, 0.0f, 1.0f, "", true, "Plain|Coupler"}};
     }
+    const char* tread = "Road|Off-road|Slick";
+    if (k == "tyre")
+        return {{"diameter", "Diameter", 650.0f, 5.0f, 5000.0f, "mm"}, {"width", "Width", 205.0f, 1.0f, 2000.0f, "mm"},
+                {"rim_dia", "Rim diameter", 432.0f, 2.0f, 4000.0f, "mm"}, {"tread", "Tread", 0.0f, 0.0f, 2.0f, "", true, tread}};
+    if (k == "sprocket")
+        return {{"pitch", "Chain pitch", 12.7f, 2.0f, 200.0f, "mm"}, {"teeth", "Teeth", 18.0f, 6.0f, 200.0f, "", true},
+                {"width", "Width", 7.0f, 0.5f, 200.0f, "mm"}, {"bore", "Bore radius", 6.0f, 0.0f, 500.0f, "mm"}};
+    if (k == "pulley")
+        return {{"type", "Type", 0.0f, 0.0f, 2.0f, "", true, "V-groove|Timing (GT2)|Flat"},
+                {"diameter", "Diameter", 60.0f, 4.0f, 3000.0f, "mm"}, {"width", "Width", 16.0f, 1.0f, 500.0f, "mm"},
+                {"bore", "Bore", 6.0f, 0.0f, 500.0f, "mm"}};
+    if (k == "chain") return {{"pitch", "Pitch", 12.7f, 2.0f, 200.0f, "mm"}, {"links", "Links", 20.0f, 1.0f, 2000.0f, "", true}};
+    if (k == "o_ring") return {{"inner_dia", "Inner diameter", 40.0f, 1.0f, 5000.0f, "mm"}, {"section", "Section", 4.0f, 0.3f, 200.0f, "mm"}};
     if (k == "gear")
         return {module, teeth, width, bore, {"helix", "Helix angle", 0.0f, -45.0f, 45.0f, "deg"},
                 {"style", "Tooth form", 0.0f, 0.0f, 2.0f, "", true, "Spur|Helical|Herringbone"}, phase};
@@ -758,6 +1207,51 @@ const std::vector<LibraryItem>& libraryItems() {
               {"rear_length", "Rear shaft", 40.0f, 1.0f, 2000.0f, "mm"},
               {"shaft_dia", "Shaft diameter", 35.0f, 8.0f, 120.0f, "mm"},
               {"fitting", "Shaft end", 0.0f, 0.0f, 1.0f, "", true, "Splined|Plain"}}},
+            {"car_wheel", "CARWHEEL WHEEL ALLOYWHEEL", "Car Wheel", "Wheels & tyres",
+             "Alloy rim with spokes and lug nuts, treaded tyre; rolls along +X",
+             {{"diameter", "Tyre diameter", 650.0f, 100.0f, 3000.0f, "mm"}, {"width", "Tyre width", 205.0f, 30.0f, 1000.0f, "mm"},
+              {"rim_dia", "Rim diameter", 432.0f, 50.0f, 2500.0f, "mm"}, {"spokes", "Spokes", 5.0f, 3.0f, 12.0f, "", true},
+              {"tread", "Tread", 0.0f, 0.0f, 2.0f, "", true, "Road|Off-road|Slick"}, rpm(30.0f)}},
+            {"robot_wheel", "ROBOTWHEEL ROVERWHEEL", "Robot Wheel", "Wheels & tyres", "Plastic hub, rubber tyre; for motor shafts",
+             {{"diameter", "Diameter", 65.0f, 10.0f, 1000.0f, "mm"}, {"width", "Width", 26.0f, 3.0f, 500.0f, "mm"},
+              {"bore", "Bore", 3.0f, 0.5f, 100.0f, "mm"}, {"tread", "Tread", 1.0f, 0.0f, 2.0f, "", true, "Road|Off-road|Slick"},
+              rpm(60.0f)}},
+            {"caster_wheel", "CASTER CASTOR SWIVEL", "Caster Wheel", "Wheels & tyres", "Swivel caster: top plate, fork, rubber wheel",
+             {{"diameter", "Wheel diameter", 50.0f, 10.0f, 500.0f, "mm"}, {"width", "Wheel width", 20.0f, 3.0f, 200.0f, "mm"},
+              rpm(30.0f)}},
+            {"omni_wheel", "OMNI OMNIWHEEL", "Omni Wheel", "Wheels & tyres", "Two staggered rows of free rollers: moves sideways too",
+             {{"diameter", "Diameter", 60.0f, 20.0f, 1000.0f, "mm"}, {"width", "Width", 26.0f, 5.0f, 300.0f, "mm"},
+              {"rollers", "Rollers per row", 8.0f, 4.0f, 24.0f, "", true}, rpm(30.0f)}},
+            {"mecanum_wheel", "MECANUM", "Mecanum Wheel", "Wheels & tyres", "Rollers at 45 deg for holonomic drives",
+             {{"diameter", "Diameter", 80.0f, 20.0f, 1000.0f, "mm"}, {"width", "Width", 40.0f, 5.0f, 300.0f, "mm"},
+              {"rollers", "Rollers", 9.0f, 5.0f, 24.0f, "", true}, rpm(30.0f)}},
+            {"tyre", "TIRE TYRE TIER", "Tyre", "Wheels & tyres", "Tyre on its own: road, off-road or slick tread",
+             {{"diameter", "Diameter", 650.0f, 5.0f, 5000.0f, "mm"}, {"width", "Width", 205.0f, 1.0f, 2000.0f, "mm"},
+              {"rim_dia", "Rim diameter", 432.0f, 2.0f, 4000.0f, "mm"}, {"tread", "Tread", 0.0f, 0.0f, 2.0f, "", true, "Road|Off-road|Slick"}}},
+            {"sprocket", "SPROCKET CHAINWHEEL", "Sprocket", "Chains & belts", "Roller-chain sprocket (ANSI 40 / 08B by default)",
+             {{"pitch", "Chain pitch", 12.7f, 2.0f, 200.0f, "mm"}, {"teeth", "Teeth", 18.0f, 6.0f, 200.0f, "", true},
+              {"width", "Width", 7.0f, 0.5f, 200.0f, "mm"}, {"bore", "Bore radius", 6.0f, 0.0f, 500.0f, "mm"}}},
+            {"roller_chain", "CHAIN STEELCHAIN ROLLERCHAIN", "Steel Roller Chain", "Chains & belts",
+             "Straight run of steel roller chain: plates, pins, rollers",
+             {{"pitch", "Pitch", 12.7f, 2.0f, 200.0f, "mm"}, {"links", "Links", 20.0f, 1.0f, 2000.0f, "", true}}},
+            {"chain_drive", "CHAINDRIVE", "Chain Drive", "Chains & belts", "Two sprockets with a steel chain loop; driven follows",
+             {{"pitch", "Chain pitch", 12.7f, 2.0f, 200.0f, "mm"}, {"teeth1", "Driver teeth", 12.0f, 6.0f, 200.0f, "", true},
+              {"teeth2", "Driven teeth", 24.0f, 6.0f, 200.0f, "", true}, {"center", "Centre distance", 200.0f, 10.0f, 10000.0f, "mm"},
+              rpm(30.0f)}},
+            {"pulley", "PULLEY SHEAVE", "Pulley", "Chains & belts", "V-groove, timing (GT2) or flat belt pulley",
+             {{"type", "Type", 0.0f, 0.0f, 2.0f, "", true, "V-groove|Timing (GT2)|Flat"}, {"diameter", "Diameter", 60.0f, 4.0f, 3000.0f, "mm"},
+              {"width", "Width", 16.0f, 1.0f, 500.0f, "mm"}, {"bore", "Bore", 6.0f, 0.0f, 500.0f, "mm"}}},
+            {"rubber_belt", "BELT RUBBERBELT VBELT TIMINGBELT", "Rubber Belt", "Chains & belts",
+             "Closed rubber belt: flat, V or timing (toothed)",
+             {{"type", "Type", 0.0f, 0.0f, 2.0f, "", true, "Flat|V-belt|Timing"}, {"dia1", "Pulley 1 diameter", 60.0f, 4.0f, 3000.0f, "mm"},
+              {"dia2", "Pulley 2 diameter", 60.0f, 4.0f, 3000.0f, "mm"}, {"center", "Centre distance", 150.0f, 5.0f, 10000.0f, "mm"},
+              {"width", "Width", 12.0f, 1.0f, 500.0f, "mm"}}},
+            {"belt_drive", "BELTDRIVE", "Belt Drive", "Chains & belts", "Two pulleys with a rubber belt; driven follows",
+             {{"type", "Type", 0.0f, 0.0f, 2.0f, "", true, "V-belt|Timing|Flat"}, {"dia1", "Driver diameter", 50.0f, 6.0f, 3000.0f, "mm"},
+              {"dia2", "Driven diameter", 100.0f, 6.0f, 3000.0f, "mm"}, {"center", "Centre distance", 180.0f, 10.0f, 10000.0f, "mm"},
+              {"width", "Width", 16.0f, 2.0f, 500.0f, "mm"}, rpm(60.0f)}},
+            {"o_ring", "ORING RUBBERBAND RUBBERRING SEAL", "O-Ring / Rubber Band", "Chains & belts", "Rubber ring of round section",
+             {{"inner_dia", "Inner diameter", 40.0f, 1.0f, 5000.0f, "mm"}, {"section", "Section", 4.0f, 0.3f, 200.0f, "mm"}}},
             {"spur_gear", "SPUR GEAR", "Spur Gear", "Gears", "Straight involute teeth, 20 deg pressure angle",
              {module, teeth(20.0f), width, bore}},
             {"helical_gear", "HELICAL", "Helical Gear", "Gears", "Teeth on a helix: smoother, quieter mesh",
@@ -828,6 +1322,9 @@ const Vec3 kBrass{0.80f, 0.64f, 0.30f};
 const Vec3 kGearBlue{0.42f, 0.58f, 0.80f};
 const Vec3 kServoBlue{0.20f, 0.36f, 0.72f};
 const Vec3 kCastAluminium{0.80f, 0.81f, 0.83f};
+const Vec3 kRubber{0.13f, 0.13f, 0.14f};
+const Vec3 kAlloy{0.74f, 0.76f, 0.79f};
+const Vec3 kYellowPlastic{0.96f, 0.76f, 0.18f};
 
 Body part(const std::string& name, const std::string& kind, std::vector<float> params, const Vec3& at, Vec3 color,
           const std::string& component, float scale = 1.0f) {
@@ -905,6 +1402,115 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
             m.mode = MotionMode::Oscillate;
         }
         c.motions.push_back(m);
+        return c;
+    }
+
+    // Wheels: spin about +Y through the wheel centre (positive rolls toward +X).
+    auto rolling = [&](std::vector<std::string> bodies, float dia) {
+        if (std::fabs(v("rpm")) > 1e-6f)
+            c.motions.push_back(spin(name + " Spin", std::move(bodies), o + Vec3{0, 0, dia * 0.5f}, v("rpm"), {0, 1, 0}));
+    };
+    if (key == "car_wheel") {
+        const float d = v("diameter"), w = v("width"), rim = std::min(v("rim_dia"), d * 0.85f);
+        c.bodies.push_back(part(name + " Rim", "alloy_rim", {rim, w, v("spokes"), d}, o, kAlloy, name));
+        c.bodies.push_back(part(name + " Tyre", "tyre", {d, w, rim, v("tread")}, o, kRubber, name));
+        rolling({name + " Rim", name + " Tyre"}, d);
+        return c;
+    }
+    if (key == "robot_wheel" || key == "caster_wheel") {
+        const float d = v("diameter"), w = v("width"), rim = d * 0.7f;
+        if (key == "caster_wheel") c.bodies.push_back(part(name + " Fork", "caster_fork", {d, w}, o, kSteel, name));
+        c.bodies.push_back(part(name + " Hub", "wheel_hub", {rim, w, key == "robot_wheel" ? v("bore") : d * 0.12f, d}, o,
+                                key == "robot_wheel" ? kYellowPlastic : kAlloy, name));
+        c.bodies.push_back(part(name + " Tyre", "tyre", {d, w, rim, key == "robot_wheel" ? v("tread") : 2.0f}, o, kRubber, name));
+        rolling({name + " Hub", name + " Tyre"}, d);
+        return c;
+    }
+    if (key == "omni_wheel" || key == "mecanum_wheel") {
+        const float d = v("diameter"), w = v("width"), style = key == "omni_wheel" ? 0.0f : 1.0f;
+        c.bodies.push_back(part(name + " Hub", "roller_hub", {d, w, style}, o, kAlloy, name));
+        c.bodies.push_back(part(name + " Rollers", "wheel_rollers", {d, w, v("rollers"), style}, o, kRubber, name));
+        rolling({name + " Hub", name + " Rollers"}, d);
+        return c;
+    }
+    if (key == "tyre") {
+        c.bodies.push_back(part(name, "tyre", {v("diameter"), v("width"), std::min(v("rim_dia"), v("diameter") * 0.95f), v("tread")}, o,
+                                kRubber, name));
+        return c;
+    }
+    if (key == "sprocket") {
+        c.bodies.push_back(part(name, "sprocket", {v("pitch"), v("teeth"), v("width"), v("bore")}, o, kSteel, name));
+        return c;
+    }
+    if (key == "roller_chain") {
+        c.bodies.push_back(part(name, "chain", {v("pitch"), v("links")}, o, kDarkSteel, name));
+        return c;
+    }
+    if (key == "chain_drive") {
+        const float p = v("pitch"), z1 = v("teeth1"), z2 = v("teeth2");
+        const float r1 = p / (2.0f * std::sin(kPi / z1)), r2 = p / (2.0f * std::sin(kPi / z2));
+        const float a = std::max(v("center"), (r1 + r2) * 1.15f);
+        const float w = p * 0.625f * 0.9f;
+        const std::string s1 = name + " Driver", s2 = name + " Driven";
+        c.bodies.push_back(part(s1, "sprocket", {p, z1, w, std::min(p * 0.5f, r1 * 0.4f)}, o, kSteel, name));
+        c.bodies.push_back(part(s2, "sprocket", {p, z2, w, std::min(p * 0.5f, r2 * 0.4f)}, o + Vec3{a, 0, 0}, kSteel, name));
+        c.bodies.push_back(part(name + " Chain", "chain_loop", {p, r1, r2, a, w * 0.5f}, o, kDarkSteel, name));
+        c.motions.push_back(spin(s1 + " Drive", {s1}, o, v("rpm")));
+        c.motions.push_back(follower(s2 + " Chain", {s2}, o + Vec3{a, 0, 0}, s1 + " Drive", z1 / z2));
+        return c;
+    }
+    if (key == "pulley") {
+        c.bodies.push_back(part(name, "pulley", {v("type"), v("diameter"), v("width"), v("bore")}, o + Vec3{0, 0, v("width") * 0.4f},
+                                kAlloy, name));
+        return c;
+    }
+    if (key == "rubber_belt") {
+        const int type = static_cast<int>(v("type"));
+        const float w = v("width"), t = type == 1 ? w * 0.6f : type == 2 ? 1.4f : std::max(w * 0.18f, 1.0f);
+        c.bodies.push_back(part(name, "belt", {v("type"), v("dia1") * 0.5f, v("dia2") * 0.5f, std::max(v("center"), (v("dia1") + v("dia2")) * 0.5f + t),
+                                               w, t, w * 0.5f}, o, kRubber, name));
+        return c;
+    }
+    if (key == "belt_drive") {
+        // Pulley types follow the belt: V-belt -> V-groove, timing -> GT2, flat -> crowned.
+        const int belt = static_cast<int>(v("type"));
+        const float ptype = belt == 0 ? 0.0f : belt == 1 ? 1.0f : 2.0f;
+        const float w = v("width"), d1 = v("dia1"), d2 = v("dia2");
+        const float a = std::max(v("center"), (d1 + d2) * 0.55f);
+        const std::string p1 = name + " Driver", p2 = name + " Driven";
+        const float lift = w * 0.4f; // pulley hubs stand below the pulley
+        c.bodies.push_back(part(p1, "pulley", {ptype, d1, w, std::min(6.0f, d1 * 0.2f)}, o + Vec3{0, 0, lift}, kAlloy, name));
+        c.bodies.push_back(part(p2, "pulley", {ptype, d2, w, std::min(8.0f, d2 * 0.2f)}, o + Vec3{a, 0, lift}, kAlloy, name));
+        float r1, r2, bw, bt;
+        if (belt == 0) { // V-belt sits in the groove
+            const float g1 = std::min(w * 0.36f, d1 * 0.175f), g2 = std::min(w * 0.36f, d2 * 0.175f);
+            r1 = d1 * 0.5f - g1 * 0.7f;
+            r2 = d2 * 0.5f - g2 * 0.7f;
+            bw = std::min(g1, g2) * 1.8f;
+            bt = std::min(g1, g2) * 1.1f;
+        } else if (belt == 1) { // timing belt wraps the pitch line
+            auto pitchR = [](float d) {
+                const float teeth = std::max(8.0f, std::round(kPi * d / 2.0f));
+                return 2.0f * teeth / (2.0f * kPi) - 0.254f;
+            };
+            bt = 1.4f;
+            r1 = pitchR(d1) + bt * 0.5f;
+            r2 = pitchR(d2) + bt * 0.5f;
+            bw = w - 2.0f * std::max(w * 0.08f, 0.8f) - 0.4f;
+        } else {
+            bt = std::max(w * 0.12f, 1.0f);
+            r1 = d1 * 0.5f + bt * 0.5f;
+            r2 = d2 * 0.5f + bt * 0.5f;
+            bw = w * 0.85f;
+        }
+        c.bodies.push_back(part(name + " Belt", "belt", {static_cast<float>(belt == 0 ? 1 : belt == 1 ? 2 : 0), r1, r2, a, bw, bt, lift + w * 0.5f},
+                                o, kRubber, name));
+        c.motions.push_back(spin(p1 + " Drive", {p1}, o, v("rpm")));
+        c.motions.push_back(follower(p2 + " Belt", {p2}, o + Vec3{a, 0, 0}, p1 + " Drive", r1 / r2));
+        return c;
+    }
+    if (key == "o_ring") {
+        c.bodies.push_back(part(name, "o_ring", {v("inner_dia"), v("section")}, o, kRubber, name));
         return c;
     }
 

@@ -1412,6 +1412,88 @@ void drawLibraryIcon(ImDrawList* dl, const std::string& key, ImVec2 c, float r, 
         dl->AddRect({x0, y - h}, {x1, y + h}, col, 2.0f, 0, t);
         for (float x = x0 + h * 0.6f; x < x1 - h * 0.3f; x += h * 0.9f) dl->AddLine({x, y + h}, {x + h * 0.7f, y - h}, col, t);
     };
+    auto tyreIcon = [&](ImVec2 at, float rr, bool lugs) {
+        dl->AddCircle(at, rr, col, 32, 2.6f);
+        dl->AddCircle(at, rr * 0.62f, col, 24, t);
+        for (int i = 0; i < (lugs ? 10 : 0); ++i) {
+            const float a = 2.0f * kPi * static_cast<float>(i) / 10.0f;
+            dl->AddLine({at.x + std::cos(a) * rr, at.y + std::sin(a) * rr}, {at.x + std::cos(a) * rr * 1.15f, at.y + std::sin(a) * rr * 1.15f},
+                        col, 2.4f);
+        }
+    };
+    auto loop = [&](ImVec2 a, float ra, ImVec2 b, float rb, bool links) {
+        dl->AddLine({a.x, a.y - ra}, {b.x, b.y - rb}, col, links ? 2.2f : 1.8f);
+        dl->AddLine({a.x, a.y + ra}, {b.x, b.y + rb}, col, links ? 2.2f : 1.8f);
+        dl->PathArcTo(a, ra, kPi * 0.5f, kPi * 1.5f, 12);
+        dl->PathStroke(col, 0, links ? 2.2f : 1.8f);
+        dl->PathArcTo(b, rb, -kPi * 0.5f, kPi * 0.5f, 12);
+        dl->PathStroke(col, 0, links ? 2.2f : 1.8f);
+    };
+    if (key == "car_wheel" || key == "robot_wheel" || key == "tyre") {
+        tyreIcon(c, r * 0.85f, true);
+        if (key == "car_wheel")
+            for (int i = 0; i < 5; ++i) {
+                const float a = -kPi * 0.5f + 2.0f * kPi * static_cast<float>(i) / 5.0f;
+                dl->AddLine(c, {c.x + std::cos(a) * r * 0.5f, c.y + std::sin(a) * r * 0.5f}, col, t);
+            }
+        else if (key == "robot_wheel") dl->AddCircleFilled(c, r * 0.15f, col);
+        return;
+    }
+    if (key == "caster_wheel") {
+        dl->AddLine({c.x - r * 0.8f, c.y - r * 0.85f}, {c.x + r * 0.8f, c.y - r * 0.85f}, col, 2.4f);
+        dl->AddLine({c.x - r * 0.45f, c.y - r * 0.8f}, {c.x - r * 0.45f, c.y + r * 0.2f}, col, t);
+        dl->AddLine({c.x + r * 0.45f, c.y - r * 0.8f}, {c.x + r * 0.45f, c.y + r * 0.2f}, col, t);
+        tyreIcon({c.x, c.y + r * 0.3f}, r * 0.55f, false);
+        return;
+    }
+    if (key == "omni_wheel" || key == "mecanum_wheel") {
+        dl->AddCircle(c, r * 0.55f, col, 24, t);
+        for (int i = 0; i < 8; ++i) {
+            const float a = 2.0f * kPi * static_cast<float>(i) / 8.0f;
+            const ImVec2 p{c.x + std::cos(a) * r * 0.8f, c.y + std::sin(a) * r * 0.8f};
+            const float tilt = key == "mecanum_wheel" ? 0.6f : 0.0f;
+            const ImVec2 d{-std::sin(a + tilt) * r * 0.2f, std::cos(a + tilt) * r * 0.2f};
+            dl->AddLine({p.x - d.x, p.y - d.y}, {p.x + d.x, p.y + d.y}, col, 3.2f);
+        }
+        return;
+    }
+    if (key == "sprocket") {
+        for (int i = 0; i < 14; ++i) {
+            const float a = 2.0f * kPi * static_cast<float>(i) / 14.0f;
+            dl->AddCircleFilled({c.x + std::cos(a) * r * 0.85f, c.y + std::sin(a) * r * 0.85f}, r * 0.11f, col);
+        }
+        dl->AddCircle(c, r * 0.72f, col, 28, t);
+        dl->AddCircle(c, r * 0.22f, col, 12, t);
+        return;
+    }
+    if (key == "roller_chain") {
+        for (int i = 0; i < 4; ++i) {
+            const float x0 = c.x - r + static_cast<float>(i) * r * 0.5f;
+            dl->AddRect({x0, c.y - r * 0.22f}, {x0 + r * 0.62f, c.y + r * 0.22f}, col, r * 0.22f, 0, t);
+            dl->AddCircleFilled({x0 + r * 0.18f, c.y}, r * 0.08f, col);
+        }
+        return;
+    }
+    if (key == "chain_drive" || key == "belt_drive" || key == "rubber_belt") {
+        const ImVec2 a{c.x - r * 0.5f, c.y}, b{c.x + r * 0.55f, c.y};
+        const float ra = key == "rubber_belt" ? r * 0.38f : r * 0.3f, rb = key == "rubber_belt" ? r * 0.38f : r * 0.42f;
+        loop(a, ra, b, rb, key == "chain_drive");
+        if (key != "rubber_belt") {
+            dl->AddCircle(a, ra * 0.7f, col, 16, t);
+            dl->AddCircle(b, rb * 0.75f, col, 16, t);
+        }
+        return;
+    }
+    if (key == "pulley") {
+        dl->AddCircle(c, r * 0.9f, col, 32, t);
+        dl->AddCircle(c, r * 0.7f, col, 28, t);
+        dl->AddCircle(c, r * 0.2f, col, 12, t);
+        return;
+    }
+    if (key == "o_ring") {
+        dl->AddCircle(c, r * 0.75f, col, 32, 3.0f);
+        return;
+    }
     if (key == "ev_flange_motor") { // ribbed drum with a flange face and splined shaft, side view
         dl->AddRect({c.x - r * 0.95f, c.y - r * 0.55f}, {c.x + r * 0.35f, c.y + r * 0.6f}, col, 3.0f, 0, t);
         for (float k : {-0.2f, 0.15f}) dl->AddLine({c.x - r * 0.85f, c.y + r * k}, {c.x + r * 0.25f, c.y + r * k}, col, 1.0f);
