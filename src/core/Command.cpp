@@ -1,4 +1,5 @@
 #include "core/Command.hpp"
+#include "core/Units.hpp"
 
 #include <cctype>
 #include <locale>
@@ -76,6 +77,9 @@ constexpr CommandSpec kCommands[] = {
     {"SNAP", "", "SNAP [ON|OFF]", "Grid and point snapping for sketches"},
     {"PANEL", "", "PANEL [ON|OFF]", "Show or hide the Model panel"},
     // Session
+    {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF]",
+     "Units for typing and showing lengths (the model stays exact in mm)"},
+    {"CONVERT", "CONV", "CONVERT length [TO unit]", "Convert a length, e.g. CONVERT 5'6-1/2\" TO mm"},
     {"HELP", "? COMMANDS", "HELP [command]", "List commands or show one command's usage"},
     {"CLEAR", "CLS", "CLEAR", "Clear the command history"},
 };
@@ -190,19 +194,19 @@ std::optional<PointInput> parsePointInput(std::string_view text) {
     const std::size_t comma = text.find(',');
     if (lt != std::string_view::npos && comma == std::string_view::npos) {
         p.polar = true;
-        const auto len = parseNumber(text.substr(0, lt));
+        const auto len = parseLength(text.substr(0, lt));
         const auto ang = parseNumber(text.substr(lt + 1));
         if (!len || !ang) return std::nullopt;
-        p.a = *len;
+        p.a = static_cast<float>(*len);
         p.b = *ang;
         return p;
     }
     if (comma == std::string_view::npos || text.find(',', comma + 1) != std::string_view::npos) return std::nullopt;
-    const auto x = parseNumber(text.substr(0, comma));
-    const auto y = parseNumber(text.substr(comma + 1));
+    const auto x = parseLength(text.substr(0, comma));
+    const auto y = parseLength(text.substr(comma + 1));
     if (!x || !y) return std::nullopt;
-    p.a = *x;
-    p.b = *y;
+    p.a = static_cast<float>(*x);
+    p.b = static_cast<float>(*y);
     return p;
 }
 
@@ -222,9 +226,9 @@ std::optional<Vec3> parseVec3(std::string_view text) {
     int n = 0;
     while (true) {
         const std::size_t comma = text.find(',');
-        const auto num = parseNumber(text.substr(0, comma));
+        const auto num = parseLength(text.substr(0, comma));
         if (!num || n == 3) return std::nullopt;
-        v[n++] = *num;
+        v[n++] = static_cast<float>(*num);
         if (comma == std::string_view::npos) break;
         text.remove_prefix(comma + 1);
     }

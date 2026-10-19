@@ -9,6 +9,7 @@
 //   images      .png .jpg .jpeg .bmp .tga .gif .psd .hdr .pnm: reference images
 
 #include "core/Scene.hpp"
+#include "core/Units.hpp"
 
 #include <optional>
 #include <string>
@@ -23,6 +24,7 @@ const char* fileKindName(FileKind k);
 // Document-level state saved alongside the scene.
 struct ProjectState {
     SketchPlane plane = SketchPlane::Top;
+    UnitSettings units{};     // display / input units (geometry is always stored in mm)
     float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
 };
 

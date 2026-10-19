@@ -2,6 +2,7 @@
 #include "core/Document.hpp"
 #include "core/Extrude.hpp"
 #include "core/Library.hpp"
+#include "core/Units.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -56,14 +57,17 @@ std::optional<StandardView> viewFromWord(const std::string& w) {
     return std::nullopt;
 }
 
-// Splits primitive args into numbers and an optional "@x,y,z" / "x,y,z" position.
-bool splitPrimitiveArgs(const std::vector<std::string>& args, std::vector<float>& nums, std::optional<Vec3>& at) {
+// Splits primitive args into lengths (in the active units, as typed in `words`) and an
+// optional "@x,y,z" / "x,y,z" position.
+bool splitPrimitiveArgs(const std::vector<std::string>& args, std::vector<float>& nums, std::vector<std::string>& words,
+                        std::optional<Vec3>& at) {
     for (const std::string& a : args) {
         if (a.find(',') != std::string::npos) {
             at = parseVec3(a);
             if (!at) return false;
-        } else if (auto n = parseNumber(a)) {
-            nums.push_back(*n);
+        } else if (auto n = parseLength(a)) {
+            nums.push_back(static_cast<float>(*n));
+            words.push_back(a);
         } else {
             return false;
         }
@@ -140,7 +144,7 @@ int findMotion(const Document& d, const std::string& name) {
     return -1;
 }
 
-std::string vecText(const Vec3& v) { return fmt("(%.1f, %.1f, %.1f)", v.x, v.y, v.z); }
+std::string vecText(const Vec3& v) { return lengthsText({v.x, v.y, v.z}, ", ", "(", ")"); }
 
 // Poses of the moving bodies and the motion values at time t.
 std::vector<std::string> describePoses(const Document& doc, float t) {
@@ -158,7 +162,7 @@ std::vector<std::string> describePoses(const Document& doc, float t) {
         const Vec3 c = tf[i].transformPoint(b.bounds().center());
         const Vec3 x = tf[i].transformDir({1, 0, 0});
         const float heading = degrees(std::atan2(x.y, x.x));
-        lines.push_back("  " + b.name + "  centre " + vecText(c) + " mm" + fmt("  x-axis heading %.1f deg", heading));
+        lines.push_back("  " + b.name + "  centre " + vecText(c) + fmt("  x-axis heading %.1f deg", heading));
     }
     return lines;
 }
@@ -185,7 +189,10 @@ std::optional<float> paramValue(const LibraryParam& p, const std::string& word) 
             if (!w.empty() && names[i].rfind(w, 0) == 0) match = match < 0 ? static_cast<int>(i) : -2;
         if (match >= 0) return static_cast<float>(match);
     }
-    const auto v = parseNumber(word);
+    // Lengths may be typed in any unit; the parameter itself is stored in mm.
+    const bool length = p.unit && std::string_view(p.unit) == "mm";
+    const auto parsed = length ? parseLength(word) : std::optional<double>(parseNumber(word));
+    const std::optional<float> v = parsed ? std::optional<float>(static_cast<float>(*parsed)) : std::nullopt;
     if (!v || *v < p.min || *v > p.max) return std::nullopt;
     return p.integer ? std::round(*v) : *v;
 }
@@ -235,12 +242,11 @@ std::vector<std::string> describeDocument(const Document& doc) {
         std::string params;
         for (float p : b.params) params += fmt(params.empty() ? "%g" : " %g", p);
         char buf[256];
-        std::snprintf(buf, sizeof(buf), "  %s [%s%s%s]  at (%.1f, %.1f, %.1f)  size %.1f x %.1f x %.1f%s", b.name.c_str(),
-                      b.kind.c_str(), params.empty() ? "" : " ", params.c_str(), static_cast<double>(b.offset.x),
-                      static_cast<double>(b.offset.y), static_cast<double>(b.offset.z),
-                      static_cast<double>(bb.max.x - bb.min.x), static_cast<double>(bb.max.y - bb.min.y),
-                      static_cast<double>(bb.max.z - bb.min.z), b.visible ? "" : "  (hidden)");
-        std::string line = buf;
+        std::snprintf(buf, sizeof(buf), "  %s [%s%s%s]", b.name.c_str(), b.kind.c_str(), params.empty() ? "" : " ",
+                      params.c_str());
+        std::string line = std::string(buf) + "  at " + vecText(b.offset) + "  size " +
+                           lengthsText({bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z}, " x ") +
+                           (b.visible ? "" : "  (hidden)");
         if (b.scale != 1.0f) line += fmt("  scale %g", b.scale);
         if (!b.component.empty() && b.component != b.name) line += "  {" + b.component + "}";
         l.push_back(line);
@@ -250,12 +256,9 @@ std::vector<std::string> describeDocument(const Document& doc) {
         l.push_back("  " + c.name + "  " + planeName(c.plane) + "  " + c.measure() + (c.visible ? "" : "  (hidden)"));
     l.push_back("Images (" + std::to_string(doc.scene.images().size()) + "):");
     for (const ImageRef& i : doc.scene.images()) {
-        char buf[256];
-        std::snprintf(buf, sizeof(buf), "  %s  %s  centre (%.1f, %.1f)  %.1f x %.1f mm  opacity %.2f%s", i.name.c_str(),
-                      planeName(i.plane), static_cast<double>(i.center.x), static_cast<double>(i.center.y),
-                      static_cast<double>(i.width), static_cast<double>(i.height()), static_cast<double>(i.opacity),
-                      i.pixels.empty() ? "  (file missing)" : "");
-        l.push_back(buf);
+        l.push_back("  " + i.name + "  " + planeName(i.plane) + "  centre " +
+                    lengthsText({i.center.x, i.center.y}, ", ", "(", ")") + "  " + lengthsText({i.width, i.height()}, " x ") +
+                    fmt("  opacity %.2f", i.opacity) + (i.pixels.empty() ? "  (file missing)" : ""));
     }
     return l;
 }
@@ -268,6 +271,8 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     if (!spec) return out.fail("Unknown command: " + pc.name + "   (type HELP for the list)");
     const std::string cmd = spec->name;
     const auto& a = pc.args;
+    // Bare numbers are read, and lengths are shown, in the document's units.
+    ScopedUnits unitScope(doc.apiMillimeters ? UnitSettings{} : doc.state.units);
     auto usage = [&] { return out.fail(std::string("Usage: ") + spec->usage); };
 
     // ---- Sketch -----------------------------------------------------------
@@ -315,7 +320,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         if (!c) return usage();
         const Vec2 centre = c->resolve({});
         float r = 0.0f;
-        if (const auto n = parseNumber(a[1])) r = *n;
+        if (const auto n = parseLength(a[1])) r = static_cast<float>(*n);
         else if (const auto p = parsePointInput(a[1])) {
             const Vec2 q = p->resolve(centre);
             r = std::hypot(q.x - centre.x, q.y - centre.y);
@@ -335,8 +340,9 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     for (const auto& [name, kind] : kSolids) {
         if (cmd != name) continue;
         std::vector<float> n;
+        std::vector<std::string> words;
         std::optional<Vec3> at;
-        if (!splitPrimitiveArgs(a, n, at)) return usage();
+        if (!splitPrimitiveArgs(a, n, words, at)) return usage();
         std::vector<float> params;
         const std::string k = kind;
         if ((k == "box" || k == "wedge") && n.size() == 3)
@@ -348,6 +354,8 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         else if ((k == "pyramid" || k == "prism") && (n.size() == 2 || n.size() == 3)) {
             params = n;
             if (params.size() == 2) params.push_back(k == "prism" ? 6.0f : 4.0f);
+            else if (const auto sides = parseNumber(words[2])) params[2] = *sides; // a count, not a length
+            else return usage();
         } else
             return usage();
         Body b = defaultPrimitive(k, ++doc.primitiveSerial);
@@ -360,7 +368,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
         doc.selectedCurve = doc.selectedImage = -1;
         markChanged(doc);
-        out.say("Created " + doc.scene.bodies().back().name + fmt(" at (%.1f, %.1f, %.1f)", o.x, o.y, o.z));
+        out.say("Created " + doc.scene.bodies().back().name + " at " + vecText(o));
         return out;
     }
 
@@ -377,8 +385,10 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         }
         // The last number is the distance; earlier words (numbers too) name the curve, e.g. "Circle 2 20".
         if (!nameWords.empty()) {
-            distance = parseNumber(nameWords.back());
-            if (distance) nameWords.pop_back();
+            if (const auto d = parseLength(nameWords.back())) {
+                distance = static_cast<float>(*d);
+                nameWords.pop_back();
+            }
         }
         if (!distance) return usage();
         if (*distance == 0.0f) return out.fail("Distance must not be zero");
@@ -410,7 +420,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
         doc.selectedCurve = doc.selectedImage = -1;
         markChanged(doc);
-        out.say("Extruded " + profileName + fmt(symmetric ? " %.2f mm symmetric" : " %.2f mm", *distance) + " -> " +
+        out.say("Extruded " + profileName + " " + lengthText(*distance) + (symmetric ? " symmetric" : "") + " -> " +
                 doc.scene.bodies().back().name);
         return out;
     }
@@ -516,7 +526,10 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
                 if (!hasNext) return out.fail("FOLLOW needs a circular motion name (or NONE)");
                 follow = iequal(a[++i], "none") ? std::string() : a[i];
             } else if (k == "radius") {
-                if (!num(radius) || *radius < 0.0f) return out.fail("RADIUS needs a number >= 0 (0 = wheel size)");
+                const auto r = hasNext ? parseLength(a[i + 1]) : std::nullopt;
+                if (!r || *r < 0.0) return out.fail("RADIUS needs a length >= 0 (0 = wheel size)");
+                radius = static_cast<float>(*r);
+                ++i;
             } else if (k == "ratio") {
                 if (!num(ratio)) return out.fail("RATIO needs a number (e.g. -0.5 for a 1:2 external mesh)");
             } else if (k == "step" || k == "steps") {
@@ -911,8 +924,8 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         std::optional<Vec2> at;
         std::optional<float> width;
         for (std::size_t i = 0; i < rest.size();) {
-            if (iequal(rest[i], "width") && i + 1 < rest.size() && parseNumber(rest[i + 1])) {
-                width = parseNumber(rest[i + 1]);
+            if (iequal(rest[i], "width") && i + 1 < rest.size() && parseLength(rest[i + 1])) {
+                width = static_cast<float>(*parseLength(rest[i + 1]));
                 rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i), rest.begin() + static_cast<std::ptrdiff_t>(i) + 2);
             } else if (rest[i].size() > 1 && rest[i][0] == '@' && parsePointInput(rest[i])) {
                 at = parsePointInput(rest[i])->resolve({});
@@ -954,7 +967,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
             doc.selectedImage = static_cast<int>(doc.scene.images().size()) - 1;
             doc.selectedBody = doc.selectedCurve = -1;
             markChanged(doc);
-            out.say("Imported image " + name + " on " + planeName(doc.state.plane) + fmt("  %.1f x %.1f mm", w, h));
+            out.say("Imported image " + name + " on " + planeName(doc.state.plane) + "  " + lengthsText({w, h}, " x "));
             return out;
         }
         case FileKind::Project: return out.fail("Use OPEN for project files");
@@ -1047,9 +1060,9 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         for (; i + 1 < a.size(); i += 2) {
             const std::string key = lower(a[i]);
             if (key == "width") {
-                const auto w = parseNumber(a[i + 1]);
-                if (!w || *w <= 0) return out.fail("WIDTH needs a positive number (mm)");
-                img.width = *w;
+                const auto w = parseLength(a[i + 1]);
+                if (!w || *w <= 0) return out.fail("WIDTH needs a positive length");
+                img.width = static_cast<float>(*w);
             } else if (key == "opacity") {
                 const auto o = parseNumber(a[i + 1]);
                 if (!o) return out.fail("OPACITY needs a number between 0 and 1");
@@ -1064,7 +1077,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
             changed = true;
         }
         if (changed) markChanged(doc);
-        out.say(img.name + fmt("  %.1f x %.1f mm", img.width, img.height()) +
+        out.say(img.name + "  " + lengthsText({img.width, img.height()}, " x ") +
                 fmt("  centre (%.1f, %.1f)  opacity %.2f", img.center.x, img.center.y, img.opacity));
         return out;
     }
@@ -1170,6 +1183,82 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     }
 
     // ---- Session ----------------------------------------------------------
+    if (cmd == "UNITS") {
+        UnitSettings u = doc.state.units;
+        bool changed = false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            const bool hasNext = i + 1 < a.size();
+            if (const auto unit = parseUnitName(k)) {
+                u.unit = *unit;
+            } else if (k == "precision" || k == "decimals" || k == "dp") {
+                if (!hasNext) return out.fail("PRECISION needs 0-10 or AUTO");
+                const std::string v = lower(a[++i]);
+                const auto n = parseNumber(v);
+                if (v == "auto" || v == "default") u.precision = -1;
+                else if (n && *n >= 0 && *n <= 10 && *n == std::floor(*n)) u.precision = static_cast<int>(*n);
+                else return out.fail("PRECISION needs 0-10 or AUTO");
+            } else if (k == "fraction" || k == "fractional" || k == "fractions") {
+                std::string v = hasNext ? lower(a[i + 1]) : "1/64";
+                if (hasNext) ++i;
+                if (v == "off" || v == "decimal" || v == "no") {
+                    u.style = LengthStyle::Decimal;
+                } else {
+                    if (v == "on" || v == "yes") v = "1/64";
+                    if (v.rfind("1/", 0) == 0) v = v.substr(2);
+                    const auto d = parseNumber(v);
+                    const int den = d ? static_cast<int>(*d) : 0;
+                    if (den < 2 || den > 256 || (den & (den - 1)) != 0)
+                        return out.fail("FRACTION needs 1/2, 1/4 ... 1/256, or OFF");
+                    u.style = LengthStyle::Fractional;
+                    u.denominator = den;
+                }
+            } else if (k == "decimal") {
+                u.style = LengthStyle::Decimal;
+            } else {
+                return usage();
+            }
+            changed = true;
+        }
+        if (changed) {
+            doc.state.units = u;
+            setActiveUnits(u);
+            markChanged(doc);
+        }
+        out.say("Units: " + describeUnits(u) + "   resolution " +
+                formatLength(u.resolutionMm(), UnitSettings{LengthUnit::Millimeter, 6}));
+        if (!changed) out.say("  UNITS MM|CM|M|IN|FT|PT   PRECISION n|AUTO   FRACTION 1/n|OFF   (geometry is stored in mm)");
+        return out;
+    }
+    if (cmd == "CONVERT") {
+        // CONVERT length [TO unit]: the length may contain spaces ("5' 6 1/2\"").
+        std::vector<std::string> words = a;
+        std::optional<LengthUnit> to;
+        if (words.size() >= 2 && (lower(words[words.size() - 2]) == "to" || lower(words[words.size() - 2]) == "in")) {
+            to = parseUnitName(words.back());
+            if (!to) return out.fail("Unknown unit " + words.back() + "   (MM CM M IN FT PT)");
+            words.resize(words.size() - 2);
+        }
+        if (words.empty()) return usage();
+        const auto mm = parseLength(joinArgs(words));
+        if (!mm) return out.fail("Not a length: " + joinArgs(words));
+        UnitSettings exact;
+        exact.precision = 10;
+        const std::string typed = joinArgs(words);
+        if (to) {
+            exact.unit = *to;
+            out.say(typed + "  =  " + formatLength(*mm, exact));
+            return out;
+        }
+        out.say(typed + "  =");
+        for (const LengthUnitInfo& u : lengthUnits()) {
+            exact.unit = u.unit;
+            out.say("  " + formatLength(*mm, exact));
+        }
+        UnitSettings frac{LengthUnit::Foot, -1, LengthStyle::Fractional, 64};
+        out.say("  " + formatLength(*mm, frac) + "   (to 1/64 in)");
+        return out;
+    }
     if (cmd == "HELP") {
         if (!a.empty()) {
             const CommandSpec* s = findCommand(a[0]);

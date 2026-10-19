@@ -173,3 +173,21 @@ TEST_CASE("MCP modify edits library part parameters") {
     CHECK_NEAR(d.scene.bodies()[1].params[3], 12, 1e-6);
     CHECK(tool(s, "modify", R"({"name":"M","params":{"shafts":"many"}})")["isError"].asBool());
 }
+
+TEST_CASE("MCP tools stay in mm while run_command follows the document units") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "run_command", R"({"command":"UNITS IN"})")["isError"].asBool());
+    Json r = tool(s, "create_solid", R"({"kind":"cylinder","radius":10,"height":30,"position":[5,0,0]})");
+    CHECK(!r["isError"].asBool());
+    CHECK_NEAR(d.scene.bodies().back().params[0], 10, 1e-5);   // mm, not inches
+    CHECK_NEAR(d.scene.bodies().back().offset.x, 5, 1e-5);
+    CHECK(!tool(s, "run_command", R"({"command":"CYLINDER 1 2"})")["isError"].asBool());
+    CHECK_NEAR(d.scene.bodies().back().params[0], 25.4, 1e-4); // inches
+    CHECK(!tool(s, "run_command", R"({"command":"BOX 20mm 1cm 1/2\""})")["isError"].asBool());
+    CHECK_NEAR(d.scene.bodies().back().params[5], 12.7, 1e-4);
+    const Json scene = tool(s, "get_scene", "{}")["structuredContent"];
+    CHECK(scene["project"]["units"].asString() == "mm");
+    CHECK(scene["project"]["display_units"]["unit"].asString() == "in");
+    CHECK(!d.apiMillimeters);
+}

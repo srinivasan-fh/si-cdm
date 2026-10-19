@@ -2,6 +2,7 @@
 
 #include "core/Command.hpp"
 #include "core/Library.hpp"
+#include "core/Units.hpp"
 #include "ui/Theme.hpp"
 #include "ui/ToolIcons.hpp"
 
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 
 namespace sicdm {
 
@@ -98,6 +100,98 @@ void propertyRow(const char* label, const char* fmt, ...) {
 }
 
 // Editor for one library parameter: a list for choices, a drag field otherwise.
+// A length field: shows `mm` in the document units and takes any typed length
+// ("12.5", "3in", "5'6-1/2\"", "1/8\"", "10pt", "1m+25mm"), committed on Enter or
+// when the field loses focus. `suffix` follows the unit ("/s" for speeds).
+bool lengthField(const char* id, float* mm, float minMm = -1e7f, float maxMm = 1e7f, const char* suffix = "",
+                 const char* emptyText = nullptr) {
+    static ImGuiID s_active = 0;
+    static char s_buf[96];
+    static ImGuiID s_errorId = 0;
+    static double s_errorUntil = 0.0;
+    const ImGuiID wid = ImGui::GetID(id);
+    char local[96];
+    char* buf = s_active == wid ? s_buf : local;
+    if (s_active != wid) {
+        const std::string text = emptyText && *mm <= 0.0f ? std::string(emptyText) : lengthText(*mm) + suffix;
+        std::snprintf(local, sizeof(local), "%s", text.c_str());
+    }
+    const bool error = s_errorId == wid && ImGui::GetTime() < s_errorUntil;
+    if (error) ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(theme::rgb(92, 38, 40)));
+    ImGui::InputText(id, buf, sizeof(s_buf), ImGuiInputTextFlags_AutoSelectAll);
+    if (error) ImGui::PopStyleColor();
+    if (ImGui::IsItemActivated()) {
+        s_active = wid;
+        std::snprintf(s_buf, sizeof(s_buf), "%s", buf);
+    }
+    bool changed = false;
+    if (ImGui::IsItemDeactivated() && s_active == wid) {
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            std::string text = s_buf;
+            const std::size_t sl = std::strlen(suffix);
+            if (sl && text.size() >= sl && text.compare(text.size() - sl, sl, suffix) == 0) text.resize(text.size() - sl);
+            const auto v = emptyText && text == emptyText ? std::optional<double>(0.0) : parseLength(text);
+            if (v && std::isfinite(*v)) {
+                *mm = static_cast<float>(std::clamp(*v, static_cast<double>(minMm), static_cast<double>(maxMm)));
+                changed = true;
+            } else {
+                s_errorId = wid;
+                s_errorUntil = ImGui::GetTime() + 1.2;
+            }
+        }
+        s_active = 0;
+    }
+    if (ImGui::IsItemHovered() && s_active != wid)
+        ImGui::SetTooltip("%s\nType a length in any unit: 12.5  3in  5'6-1/2\"  1/8\"  10pt  1m+25mm",
+                          error ? "Not a length" : lengthText(*mm, {true, false}).c_str());
+    return changed;
+}
+
+// Unit choices, shared by View > Units and the status bar chip. Each choice runs
+// a UNITS command, so it is logged, marks the file changed and saves with it.
+void unitsMenu(UiCommands& cmd) {
+    const UnitSettings& u = activeUnits();
+    ImGui::TextDisabled("Lengths stay exact in mm; this sets typing and display");
+    ImGui::Separator();
+    struct Choice {
+        LengthUnit unit;
+        const char* label;
+        const char* word;
+    };
+    static constexpr Choice kChoices[] = {
+        {LengthUnit::Millimeter, "Millimeters", "MM"}, {LengthUnit::Centimeter, "Centimeters", "CM"},
+        {LengthUnit::Meter, "Meters", "M"},            {LengthUnit::Inch, "Inches", "IN"},
+        {LengthUnit::Foot, "Feet", "FT"},              {LengthUnit::Point, "Points (1/72 in)", "PT"},
+    };
+    for (const Choice& c : kChoices)
+        if (ImGui::MenuItem(c.label, unitInfo(c.unit).symbol, u.unit == c.unit && !(u.fractional())))
+            cmd.commands.push_back(std::string("UNITS ") + c.word + " FRACTION OFF");
+    if (ImGui::MenuItem("Feet-Inches (5'-6 1/2\")", nullptr, u.unit == LengthUnit::Foot && u.fractional()))
+        cmd.commands.push_back("UNITS FT FRACTION 1/" + std::to_string(u.denominator));
+    if (ImGui::MenuItem("Fractional Inches (3-1/2\")", nullptr, u.unit == LengthUnit::Inch && u.fractional()))
+        cmd.commands.push_back("UNITS IN FRACTION 1/" + std::to_string(u.denominator));
+    ImGui::Separator();
+    if (ImGui::BeginMenu("Precision", !u.fractional())) {
+        if (ImGui::MenuItem("Auto", nullptr, u.precision < 0)) cmd.commands.push_back("UNITS PRECISION AUTO");
+        for (int d = 0; d <= 8; ++d) {
+            char label[32];
+            std::snprintf(label, sizeof(label), "%s", formatDecimal(0.0, d, false).c_str());
+            if (ImGui::MenuItem(label, nullptr, u.precision == d)) cmd.commands.push_back("UNITS PRECISION " + std::to_string(d));
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Fraction Precision", u.unit == LengthUnit::Inch || u.unit == LengthUnit::Foot)) {
+        for (int den = 2; den <= 256; den *= 2) {
+            const std::string label = "1/" + std::to_string(den) + " in";
+            if (ImGui::MenuItem(label.c_str(), nullptr, u.fractional() && u.denominator == den))
+                cmd.commands.push_back("UNITS FRACTION 1/" + std::to_string(den));
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Resolution  %s", formatLength(u.resolutionMm(), UnitSettings{LengthUnit::Millimeter, 6}).c_str());
+}
+
 bool paramEditor(const LibraryParam& p, float& value) {
     ImGui::SetNextItemWidth(-1);
     ImGui::PushID(p.key);
@@ -116,6 +210,8 @@ bool paramEditor(const LibraryParam& p, float& value) {
                 }
             ImGui::EndCombo();
         }
+    } else if (p.unit && std::string_view(p.unit) == "mm" && !p.integer) {
+        changed = lengthField("##v", &value, p.min, p.max);
     } else {
         char fmt[32];
         std::snprintf(fmt, sizeof(fmt), p.integer ? "%%.0f %s" : "%%.2f %s", p.unit);
@@ -202,7 +298,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     drawMenuBar(cmd, cam, vp, st);
     drawOptionsBar(cmd, cam, vp, st);
-    drawStatusBar(scene, cam, st);
+    drawStatusBar(cmd, scene, cam, st);
     drawCommandBar(cmd, st);
     const float railTop = mv->WorkPos.y + m_optionsHeight;
     const float bottom = mv->WorkPos.y + mv->WorkSize.y - m_statusHeight - m_commandHeight;
@@ -304,6 +400,11 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::Separator();
             for (DisplayMode m : kDisplayModes)
                 if (ImGui::MenuItem(displayModeLabel(m), nullptr, vp.displayMode == m)) vp.displayMode = m;
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Units")) {
+            unitsMenu(cmd);
+            ImGui::EndMenu();
         }
         ImGui::Separator();
         ImGui::MenuItem("Grid", "G", &vp.showGrid);
@@ -431,8 +532,8 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::TextDisabled("Distance");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(100);
-        if (ImGui::DragFloat("##extdist", &st.extrudeDistance, 0.5f, -10000.0f, 10000.0f, "%.1f mm"))
-            st.extrudeLive = false; // typed / dragged in the field: stop following the mouse
+        if (lengthField("##extdist", &st.extrudeDistance, -1e6f, 1e6f))
+            st.extrudeLive = false; // typed in the field: stop following the mouse
         ImGui::SameLine();
         ImGui::Checkbox("Symmetric", &st.extrudeSymmetric);
         ImGui::SameLine();
@@ -450,8 +551,9 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             ImGui::TextDisabled("drag, type the depth, click or Enter");
         }
     } else if (isPrimitiveTool(tool.id)) {
-        ImGui::TextDisabled(is2D ? "Click to place on the %s plane (5 mm snap)" : "Click the grid or a face to place (5 mm snap)",
-                            shortPlaneName(st.plane));
+        const std::string snap = lengthText(5.0);
+        if (is2D) ImGui::TextDisabled("Click to place on the %s plane (%s snap)", shortPlaneName(st.plane), snap.c_str());
+        else ImGui::TextDisabled("Click the grid or a face to place (%s snap)", snap.c_str());
     } else if (tool.id == ToolId::Move || tool.id == ToolId::Select) {
         ImGui::TextDisabled("Auto-select:");
         ImGui::SameLine();
@@ -643,7 +745,12 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
     dl->AddLine({m_canvasMin.x, m_canvasMin.y}, {m_canvasMax.x, m_canvasMin.y}, IM_COL32(60, 64, 74, 255));
     dl->AddLine({m_canvasMin.x, m_canvasMin.y}, {m_canvasMin.x, m_canvasMax.y}, IM_COL32(60, 64, 74, 255));
 
-    const float major = niceStep(wpp * 70.0f);
+    // Ticks and labels in the document units.
+    const UnitSettings& units = activeUnits();
+    // Feet rulers read in inches, as on a drafting scale.
+    const LengthUnit rulerUnit = units.unit == LengthUnit::Foot ? LengthUnit::Inch : units.unit;
+    const float perUnit = static_cast<float>(toMillimeters(1.0, rulerUnit)); // mm per ruler unit
+    const float major = niceStep(wpp / perUnit * 70.0f);
     const float minor = major / 10.0f;
     ImFont* font = ImGui::GetFont();
     const float fs = ImGui::GetFontSize() * 0.82f;
@@ -656,8 +763,8 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
 
     // Top ruler (u).
     dl->PushClipRect({m_canvasMin.x, y0}, {m_canvasMax.x, m_canvasMin.y}, true);
-    for (float u = std::floor(uAt(m_canvasMin.x) / minor) * minor; u <= uAt(m_canvasMax.x); u += minor) {
-        const float x = xOf(u);
+    for (float u = std::floor(uAt(m_canvasMin.x) / perUnit / minor) * minor; u <= uAt(m_canvasMax.x) / perUnit; u += minor) {
+        const float x = xOf(u * perUnit);
         const long k = std::lround(u / minor);
         const float len = k % 10 == 0 ? kRulerSize : (k % 5 == 0 ? 8.0f : 4.0f);
         dl->AddLine({x, m_canvasMin.y - len}, {x, m_canvasMin.y}, tick);
@@ -667,8 +774,8 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
 
     // Left ruler (v), labels written top-to-bottom like Photoshop.
     dl->PushClipRect({x0, m_canvasMin.y}, {m_canvasMin.x, m_canvasMax.y}, true);
-    for (float v = std::floor(vAt(m_canvasMax.y) / minor) * minor; v <= vAt(m_canvasMin.y); v += minor) {
-        const float y = yOf(v);
+    for (float v = std::floor(vAt(m_canvasMax.y) / perUnit / minor) * minor; v <= vAt(m_canvasMin.y) / perUnit; v += minor) {
+        const float y = yOf(v * perUnit);
         const long k = std::lround(v / minor);
         const float len = k % 10 == 0 ? kRulerSize : (k % 5 == 0 ? 8.0f : 4.0f);
         dl->AddLine({m_canvasMin.x - len, y}, {m_canvasMin.x, y}, tick);
@@ -693,7 +800,7 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
     }
     // Corner box with units and plane axes.
     dl->AddRectFilled({x0, y0}, {m_canvasMin.x, m_canvasMin.y}, IM_COL32(24, 26, 31, 255));
-    dl->AddText(font, fs, {x0 + 2, y0 + 3}, text, "mm");
+    dl->AddText(font, fs, {x0 + 2, y0 + 3}, text, unitInfo(rulerUnit).symbol);
 }
 
 float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float x, float top, float bottom) {
@@ -827,10 +934,8 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip(b.component.empty() ? "Size factor (Enter or +/-)" : "Size factor of the whole component, motions included");
-                propertyRow("Extents", "%.1f x %.1f x %.1f mm", static_cast<double>(bb.max.x - bb.min.x),
-                            static_cast<double>(bb.max.y - bb.min.y), static_cast<double>(bb.max.z - bb.min.z));
-                propertyRow("Position", "%.1f, %.1f, %.1f", static_cast<double>(b.offset.x),
-                            static_cast<double>(b.offset.y), static_cast<double>(b.offset.z));
+                propertyRow("Extents", "%s", lengthsText({bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z}, " x ").c_str());
+                propertyRow("Position", "%s", lengthsText({b.offset.x, b.offset.y, b.offset.z}, ", ").c_str());
                 propertyRow("Triangles", "%zu", b.mesh.indices.size() / 3);
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -909,10 +1014,14 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 ImGui::EndTable();
             }
             ImGui::SetNextItemWidth(-90);
-            ImGui::DragFloat("Width mm", &img.width, 0.5f, 0.1f, 100000.0f, "%.1f");
-            ImGui::TextDisabled("Height     %.1f mm", static_cast<double>(img.height()));
-            ImGui::SetNextItemWidth(-90);
-            ImGui::DragFloat2("Centre", &img.center.x, 0.5f, -100000.0f, 100000.0f, "%.1f");
+            lengthField("Width", &img.width, 0.1f, 1e6f);
+            ImGui::TextDisabled("Height     %s", lengthText(img.height()).c_str());
+            const float half = (ImGui::GetContentRegionAvail().x - 90.0f - ImGui::GetStyle().ItemInnerSpacing.x) * 0.5f;
+            ImGui::SetNextItemWidth(half);
+            lengthField("##cu", &img.center.x);
+            ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+            ImGui::SetNextItemWidth(half);
+            lengthField("Centre", &img.center.y);
             ImGui::SetNextItemWidth(-90);
             ImGui::SliderFloat("Opacity", &img.opacity, 0.0f, 1.0f, "%.2f");
             img.width = std::max(img.width, 0.1f);
@@ -922,7 +1031,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
     return width;
 }
 
-void LandingUI::drawStatusBar(const Scene& scene, const OrbitCamera& cam, const UiState& st) {
+void LandingUI::drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCamera& cam, const UiState& st) {
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     const float h = theme::kStatusBarHeight;
     ImGui::SetNextWindowPos({mv->WorkPos.x, mv->WorkPos.y + mv->WorkSize.y - h});
@@ -965,13 +1074,36 @@ void LandingUI::drawStatusBar(const Scene& scene, const OrbitCamera& cam, const 
     ImGui::PushFont(theme::font(theme::Font::Mono));
     const char* uName = st.plane == SketchPlane::Right ? "Y" : "X";
     const char* vName = st.plane == SketchPlane::Top ? "Y" : "Z";
-    auto clean = [](float v) { return std::fabs(v) < 0.005f ? 0.0f : v; }; // no "-0.00"
-    // Fixed-width coordinate readout so the digits do not jump.
+    // Fixed-width coordinate readout in the document units, so the digits do not jump.
+    const UnitSettings& units = activeUnits();
+    const bool each = units.fractional();
+    const LengthFormat readout{each, false};
+    const char* symbol = each ? "" : unitInfo(units.unit).symbol;
     if (st.cursorPlane)
-        ImGui::Text("%s %9.2f  %s %9.2f mm", uName, clean(st.cursorPlane->x), vName, clean(st.cursorPlane->y));
+        ImGui::Text("%s %11s  %s %11s %s", uName, lengthText(st.cursorPlane->x, readout).c_str(), vName,
+                    lengthText(st.cursorPlane->y, readout).c_str(), symbol);
     else
-        ImGui::TextColored(theme::vec(theme::kTextFaint), "%s %9s  %s %9s mm", uName, "--", vName, "--");
+        ImGui::TextColored(theme::vec(theme::kTextFaint), "%s %11s  %s %11s %s", uName, "--", vName, "--", symbol);
     ImGui::PopFont();
+    // Units chip: click to change the document units.
+    ImGui::SameLine(0, 10);
+    const std::string chip = !each ? std::string(unitInfo(units.unit).symbol)
+                             : (units.unit == LengthUnit::Foot ? "ft-in" : "in") + std::string(" 1/") +
+                                   std::to_string(units.denominator);
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(theme::kPanelRaised));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {6, 1});
+    if (ImGui::SmallButton(chip.c_str())) ImGui::OpenPopup("##unitspopup");
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Units: %s\nLengths are stored exactly in mm", describeUnits(units).c_str());
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {10, 8});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {8, 6});
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {8, 4});
+    if (ImGui::BeginPopup("##unitspopup")) {
+        unitsMenu(cmd);
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(3);
     sep();
     ImGui::TextColored(theme::vec(theme::kTextDim), "%s",
                        st.mode == ViewMode::Drawing2D   ? "2D Drawing"
@@ -1970,7 +2102,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                     ImGui::TextDisabled("Radius");
                     ImGui::SameLine(90);
                     ImGui::SetNextItemWidth(130);
-                    ImGui::DragFloat("##radius", &m.radius, 0.5f, 0.0f, 1e5f, m.radius <= 0.0f ? "wheel size" : "%.1f mm");
+                    lengthField("##radius", &m.radius, 0.0f, 1e6f, "", "wheel size");
                     m.radius = std::max(m.radius, 0.0f);
                 }
             }
@@ -1983,16 +2115,21 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                         if (m.moves(b.name)) box.expand(b.bounds());
                     if (box.valid()) m.origin = box.center();
                 }
-                ImGui::SetNextItemWidth(-1);
-                ImGui::DragFloat3("##origin", &m.origin.x, 0.5f, 0, 0, "%.1f mm");
+                const float third = (ImGui::GetContentRegionAvail().x - 2.0f * ImGui::GetStyle().ItemInnerSpacing.x) / 3.0f;
+                for (int k = 0; k < 3; ++k) {
+                    if (k) ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+                    ImGui::SetNextItemWidth(third);
+                    const char* ids[] = {"##ox", "##oy", "##oz"};
+                    lengthField(ids[k], k == 0 ? &m.origin.x : k == 1 ? &m.origin.y : &m.origin.z);
+                }
             }
 
             // Speed, range, mode, delay.
             ImGui::TextDisabled("Speed");
             ImGui::SameLine(90);
             ImGui::SetNextItemWidth(130);
-            ImGui::DragFloat("##speed", &m.speed, m.kind == MotionKind::Circular ? 1.0f : 0.5f, -100000.0f, 100000.0f,
-                             m.kind == MotionKind::Circular ? "%.1f deg/s" : "%.1f mm/s");
+            if (m.kind == MotionKind::Circular) ImGui::DragFloat("##speed", &m.speed, 1.0f, -100000.0f, 100000.0f, "%.1f deg/s");
+            else lengthField("##speed", &m.speed, -1e6f, 1e6f, "/s");
             if (m.kind == MotionKind::Circular) {
                 ImGui::SameLine();
                 ImGui::TextDisabled("%.1f rpm", static_cast<double>(m.speed / 6.0f));
@@ -2000,8 +2137,9 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             ImGui::TextDisabled(m.kind == MotionKind::Circular ? "Sweep" : "Stroke");
             ImGui::SameLine(90);
             ImGui::SetNextItemWidth(110);
-            ImGui::DragFloat("##range", &m.range, m.kind == MotionKind::Circular ? 1.0f : 0.5f, 0.0f, 1e6f,
-                             m.range <= 0.0f ? "unlimited" : (m.kind == MotionKind::Circular ? "%.1f deg" : "%.1f mm"));
+            if (m.kind == MotionKind::Circular)
+                ImGui::DragFloat("##range", &m.range, 1.0f, 0.0f, 1e6f, m.range <= 0.0f ? "unlimited" : "%.1f deg");
+            else lengthField("##range", &m.range, 0.0f, 1e7f, "", "unlimited");
             m.range = std::max(m.range, 0.0f);
             ImGui::SameLine();
             int mode = static_cast<int>(m.mode);
@@ -2018,8 +2156,12 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             // Live value.
             ImGui::TextDisabled("Now");
             ImGui::SameLine(90);
-            ImGui::TextColored(col, "%.2f %s   %.1f %s", static_cast<double>(motionValue(scene, m, st.simTime)), m.unit(),
-                               static_cast<double>(motionRate(scene, m, st.simTime)), m.rateUnit());
+            if (m.kind == MotionKind::Circular)
+                ImGui::TextColored(col, "%.2f deg   %.1f deg/s", static_cast<double>(motionValue(scene, m, st.simTime)),
+                                   static_cast<double>(motionRate(scene, m, st.simTime)));
+            else
+                ImGui::TextColored(col, "%s   %s/s", lengthText(motionValue(scene, m, st.simTime)).c_str(),
+                                   lengthText(motionRate(scene, m, st.simTime)).c_str());
             ImGui::Spacing();
         }
         ImGui::PopID();
@@ -2062,7 +2204,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 }
                 ImGui::EndTable();
             }
-            ImGui::TextDisabled("mm  ·  deg  ·  mm/s, deg/s   |v| %.1f mm/s", static_cast<double>(length(v)));
+            ImGui::TextDisabled("lengths in mm  ·  deg  ·  mm/s, deg/s   |v| %s/s", lengthText(length(v)).c_str());
         }
     }
     ImGui::End();

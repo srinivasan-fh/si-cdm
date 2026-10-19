@@ -1,4 +1,5 @@
 #include "core/Mcp.hpp"
+#include "core/Units.hpp"
 
 #include "core/Command.hpp"
 #include "core/Library.hpp"
@@ -14,7 +15,9 @@ constexpr const char* kServerVersion = "0.1.0";
 constexpr const char* kSupportedVersions[] = {"2025-06-18", "2025-03-26", "2024-11-05"};
 
 constexpr const char* kInstructions =
-    "SI CDM is a CAD/CAM workbench. Units are millimetres; Z is up. The model has 3D bodies "
+    "SI CDM is a CAD/CAM workbench. Tool arguments and get_scene numbers are millimetres; Z is up. "
+    "run_command reads bare numbers in the document's display units (get_scene project.display_units; "
+    "change them with UNITS) and accepts explicit units anywhere: 12.5mm 2cm 0.5m 3in 1/8\" 5'6-1/2\" 10pt. The model has 3D bodies "
     "(parametric solids or imported meshes), 2D sketch curves on the Top (XY), Front (XZ) or Right (YZ) "
     "plane, and reference images on those planes. Call get_scene first to see what exists. "
     "Sketch coordinates are 2D in the plane: Top u=X v=Y, Front u=X v=Z, Right u=Y v=Z. "
@@ -279,6 +282,12 @@ Json McpServer::sceneJson() const {
     Json s = Json::object();
     Json project = Json::object();
     project.set("path", m_doc.path).set("unsaved_changes", m_doc.dirty).set("units", "mm");
+    Json du = Json::object();
+    du.set("unit", unitInfo(m_doc.state.units.unit).symbol)
+        .set("decimals", m_doc.state.units.decimals())
+        .set("fractional", m_doc.state.units.fractional())
+        .set("description", describeUnits(m_doc.state.units));
+    project.set("display_units", du);
     s.set("project", project);
     s.set("sketch_plane", planeKey(m_doc.state.plane));
 
@@ -654,7 +663,11 @@ Json McpServer::handleJson(const Json& msg) {
     if (method == "tools/call") {
         const std::string name = params["name"].asString();
         const Json& args = params["arguments"].isObject() ? params["arguments"] : Json::object();
+        // Dedicated tools speak millimetres; run_command uses the document's units.
+        const bool api = name != "run_command" && name != "list_commands";
+        m_doc.apiMillimeters = api;
         Json result = callTool(name, args);
+        m_doc.apiMillimeters = false;
         if (result.isNull()) return errorReply(id, -32602, "Unknown tool: " + name);
         return resultReply(id, result);
     }

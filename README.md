@@ -208,6 +208,45 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
 
 Shift + a tool key cycles through that slot's tools.
 
+## Units
+
+Lengths can be typed and shown in **mm, cm, m, in, ft or pt** (the DTP / PostScript point, 1/72 in).
+The model itself is always stored in millimetres, so changing units never changes the geometry.
+
+- **Exact factors.** 1 in = 25.4 mm and 1 ft = 304.8 mm (international inch), 1 pt = 127/360 mm.
+  They are held as fractions, and everything you type is evaluated as an exact fraction, then
+  rounded once: `0.1mm+0.2mm` is exactly 0.3 mm, and `1/3in+2/3in` is exactly 25.4 mm.
+- **Type any length, anywhere** (command line, typed sketch input, every length field in the panels):
+
+  ```text
+  12.5        bare numbers use the document unit
+  12.5mm  1.2cm  0.5m  3in  3"  2ft  2'  10pt  1.5e3mm
+  1/8in  3-1/2"  5'6"  5'-6 1/2"  5ft 6in      (a bare number after feet is inches)
+  1m+25mm  2ft - 1cm                            (explicit + / - mixes units)
+  BOX 2in 30mm 1/2"      CIRCLE 0,0 3/4"      LINE 0,0 5'6-1/2",0      MOVE 1in,0,0
+  ```
+
+- **Display** in decimals (0-10 places, or each unit's default) or, for inches and feet, as
+  fractions down to 1/256 in: `3-1/2"`, `5'-6 1/2"`. What is shown parses back to the same length.
+- **Where to set it:** the units chip in the status bar (next to the cursor coordinates), *View ▸
+  Units*, or the command line:
+
+  ```text
+  UNITS                          show the current units and resolution
+  UNITS IN | MM | CM | M | FT | PT
+  UNITS PRECISION 4 | AUTO       decimals
+  UNITS FT FRACTION 1/16         feet-inches to 1/16 in      (FRACTION OFF: decimal)
+  CONVERT 5'6-1/2" TO mm         1689.1 mm   (without TO: every unit)
+  ```
+
+The units are saved with each project (each file tab has its own), and the status bar, rulers,
+Properties, Motion Study, live sketch dimensions and command messages all follow them. The MCP tools
+for AI agents keep taking and returning millimetres; `run_command` reads bare numbers in the
+document's units, and `get_scene` reports them under `project.display_units`.
+
+Bodies and sketches are stored as 32-bit floats in millimetres: about 7 significant digits, roughly
+0.1 µm on a 1 m part. Unit conversion and typed input are exact up to that final storage step.
+
 ## Command line
 
 The full-width command line above the status bar runs every operation by typing, AutoCAD style.

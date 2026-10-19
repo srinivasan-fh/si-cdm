@@ -1,4 +1,5 @@
 #include "core/Sketch.hpp"
+#include "core/Units.hpp"
 
 #include <cstdio>
 
@@ -80,29 +81,25 @@ std::vector<Vec2> SketchCurve::keyPoints() const {
 }
 
 std::string SketchCurve::measure() const {
-    char buf[64] = "";
-    auto len = [](Vec2 a, Vec2 b) { return std::hypot(b.x - a.x, b.y - a.y); };
+    auto len = [](Vec2 a, Vec2 b) { return static_cast<double>(std::hypot(b.x - a.x, b.y - a.y)); };
     switch (kind) {
     case CurveKind::Point:
-        if (!pts.empty()) std::snprintf(buf, sizeof(buf), "(%.1f, %.1f)", pts[0].x, pts[0].y);
+        if (!pts.empty()) return lengthsText({pts[0].x, pts[0].y}, ", ", "(", ")");
         break;
     case CurveKind::Line:
-        if (pts.size() >= 2) std::snprintf(buf, sizeof(buf), "L %.1f", len(pts[0], pts[1]));
+        if (pts.size() >= 2) return "L " + lengthText(len(pts[0], pts[1]));
         break;
     case CurveKind::Polyline: {
-        float total = 0.0f;
+        double total = 0.0;
         for (std::size_t i = 1; i < pts.size(); ++i) total += len(pts[i - 1], pts[i]);
-        std::snprintf(buf, sizeof(buf), "L %.1f (%zu seg)", total, pts.empty() ? 0 : pts.size() - 1);
-        break;
+        return "L " + lengthText(total) + " (" + std::to_string(pts.empty() ? 0 : pts.size() - 1) + " seg)";
     }
     case CurveKind::Rectangle:
-        if (pts.size() >= 2)
-            std::snprintf(buf, sizeof(buf), "%.1f x %.1f", std::fabs(pts[1].x - pts[0].x),
-                          std::fabs(pts[1].y - pts[0].y));
+        if (pts.size() >= 2) return lengthsText({std::fabs(pts[1].x - pts[0].x), std::fabs(pts[1].y - pts[0].y)}, " x ");
         break;
-    case CurveKind::Circle: std::snprintf(buf, sizeof(buf), "R %.1f", radius); break;
+    case CurveKind::Circle: return "R " + lengthText(radius);
     }
-    return buf;
+    return "";
 }
 
 SketchCurve& Sketch::add(SketchCurve c) {

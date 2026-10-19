@@ -12,6 +12,7 @@ add_executable(sicdm_tests
     test_extrude.cpp
     test_motion.cpp
     test_library.cpp
+    test_units.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 sicdm_set_compile_options(sicdm_tests)

@@ -233,7 +233,13 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     Json doc = Json::object();
     doc.set("format", "sicdm-project");
     doc.set("version", 1);
-    doc.set("units", "mm");
+    doc.set("units", "mm"); // storage unit of every length in the file
+    Json du = Json::object();
+    du.set("unit", unitInfo(state.units.unit).symbol)
+        .set("precision", state.units.precision)
+        .set("style", state.units.style == LengthStyle::Fractional ? "fractional" : "decimal")
+        .set("denominator", state.units.denominator);
+    doc.set("display_units", du);
     doc.set("plane", planeKey(state.plane));
 
     Json bodies = Json::array();
@@ -426,6 +432,12 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         loaded.motions().push_back(std::move(m));
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);
+    const Json& du = (*doc)["display_units"];
+    st.units = UnitSettings{};
+    if (const auto u = parseUnitName(du["unit"].asString("mm"))) st.units.unit = *u;
+    st.units.precision = std::clamp(static_cast<int>(du["precision"].asNumber(-1)), -1, 10);
+    st.units.style = du["style"].asString("decimal") == "fractional" ? LengthStyle::Fractional : LengthStyle::Decimal;
+    st.units.denominator = std::clamp(static_cast<int>(du["denominator"].asNumber(64)), 2, 256);
 
     scene.assign(std::move(loaded));
     state = st;

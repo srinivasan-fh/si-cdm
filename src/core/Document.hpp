@@ -24,6 +24,10 @@ struct Document {
     int selectedCurve = -1;
     int selectedImage = -1;
 
+    // Commands built by the MCP tools pass plain numbers in millimetres whatever the
+    // document's display units are; set while such a tool runs.
+    bool apiMillimeters = false;
+
     bool snapGrid = true;
     bool snapPoints = true;
 

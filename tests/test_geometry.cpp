@@ -88,7 +88,7 @@ TEST_CASE("sketch curves tessellate and measure") {
     r.pts = {{0, 0}, {30, 20}};
     s.add(r);
     CHECK(s.curves()[0].worldStrip().size() == 5);
-    CHECK(s.curves()[0].measure() == "30.0 x 20.0");
+    CHECK(s.curves()[0].measure() == "30 x 20 mm");
     CHECK(s.curves()[0].name == "Rectangle 1");
     SketchCurve c;
     c.kind = CurveKind::Circle;

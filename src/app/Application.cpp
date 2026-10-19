@@ -9,6 +9,7 @@
 
 #include "core/Command.hpp"
 #include "core/Library.hpp"
+#include "core/Units.hpp"
 #include "ui/Theme.hpp"
 #include "core/Extrude.hpp"
 
@@ -415,7 +416,8 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         Body body = defaultPrimitive(primitiveKind(tool), ++m_doc.primitiveSerial);
         body.offset = at;
         char msg[160];
-        std::snprintf(msg, sizeof(msg), "Placed %s at (%.0f, %.0f, %.0f) mm", body.name.c_str(), at.x, at.y, at.z);
+        std::snprintf(msg, sizeof(msg), "Placed %s at %s", body.name.c_str(),
+                      lengthsText({at.x, at.y, at.z}, ", ", "(", ")").c_str());
         m_doc.scene.add(std::move(body));
         m_uiState.selectedBody = static_cast<int>(m_doc.scene.bodies().size()) - 1;
         m_uiState.selectedCurve = m_uiState.selectedImage = -1;
@@ -681,6 +683,8 @@ void Application::handleCommands(const UiCommands& cmd) {
 }
 
 void Application::frame(float dt) {
+    // Typed lengths and every readout follow the active file's units.
+    setActiveUnits(m_doc.state.units);
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -865,8 +869,8 @@ void Application::runCommandLine(const std::string& raw) {
         if (tool == ToolId::Polyline && m_sketcher.stage() >= 2 && (upper == "C" || upper == "CLOSE"))
             p = m_sketcher.firstPoint(); // close the loop, like clicking the first point
         else if (const auto in = parsePointInput(text)) p = in->resolve(m_sketcher.lastPoint().value_or(Vec2{}));
-        else if (const auto r = parseNumber(text); r && tool == ToolId::Circle && m_sketcher.stage() == 1 && *r > 0)
-            p = Vec2{m_sketcher.lastPoint()->x + *r, m_sketcher.lastPoint()->y}; // typed radius
+        else if (const auto r = parseLength(text); r && tool == ToolId::Circle && m_sketcher.stage() == 1 && *r > 0)
+            p = Vec2{m_sketcher.lastPoint()->x + static_cast<float>(*r), m_sketcher.lastPoint()->y}; // typed radius
         if (p) {
             log(text, UiState::LogLine::Input);
             if (auto c = m_sketcher.typedPoint(tool, m_uiState.plane, *p)) addCurve(std::move(*c));
@@ -879,9 +883,9 @@ void Application::runCommandLine(const std::string& raw) {
             applyExtrude();
             return;
         }
-        if (const auto d = parseNumber(text)) {
+        if (const auto d = parseLength(text)) {
             log(text, UiState::LogLine::Input);
-            m_uiState.extrudeDistance = *d;
+            m_uiState.extrudeDistance = static_cast<float>(*d);
             applyExtrude();
             return;
         }
@@ -941,6 +945,9 @@ std::uint64_t Application::signatureOf(const Document& doc) {
     const Scene& s = doc.scene;
     const std::size_t counts[3] = {s.bodies().size(), s.sketch().curves().size(), s.images().size()};
     mix(counts, sizeof(counts));
+    const UnitSettings& u = doc.state.units;
+    const int units[4] = {static_cast<int>(u.unit), u.precision, static_cast<int>(u.style), u.denominator};
+    mix(units, sizeof(units));
     for (const Body& b : s.bodies()) {
         mixStr(b.name);
         mixStr(b.kind);
@@ -1180,9 +1187,8 @@ void Application::drawExtrudePreview() const {
         dl->AddLine(*a, *b, col, 2.0f);
         dl->AddCircleFilled(*b, 4.0f, col);
     }
-    char label[64];
-    std::snprintf(label, sizeof(label), m_uiState.extrudeSymmetric ? "D %.1f mm (symmetric)" : "D %.1f mm",
-                  static_cast<double>(d));
+    char label[96];
+    std::snprintf(label, sizeof(label), "D %s%s", lengthText(d).c_str(), m_uiState.extrudeSymmetric ? " (symmetric)" : "");
     const ImVec2 at{io.MousePos.x + 16, io.MousePos.y + 14};
     const ImVec2 ts = ImGui::CalcTextSize(label);
     dl->AddRectFilled({at.x - 4, at.y - 2}, {at.x + ts.x + 4, at.y + ts.y + 2}, IM_COL32(20, 22, 28, 220), 3.0f);
@@ -1537,8 +1543,8 @@ void Application::drawSimulationOverlay() const {
             if (!m.enabled || groups[k].body < 0 || length(m.axis) < 1e-6f) continue;
             if (m.alongLoop) { // chains / belts: no straight travel arrow, just the live value
                 char travel[96];
-                std::snprintf(travel, sizeof(travel), "%s  %.1f mm  %.0f mm/s", m.name.c_str(),
-                              static_cast<double>(motionValue(scene, m, t)), static_cast<double>(motionRate(scene, m, t)));
+                std::snprintf(travel, sizeof(travel), "%s  %s  %s/s", m.name.c_str(),
+                              lengthText(motionValue(scene, m, t)).c_str(), lengthText(motionRate(scene, m, t)).c_str());
                 label(groups[k].centre, toU32(motionColor(k)), travel);
                 continue;
             }
@@ -1547,8 +1553,12 @@ void Application::drawSimulationOverlay() const {
             const Vec3 dir = normalize(outer.transformDir(m.axis));
             const float r = std::max(groups[k].radius * 0.6f, 24.0f * wpp);
             char text[96];
-            std::snprintf(text, sizeof(text), "%s  %.1f %s  %.0f %s", m.name.c_str(), static_cast<double>(motionValue(scene, m, t)),
-                          m.unit(), static_cast<double>(motionRate(scene, m, t)), m.rateUnit());
+            if (m.kind == MotionKind::Circular)
+                std::snprintf(text, sizeof(text), "%s  %.1f deg  %.0f deg/s", m.name.c_str(),
+                              static_cast<double>(motionValue(scene, m, t)), static_cast<double>(motionRate(scene, m, t)));
+            else
+                std::snprintf(text, sizeof(text), "%s  %s  %s/s", m.name.c_str(), lengthText(motionValue(scene, m, t)).c_str(),
+                              lengthText(motionRate(scene, m, t)).c_str());
             if (m.kind == MotionKind::Circular) {
                 const Vec3 pivot = m.eachCentre ? bodies[static_cast<std::size_t>(groups[k].body)].bounds().center() : m.origin;
                 const Vec3 o = outer.transformPoint(pivot);

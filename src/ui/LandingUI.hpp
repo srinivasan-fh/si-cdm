@@ -141,7 +141,7 @@ private:
     void drawMcpWindow(UiState& st);
     void requestFile(int action, const UiState& st); // see FileAction
     static int commandInputCallback(struct ImGuiInputTextCallbackData* data);
-    void drawStatusBar(const Scene& scene, const OrbitCamera& cam, const UiState& st);
+    void drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCamera& cam, const UiState& st);
     void drawControlsWindow(UiState& st);
     void drawAboutWindow(UiState& st);
 

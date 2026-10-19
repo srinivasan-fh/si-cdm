@@ -1,5 +1,7 @@
 #include "app/SketchController.hpp"
 
+#include "core/Units.hpp"
+
 #include <cmath>
 #include <cstdio>
 
@@ -173,7 +175,7 @@ void SketchController::drawOverlay(ImDrawList* dl, const OrbitCamera& cam, ImVec
         switch (tool) {
         case ToolId::Line:
             if (auto s = scr(a)) dl->AddLine(*s, *h, kPreview, 1.5f);
-            std::snprintf(label, sizeof(label), "L %.2f", dist(a, m_hover));
+            std::snprintf(label, sizeof(label), "L %s", lengthText(dist(a, m_hover)).c_str());
             break;
         case ToolId::Polyline: {
             for (std::size_t i = 1; i < m_points.size(); ++i) {
@@ -181,7 +183,7 @@ void SketchController::drawOverlay(ImDrawList* dl, const OrbitCamera& cam, ImVec
                 if (s0 && s1) dl->AddLine(*s0, *s1, kPreview, 1.5f);
             }
             if (auto s = scr(m_points.back())) dl->AddLine(*s, *h, kPreview, 1.0f);
-            std::snprintf(label, sizeof(label), "L %.2f", dist(m_points.back(), m_hover));
+            std::snprintf(label, sizeof(label), "L %s", lengthText(dist(m_points.back(), m_hover)).c_str());
             break;
         }
         case ToolId::Rectangle: {
@@ -191,7 +193,7 @@ void SketchController::drawOverlay(ImDrawList* dl, const OrbitCamera& cam, ImVec
                 auto s0 = scr(c[i]), s1 = scr(c[(i + 1) % 4]);
                 if (s0 && s1) dl->AddLine(*s0, *s1, kPreview, 1.5f);
             }
-            std::snprintf(label, sizeof(label), "%.2f x %.2f", std::fabs(b.x - a.x), std::fabs(b.y - a.y));
+            std::snprintf(label, sizeof(label), "%s", lengthsText({std::fabs(b.x - a.x), std::fabs(b.y - a.y)}, " x ").c_str());
             break;
         }
         case ToolId::Circle: {
@@ -204,7 +206,7 @@ void SketchController::drawOverlay(ImDrawList* dl, const OrbitCamera& cam, ImVec
                 if (s) prev = *s;
             }
             if (auto s = scr(a)) dl->AddLine(*s, *h, IM_COL32(255, 190, 90, 140), 1.0f);
-            std::snprintf(label, sizeof(label), "R %.2f", r);
+            std::snprintf(label, sizeof(label), "R %s", lengthText(r).c_str());
             break;
         }
         default: break;
@@ -219,8 +221,7 @@ void SketchController::drawOverlay(ImDrawList* dl, const OrbitCamera& cam, ImVec
 
     // Coordinates / live dimension next to the cursor.
     char coords[64];
-    auto clean = [](float v) { return std::fabs(v) < 0.005f ? 0.0f : v; };
-    std::snprintf(coords, sizeof(coords), "%.2f, %.2f", clean(m_hover.x), clean(m_hover.y));
+    std::snprintf(coords, sizeof(coords), "%s", lengthsText({m_hover.x, m_hover.y}, ", ").c_str());
     const char* text = label[0] ? label : coords;
     const ImVec2 ts = ImGui::CalcTextSize(text);
     const ImVec2 at{h->x + 14, h->y + 12};
