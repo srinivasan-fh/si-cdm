@@ -153,6 +153,27 @@ TEST_CASE("motions survive save and reopen") {
     CHECK_NEAR(st.simDuration, 12, 1e-5);
 }
 
+TEST_CASE("FOLLOW rolls a linear drive with its wheel spin") {
+    Document d;
+    CHECK(run(d, "CYLINDER 50 20 @0,0,0").ok); // 100 mm across: radius 50 along X
+    CHECK(run(d, "BOX 200 100 50 @0,0,100").ok);
+    CHECK(run(d, "MOTION LINEAR Drive AXIS X BODIES ALL").ok);
+    CHECK(!run(d, "MOTION LINEAR Drive FOLLOW Nothing").ok);
+    CHECK(run(d, "MOTION CIRCLE Spin AXIS Y SPEED 90 EACH BODIES \"Cylinder 1\"").ok);
+    CHECK(run(d, "MOTION LINEAR Drive FOLLOW Spin").ok);
+    REQUIRE(d.scene.motions()[0].follow == "Spin");
+    const Motion& drive = d.scene.motions()[0];
+    CHECK_NEAR(motionValue(d.scene, drive, 2.0f), kPi * 50, 1e-2); // 180 deg of a 50 mm wheel
+    CHECK_NEAR(motionRate(d.scene, drive, 2.0f), kPi / 2 * 50, 1e-2);
+    CHECK_NEAR(bodyMotionTransform(d.scene, 1, 2.0f).transformPoint({0, 0, 0}).x, kPi * 50, 1e-2);
+    CHECK(run(d, "MOTION LINEAR Drive RADIUS 10").ok);
+    CHECK_NEAR(motionValue(d.scene, drive, 2.0f), kPi * 10, 1e-3);
+    CHECK(run(d, "MOTION OFF Spin").ok); // wheels stopped: the body stays
+    CHECK_NEAR(motionValue(d.scene, drive, 2.0f), 0, 1e-6);
+    CHECK(run(d, "MOTION LINEAR Drive FOLLOW NONE").ok);
+    CHECK(drive.follow.empty());
+}
+
 TEST_CASE("EACH turns every body about its own centre") {
     Document d;
     CHECK(run(d, "CYLINDER 5 4 @-20,0,0").ok);

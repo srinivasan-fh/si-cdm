@@ -68,12 +68,50 @@ Mat4 motionMatrix(const Motion& m, float t, const Vec3& origin) noexcept {
 
 namespace {
 
+const Motion* driverOf(const Scene& scene, const Motion& m) {
+    if (m.kind != MotionKind::Linear || m.follow.empty()) return nullptr;
+    for (const Motion& d : scene.motions())
+        if (d.kind == MotionKind::Circular && d.enabled && iequals(d.name, m.follow)) return &d;
+    return nullptr;
+}
+
+// mm of travel per radian of the driving wheel.
+float rollRadius(const Scene& scene, const Motion& m, const Motion& driver) {
+    if (m.radius > 0.0f) return m.radius;
+    const Vec3 dir = normalize(m.axis);
+    for (const Body& b : scene.bodies())
+        if (driver.moves(b.name)) {
+            const Vec3 size = b.bounds().max - b.bounds().min;
+            return 0.5f * (std::fabs(dir.x) * size.x + std::fabs(dir.y) * size.y + std::fabs(dir.z) * size.z);
+        }
+    return 0.0f;
+}
+
+Mat4 sceneMatrix(const Scene& scene, const Motion& m, float t) {
+    if (m.enabled && !m.follow.empty() && length(m.axis) > 1e-9f)
+        return translate(normalize(m.axis) * motionValue(scene, m, t));
+    return motionMatrix(m, t);
+}
+
 // Matrix of motion m for one body (its own centre when the motion asks for it).
-Mat4 matrixFor(const Motion& m, const Body& b, float t) {
-    return m.kind == MotionKind::Circular && m.eachCentre ? motionMatrix(m, t, b.bounds().center()) : motionMatrix(m, t);
+Mat4 matrixFor(const Scene& scene, const Motion& m, const Body& b, float t) {
+    return m.kind == MotionKind::Circular && m.eachCentre ? motionMatrix(m, t, b.bounds().center())
+                                                          : sceneMatrix(scene, m, t);
 }
 
 } // namespace
+
+float motionValue(const Scene& scene, const Motion& m, float t) {
+    if (m.follow.empty()) return motionValue(m, t);
+    const Motion* d = driverOf(scene, m);
+    return d ? radians(motionValue(*d, t)) * rollRadius(scene, m, *d) : 0.0f;
+}
+
+float motionRate(const Scene& scene, const Motion& m, float t) {
+    if (m.follow.empty()) return motionRate(m, t);
+    const Motion* d = driverOf(scene, m);
+    return d ? radians(motionRate(*d, t)) * rollRadius(scene, m, *d) : 0.0f;
+}
 
 float motionCycle(const Motion& m) noexcept {
     if (!limited(m) || m.speed == 0.0f) return 0.0f;
@@ -86,10 +124,10 @@ std::vector<Mat4> motionTransforms(const Scene& scene, float t) {
     std::vector<Mat4> out(bodies.size(), Mat4::identity());
     for (const Motion& m : scene.motions()) {
         if (!m.enabled) continue;
-        const Mat4 mm = motionMatrix(m, t);
+        const Mat4 mm = sceneMatrix(scene, m, t);
         for (std::size_t i = 0; i < bodies.size(); ++i)
             if (m.moves(bodies[i].name))
-                out[i] = out[i] * (m.eachCentre ? matrixFor(m, bodies[i], t) : mm); // earlier motions stay outermost
+                out[i] = out[i] * (m.eachCentre ? matrixFor(scene, m, bodies[i], t) : mm); // earlier motions stay outermost
     }
     return out;
 }
@@ -100,14 +138,14 @@ Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::siz
     const std::string& name = scene.bodies()[body].name;
     const auto& motions = scene.motions();
     for (std::size_t k = 0; k < motions.size() && k < before; ++k)
-        if (motions[k].enabled && motions[k].moves(name)) out = out * matrixFor(motions[k], scene.bodies()[body], t);
+        if (motions[k].enabled && motions[k].moves(name)) out = out * matrixFor(scene, motions[k], scene.bodies()[body], t);
     return out;
 }
 
 bool isMoving(const Scene& scene, std::size_t body) {
     if (body >= scene.bodies().size()) return false;
     for (const Motion& m : scene.motions())
-        if (m.enabled && m.speed != 0.0f && m.moves(scene.bodies()[body].name)) return true;
+        if (m.enabled && (m.speed != 0.0f || !m.follow.empty()) && m.moves(scene.bodies()[body].name)) return true;
     return false;
 }
 
@@ -159,11 +197,18 @@ std::string describeMotion(const Motion& m) {
         std::snprintf(buf, sizeof(buf), "%g deg/s about (%g, %g, %g) through (%g, %g, %g)", static_cast<double>(m.speed),
                       static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z),
                       static_cast<double>(m.origin.x), static_cast<double>(m.origin.y), static_cast<double>(m.origin.z));
+    else if (!m.follow.empty() && m.radius > 0.0f)
+        std::snprintf(buf, sizeof(buf), "rolls with %s (radius %g mm) along (%g, %g, %g)", m.follow.c_str(),
+                      static_cast<double>(m.radius), static_cast<double>(a.x), static_cast<double>(a.y),
+                      static_cast<double>(a.z));
+    else if (!m.follow.empty())
+        std::snprintf(buf, sizeof(buf), "rolls with %s (wheel radius) along (%g, %g, %g)", m.follow.c_str(),
+                      static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z));
     else
         std::snprintf(buf, sizeof(buf), "%g mm/s along (%g, %g, %g)", static_cast<double>(m.speed),
                       static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z));
     std::string s = m.name + "  " + motionKindKey(m.kind) + "  " + buf;
-    if (m.range > 0.0f && m.mode != MotionMode::Continuous) {
+    if (m.follow.empty() && m.range > 0.0f && m.mode != MotionMode::Continuous) {
         char r[64];
         std::snprintf(r, sizeof(r), "  %s %g %s", motionModeKey(m.mode), static_cast<double>(m.range), m.unit());
         s += r;

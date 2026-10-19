@@ -147,8 +147,8 @@ std::vector<std::string> describePoses(const Document& doc, float t) {
     lines.push_back(fmt("t = %.3f s", t));
     for (const Motion& m : doc.scene.motions()) {
         if (!m.enabled) continue;
-        lines.push_back("  " + m.name + "  " + fmt("%.2f ", motionValue(m, t)) + m.unit() + "  " +
-                        fmt("%.2f ", motionRate(m, t)) + m.rateUnit());
+        lines.push_back("  " + m.name + "  " + fmt("%.2f ", motionValue(doc.scene, m, t)) + m.unit() + "  " +
+                        fmt("%.2f ", motionRate(doc.scene, m, t)) + m.rateUnit());
     }
     const std::vector<Mat4> tf = motionTransforms(doc.scene, t);
     for (std::size_t i = 0; i < doc.scene.bodies().size(); ++i) {
@@ -442,7 +442,8 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         // Options; a motion that already has the name is updated, keeping what is not given.
         std::optional<std::string> name;
         std::optional<Vec3> axis, origin;
-        std::optional<float> speed, range, start;
+        std::optional<float> speed, range, start, radius;
+        std::optional<std::string> follow;
         std::optional<MotionMode> mode;
         std::optional<std::vector<std::string>> targets;
         std::optional<bool> each; // EACH: every body turns about its own centre
@@ -470,6 +471,11 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
             } else if (k == "mode") {
                 if (!hasNext || !(mode = motionModeFromKey(a[i + 1]))) return out.fail("MODE: CONT, LOOP, OSC or ONCE");
                 ++i;
+            } else if (k == "follow" || k == "roll" || k == "driven") {
+                if (!hasNext) return out.fail("FOLLOW needs a circular motion name (or NONE)");
+                follow = iequal(a[++i], "none") ? std::string() : a[i];
+            } else if (k == "radius") {
+                if (!num(radius) || *radius < 0.0f) return out.fail("RADIUS needs a number >= 0 (0 = wheel size)");
             } else if (k == "each" || k == "own") {
                 each = true;
             } else if (k == "shared" || k == "common") {
@@ -525,6 +531,16 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         if (range && *range > 0.0f && !mode && m.mode == MotionMode::Continuous) m.mode = MotionMode::Oscillate;
         if (start) m.start = *start;
         if (each) m.eachCentre = *each;
+        if (follow && !follow->empty()) {
+            const int d = findMotion(doc, *follow);
+            if (m.kind != MotionKind::Linear) return out.fail("FOLLOW is for linear motions");
+            if (d < 0 || motions[static_cast<std::size_t>(d)].kind != MotionKind::Circular)
+                return out.fail("No circular motion named " + *follow);
+            m.follow = motions[static_cast<std::size_t>(d)].name;
+        } else if (follow) {
+            m.follow.clear();
+        }
+        if (radius) m.radius = *radius;
         if (origin) {
             m.origin = *origin;
             if (!each) m.eachCentre = false;

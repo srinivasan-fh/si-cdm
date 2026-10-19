@@ -203,6 +203,9 @@ Json McpServer::toolDefinitions() {
         p.set("mode", enumProp({"continuous", "loop", "oscillate", "once"}, "Behaviour at the end of the range"));
         p.set("start", prop("number", "Delay before it starts (s)"));
         p.set("enabled", prop("boolean", "Enable or disable the motion"));
+        p.set("follow", prop("string", "Linear: circular motion (wheel spin) that drives the travel, rolling without "
+                                       "slip; speed / range / mode then come from it. \"\" unlinks"));
+        p.set("radius", prop("number", "Linear with follow: wheel radius in mm (0 = from the wheel's size)"));
         tools.push(tool("create_motion",
                         "Add or update a circular or linear motion of bodies, played by the Simulation window.", p,
                         {"kind"}));
@@ -300,6 +303,7 @@ Json McpServer::sceneJson() const {
         jm.set("axis", vec3(m.axis)).set("origin", vec3(m.origin)).set("each_centre", m.eachCentre).set("speed", m.speed);
         jm.set("speed_unit", m.rateUnit()).set("range", m.range).set("mode", motionModeKey(m.mode));
         jm.set("start", m.start).set("enabled", m.enabled);
+        if (!m.follow.empty()) jm.set("follow", m.follow).set("radius", m.radius);
         motions.push(jm);
     }
     s.set("motions", motions);
@@ -495,6 +499,9 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["range"].isNumber()) line += " RANGE " + num(a["range"].asNumber());
         if (a["mode"].isString()) line += " MODE " + a["mode"].asString();
         if (a["start"].isNumber()) line += " START " + num(a["start"].asNumber());
+        if (a["follow"].isString())
+            line += " FOLLOW " + (a["follow"].asString().empty() ? std::string("NONE") : quote(a["follow"].asString()));
+        if (a["radius"].isNumber()) line += " RADIUS " + num(a["radius"].asNumber());
         if (a["bodies"].isArray() && a["bodies"].size() > 0) {
             line += " BODIES";
             for (const Json& b : a["bodies"].items()) line += " " + quote(b.asString() == "*" ? "ALL" : b.asString());
