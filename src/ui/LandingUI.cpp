@@ -324,7 +324,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (vc.open3D) cmd.mode = ViewMode::Model3D;
     if (vc.home) {
         cmd.home = true;
-        cmd.mode = ViewMode::Model3D;
+        if (is2D) cmd.mode = ViewMode::Model3D; // the Simulation window keeps its mode: it shares the 3D camera
     }
     cmd.fit = cmd.fit || vc.fit;
     cmd.toggleProjection = cmd.toggleProjection || vc.toggleProjection;
@@ -486,7 +486,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         }
         if (ImGui::IsItemClicked()) {
             cmd.home = true;
-            cmd.mode = ViewMode::Model3D;
+            if (st.mode == ViewMode::Drawing2D) cmd.mode = ViewMode::Model3D; // Simulation stays Simulation
         }
         const ImU32 ic = IM_COL32(210, 214, 222, 255);
         dl->AddTriangleFilled({c.x - 8, c.y - 1}, {c.x, c.y - 8}, {c.x + 8, c.y - 1}, ic);

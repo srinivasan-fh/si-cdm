@@ -1714,7 +1714,7 @@ void Application::zoomStep(float steps) { camera().zoom(steps); }
 void Application::home() {
     UiCommands c;
     c.home = true;
-    c.mode = ViewMode::Model3D;
+    if (m_uiState.mode == ViewMode::Drawing2D) c.mode = ViewMode::Model3D; // Simulation keeps its window
     handleCommands(c);
 }
 

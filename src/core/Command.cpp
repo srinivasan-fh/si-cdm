@@ -68,7 +68,7 @@ constexpr CommandSpec kCommands[] = {
     {"PLANE", "", "PLANE TOP|FRONT|RIGHT", "Active sketch plane"},
     {"ZOOM", "Z", "ZOOM E|IN|OUT", "Zoom extents (fit) or step in / out"},
     {"FIT", "ZE", "FIT", "Zoom to fit everything"},
-    {"HOME", "", "HOME", "Home view: 3D isometric, fit all"},
+    {"HOME", "", "HOME", "Home view: isometric, fit all (keeps the Simulation window; 2D opens 3D)"},
     {"ROLL", "", "ROLL deg | ROLL 0", "Roll the 3D view; 0 levels it"},
     {"ORTHO", "", "ORTHO", "Orthographic projection (3D)"},
     {"PERSP", "PERSPECTIVE", "PERSP", "Perspective projection (3D)"},
