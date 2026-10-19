@@ -106,7 +106,7 @@ parametric: they save as parameters and rebuild exactly when the project opens.
 
 | Category | Parts |
 | --- | --- |
-| Motors | **DC motor** (28 mm can, 3 mm shaft), **Stepper motor** (NEMA 17, 1.8° steps), **Servo motor** (standard servo, two-arm horn) |
+| Motors | **DC motor** (28 mm can, 3 mm shaft), **Stepper motor** (NEMA 17, 1.8° steps), **Servo motor** (standard servo, two-arm horn), **Electric car motor (Foot)** (foot-mounted traction motor: ribbed end shield, terminal box, keyed hollow-end shaft), **Electric car motor (Flange)** (ribbed flange-mount EV motor, lifting eyes, splined shaft) |
 | Gears | **Spur**, **Helical**, **Herringbone**, **Bevel**, **Internal ring**, **Worm**, **Worm wheel**: involute teeth, 20° pressure angle, module / teeth / face width / bore |
 | Linear gears | **Gear rack** |
 | Gear trains | **Gear pair**, **Rack and pinion**, **Planetary set** (sun, 3 planets, carrier, ring), **Worm drive**: meshed, with linked motions |
@@ -114,7 +114,10 @@ parametric: they save as parameters and rebuild exactly when the project opens.
 - **Motors** are two bodies, a fixed housing and a rotor (shaft with coupler, or servo horn), and come
   with a **360° circular motion** on the rotor (speed in rpm, Loop 0–360°). Steppers move in 1.8°
   steps; a servo with a sweep under 360° swings back and forth.
-- **Shafts:** DC and stepper motors have *Shafts* (None / Single / Dual), *Shaft length*, *Rear shaft*
+- **Electric car motors** lie on their side: the shaft and the 360° drive run along +X at the shaft
+  height (170 / 120 mm at size 1). Shaft end: plain or with a flange coupling (foot motor), splined
+  or plain (flange motor).
+- **Shafts:** DC, stepper and electric car motors have *Shafts* (None / Single / Dual), *Shaft length*, *Rear shaft*
   length (dual), *Shaft diameter* and *Shaft end* (plain or with a coupler). Servos choose a *Horn*
   (single arm, double arm, cross, disc). Set them before inserting, or afterwards: select the motor and
   edit *Properties → Shaft* (live), or `PARAM "Stepper Motor 1" SHAFTS DUAL REAR_LENGTH 20`. Gears and
@@ -131,7 +134,7 @@ parametric: they save as parameters and rebuild exactly when the project opens.
 PART                              (lists the library)
 PART DCMOTOR SIZE 1.5 RPM 60      PART STEPPER @100,0,0 RPM 30 STEP 1.8      PART SERVO NAME Pan SWEEP 180
 PART STEPPER SHAFTS DUAL SHAFT_LENGTH 30 REAR_LENGTH 20 SHAFT_DIA 8 FITTING PLAIN      PART SERVO HORN DISC
-PARAM "DC Motor 1" SHAFTS NONE      PARAM "Spur Gear 1" TEETH 32      PARAM "Stepper Motor 1"   (lists them)
+PART EVMOTOR SIZE 0.8 SHAFT_LENGTH 150      PART EVFLANGE SHAFTS DUAL FITTING SPLINED      PARAM "DC Motor 1" SHAFTS NONE      PARAM "Spur Gear 1" TEETH 32      PARAM "Stepper Motor 1"   (lists them)
 PART SPUR MODULE 2 TEETH 24 WIDTH 10 BORE 4      PART HELICAL TEETH 30 HELIX 20      PART RACK TEETH 40
 PART GEARPAIR TEETH1 16 TEETH2 48      PART PLANETARY SUN_TEETH 18 PLANET_TEETH 18      PART WORMDRIVE
 SCALE "DC Motor 1" 2      SCALE "Gear Pair 1 Driver" TO 1

@@ -847,7 +847,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                     if (other.component == b.component && other.kind == "motor_rotor") part = &other;
             const std::vector<LibraryParam> schema = partParams(part->kind, part->params);
             if (!schema.empty()) {
-                theme::caption(part->kind == "motor_rotor" ? (part->params.empty() || part->params[0] < 1.5f ? "Shaft" : "Horn")
+                theme::caption(part->kind == "motor_rotor" ? (!part->params.empty() && std::lround(part->params[0]) == 2 ? "Horn" : "Shaft")
                                                            : "Parameters");
                 std::vector<float> values = withDefaults(part->kind, part->params);
                 bool changed = false;
@@ -1412,7 +1412,20 @@ void drawLibraryIcon(ImDrawList* dl, const std::string& key, ImVec2 c, float r, 
         dl->AddRect({x0, y - h}, {x1, y + h}, col, 2.0f, 0, t);
         for (float x = x0 + h * 0.6f; x < x1 - h * 0.3f; x += h * 0.9f) dl->AddLine({x, y + h}, {x + h * 0.7f, y - h}, col, t);
     };
-    if (key == "dc_motor") {
+    if (key == "ev_flange_motor") { // ribbed drum with a flange face and splined shaft, side view
+        dl->AddRect({c.x - r * 0.95f, c.y - r * 0.55f}, {c.x + r * 0.35f, c.y + r * 0.6f}, col, 3.0f, 0, t);
+        for (float k : {-0.2f, 0.15f}) dl->AddLine({c.x - r * 0.85f, c.y + r * k}, {c.x + r * 0.25f, c.y + r * k}, col, 1.0f);
+        dl->AddRect({c.x + r * 0.35f, c.y - r * 0.68f}, {c.x + r * 0.48f, c.y + r * 0.72f}, col, 1.0f, 0, t);
+        dl->AddLine({c.x + r * 0.48f, c.y}, {c.x + r, c.y}, col, 3.4f);
+        dl->AddCircle({c.x - r * 0.65f, c.y - r * 0.72f}, r * 0.13f, col, 10, t);
+        dl->AddCircle({c.x + r * 0.1f, c.y - r * 0.72f}, r * 0.13f, col, 10, t);
+    } else if (key == "ev_motor") { // round frame on feet, terminal box, shaft to the right
+        dl->AddCircle({c.x - r * 0.2f, c.y + r * 0.05f}, r * 0.62f, col, 28, t);
+        dl->AddCircle({c.x - r * 0.2f, c.y + r * 0.05f}, r * 0.25f, col, 16, t);
+        dl->AddRect({c.x - r * 0.55f, c.y - r * 0.95f}, {c.x + r * 0.1f, c.y - r * 0.6f}, col, 1.0f, 0, t);
+        dl->AddLine({c.x - r * 0.75f, c.y + r * 0.8f}, {c.x + r * 0.35f, c.y + r * 0.8f}, col, 2.0f);
+        dl->AddLine({c.x + r * 0.05f, c.y + r * 0.05f}, {c.x + r, c.y + r * 0.05f}, col, 3.0f);
+    } else if (key == "dc_motor") {
         dl->AddRect({c.x - r * 0.75f, c.y - r * 0.55f}, {c.x + r * 0.45f, c.y + r * 0.55f}, col, r * 0.5f, 0, t);
         dl->AddLine({c.x + r * 0.45f, c.y}, {c.x + r, c.y}, col, 2.2f);
         dl->AddLine({c.x - r * 0.75f, c.y - r * 0.2f}, {c.x - r * 0.95f, c.y - r * 0.2f}, col, t);

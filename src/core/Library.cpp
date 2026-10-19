@@ -330,6 +330,208 @@ MeshData servoMotor() {
     return m;
 }
 
+// ---------------------------------------------------------------------------
+// Electric car (traction) motor: horizontal axis along +X at height kEvAxis,
+// standing on mounting feet at z = 0. Front end shield faces +X.
+
+constexpr float kEvAxis = 170.0f;   // shaft centre height
+constexpr float kEvFront = 132.0f;  // x of the front bearing seal face (shaft starts here)
+constexpr float kEvBack = -130.0f;  // x of the rear bearing cap
+
+// Cylinder / tube along +X from x0 to x1, centred on (y, z).
+MeshData cylX(float x0, float x1, float r, float y, float z, int seg = 64) {
+    MeshData m = primitives::cylinder({0, 0, 0}, r, x1 - x0, seg);
+    m.transform(translate({x0, y, z}) * rotateAxis({0, 1, 0}, kPi * 0.5f));
+    return m;
+}
+MeshData tubeX(float x0, float x1, float ro, float ri, float y, float z, int seg = 64) {
+    MeshData m = primitives::tube({0, 0, 0}, ro, ri, x1 - x0, seg);
+    m.transform(translate({x0, y, z}) * rotateAxis({0, 1, 0}, kPi * 0.5f));
+    return m;
+}
+// Small part on the end shield at polar angle a, radius r (in the YZ plane).
+Vec3 onShield(float x, float r, float a) { return {x, r * std::cos(a), kEvAxis + r * std::sin(a)}; }
+
+MeshData evMotor() {
+    const float h = kEvAxis;
+    MeshData m = cylX(-110.0f, 90.0f, 140.0f, 0, h, 96);            // stator frame
+    m.append(cylX(-122.0f, -110.0f, 132.0f, 0, h, 96));             // rear end cap
+    m.append(cylX(kEvBack, -122.0f, 46.0f, 0, h, 48));              // rear bearing cap
+    m.append(cylX(90.0f, 100.0f, 146.0f, 0, h, 96));                // front flange
+    m.append(cylX(100.0f, 110.0f, 132.0f, 0, h, 96));               // front end shield
+    m.append(tubeX(110.0f, 114.0f, 128.0f, 118.0f, 0, h, 96));      // shield rim
+    for (int i = 0; i < 8; ++i) {                                   // cast ribs
+        MeshData rib = boxOf({110.0f, 44.0f, -4.0f}, {119.0f, 120.0f, 4.0f});
+        rib.transform(translate({0, 0, h}) * rotateAxis({1, 0, 0}, kPi * 0.25f * static_cast<float>(i) + kPi / 8.0f));
+        m.append(rib);
+    }
+    m.append(cylX(110.0f, 124.0f, 50.0f, 0, h, 64));                // bearing hub
+    for (int i = 0; i < 10; ++i) {                                  // hub bolt pattern
+        const Vec3 b = onShield(124.0f, 38.0f, 2.0f * kPi * static_cast<float>(i) / 10.0f);
+        m.append(cylX(b.x, b.x + 1.5f, 3.6f, b.y, b.z, 12));
+    }
+    m.append(cylX(124.0f, kEvFront, 30.0f, 0, h, 48));              // seal housing
+    for (int i = 0; i < 18; ++i) {                                  // flange bolt circle
+        const Vec3 b = onShield(100.0f, 139.0f, 2.0f * kPi * static_cast<float>(i) / 18.0f);
+        m.append(cylX(b.x, b.x + 3.0f, 4.2f, b.y, b.z, 12));
+    }
+    for (int i = 0; i < 12; ++i) {                                  // rear cap bolts
+        const Vec3 b = onShield(-126.0f, 126.0f, 2.0f * kPi * static_cast<float>(i) / 12.0f);
+        m.append(cylX(b.x, b.x + 4.0f, 3.6f, b.y, b.z, 12));
+    }
+    // Terminal box on top with three cable glands facing forward.
+    m.append(boxOf({-90.0f, -48.0f, h + 118.0f}, {10.0f, 48.0f, h + 178.0f}));
+    m.append(boxOf({-84.0f, -42.0f, h + 178.0f}, {4.0f, 42.0f, h + 184.0f}));  // lid
+    m.append(boxOf({-60.0f, -30.0f, h + 100.0f}, {-20.0f, 30.0f, h + 120.0f})); // plinth
+    for (float y : {-28.0f, 0.0f, 28.0f}) {
+        m.append(cylX(10.0f, 18.0f, 10.0f, y, h + 148.0f, 6));      // hex nut
+        m.append(cylX(18.0f, 30.0f, 7.5f, y, h + 148.0f, 24));      // gland body
+    }
+    // Coolant stubs on the side and a lifting lug at the front.
+    for (float x : {-40.0f, 30.0f}) {
+        MeshData pipe = primitives::cylinder({0, 0, 0}, 8.0f, 30.0f, 24);
+        pipe.transform(translate({x, -136.0f, h + 50.0f}) * rotateAxis({1, 0, 0}, kPi * 0.5f));
+        m.append(pipe);
+        MeshData barb = primitives::cylinder({0, 0, 0}, 9.5f, 5.0f, 24);
+        barb.transform(translate({x, -160.0f, h + 50.0f}) * rotateAxis({1, 0, 0}, kPi * 0.5f));
+        m.append(barb);
+    }
+    {
+        MeshData lug = boxOf({74.0f, -6.0f, -24.0f}, {92.0f, 6.0f, 26.0f});
+        lug.transform(translate({0, 0, h}) * rotateAxis({1, 0, 0}, kPi * 0.30f) * translate({0, 0, 140.0f}));
+        m.append(lug);
+    }
+    // Mounting feet with bolt bosses.
+    for (float side : {-1.0f, 1.0f}) {
+        const float y0 = side * 70.0f, y1 = side * 132.0f;
+        m.append(boxOf({-100.0f, std::min(y0, y1), 0.0f}, {80.0f, std::max(y0, y1), 16.0f}));
+        m.append(boxOf({-90.0f, std::min(side * 60.0f, side * 112.0f), 16.0f}, {70.0f, std::max(side * 60.0f, side * 112.0f), 70.0f}));
+        for (float x : {-80.0f, 60.0f}) m.append(cylinderAt(x, side * 118.0f, 7.0f, 16.0f, 19.0f, 16));
+    }
+    return m;
+}
+
+// Traction motor rotor: stepped output shaft with a key and a hollow (splined) end.
+MeshData evRotor(float len, int shafts, float rearLen, float dia, bool coupling) {
+    const float h = kEvAxis, r = dia * 0.5f;
+    if (shafts == 0) { // flush output flange with a drive dog
+        MeshData m = cylX(kEvFront, kEvFront + 6.0f, std::max(r * 1.1f, 20.0f), 0, h);
+        m.append(boxOf({kEvFront + 6.0f, -4.0f, h + r * 0.4f}, {kEvFront + 10.0f, 4.0f, h + std::max(r, 18.0f)}));
+        return m;
+    }
+    MeshData m = cylX(kEvFront, kEvFront + std::min(12.0f, len), r * 1.25f, 0, h); // collar
+    const float tip = kEvFront + len;
+    const float hollow = std::min(len * 0.3f, dia * 0.8f);
+    if (len > 12.0f) {
+        m.append(cylX(kEvFront + 12.0f, tip - hollow, r, 0, h));
+        m.append(tubeX(tip - hollow, tip, r, r * 0.55f, 0, h)); // splined bore at the end
+        const float kw = std::max(r * 0.28f, 1.0f);              // key along the shaft
+        m.append(boxOf({kEvFront + 18.0f, -kw, h + r - kw * 0.6f}, {std::max(kEvFront + 20.0f, tip - hollow - 6.0f), kw, h + r + kw}));
+    }
+    if (coupling && len > 12.0f) { // flange coupling on the shaft end
+        const float cr = r * 2.2f;
+        m.append(cylX(tip - std::min(len * 0.25f, r * 1.6f), tip, cr, 0, h, 64));
+        for (int i = 0; i < 6; ++i) {
+            const Vec3 b = onShield(tip, cr * 0.72f, 2.0f * kPi * static_cast<float>(i) / 6.0f);
+            m.append(cylX(b.x, b.x + 2.0f, std::max(r * 0.16f, 1.5f), b.y, b.z, 12));
+        }
+    }
+    if (shafts == 2) m.append(cylX(kEvBack - rearLen, kEvBack, r * 0.8f, 0, h));
+    return m;
+}
+
+// ---------------------------------------------------------------------------
+// Flange-mount electric car motor: ribbed cylindrical frame, axis along +X at
+// height kEv2Axis (resting on its ribs), splined output shaft.
+
+constexpr float kEv2Axis = 120.0f;
+constexpr float kEv2Front = 140.0f; // bearing seal face
+constexpr float kEv2Back = -197.0f; // rear of the connector housing
+
+MeshData eyeBolt(float x, float y, float zBase) {
+    MeshData m = cylinderAt(x, y, 12.0f, zBase - 2.0f, zBase + 4.0f, 24); // boss
+    m.append(cylinderAt(x, y, 4.5f, zBase + 4.0f, zBase + 12.0f, 16));    // stem
+    MeshData ring = primitives::torus({0, 0, 0}, 10.0f, 3.2f, 32, 12);    // eye, standing up
+    ring.transform(translate({x, y, zBase + 24.0f}) * rotateAxis({0, 1, 0}, kPi * 0.5f));
+    m.append(ring);
+    return m;
+}
+
+MeshData evFlangeMotor() {
+    const float h = kEv2Axis;
+    MeshData m = cylX(-160.0f, 120.0f, 112.0f, 0, h, 96);                     // frame
+    for (int i = 0; i < 8; ++i) {                                              // longitudinal ribs
+        MeshData rib = boxOf({-150.0f, -8.0f, 108.0f}, {112.0f, 8.0f, 116.0f});
+        rib.transform(translate({0, 0, h}) * rotateAxis({1, 0, 0}, kPi * 0.25f * static_cast<float>(i) + kPi / 8.0f));
+        m.append(rib);
+    }
+    m.append(cylX(112.0f, 124.0f, 116.0f, 0, h, 96));                         // front flange band
+    m.append(cylX(124.0f, 134.0f, 108.0f, 0, h, 96));                         // front face
+    m.append(tubeX(134.0f, 137.0f, 46.0f, 33.0f, 0, h, 64));                  // bearing seal ring
+    m.append(cylX(134.0f, 136.0f, 33.0f, 0, h, 48));
+    for (int i = 0; i < 8; ++i) {                                             // face bolt holes (rings)
+        const Vec3 b = onShield(134.0f, 90.0f, 2.0f * kPi * static_cast<float>(i) / 8.0f + kPi / 8.0f);
+        m.append(tubeX(b.x, b.x + 1.2f, 6.0f, 3.5f, b.y, b.z - kEvAxis + h, 16));
+    }
+    for (int i = 0; i < 4; ++i) {                                             // rim bosses with hex bolts
+        const float a = kPi * 0.5f * static_cast<float>(i) + kPi * 0.25f;
+        const Vec3 b{0.0f, 117.0f * std::cos(a), h + 117.0f * std::sin(a)};
+        m.append(cylX(112.0f, 134.0f, 9.0f, b.y, b.z, 20));
+        m.append(cylX(134.0f, 138.0f, 6.5f, b.y, b.z, 6));
+    }
+    m.append(cylX(-175.0f, -160.0f, 108.0f, 0, h, 96));                       // rear cap
+    m.append(cylX(kEv2Back, -175.0f, 78.0f, 0, h, 64));                       // connector housing
+    for (int i = 0; i < 6; ++i) {                                             // rear cap bolts
+        const float a = 2.0f * kPi * static_cast<float>(i) / 6.0f;
+        m.append(cylX(-179.0f, -175.0f, 5.0f, 96.0f * std::cos(a), h + 96.0f * std::sin(a), 6));
+    }
+    for (float y : {-30.0f, 0.0f, 30.0f}) m.append(cylX(kEv2Back - 10.0f, kEv2Back, 8.0f, y, h + 40.0f, 16)); // connectors
+    m.append(eyeBolt(-120.0f, 0.0f, h + 112.0f));                             // lifting eyes
+    m.append(eyeBolt(96.0f, 0.0f, h + 112.0f));
+    // Coolant elbow at the rear: out of the side, then up, with a cap.
+    {
+        MeshData out = primitives::cylinder({0, 0, 0}, 6.0f, 34.0f, 24);
+        out.transform(translate({-150.0f, -100.0f, h + 50.0f}) * rotateAxis({1, 0, 0}, kPi * 0.5f));
+        m.append(out);
+        m.append(primitives::sphere({-150.0f, -134.0f, h + 50.0f}, 6.0f, 16, 8));
+        m.append(cylinderAt(-150.0f, -134.0f, 6.0f, h + 50.0f, h + 92.0f, 24));
+        m.append(cylinderAt(-150.0f, -134.0f, 8.0f, h + 92.0f, h + 104.0f, 24)); // cap
+    }
+    return m;
+}
+
+// Splined output shaft (involute spline, 16 teeth) with a collar; plain is round.
+MeshData evSplineRotor(float len, int shafts, float rearLen, float dia, bool plain) {
+    const float h = kEv2Axis, r = dia * 0.5f;
+    auto alongX = [&](MeshData m, float x0) {
+        m.transform(translate({x0, 0, h}) * rotateAxis({0, 1, 0}, kPi * 0.5f));
+        return m;
+    };
+    if (shafts == 0) {
+        MeshData m = cylX(kEv2Front, kEv2Front + 5.0f, std::max(r * 1.2f, 16.0f), 0, h);
+        m.append(boxOf({kEv2Front + 5.0f, -3.0f, h + r * 0.3f}, {kEv2Front + 8.0f, 3.0f, h + std::max(r, 14.0f)}));
+        return m;
+    }
+    const float collar = std::min(10.0f, len * 0.3f);
+    MeshData m = cylX(kEv2Front, kEv2Front + collar, r * 1.35f, 0, h, 48);
+    const float shaftLen = len - collar;
+    if (shaftLen > 0.5f) {
+        if (plain) {
+            m.append(cylX(kEv2Front + collar, kEv2Front + len, r, 0, h, 48));
+        } else {
+            constexpr int kTeeth = 16;
+            const float module = dia / static_cast<float>(kTeeth + 2);
+            // Spline: gear-like profile, shallow teeth (addendum 0.8 m, dedendum 0.9 m).
+            const std::vector<Vec2> outline = gearOutline(module, kTeeth, 0.0f, 0.8f, 0.9f);
+            const float mark = std::min(0.6f, shaftLen * 0.1f); // centre boss at the tip, flush with the length
+            m.append(alongX(prismOf(outline, 0.0f, shaftLen - mark), kEv2Front + collar));
+            m.append(cylX(kEv2Front + len - mark, kEv2Front + len, r * 0.25f, 0, h, 16));
+        }
+    }
+    if (shafts == 2) m.append(cylX(kEv2Back - rearLen, kEv2Back, r * 0.8f, 0, h));
+    return m;
+}
+
 MeshData servoHorn(int horn) {
     MeshData m = cylinderAt(0, 0, 2.5f, 38.0f, 41.0f, 24); // spline
     m.append(cylinderAt(0, 0, 4.5f, 41.0f, 45.0f, 32));   // hub
@@ -360,8 +562,14 @@ MeshData servoHorn(int horn) {
 // flush output disc when the motor has no shaft.
 MeshData motorRotor(const std::vector<float>& raw) {
     const std::vector<float> p = withDefaults("motor_rotor", raw);
-    const int style = std::clamp(static_cast<int>(p[0]), 0, 2);
+    const int style = std::clamp(static_cast<int>(p[0]), 0, 4);
+    if (style == 4)
+        return evSplineRotor(std::max(p[1], 0.5f), std::clamp(static_cast<int>(std::lround(p[2])), 0, 2), std::max(p[3], 0.5f),
+                             std::max(p[4], 4.0f), p[5] >= 0.5f);
     if (style == 2) return servoHorn(static_cast<int>(p[1]));
+    if (style == 3)
+        return evRotor(std::max(p[1], 0.5f), std::clamp(static_cast<int>(std::lround(p[2])), 0, 2), std::max(p[3], 0.5f),
+                       std::max(p[4], 1.0f), p[5] >= 0.5f);
     const float front = style == 0 ? 32.0f : 42.0f; // face of the bearing boss
     const float back = style == 0 ? -3.0f : 0.0f;   // rear face of the housing
     const float len = std::max(p[1], 0.5f);
@@ -436,7 +644,7 @@ std::vector<Vec2> gearOutline(float m, int z, float phase, float addendum, float
 
 bool isLibraryKind(const std::string& k) {
     return k == "gear" || k == "ring_gear" || k == "bevel_gear" || k == "rack" || k == "worm" || k == "dc_motor" ||
-           k == "stepper_motor" || k == "servo_motor" || k == "motor_rotor";
+           k == "stepper_motor" || k == "servo_motor" || k == "ev_motor" || k == "ev_flange_motor" || k == "motor_rotor";
 }
 
 MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
@@ -449,6 +657,8 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "dc_motor") m = dcMotor();
     else if (k == "stepper_motor") m = stepperMotor();
     else if (k == "servo_motor") m = servoMotor();
+    else if (k == "ev_motor") m = evMotor();
+    else if (k == "ev_flange_motor") m = evFlangeMotor();
     else if (k == "motor_rotor") m = motorRotor(p);
     return m;
 }
@@ -464,7 +674,21 @@ std::vector<LibraryParam> partParams(const std::string& k, const std::vector<flo
     const LibraryParam bore{"bore", "Bore radius", 4.0f, 0.0f, 500.0f, "mm"};
     const LibraryParam phase{"phase", "Tooth phase", 0.0f, -360.0f, 360.0f, "deg"};
     if (k == "motor_rotor") {
-        const int style = p.empty() ? 0 : std::clamp(static_cast<int>(p[0]), 0, 2);
+        const int style = p.empty() ? 0 : std::clamp(static_cast<int>(p[0]), 0, 4);
+        if (style == 4)
+            return {fixed("style", 4.0f),
+                    {"shaft_length", "Shaft length", 70.0f, 1.0f, 2000.0f, "mm"},
+                    {"shafts", "Shafts", 1.0f, 0.0f, 2.0f, "", true, "None|Single|Dual"},
+                    {"rear_length", "Rear shaft", 40.0f, 1.0f, 2000.0f, "mm"},
+                    {"shaft_dia", "Shaft diameter", 35.0f, 8.0f, 120.0f, "mm"},
+                    {"fitting", "Shaft end", 0.0f, 0.0f, 1.0f, "", true, "Splined|Plain"}};
+        if (style == 3)
+            return {fixed("style", 3.0f),
+                    {"shaft_length", "Shaft length", 120.0f, 1.0f, 2000.0f, "mm"},
+                    {"shafts", "Shafts", 1.0f, 0.0f, 2.0f, "", true, "None|Single|Dual"},
+                    {"rear_length", "Rear shaft", 60.0f, 1.0f, 2000.0f, "mm"},
+                    {"shaft_dia", "Shaft diameter", 50.0f, 10.0f, 120.0f, "mm"},
+                    {"fitting", "Shaft end", 0.0f, 0.0f, 1.0f, "", true, "Plain|Coupling"}};
         if (style == 2)
             return {fixed("style", 2.0f), {"horn", "Horn", 1.0f, 0.0f, 3.0f, "", true, "Single arm|Double arm|Cross|Disc"}};
         const bool dc = style == 0;
@@ -522,6 +746,18 @@ const std::vector<LibraryItem>& libraryItems() {
             {"servo_motor", "SERVO", "Servo Motor", "Motors", "Standard servo with a horn; turns 360 deg",
              {size, rpm(60.0f), {"sweep", "Sweep", 360.0f, 1.0f, 360.0f, "deg"},
               {"horn", "Horn", 1.0f, 0.0f, 3.0f, "", true, "Single arm|Double arm|Cross|Disc"}}},
+            {"ev_motor", "EVMOTOR EV TRACTION TRACTIONMOTOR ELECTRICCAR CARMOTOR FOOTMOTOR", "Electric Car Motor (Foot)",
+             "Motors", "Foot-mounted traction motor, terminal box, keyed shaft; spins 360 deg",
+             {size, rpm(120.0f), shafts, {"shaft_length", "Shaft length", 120.0f, 1.0f, 2000.0f, "mm"},
+              {"rear_length", "Rear shaft", 60.0f, 1.0f, 2000.0f, "mm"},
+              {"shaft_dia", "Shaft diameter", 50.0f, 10.0f, 120.0f, "mm"},
+              {"fitting", "Shaft end", 0.0f, 0.0f, 1.0f, "", true, "Plain|Coupling"}}},
+            {"ev_flange_motor", "EVFLANGE EVMOTOR2 FLANGEMOTOR SPLINEMOTOR ELECTRICCAR2", "Electric Car Motor (Flange)",
+             "Motors", "Ribbed flange-mount EV motor, lifting eyes, splined shaft; spins 360 deg",
+             {size, rpm(120.0f), shafts, {"shaft_length", "Shaft length", 70.0f, 1.0f, 2000.0f, "mm"},
+              {"rear_length", "Rear shaft", 40.0f, 1.0f, 2000.0f, "mm"},
+              {"shaft_dia", "Shaft diameter", 35.0f, 8.0f, 120.0f, "mm"},
+              {"fitting", "Shaft end", 0.0f, 0.0f, 1.0f, "", true, "Splined|Plain"}}},
             {"spur_gear", "SPUR GEAR", "Spur Gear", "Gears", "Straight involute teeth, 20 deg pressure angle",
              {module, teeth(20.0f), width, bore}},
             {"helical_gear", "HELICAL", "Helical Gear", "Gears", "Teeth on a helix: smoother, quieter mesh",
@@ -591,6 +827,7 @@ const Vec3 kBlack{0.17f, 0.18f, 0.20f};
 const Vec3 kBrass{0.80f, 0.64f, 0.30f};
 const Vec3 kGearBlue{0.42f, 0.58f, 0.80f};
 const Vec3 kServoBlue{0.20f, 0.36f, 0.72f};
+const Vec3 kCastAluminium{0.80f, 0.81f, 0.83f};
 
 Body part(const std::string& name, const std::string& kind, std::vector<float> params, const Vec3& at, Vec3 color,
           const std::string& component, float scale = 1.0f) {
@@ -648,16 +885,20 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
     const std::string rotor = name + " Rotor";
 
     // Motors: housing + rotor, 360 deg circular motion on the rotor.
-    if (key == "dc_motor" || key == "stepper_motor" || key == "servo_motor") {
+    if (key == "dc_motor" || key == "stepper_motor" || key == "servo_motor" || key == "ev_motor" || key == "ev_flange_motor") {
         const float s = v("size");
-        const int style = key == "dc_motor" ? 0 : key == "stepper_motor" ? 1 : 2;
-        const Vec3 housingColor = style == 0 ? kSteel : style == 1 ? kBlack : kServoBlue;
+        const int style = key == "dc_motor" ? 0 : key == "stepper_motor" ? 1 : key == "servo_motor" ? 2 : key == "ev_motor" ? 3 : 4;
+        const Vec3 housingColor = style == 0 ? kSteel : style == 1 ? kBlack : style == 2 ? kServoBlue : kCastAluminium;
+        const float axisHeight = style == 3 ? kEvAxis : kEv2Axis; // traction motors lie along +X
         c.bodies.push_back(part(name, key, {}, o, housingColor, name, s));
         std::vector<float> rotorParams{static_cast<float>(style)};
         if (style == 2) rotorParams.push_back(v("horn"));
         else rotorParams.insert(rotorParams.end(), {v("shaft_length"), v("shafts"), v("rear_length"), v("shaft_dia"), v("fitting")});
-        c.bodies.push_back(part(rotor, "motor_rotor", rotorParams, o, style == 2 ? Vec3{0.92f, 0.92f, 0.90f} : kSteel, name, s));
-        Motion m = spin(name + " Drive", {rotor}, o, v("rpm"));
+        const Vec3 rotorColor = style == 2 ? Vec3{0.92f, 0.92f, 0.90f} : style == 3 ? kBlack : kSteel;
+        c.bodies.push_back(part(rotor, "motor_rotor", rotorParams, o, rotorColor, name, s));
+        // The traction motor turns about its horizontal axis (+X) at the shaft height.
+        Motion m = style >= 3 ? spin(name + " Drive", {rotor}, o + Vec3{0, 0, axisHeight * s}, v("rpm"), {1, 0, 0})
+                              : spin(name + " Drive", {rotor}, o, v("rpm"));
         if (style == 1) m.step = v("step");
         if (style == 2 && v("sweep") < 359.5f) { // positional servo: back and forth over the sweep
             m.range = v("sweep");

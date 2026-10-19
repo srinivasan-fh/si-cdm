@@ -300,3 +300,36 @@ TEST_CASE("PART takes shaft options; PARAM edits them after placing") {
     REQUIRE(lr);
     CHECK_NEAR(lr->bounds().max.z, 52, 1e-3);
 }
+
+TEST_CASE("electric car motors: horizontal shaft axis, shaft options, scaling") {
+    Document d;
+    REQUIRE(run(d, "PART EVMOTOR NAME Foot @0,0,0").ok);
+    REQUIRE(run(d, "PART EVFLANGE NAME Flange @0,500,0 SHAFTS DUAL REAR_LENGTH 50").ok);
+    const Motion* foot = motion(d.scene, "Foot Drive");
+    const Motion* flange = motion(d.scene, "Flange Drive");
+    REQUIRE(foot && flange);
+    CHECK_NEAR(foot->axis.x, 1, 1e-6);   // turns about +X
+    CHECK_NEAR(foot->origin.z, 170, 1e-3); // at the shaft height
+    CHECK_NEAR(flange->origin.z, 120, 1e-3);
+    CHECK(foot->mode == MotionMode::Loop && foot->range == 360.0f);
+    const Body* fh = body(d.scene, "Foot");
+    REQUIRE(fh);
+    CHECK_NEAR(fh->bounds().min.z, 0, 1e-3); // stands on its feet
+    const Body* fr = body(d.scene, "Foot Rotor");
+    REQUIRE(fr);
+    CHECK_NEAR(fr->bounds().max.x, 132 + 120, 1e-2); // 120 mm shaft from the seal face
+    const Body* sr = body(d.scene, "Flange Rotor");
+    REQUIRE(sr);
+    CHECK_NEAR(sr->bounds().min.x, -197 - 50, 1e-2); // rear shaft
+    CHECK_NEAR(sr->bounds().max.x, 140 + 70, 1e-2);
+    // Splined vs plain end, editable afterwards.
+    const std::size_t splined = sr->mesh.indices.size();
+    REQUIRE(run(d, "PARAM Flange FITTING PLAIN SHAFT_LENGTH 90").ok);
+    sr = body(d.scene, "Flange Rotor");
+    CHECK(sr->mesh.indices.size() < splined);
+    CHECK_NEAR(sr->bounds().max.x, 140 + 90, 1e-2);
+    // Scaling keeps the drive on the shaft axis.
+    REQUIRE(run(d, "SCALE Foot 0.5").ok);
+    CHECK_NEAR(motion(d.scene, "Foot Drive")->origin.z, 85, 1e-3);
+    CHECK_NEAR(body(d.scene, "Foot Rotor")->bounds().max.x, 0.5 * (132 + 120), 1e-2);
+}

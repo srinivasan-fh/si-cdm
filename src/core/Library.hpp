@@ -25,7 +25,9 @@ struct Body;
 //   rack:          module teeth width height                   (teeth along X, pointing +Y, pitch line y = 0)
 //   worm:          module starts length phase                  (axis along X)
 //   dc_motor, stepper_motor, servo_motor: none (housing, shaft along +Z through the origin)
-//   motor_rotor:   style (0 DC, 1 stepper): style shaft_length shafts rear_length shaft_dia fitting
+//   ev_motor:      none (foot-mounted traction motor, shaft along +X at z = 170, feet at z = 0)
+//   ev_flange_motor: none (flange-mount traction motor, shaft along +X at z = 120)
+//   motor_rotor:   style (0 DC, 1 stepper, 3 / 4 traction): style shaft_length shafts rear_length shaft_dia fitting
 //                  style 2 (servo): style horn            (see partParams())
 bool isLibraryKind(const std::string& kind);
 MeshData buildLibraryPart(const std::string& kind, const std::vector<float>& params);
