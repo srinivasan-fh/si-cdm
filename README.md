@@ -20,6 +20,14 @@ Requires CMake 3.24+ (`brew install cmake`) and, on macOS, Xcode 15+.
 
 In Xcode, select the **sicdm** scheme and press ⌘R.
 
+## Interface
+
+Dark graphite workbench in the style of AutoCAD, Maya and Photoshop: Inter for the interface,
+JetBrains Mono for the command line and numeric readouts (both SIL OFL, embedded in the app from
+`resources/fonts`), 22 pt controls on an 8 pt spacing grid, one accent blue for selection and the
+active window. Text is rasterised at the display's pixel density, so it is sharp on Retina screens.
+Colours, fonts and spacing live in `src/ui/Theme.hpp`.
+
 ## Files in tabs
 
 Every open file has its own tab at the top of the canvas, AutoCAD style: `☰` (file menu and the list

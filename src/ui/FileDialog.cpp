@@ -1,5 +1,7 @@
 #include "ui/FileDialog.hpp"
 
+#include "ui/Theme.hpp"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -85,7 +87,12 @@ std::optional<std::string> FileDialog::draw() {
     ImGui::SetNextWindowPos({mv->GetCenter().x, mv->GetCenter().y}, ImGuiCond_Appearing, {0.5f, 0.5f});
     bool keepOpen = true;
     const std::string label = m_title + id;
-    if (!ImGui::BeginPopupModal(label.c_str(), &keepOpen, ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {14, 12});
+    const bool shown = ImGui::BeginPopupModal(label.c_str(), &keepOpen, ImGuiWindowFlags_NoSavedSettings |
+                                                                             ImGuiWindowFlags_NoScrollbar |
+                                                                             ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    if (!shown) {
         m_open = ImGui::IsPopupOpen(id);
         if (!keepOpen) m_open = false;
         return std::nullopt;
@@ -109,13 +116,41 @@ std::optional<std::string> FileDialog::draw() {
         }
     }
 
-    // Listing.
-    const float footer = ImGui::GetFrameHeightWithSpacing() * 2.6f;
-    if (ImGui::BeginChild("##list", {0, -footer}, ImGuiChildFlags_Borders)) {
+    // Listing: folders first, with folder / document icons.
+    const float footer = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(theme::kField));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {4, 4});
+    const bool listShown = ImGui::BeginChild("##list", {0, -footer}, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    constexpr float kRow = 24.0f;
+    auto row = [&](const std::string& name, bool folder, bool selected) {
+        const bool clicked =
+            ImGui::Selectable(("##" + name).c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick, {0, kRow});
+        const ImVec2 lo = ImGui::GetItemRectMin();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const float cy = lo.y + kRow * 0.5f;
+        const ImVec2 o{lo.x + 8, cy - 6};
+        if (folder) { // folder: tab + body
+            dl->AddRectFilled({o.x, o.y}, {o.x + 6, o.y + 3}, theme::kWarning, 1.0f);
+            dl->AddRectFilled({o.x, o.y + 2}, {o.x + 15, o.y + 12}, theme::kWarning, 2.0f);
+        } else { // document with a folded corner
+            const ImU32 c = theme::kTextDim;
+            dl->AddLine({o.x + 2, o.y}, {o.x + 9, o.y}, c);
+            dl->AddLine({o.x + 9, o.y}, {o.x + 13, o.y + 4}, c);
+            dl->AddLine({o.x + 13, o.y + 4}, {o.x + 13, o.y + 13}, c);
+            dl->AddLine({o.x + 13, o.y + 13}, {o.x + 2, o.y + 13}, c);
+            dl->AddLine({o.x + 2, o.y + 13}, {o.x + 2, o.y}, c);
+            dl->AddLine({o.x + 9, o.y}, {o.x + 9, o.y + 4}, c);
+            dl->AddLine({o.x + 9, o.y + 4}, {o.x + 13, o.y + 4}, c);
+        }
+        dl->AddText({lo.x + 32, cy - ImGui::GetFontSize() * 0.5f}, theme::kText, name.c_str());
+        return clicked;
+    };
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {8, 0});
+    if (listShown) {
         for (const std::string& d : m_dirs) {
-            const std::string row = "[dir]  " + d;
-            if (ImGui::Selectable(row.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) &&
-                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            if (row(d, true, false) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 m_dir = (fs::path(m_dir) / d).string();
                 refresh();
                 break;
@@ -123,21 +158,22 @@ std::optional<std::string> FileDialog::draw() {
         }
         for (const std::string& f : m_files) {
             const bool sel = f == m_name;
-            if (ImGui::Selectable(f.c_str(), sel, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (row(f, false, sel)) {
                 copyTo(m_name, sizeof(m_name), f);
                 m_confirmOverwrite = false;
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && m_mode == Mode::Open)
                     result = (fs::path(m_dir) / f).string();
             }
         }
-        if (m_dirs.empty() && m_files.empty()) ImGui::TextDisabled("(empty)");
+        if (m_dirs.empty() && m_files.empty()) ImGui::TextDisabled("  Empty folder");
     }
+    ImGui::PopStyleVar();
     ImGui::EndChild();
 
     // File name + actions.
     std::string filter;
     for (const std::string& e : m_extensions) filter += (filter.empty() ? "" : " ") + e;
-    ImGui::SetNextItemWidth(-240);
+    ImGui::SetNextItemWidth(-ImGui::CalcTextSize(filter.empty() ? "All files" : filter.c_str()).x - 16.0f);
     if (m_focusName) {
         ImGui::SetKeyboardFocusHere();
         m_focusName = false;
@@ -146,14 +182,28 @@ std::optional<std::string> FileDialog::draw() {
                                                 ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
     ImGui::TextDisabled("%s", filter.empty() ? "All files" : filter.c_str());
-    if (!m_error.empty()) ImGui::TextColored({0.95f, 0.45f, 0.4f, 1}, "%s", m_error.c_str());
-    else if (m_confirmOverwrite) ImGui::TextColored({0.95f, 0.70f, 0.35f, 1}, "File exists. Click Save again to replace it.");
-    else ImGui::TextDisabled("%s", m_dir.c_str());
-
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 200);
-    const bool ok = ImGui::Button(m_mode == Mode::Open ? "Open" : "Save", {90, 0});
+    // Message on the left, Cancel + primary action on the right (one row).
+    constexpr float kButton = 96.0f;
+    const float buttonsX = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - kButton * 2.0f -
+                           ImGui::GetStyle().ItemSpacing.x;
+    ImGui::AlignTextToFramePadding();
+    {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::PushClipRect(p, {ImGui::GetWindowPos().x + buttonsX - 8.0f, p.y + ImGui::GetFrameHeight()}, true);
+        theme::ScopedFont small(theme::Font::Small);
+        if (!m_error.empty()) ImGui::TextColored(theme::vec(theme::kError), "%s", m_error.c_str());
+        else if (m_confirmOverwrite)
+            ImGui::TextColored(theme::vec(theme::kWarning), "File exists. Click Save again to replace it.");
+        else ImGui::TextColored(theme::vec(theme::kTextFaint), "%s", m_dir.c_str());
+        ImGui::PopClipRect();
+    }
+    ImGui::SameLine(buttonsX);
+    const bool cancel = ImGui::Button("Cancel", {kButton, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape);
     ImGui::SameLine();
-    const bool cancel = ImGui::Button("Cancel", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(theme::kAccent));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(theme::kAccentHover));
+    const bool ok = ImGui::Button(m_mode == Mode::Open ? "Open" : "Save", {kButton, 0});
+    ImGui::PopStyleColor(2);
 
     if ((ok || enter) && !result) {
         std::string name = m_name;

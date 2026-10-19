@@ -60,6 +60,8 @@ sicdm_set_compile_options(sicdm_mcp)
 # ---------------------------------------------------------------------------
 if(SICDM_BUILD_APP)
     include(Dependencies)
+    include(EmbedFonts)
+    sicdm_embed_fonts(SICDM_FONT_SOURCE)
 
     set(SICDM_APP_SOURCES
         src/main.cpp
@@ -72,13 +74,14 @@ if(SICDM_BUILD_APP)
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
         src/ui/ToolIcons.cpp
+        src/ui/Theme.cpp
         src/ui/ViewCube.cpp
     )
 
     if(APPLE)
         set(SICDM_BUNDLE_NAME "SI CDM")
         set(SICDM_BUNDLE_ID "com.sicdm.workbench")
-        add_executable(sicdm MACOSX_BUNDLE ${SICDM_APP_SOURCES})
+        add_executable(sicdm MACOSX_BUNDLE ${SICDM_APP_SOURCES} ${SICDM_FONT_SOURCE})
         set_target_properties(sicdm PROPERTIES
             OUTPUT_NAME "SICDM"
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/Info.plist.in"
@@ -95,7 +98,7 @@ if(SICDM_BUILD_APP)
             XCODE_GENERATE_SCHEME ON
         )
     else()
-        add_executable(sicdm ${SICDM_APP_SOURCES})
+        add_executable(sicdm ${SICDM_APP_SOURCES} ${SICDM_FONT_SOURCE})
     endif()
 
     target_compile_definitions(sicdm PRIVATE SICDM_VERSION="${PROJECT_VERSION}")
@@ -105,6 +108,7 @@ if(SICDM_BUILD_APP)
 
     if(CMAKE_GENERATOR STREQUAL "Xcode")
         source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src PREFIX "Sources" FILES ${SICDM_APP_SOURCES})
+        source_group("Generated" FILES ${SICDM_FONT_SOURCE})
     endif()
 endif()
 

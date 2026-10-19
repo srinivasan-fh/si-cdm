@@ -1,5 +1,7 @@
 #include "ui/Toolbox.hpp"
 
+#include "ui/Theme.hpp"
+
 #include "ui/ToolIcons.hpp"
 
 #include <imgui.h>
@@ -10,7 +12,7 @@ namespace {
 
 constexpr float kSlot = 32.0f;
 constexpr float kGap = 2.0f;
-constexpr float kPad = 5.0f;
+constexpr float kPad = 6.0f;
 constexpr double kLongPress = 0.4; // seconds before a held slot opens its flyout
 
 ImU32 iconColor(ToolId id, bool active) {
@@ -74,17 +76,34 @@ float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {kPad, kPad});
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {kGap, kGap});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
     ImGui::Begin("##toolbox", nullptr, flags);
+    {
+        // Hairline between the rail and the canvas / panel.
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        ImGui::GetWindowDrawList()->AddLine({wp.x + ws.x - 1, wp.y}, {wp.x + ws.x - 1, wp.y + ws.y}, theme::kBorder);
+    }
 
-    // Header: expand / collapse between one and two columns.
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {0, 0});
-    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
-    if (ImGui::Button(m_twoColumns ? "<<" : ">>", {width - kPad * 2.0f, 14.0f})) m_twoColumns = !m_twoColumns;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip(m_twoColumns ? "Single-column tools" : "Two-column tools");
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
+    // Header: expand / collapse between one and two columns (double chevron, like Photoshop).
+    {
+        ImGui::InvisibleButton("##columns", {width - kPad * 2.0f, 16.0f});
+        const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+        const bool hov = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) m_twoColumns = !m_twoColumns;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (hov) dl->AddRectFilled(lo, hi, theme::kHover, 3.0f);
+        const ImU32 c = hov ? theme::kText : theme::kTextDim;
+        const float cx = (lo.x + hi.x) * 0.5f, cy = (lo.y + hi.y) * 0.5f;
+        const float d = m_twoColumns ? 1.0f : -1.0f; // << collapses, >> expands
+        for (float off : {-3.5f, 2.5f}) {
+            const float x = cx + off * d;
+            dl->AddLine({x + 2.5f * d, cy - 3.5f}, {x - 1.0f * d, cy}, c, 1.4f);
+            dl->AddLine({x - 1.0f * d, cy}, {x + 2.5f * d, cy + 3.5f}, c, 1.4f);
+        }
+        if (hov) ImGui::SetTooltip(m_twoColumns ? "Single-column tools" : "Two-column tools");
+    }
 
     // Model panel toggle: a tree icon that docks the panel beside the rail.
     {
@@ -93,8 +112,8 @@ float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen) {
         const bool hovered = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked()) panelOpen = !panelOpen;
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        if (panelOpen) dl->AddRectFilled(lo, hi, IM_COL32(52, 92, 150, 255), 4.0f);
-        else if (hovered) dl->AddRectFilled(lo, hi, IM_COL32(62, 66, 76, 255), 4.0f);
+        if (panelOpen) dl->AddRectFilled(lo, hi, theme::kAccent, 4.0f);
+        else if (hovered) dl->AddRectFilled(lo, hi, theme::kHover, 4.0f);
         const ImU32 c = panelOpen ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 210, 218, 255);
         const ImVec2 o{(lo.x + hi.x) * 0.5f - 7.0f, (lo.y + hi.y) * 0.5f - 6.0f};
         // Root node + two indented children.
@@ -116,7 +135,7 @@ float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen) {
             ImGui::Dummy({width - kPad * 2.0f, 5.0f});
             const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
             const float y = (a.y + b.y) * 0.5f;
-            ImGui::GetWindowDrawList()->AddLine({a.x + 2, y}, {b.x - 2, y}, IM_COL32(80, 86, 96, 255), 1.0f);
+            ImGui::GetWindowDrawList()->AddLine({a.x + 4, y}, {b.x - 4, y}, theme::kLine, 1.0f);
         }
         if (col > 0) ImGui::SameLine();
         drawSlot(static_cast<int>(g), kSlot);
@@ -124,7 +143,7 @@ float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen) {
     }
 
     ImGui::End();
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleVar(4);
     return width;
 }
 
@@ -139,8 +158,8 @@ void Toolbox::drawSlot(int gi, float size) {
     const bool hovered = ImGui::IsItemHovered();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (isActive) dl->AddRectFilled(lo, hi, IM_COL32(52, 92, 150, 255), 4.0f);
-    else if (hovered) dl->AddRectFilled(lo, hi, IM_COL32(62, 66, 76, 255), 4.0f);
+    if (isActive) dl->AddRectFilled(lo, hi, theme::kAccent, 4.0f);
+    else if (hovered) dl->AddRectFilled(lo, hi, theme::kHover, 4.0f);
     const bool dimmed = m_drawing2D && shown == ToolId::Orbit;
     drawToolIcon(dl, shown, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, size * 0.56f,
                  dimmed ? IM_COL32(95, 100, 110, 255) : iconColor(shown, isActive));
@@ -178,8 +197,8 @@ void Toolbox::drawSlot(int gi, float size) {
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
         ImGui::TextDisabled("%s", info.description);
         ImGui::PopTextWrapPos();
-        if (!info.available) ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "Planned for a later milestone");
-        if (dimmed) ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "3D window only");
+        if (!info.available) ImGui::TextColored(theme::vec(theme::kWarning), "Planned for a later milestone");
+        if (dimmed) ImGui::TextColored(theme::vec(theme::kWarning), "3D window only");
         if (hasFlyout) ImGui::TextDisabled("Right-click or hold for %zu more", group.tools.size() - 1);
         ImGui::EndTooltip();
     }
@@ -193,8 +212,7 @@ void Toolbox::drawSlot(int gi, float size) {
 void Toolbox::drawFlyout(int gi) {
     if (!ImGui::BeginPopup("flyout")) return;
     const ToolGroup& group = toolGroups()[static_cast<std::size_t>(gi)];
-    ImGui::TextDisabled("%s", categoryName(group.category));
-    ImGui::Separator();
+    theme::caption(categoryName(group.category));
 
     constexpr float rowH = 26.0f, rowW = 250.0f;
     for (std::size_t i = 0; i < group.tools.size(); ++i) {
@@ -208,18 +226,18 @@ void Toolbox::drawFlyout(int gi) {
         const ImVec2 lo = ImGui::GetItemRectMin();
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const bool current = static_cast<int>(i) == m_current[static_cast<std::size_t>(gi)];
-        if (current) dl->AddRectFilled({lo.x - 4, lo.y + 6}, {lo.x - 1, lo.y + rowH - 6}, IM_COL32(90, 160, 255, 255));
+        if (current) dl->AddRectFilled({lo.x - 4, lo.y + 6}, {lo.x - 1, lo.y + rowH - 6}, theme::kAccentText);
         drawToolIcon(dl, id, {lo.x + 13, lo.y + rowH * 0.5f}, 18.0f, iconColor(id, false));
         const float ty = lo.y + (rowH - ImGui::GetFontSize()) * 0.5f;
-        dl->AddText({lo.x + 32, ty}, info.available ? IM_COL32(225, 228, 234, 255) : IM_COL32(150, 154, 162, 255),
+        dl->AddText({lo.x + 32, ty}, info.available ? theme::kText : theme::kTextFaint,
                     info.name);
-        if (info.shortcut[0]) dl->AddText({lo.x + rowW - 16, ty}, IM_COL32(140, 145, 155, 255), info.shortcut);
+        if (info.shortcut[0]) dl->AddText({lo.x + rowW - 16, ty}, theme::kTextDim, info.shortcut);
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
             ImGui::TextUnformatted(info.description);
             ImGui::PopTextWrapPos();
-            if (!info.available) ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "Planned for a later milestone");
+            if (!info.available) ImGui::TextColored(theme::vec(theme::kWarning), "Planned for a later milestone");
             ImGui::EndTooltip();
         }
         ImGui::PopID();

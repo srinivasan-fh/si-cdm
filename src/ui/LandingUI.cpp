@@ -1,6 +1,7 @@
 #include "ui/LandingUI.hpp"
 
 #include "core/Command.hpp"
+#include "ui/Theme.hpp"
 #include "ui/ToolIcons.hpp"
 
 #include <filesystem>
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 
 namespace sicdm {
@@ -17,7 +19,7 @@ namespace sicdm {
 namespace {
 
 constexpr float kRulerSize = 20.0f;
-constexpr ImU32 kAccent = IM_COL32(52, 92, 150, 255);
+constexpr ImU32 kAccent = theme::kAccent;
 
 const char* displayModeLabel(DisplayMode m) {
     switch (m) {
@@ -57,19 +59,75 @@ const char* shortPlaneName(SketchPlane p) {
     return "";
 }
 
-// One half of the 2D / 3D segmented switch. Returns true when clicked.
-bool segment(const char* label, bool active, float width, ImDrawFlags corners, void (*icon)(ImDrawList*, ImVec2, ImU32)) {
+// Visibility toggle drawn as an eye (open / closed), like the layer lists of DCC tools.
+bool eyeToggle(const char* id, bool& visible) {
+    const float h = ImGui::GetTextLineHeight();
+    ImGui::InvisibleButton(id, {h + 4, h});
+    const bool clicked = ImGui::IsItemClicked();
+    if (clicked) visible = !visible;
+    const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+    const ImVec2 c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f};
+    const bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 col = visible ? (hov ? theme::kText : theme::kTextDim) : (hov ? theme::kTextDim : theme::kTextFaint);
+    if (visible) {
+        dl->PathArcTo({c.x, c.y + 4.5f}, 7.5f, 3.6f, 5.82f, 10); // upper lid
+        dl->PathArcTo({c.x, c.y - 4.5f}, 7.5f, 0.46f, 2.68f, 10); // lower lid
+        dl->PathStroke(col, ImDrawFlags_Closed, 1.3f);
+        dl->AddCircleFilled(c, 2.3f, col);
+    } else {
+        dl->PathArcTo({c.x, c.y - 4.5f}, 7.5f, 0.46f, 2.68f, 10); // closed lid
+        dl->PathStroke(col, 0, 1.3f);
+    }
+    if (hov) ImGui::SetTooltip(visible ? "Hide" : "Show");
+    return clicked;
+}
+
+// Label / value row of a property grid (label column in the dim colour).
+void propertyRow(const char* label, const char* fmt, ...) IM_FMTARGS(2);
+void propertyRow(const char* label, const char* fmt, ...) {
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::TextColored(theme::vec(theme::kTextDim), "%s", label);
+    ImGui::TableNextColumn();
+    va_list args;
+    va_start(args, fmt);
+    ImGui::TextV(fmt, args);
+    va_end(args);
+}
+
+bool beginPropertyGrid(const char* id) {
+    if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingFixedFit)) return false;
+    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, 82.0f);
+    ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+    return true;
+}
+
+// One part of the 2D / 3D / Simulation segmented switch. Returns true when clicked.
+bool segment(const char* label, bool active, ImDrawFlags corners, void (*icon)(ImDrawList*, ImVec2, ImU32)) {
     const float h = ImGui::GetFrameHeight();
+    const float width = 36.0f + ImGui::CalcTextSize(label).x + 14.0f; // icon gutter + label + padding
     ImGui::InvisibleButton(label, {width, h});
     const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
     const bool hovered = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImU32 bg = active ? kAccent : (hovered ? IM_COL32(58, 64, 76, 255) : IM_COL32(40, 44, 52, 255));
-    dl->AddRectFilled(lo, hi, bg, 5.0f, corners);
-    const ImU32 fg = active ? IM_COL32(255, 255, 255, 255) : IM_COL32(190, 195, 204, 255);
-    icon(dl, {lo.x + 16, (lo.y + hi.y) * 0.5f}, fg);
-    dl->AddText({lo.x + 30, lo.y + (h - ImGui::GetFontSize()) * 0.5f}, fg, label);
+    const ImU32 bg = active ? theme::kAccent : (hovered ? theme::kHover : theme::kPanelRaised);
+    dl->AddRectFilled(lo, hi, bg, 4.0f, corners);
+    const ImU32 fg = active ? IM_COL32(255, 255, 255, 255) : theme::kTextDim;
+    icon(dl, {lo.x + 20, (lo.y + hi.y) * 0.5f}, fg);
+    ImFont* f = active ? theme::font(theme::Font::Strong) : ImGui::GetFont();
+    dl->AddText(f, ImGui::GetFontSize(), {lo.x + 36, lo.y + (h - ImGui::GetFontSize()) * 0.5f}, active ? fg : theme::kText,
+                label);
     return ImGui::IsItemClicked();
+}
+
+// Thin vertical divider between groups of a bar.
+void barDivider(float height) {
+    ImGui::SameLine(0, 10);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddLine({p.x, p.y + 4}, {p.x, p.y + height - 4}, theme::kLine);
+    ImGui::Dummy({1, height});
+    ImGui::SameLine(0, 10);
 }
 
 void icon2D(ImDrawList* dl, ImVec2 c, ImU32 col) {
@@ -156,7 +214,16 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
 }
 
 void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st) {
-    if (!ImGui::BeginMainMenuBar()) return;
+    // 26 pt bar, menus with 24 pt rows (AutoCAD / Photoshop proportions).
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {10, (theme::kMenuBarHeight - ImGui::GetFontSize()) * 0.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {12, 8});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8, 8});
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 6.0f);
+    const bool open = ImGui::BeginMainMenuBar();
+    if (!open) {
+        ImGui::PopStyleVar(4);
+        return;
+    }
     m_menuHeight = ImGui::GetWindowSize().y;
     const bool is2D = st.mode == ViewMode::Drawing2D;
 
@@ -241,11 +308,15 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
 
-    const char* gpu = st.gpuName.c_str();
-    const float w = ImGui::CalcTextSize(gpu).x;
-    ImGui::SameLine(ImGui::GetWindowWidth() - w - ImGui::GetStyle().ItemSpacing.x * 2.0f);
-    ImGui::TextDisabled("%s", gpu);
+    {
+        theme::ScopedFont small(theme::Font::Small);
+        const char* gpu = st.gpuName.c_str();
+        const float w = ImGui::CalcTextSize(gpu).x;
+        ImGui::SameLine(ImGui::GetWindowWidth() - w - 14.0f);
+        ImGui::TextColored(theme::vec(theme::kTextFaint), "%s", gpu);
+    }
     ImGui::EndMainMenuBar();
+    ImGui::PopStyleVar(4);
 }
 
 void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st) {
@@ -258,8 +329,9 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
                                        ImGuiWindowFlags_AlwaysAutoResize;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8, 6});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {10, (theme::kOptionsBarHeight - ImGui::GetFrameHeight()) * 0.5f});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("##options", nullptr, flags);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float fh = ImGui::GetFrameHeight();
@@ -282,13 +354,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         dl->AddRectFilled({c.x - 6, c.y - 1}, {c.x + 6, c.y + 7}, ic);
         dl->AddRectFilled({c.x - 2, c.y + 2}, {c.x + 2, c.y + 7}, IM_COL32(28, 30, 36, 255));
     }
-    auto divider = [&] {
-        ImGui::SameLine();
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        dl->AddLine({p.x + 2, p.y + 3}, {p.x + 2, p.y + fh - 3}, IM_COL32(70, 76, 88, 255));
-        ImGui::Dummy({6, fh});
-        ImGui::SameLine();
-    };
+    auto divider = [&] { barDivider(fh); };
     divider();
 
     // Active tool.
@@ -366,15 +432,15 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, right - m_rightGroupWidth));
     const float groupStart = ImGui::GetCursorScreenPos().x;
     const bool isSim = st.mode == ViewMode::Simulation;
-    if (segment("2D Drawing", is2D, 118.0f, ImDrawFlags_RoundCornersLeft, icon2D) && !is2D) cmd.mode = ViewMode::Drawing2D;
+    if (segment("2D Drawing", is2D, ImDrawFlags_RoundCornersLeft, icon2D) && !is2D) cmd.mode = ViewMode::Drawing2D;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("2D drawing window: plan view of the %s plane  [Tab]", shortPlaneName(st.plane));
     ImGui::SameLine(0, 2);
-    if (segment("3D Model", st.mode == ViewMode::Model3D, 110.0f, ImDrawFlags_RoundCornersNone, icon3D) &&
+    if (segment("3D Model", st.mode == ViewMode::Model3D, ImDrawFlags_RoundCornersNone, icon3D) &&
         st.mode != ViewMode::Model3D)
         cmd.mode = ViewMode::Model3D;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D model window  [Tab]");
     ImGui::SameLine(0, 2);
-    if (segment("Simulation", isSim, 118.0f, ImDrawFlags_RoundCornersRight, iconSim) && !isSim)
+    if (segment("Simulation", isSim, ImDrawFlags_RoundCornersRight, iconSim) && !isSim)
         cmd.mode = ViewMode::Simulation;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Simulation window: circular and linear motion, live axes  [Shift+Tab]");
     divider();
@@ -407,8 +473,12 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     m_rightGroupWidth = ImGui::GetItemRectMax().x - groupStart;
 
     m_optionsHeight = ImGui::GetWindowSize().y;
+    {
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        dl->AddLine({wp.x, wp.y + ws.y - 1}, {wp.x + ws.x, wp.y + ws.y - 1}, theme::kBorder);
+    }
     ImGui::End();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
 }
 
 void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
@@ -422,14 +492,22 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
                                        ImGuiWindowFlags_AlwaysAutoResize;
+    // Document tabs sit on the chrome colour; the active one takes the panel colour
+    // with an accent overline and reads as part of the canvas below.
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {6, 4});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {14, 6});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, {8, 4});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {2, 0});
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(theme::kChrome));
     ImGui::Begin("##tabs", nullptr, flags);
 
     const int activeId = st.activeFile >= 0 && st.activeFile < static_cast<int>(st.files.size())
                              ? st.files[static_cast<std::size_t>(st.activeFile)].id
                              : -1;
-    if (ImGui::BeginTabBar("##files", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip)) {
+    if (ImGui::BeginTabBar("##files", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip |
+                                                ImGuiTabBarFlags_DrawSelectedOverline)) {
         // File menu: three bars drawn over a blank leading button.
         if (ImGui::TabItemButton("    ##filemenu", ImGuiTabItemFlags_Leading | ImGuiTabItemFlags_NoTooltip))
             ImGui::OpenPopup("##filesMenu");
@@ -464,7 +542,9 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
             // Tabs switch files only when clicked; otherwise they follow the active file.
             const ImGuiTabItemFlags tf =
                 f.id == activeId && m_shownFile != activeId ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+            if (f.id == activeId) ImGui::PushFont(theme::font(theme::Font::Strong));
             const bool selected = ImGui::BeginTabItem(label.c_str(), &open, tf);
+            if (f.id == activeId) ImGui::PopFont();
             if (ImGui::IsItemClicked() && f.id != activeId) cmd.switchFile = f.id;
             if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) requestClose(cmd, st, static_cast<int>(i));
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
@@ -487,7 +567,8 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
     }
     m_tabsBottom = y + ImGui::GetWindowSize().y;
     ImGui::End();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(6);
 }
 
 void LandingUI::requestClose(UiCommands& cmd, const UiState& st, int index) {
@@ -591,19 +672,18 @@ float LandingUI::drawModelTree(Scene& scene, UiState& st, float x, float top, fl
     const float width = ImGui::GetWindowWidth();
     if (visible) {
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-        if (ImGui::TreeNode("Demo Bracket  (Part)")) {
+        if (ImGui::TreeNode("##root", "%s  (Part)", st.projectName.c_str())) {
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             if (ImGui::TreeNode("Bodies")) {
                 auto& bodies = scene.bodies();
                 for (int i = 0; i < static_cast<int>(bodies.size()); ++i) {
                     Body& b = bodies[static_cast<std::size_t>(i)];
                     ImGui::PushID(i);
-                    ImGui::Checkbox("##vis", &b.visible);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(b.visible ? "Hide" : "Show");
-                    ImGui::SameLine();
+                    eyeToggle("##vis", b.visible);
+                    ImGui::SameLine(0, 4);
                     ImGui::ColorButton("##col", {b.color.x, b.color.y, b.color.z, 1.0f},
-                                       ImGuiColorEditFlags_NoTooltip, {12, 12});
-                    ImGui::SameLine();
+                                       ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder, {10, 10});
+                    ImGui::SameLine(0, 6);
                     if (ImGui::Selectable(b.name.c_str(), st.selectedBody == i)) {
                         st.selectedBody = st.selectedBody == i ? -1 : i;
                         st.selectedCurve = st.selectedImage = -1;
@@ -621,14 +701,14 @@ float LandingUI::drawModelTree(Scene& scene, UiState& st, float x, float top, fl
                 for (int i = 0; i < static_cast<int>(curves.size()); ++i) {
                     SketchCurve& c = curves[static_cast<std::size_t>(i)];
                     ImGui::PushID(1000 + i);
-                    ImGui::Checkbox("##vis", &c.visible);
-                    ImGui::SameLine();
+                    if (eyeToggle("##vis", c.visible)) scene.sketch().touch();
+                    ImGui::SameLine(0, 6);
                     if (ImGui::Selectable(c.name.c_str(), st.selectedCurve == i)) {
                         st.selectedCurve = st.selectedCurve == i ? -1 : i;
                         st.selectedBody = st.selectedImage = -1;
                     }
-                    ImGui::SameLine(190);
-                    ImGui::TextDisabled("%s", shortPlaneName(c.plane));
+                    ImGui::SameLine(ImGui::GetWindowWidth() - 52);
+                    ImGui::TextColored(theme::vec(theme::kTextFaint), "%s", shortPlaneName(c.plane));
                     ImGui::PopID();
                 }
                 ImGui::TreePop();
@@ -642,14 +722,15 @@ float LandingUI::drawModelTree(Scene& scene, UiState& st, float x, float top, fl
                 for (int i = 0; i < static_cast<int>(images.size()); ++i) {
                     ImageRef& img = images[static_cast<std::size_t>(i)];
                     ImGui::PushID(2000 + i);
-                    ImGui::Checkbox("##vis", &img.visible);
-                    ImGui::SameLine();
+                    eyeToggle("##vis", img.visible);
+                    ImGui::SameLine(0, 6);
                     if (ImGui::Selectable(img.name.c_str(), st.selectedImage == i)) {
                         st.selectedImage = st.selectedImage == i ? -1 : i;
                         st.selectedBody = st.selectedCurve = -1;
                     }
-                    ImGui::SameLine(190);
-                    ImGui::TextDisabled("%s", img.pixels.empty() ? "missing" : shortPlaneName(img.plane));
+                    ImGui::SameLine(ImGui::GetWindowWidth() - 52);
+                    ImGui::TextColored(theme::vec(img.pixels.empty() ? theme::kWarning : theme::kTextFaint), "%s",
+                                       img.pixels.empty() ? "missing" : shortPlaneName(img.plane));
                     ImGui::PopID();
                 }
                 ImGui::TreePop();
@@ -665,29 +746,49 @@ float LandingUI::drawModelTree(Scene& scene, UiState& st, float x, float top, fl
             Body& b = scene.bodies()[static_cast<std::size_t>(st.selectedBody)];
             const AABB bb = b.mesh.bounds();
             ImGui::Spacing();
-            ImGui::SeparatorText("Properties");
-            ImGui::Text("Name       %s", b.name.c_str());
-            ImGui::Text("Triangles  %zu", b.mesh.indices.size() / 3);
-            ImGui::Text("Size (mm)  %.1f x %.1f x %.1f", bb.max.x - bb.min.x, bb.max.y - bb.min.y,
-                        bb.max.z - bb.min.z);
-            ImGui::Text("Position   %.1f, %.1f, %.1f", b.offset.x, b.offset.y, b.offset.z);
-            ImGui::ColorEdit3("Colour", &b.color.x, ImGuiColorEditFlags_NoInputs);
+            theme::caption("Properties");
+            if (beginPropertyGrid("##bodyprops")) {
+                propertyRow("Name", "%s", b.name.c_str());
+                propertyRow("Type", "%s", b.kind.c_str());
+                propertyRow("Size", "%.1f x %.1f x %.1f mm", static_cast<double>(bb.max.x - bb.min.x),
+                            static_cast<double>(bb.max.y - bb.min.y), static_cast<double>(bb.max.z - bb.min.z));
+                propertyRow("Position", "%.1f, %.1f, %.1f", static_cast<double>(b.offset.x),
+                            static_cast<double>(b.offset.y), static_cast<double>(b.offset.z));
+                propertyRow("Triangles", "%zu", b.mesh.indices.size() / 3);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(theme::vec(theme::kTextDim), "Colour");
+                ImGui::TableNextColumn();
+                ImGui::ColorEdit3("##colour", &b.color.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                ImGui::EndTable();
+            }
         } else if (st.selectedCurve >= 0 && st.selectedCurve < static_cast<int>(scene.sketch().curves().size())) {
             const SketchCurve& c = scene.sketch().curves()[static_cast<std::size_t>(st.selectedCurve)];
             ImGui::Spacing();
-            ImGui::SeparatorText("Properties");
-            ImGui::Text("Name       %s", c.name.c_str());
-            ImGui::Text("Type       %s", curveKindName(c.kind));
-            ImGui::Text("Plane      %s", planeName(c.plane));
-            ImGui::Text("Size (mm)  %s", c.measure().c_str());
+            theme::caption("Properties");
+            if (beginPropertyGrid("##curveprops")) {
+                propertyRow("Name", "%s", c.name.c_str());
+                propertyRow("Type", "%s", curveKindName(c.kind));
+                propertyRow("Plane", "%s", planeName(c.plane));
+                propertyRow("Size", "%s", c.measure().c_str());
+                ImGui::EndTable();
+            }
         } else if (st.selectedImage >= 0 && st.selectedImage < static_cast<int>(scene.images().size())) {
             ImageRef& img = scene.images()[static_cast<std::size_t>(st.selectedImage)];
             ImGui::Spacing();
-            ImGui::SeparatorText("Properties");
-            ImGui::Text("Name       %s", img.name.c_str());
-            ImGui::Text("Plane      %s", planeName(img.plane));
-            ImGui::Text("Pixels     %d x %d", img.pixelWidth, img.pixelHeight);
-            ImGui::TextWrapped("File       %s", img.path.c_str());
+            theme::caption("Properties");
+            if (beginPropertyGrid("##imageprops")) {
+                propertyRow("Name", "%s", img.name.c_str());
+                propertyRow("Plane", "%s", planeName(img.plane));
+                propertyRow("Pixels", "%d x %d", img.pixelWidth, img.pixelHeight);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(theme::vec(theme::kTextDim), "File");
+                ImGui::TableNextColumn();
+                ImGui::TextWrapped("%s", img.path.c_str());
+                ImGui::EndTable();
+            }
             ImGui::SetNextItemWidth(-90);
             ImGui::DragFloat("Width mm", &img.width, 0.5f, 0.1f, 100000.0f, "%.1f");
             ImGui::TextDisabled("Height     %.1f mm", static_cast<double>(img.height()));
@@ -704,50 +805,77 @@ float LandingUI::drawModelTree(Scene& scene, UiState& st, float x, float top, fl
 
 void LandingUI::drawStatusBar(const Scene& scene, const OrbitCamera& cam, const UiState& st) {
     const ImGuiViewport* mv = ImGui::GetMainViewport();
-    const float h = ImGui::GetFrameHeight() + 4.0f;
+    const float h = theme::kStatusBarHeight;
     ImGui::SetNextWindowPos({mv->WorkPos.x, mv->WorkPos.y + mv->WorkSize.y - h});
     ImGui::SetNextWindowSize({mv->WorkSize.x, h});
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {10, 3});
+    ImGui::PushFont(theme::font(theme::Font::Small));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {12, (h - ImGui::GetFontSize()) * 0.5f});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {8, 0});
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(theme::kChrome));
     ImGui::Begin("##status", nullptr, flags);
+    {
+        const ImVec2 wp = ImGui::GetWindowPos();
+        ImGui::GetWindowDrawList()->AddLine(wp, {wp.x + ImGui::GetWindowWidth(), wp.y}, theme::kBorder);
+    }
+    auto sep = [&] {
+        ImGui::SameLine(0, 12);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddLine({p.x, p.y - 1}, {p.x, p.y + ImGui::GetFontSize() + 1}, theme::kLine);
+        ImGui::Dummy({1, ImGui::GetFontSize()});
+        ImGui::SameLine(0, 12);
+    };
     const ToolInfo& tool = toolInfo(m_toolbox.active());
-    ImGui::Text("%s", tool.name);
-    ImGui::SameLine();
+    ImGui::PushFont(theme::font(theme::Font::Strong));
+    ImGui::TextUnformatted(tool.name);
+    ImGui::PopFont();
+    ImGui::SameLine(0, 10);
     // Long messages (file paths) are clipped so they never run into the coordinates.
     const float msgEnd = ImGui::GetWindowPos().x + 588.0f;
     const ImVec2 msgPos = ImGui::GetCursorScreenPos();
     ImGui::PushClipRect(msgPos, {msgEnd, msgPos.y + ImGui::GetFrameHeight()}, true);
-    if (!st.statusMessage.empty()) ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "%s", st.statusMessage.c_str());
-    else if (tool.available) ImGui::TextDisabled("%s", tool.description);
-    else ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "planned for a later milestone");
+    if (!st.statusMessage.empty()) ImGui::TextColored(theme::vec(theme::kAccentText), "%s", st.statusMessage.c_str());
+    else if (tool.available) ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tool.description);
+    else ImGui::TextColored(theme::vec(theme::kWarning), "planned for a later milestone");
     ImGui::PopClipRect();
 
     ImGui::SameLine(600.0f);
+    ImGui::PushFont(theme::font(theme::Font::Mono));
     const char* uName = st.plane == SketchPlane::Right ? "Y" : "X";
     const char* vName = st.plane == SketchPlane::Top ? "Y" : "Z";
     auto clean = [](float v) { return std::fabs(v) < 0.005f ? 0.0f : v; }; // no "-0.00"
+    // Fixed-width coordinate readout so the digits do not jump.
     if (st.cursorPlane)
-        ImGui::Text("%s %8.2f   %s %8.2f mm", uName, clean(st.cursorPlane->x), vName, clean(st.cursorPlane->y));
+        ImGui::Text("%s %9.2f  %s %9.2f mm", uName, clean(st.cursorPlane->x), vName, clean(st.cursorPlane->y));
     else
-        ImGui::TextDisabled("%s     --      %s     --   mm", uName, vName);
-    ImGui::SameLine();
-    ImGui::TextDisabled("|  %s  |  Bodies %zu  Curves %zu  Images %zu", st.mode == ViewMode::Drawing2D ? "2D Drawing" : st.mode == ViewMode::Simulation ? "Simulation" : "3D Model",
-                        scene.bodies().size(), scene.sketch().curves().size(), scene.images().size());
+        ImGui::TextColored(theme::vec(theme::kTextFaint), "%s %9s  %s %9s mm", uName, "--", vName, "--");
+    ImGui::PopFont();
+    sep();
+    ImGui::TextColored(theme::vec(theme::kTextDim), "%s",
+                       st.mode == ViewMode::Drawing2D   ? "2D Drawing"
+                       : st.mode == ViewMode::Simulation ? "Simulation"
+                                                          : "3D Model");
+    sep();
+    ImGui::TextColored(theme::vec(theme::kTextDim), "Bodies %zu   Curves %zu   Images %zu", scene.bodies().size(),
+                       scene.sketch().curves().size(), scene.images().size());
     if (st.mcpRunning) {
-        ImGui::SameLine();
-        ImGui::TextColored({0.45f, 0.85f, 0.55f, 1.0f}, "|  MCP :%d", st.mcpPort);
+        sep();
+        ImGui::TextColored(theme::vec(theme::kSuccess), "MCP  :%d", st.mcpPort);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("AI agents can connect at http://127.0.0.1:%d/mcp", st.mcpPort);
     }
     (void)cam;
     char perf[64];
     std::snprintf(perf, sizeof(perf), "%.1f ms", static_cast<double>(st.frameMs));
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize(perf).x - 12.0f);
-    ImGui::TextDisabled("%s", perf);
+    ImGui::TextColored(theme::vec(theme::kTextFaint), "%s", perf);
     m_statusHeight = h;
     ImGui::End();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(4);
+    ImGui::PopFont();
 }
 
 namespace {
@@ -795,7 +923,7 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
     // Full-width command line directly above the status bar (AutoCAD style).
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     const ImGuiIO& io = ImGui::GetIO();
-    const float h = ImGui::GetFrameHeight() + 10.0f;
+    const float h = theme::kCommandBarHeight;
     const float y = mv->WorkPos.y + mv->WorkSize.y - m_statusHeight - h;
     m_commandHeight = h;
 
@@ -831,25 +959,36 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
     ImGui::SetNextWindowSize({mv->WorkSize.x, h});
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8, 5});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8, (h - ImGui::GetFrameHeight()) * 0.5f});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4{0.085f, 0.09f, 0.105f, 1.0f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(theme::kPanel));
     ImGui::Begin("##commandbar", nullptr, flags);
+    {
+        const ImVec2 wp = ImGui::GetWindowPos();
+        ImGui::GetWindowDrawList()->AddLine(wp, {wp.x + ImGui::GetWindowWidth(), wp.y}, theme::kBorder);
+    }
 
     // History toggle.
     if (ImGui::ArrowButton("##hist", m_showHistory ? ImGuiDir_Down : ImGuiDir_Up)) m_showHistory = !m_showHistory;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Command history");
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored({0.45f, 0.72f, 1.0f, 1.0f}, "%s", st.commandPrompt.c_str());
-    ImGui::SameLine();
+    ImGui::PushFont(theme::font(theme::Font::Strong));
+    ImGui::TextColored(theme::vec(theme::kAccentText), "%s", st.commandPrompt.c_str());
+    ImGui::PopFont();
+    ImGui::SameLine(0, 10);
 
     ImGui::SetNextItemWidth(-1);
     if (m_focusCommand) {
         ImGui::SetKeyboardFocusHere();
         m_focusCommand = false;
     }
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{0.13f, 0.14f, 0.17f, 1.0f});
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(theme::kField));
+    ImGui::PushFont(theme::font(theme::Font::Mono));
+    // Mono text, but the frame keeps the height of the other controls.
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                        {10, (ImGui::GetFrameHeight() - ImGui::GetFontSize()) * 0.5f + 0.0f});
     const bool submitted = ImGui::InputTextWithHint(
         "##command",
         st.mode == ViewMode::Simulation
@@ -859,6 +998,8 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion |
             ImGuiInputTextFlags_CallbackHistory,
         commandInputCallback, this);
+    ImGui::PopStyleVar();
+    ImGui::PopFont();
     ImGui::PopStyleColor();
     const bool active = ImGui::IsItemActive();
     const ImVec2 inputMin = ImGui::GetItemRectMin();
@@ -874,14 +1015,15 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
     }
     ImGui::End();
     ImGui::PopStyleColor();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
 
+    ImGui::PushFont(theme::font(theme::Font::Mono));
     const float lineH = ImGui::GetTextLineHeightWithSpacing();
     auto colorOf = [](UiState::LogLine::Kind k) {
         switch (k) {
-        case UiState::LogLine::Input: return ImVec4{0.62f, 0.66f, 0.74f, 1.0f};
-        case UiState::LogLine::Error: return ImVec4{1.0f, 0.48f, 0.42f, 1.0f};
-        default: return ImVec4{0.86f, 0.89f, 0.94f, 1.0f};
+        case UiState::LogLine::Input: return theme::vec(theme::kTextDim);
+        case UiState::LogLine::Error: return theme::vec(theme::kError);
+        default: return theme::vec(theme::kText);
         }
     };
 
@@ -909,14 +1051,20 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
     } else if ((m_showHistory || recent) && !st.commandLog.empty()) {
         // History panel (toggle) or the last few lines after a command.
         const int lines = m_showHistory ? 12 : 3;
-        const float ph = lineH * static_cast<float>(lines) + 12.0f;
-        ImGui::SetNextWindowPos({mv->WorkPos.x, y - ph});
-        ImGui::SetNextWindowSize({mv->WorkSize.x, ph});
-        ImGui::SetNextWindowBgAlpha(m_showHistory ? 0.96f : 0.75f);
+        const float ph = lineH * static_cast<float>(lines) + 16.0f;
+        // Over the canvas: clear of the tool rail and of the ViewCube in the right corner.
+        const float left = mv->WorkPos.x + m_leftDockWidth;
+        const float right = std::max(left + 320.0f, m_canvasMax.x - (m_showHistory ? 0.0f : 190.0f));
+        ImGui::SetNextWindowPos({left, y - ph});
+        ImGui::SetNextWindowSize({right - left, ph});
+        ImGui::SetNextWindowBgAlpha(m_showHistory ? 0.97f : 0.82f);
         ImGuiWindowFlags hf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
                               ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
         if (!m_showHistory) hf |= ImGuiWindowFlags_NoInputs;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {12, 8});
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(theme::kChrome));
         ImGui::Begin("##history", nullptr, hf);
         const std::size_t first =
             m_showHistory ? 0 : (st.commandLog.size() > 3 ? st.commandLog.size() - 3 : 0);
@@ -926,8 +1074,10 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
         }
         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f || !m_showHistory) ImGui::SetScrollHereY(1.0f);
         ImGui::End();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(3);
     }
+    ImGui::PopFont();
 }
 
 void LandingUI::requestFile(int action, const UiState& st) {
@@ -1205,23 +1355,36 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                                        ImGuiWindowFlags_NoBringToFrontOnFocus;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::Begin("##motionstudy", nullptr, flags);
-    ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "MOTION STUDY");
+    {
+        theme::ScopedFont title(theme::Font::Strong);
+        ImGui::TextUnformatted("Motion Study");
+    }
     ImGui::SameLine();
-    ImGui::TextDisabled("%zu motion%s", scene.motions().size(), scene.motions().size() == 1 ? "" : "s");
+    {
+        theme::ScopedFont small(theme::Font::Small);
+        ImGui::TextColored(theme::vec(theme::kTextDim), "%zu motion%s", scene.motions().size(),
+                           scene.motions().size() == 1 ? "" : "s");
+    }
+    ImGui::Spacing();
 
     const auto& bodies = scene.bodies();
     const bool hasSel = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(bodies.size());
     const std::string targets = hasSel ? std::string() : " BODIES ALL";
-    if (ImGui::Button("+ Circular", {150, 0})) cmd.commands.push_back("MOTION CIRCULAR" + targets);
+    const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("+ Circular", {half, 0})) cmd.commands.push_back("MOTION CIRCULAR" + targets);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Rotate %s about an axis (deg/s)", hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name.c_str() : "all bodies");
     ImGui::SameLine();
-    if (ImGui::Button("+ Linear", {150, 0})) cmd.commands.push_back("MOTION LINEAR" + targets);
+    if (ImGui::Button("+ Linear", {half, 0})) cmd.commands.push_back("MOTION LINEAR" + targets);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Move %s along a direction (mm/s)", hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name.c_str() : "all bodies");
-    ImGui::TextDisabled(hasSel ? "Moves the selected body" : "Moves all bodies (select one to target it)");
+    {
+        theme::ScopedFont small(theme::Font::Small);
+        ImGui::TextColored(theme::vec(theme::kTextDim), hasSel ? "Adds a motion for the selected body"
+                                                              : "Adds a motion for all bodies (select one to target it)");
+    }
 
-    ImGui::SeparatorText("Show");
+    theme::caption("Display");
     ImGui::Checkbox("Real-time axes", &st.simAxes);
     ImGui::SameLine(170);
     ImGui::Checkbox("Motion axes", &st.simMotionAxes);
@@ -1247,7 +1410,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
         if (automatic) ImGui::EndDisabled();
     }
 
-    ImGui::SeparatorText("Motions");
+    theme::caption("Motions");
     auto& motions = scene.motions();
     const float readoutH = st.simReadout ? 190.0f : 0.0f;
     ImGui::BeginChild("##motions", {0, -readoutH}, ImGuiChildFlags_None);
@@ -1264,10 +1427,24 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
         Motion& m = motions[i];
         ImGui::PushID(static_cast<int>(i));
         const ImVec4 col = motionColor(i);
-        ImGui::PushStyleColor(ImGuiCol_Text, m.enabled ? col : ImVec4{0.5f, 0.5f, 0.55f, 1});
-        const std::string header = std::string(m.kind == MotionKind::Circular ? "@  " : "->  ") + m.name + "###hdr";
+        // Neutral section header with the motion's colour as a swatch.
+        ImGui::PushStyleColor(ImGuiCol_Header, theme::vec(theme::kPanelRaised));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, theme::vec(theme::kHover));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, theme::vec(theme::kHover));
+        ImGui::PushStyleColor(ImGuiCol_Text, m.enabled ? theme::vec(theme::kText) : theme::vec(theme::kTextFaint));
+        const std::string header = std::string("      ") + m.name + "###hdr";
         const bool open = ImGui::CollapsingHeader(header.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
-        ImGui::PopStyleColor();
+        ImGui::PopStyleColor(4);
+        {
+            const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+            const float cy = (lo.y + hi.y) * 0.5f, x = lo.x + 30.0f;
+            ImDrawList* hdl = ImGui::GetWindowDrawList();
+            hdl->AddCircleFilled({x, cy}, 4.0f, ImGui::ColorConvertFloat4ToU32(m.enabled ? col : theme::vec(theme::kTextFaint)));
+            theme::ScopedFont small(theme::Font::Small);
+            const char* kind = m.kind == MotionKind::Circular ? "Circular" : "Linear";
+            const float kw = ImGui::CalcTextSize(kind).x;
+            hdl->AddText({hi.x - kw - 10.0f, cy - ImGui::GetFontSize() * 0.5f}, theme::kTextDim, kind);
+        }
         if (open) {
             ImGui::Checkbox("##on", &m.enabled);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enabled");
@@ -1297,15 +1474,19 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 }
                 ImGui::PopID();
             }
-            if (hasSel) {
-                const std::string& sel = bodies[static_cast<std::size_t>(st.selectedBody)].name;
-                if (!m.moves(sel) && ImGui::SmallButton(("+ " + sel).c_str())) {
-                    if (m.bodies.size() == 1 && m.bodies[0] == "*") m.bodies.clear();
+            {
+                const bool all = m.bodies.size() == 1 && m.bodies[0] == "*";
+                const std::string sel = hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name : std::string();
+                const bool canAdd = hasSel && !all && !m.moves(sel);
+                if (canAdd && ImGui::SmallButton(("+ " + sel).c_str())) {
+                    if (all) m.bodies.clear();
                     m.bodies.push_back(sel);
                 }
-                ImGui::SameLine();
+                if (!all) {
+                    if (canAdd) ImGui::SameLine();
+                    if (ImGui::SmallButton("All bodies")) m.bodies = {"*"};
+                }
             }
-            if (!(m.bodies.size() == 1 && m.bodies[0] == "*") && ImGui::SmallButton("All bodies")) m.bodies = {"*"};
 
             // Axis / direction.
             ImGui::TextDisabled(m.kind == MotionKind::Circular ? "Axis" : "Direction");
@@ -1382,7 +1563,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
 
     // Real-time axes: digital readout of the selected (or first moving) body.
     if (st.simReadout) {
-        ImGui::SeparatorText("Real-time axes");
+        theme::caption("Real-time axes");
         int body = hasSel ? st.selectedBody : -1;
         for (std::size_t i = 0; i < bodies.size() && body < 0; ++i)
             if (isMoving(scene, i)) body = static_cast<int>(i);

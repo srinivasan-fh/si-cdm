@@ -8,6 +8,7 @@
 #include <imgui_impl_opengl3.h>
 
 #include "core/Command.hpp"
+#include "ui/Theme.hpp"
 #include "core/Extrude.hpp"
 
 #include <algorithm>
@@ -27,34 +28,6 @@ void glfwErrorCallback(int code, const char* msg) {
     std::fprintf(stderr, "[glfw] error %d: %s\n", code, msg);
 }
 
-void applyTheme() {
-    ImGui::StyleColorsDark();
-    ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 6.0f;
-    s.FrameRounding = 4.0f;
-    s.GrabRounding = 4.0f;
-    s.PopupRounding = 4.0f;
-    s.WindowBorderSize = 1.0f;
-    s.FramePadding = {8, 4};
-    s.ItemSpacing = {8, 6};
-
-    ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg] = {0.11f, 0.12f, 0.14f, 1.00f};
-    c[ImGuiCol_MenuBarBg] = {0.09f, 0.10f, 0.12f, 1.00f};
-    c[ImGuiCol_PopupBg] = {0.10f, 0.11f, 0.13f, 0.98f};
-    c[ImGuiCol_Border] = {0.24f, 0.26f, 0.30f, 0.60f};
-    c[ImGuiCol_TitleBg] = {0.10f, 0.11f, 0.13f, 1.00f};
-    c[ImGuiCol_TitleBgActive] = {0.13f, 0.15f, 0.18f, 1.00f};
-    c[ImGuiCol_FrameBg] = {0.17f, 0.18f, 0.21f, 1.00f};
-    c[ImGuiCol_FrameBgHovered] = {0.22f, 0.24f, 0.28f, 1.00f};
-    c[ImGuiCol_Button] = {0.18f, 0.20f, 0.24f, 1.00f};
-    c[ImGuiCol_ButtonHovered] = {0.20f, 0.42f, 0.72f, 1.00f};
-    c[ImGuiCol_ButtonActive] = {0.16f, 0.36f, 0.64f, 1.00f};
-    c[ImGuiCol_Header] = {0.20f, 0.38f, 0.64f, 0.55f};
-    c[ImGuiCol_HeaderHovered] = {0.22f, 0.44f, 0.74f, 0.70f};
-    c[ImGuiCol_HeaderActive] = {0.22f, 0.44f, 0.74f, 1.00f};
-    c[ImGuiCol_CheckMark] = {0.40f, 0.68f, 1.00f, 1.00f};
-}
 
 } // namespace
 
@@ -101,7 +74,16 @@ bool Application::init() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr; // landing layout is fixed for now
-    applyTheme();
+    {
+        // Sharp text on Retina (framebuffer > window size) and larger UI on HiDPI elsewhere.
+        int ww = 0, wh = 0, fw = 0, fh = 0;
+        float xs = 1.0f, ys = 1.0f;
+        glfwGetWindowSize(m_window, &ww, &wh);
+        glfwGetFramebufferSize(m_window, &fw, &fh);
+        glfwGetWindowContentScale(m_window, &xs, &ys);
+        const float fbScale = ww > 0 ? static_cast<float>(fw) / static_cast<float>(ww) : 1.0f;
+        theme::apply(xs / std::max(fbScale, 1.0f), fbScale);
+    }
     // Callbacks are chained manually above; let the backend install the rest.
     ImGui_ImplGlfw_InitForOpenGL(m_window, false);
     glfwSetCharCallback(m_window, ImGui_ImplGlfw_CharCallback);
@@ -971,7 +953,7 @@ std::uint64_t Application::signatureOf(const Document& doc) {
 void Application::updateTitle() {
     m_uiState.projectPath = m_doc.path;
     m_uiState.projectTitle = m_doc.title();
-    m_uiState.projectName = m_doc.name;
+    m_uiState.projectName = m_doc.path.empty() ? m_doc.name : std::filesystem::path(m_doc.path).stem().string();
     const std::string title = m_uiState.projectTitle + "  —  SI CDM";
     if (title != m_shownTitle) {
         glfwSetWindowTitle(m_window, title.c_str());
