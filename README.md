@@ -118,8 +118,11 @@ parametric: they save as parameters and rebuild exactly when the project opens.
   steps; a servo with a sweep under 360° swings back and forth.
 - **Wheels** stand on the ground with the axle along Y and spin (rpm, 0 = no motion) so that positive
   speeds roll toward +X; omni and mecanum rollers follow the rolling circle exactly. **Chain and belt
-  drives** turn the driven sprocket / pulley at the right ratio (same direction); the chain or belt
-  itself is drawn in place (it does not travel).
+  drives** turn the driven sprocket / pulley at the right ratio (same direction), and the **chain or
+  belt travels along its loop** with the driver (travel = driver angle × pitch radius): links, rollers
+  and timing teeth run round the sprockets / pulleys; smooth belts carry printed marks so their motion
+  shows. Any linear motion can do this for a chain or belt body with *Travel along the chain / belt
+  loop* in the Motion Study panel, or `MOTION LINEAR name PATH FOLLOW driver RADIUS r BODIES belt`.
 - **Electric car motors** lie on their side: the shaft and the 360° drive run along +X at the shaft
   height (170 / 120 mm at size 1). Shaft end: plain or with a flange coupling (foot motor), splined
   or plain (flange motor).

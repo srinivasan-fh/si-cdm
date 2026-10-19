@@ -50,7 +50,8 @@ public:
 
     void render(const Scene& scene, const OrbitCamera& camera, const ViewportSettings& settings,
                 int framebufferWidth, int framebufferHeight, int selectedBody, int selectedCurve,
-                int selectedImage = -1, const std::vector<Mat4>* motion = nullptr); // motion: per-body transforms
+                int selectedImage = -1, const std::vector<Mat4>* motion = nullptr, // motion: per-body transforms
+                const std::vector<const MeshData*>* overrides = nullptr);           // per-body shapes for this frame
 
 private:
     void drawBackground(const ViewportSettings& s);
@@ -84,6 +85,7 @@ private:
 
     GLuint m_emptyVao = 0;
     std::vector<GpuMesh> m_meshes;
+    std::vector<GpuMesh> m_streamed; // per-frame overrides (simulated chains / belts)
     std::uint64_t m_uploadedRevision = ~std::uint64_t{0};
 };
 

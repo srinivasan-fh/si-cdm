@@ -40,7 +40,7 @@ constexpr CommandSpec kCommands[] = {
     {"EXPORT", "EXP", "EXPORT path.stl|.obj|.dxf|.svg", "STL/OBJ of visible bodies; DXF/SVG of the sketch plane"},
     // Motion & simulation
     {"MOTION", "MOT MOTIONS", "MOTION CIRCLE|LINEAR [name] [AXIS X|Y|Z|x,y,z] [AT x,y,z] [SPEED v] [RANGE r] "
-     "[MODE CONT|LOOP|OSC|ONCE] [START s] [EACH] [FOLLOW circular|NONE] [RATIO r] [RADIUS r] [STEP s] [BODIES name... | ALL]  |  "
+     "[MODE CONT|LOOP|OSC|ONCE] [START s] [EACH] [FOLLOW circular|NONE] [RATIO r] [RADIUS r] [STEP s] [PATH] [BODIES name... | ALL]  |  "
      "MOTION DELETE|ON|OFF name  |  MOTION",
      "Circular (deg/s about an axis; EACH: every body about its own centre) or linear (mm/s along a direction) "
      "motion of bodies; FOLLOW makes a linear motion roll with a wheel spin (travel = angle x RADIUS, "

@@ -167,6 +167,16 @@ private:
     Vec2 m_imageGrab{}, m_imageStart{};
 
     std::vector<Mat4> m_simTransforms; // per body, while the Simulation window shows motion
+    // Chains / belts travelling along their loop: shape per body for this frame.
+    struct LoopShape {
+        float travel = 0.0f;
+        std::uint64_t revision = 0;
+        MeshData mesh;
+        bool valid = false;
+    };
+    std::vector<LoopShape> m_loopShapes;
+    std::vector<const MeshData*> m_loopOverrides;
+    void updateLoopShapes();
 
     int m_extrudeCurve = -1;   // profile being extruded
     float m_extrudeAnchorDist = 0.0f;

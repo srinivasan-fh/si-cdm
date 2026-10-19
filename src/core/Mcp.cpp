@@ -229,6 +229,10 @@ Json McpServer::toolDefinitions() {
         p.set("mode", enumProp({"continuous", "loop", "oscillate", "once"}, "Behaviour at the end of the range"));
         p.set("start", prop("number", "Delay before it starts (s)"));
         p.set("enabled", prop("boolean", "Enable or disable the motion"));
+        p.set("follow", prop("string", "Circular motion that drives this one (gear / pulley / sprocket trains)"));
+        p.set("ratio", prop("number", "Circular follower: angle = ratio x the leader's angle"));
+        p.set("radius", prop("number", "Linear follower: travel = leader angle (rad) x radius"));
+        p.set("along_loop", prop("boolean", "Linear: move a chain / belt body along its own loop instead of translating it"));
         p.set("follow", prop("string", "Linear: circular motion (wheel spin) that drives the travel, rolling without "
                                        "slip; speed / range / mode then come from it. \"\" unlinks"));
         p.set("radius", prop("number", "Linear with follow: wheel radius in mm (0 = from the wheel's size)"));
@@ -333,6 +337,7 @@ Json McpServer::sceneJson() const {
         jm.set("start", m.start).set("enabled", m.enabled);
         if (!m.follow.empty()) jm.set("follow", m.follow).set("ratio", m.ratio).set("radius", m.radius);
         if (m.step > 0.0f) jm.set("step", m.step);
+        if (m.alongLoop) jm.set("along_loop", true);
         motions.push(jm);
     }
     s.set("motions", motions);
@@ -564,6 +569,10 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["range"].isNumber()) line += " RANGE " + num(a["range"].asNumber());
         if (a["mode"].isString()) line += " MODE " + a["mode"].asString();
         if (a["start"].isNumber()) line += " START " + num(a["start"].asNumber());
+        if (a["follow"].isString()) line += " FOLLOW " + quote(a["follow"].asString());
+        if (a["ratio"].isNumber()) line += " RATIO " + num(a["ratio"].asNumber());
+        if (a["radius"].isNumber()) line += " RADIUS " + num(a["radius"].asNumber());
+        if (a["along_loop"].asBool()) line += " PATH";
         if (a["follow"].isString())
             line += " FOLLOW " + (a["follow"].asString().empty() ? std::string("NONE") : quote(a["follow"].asString()));
         if (a["radius"].isNumber()) line += " RADIUS " + num(a["radius"].asNumber());

@@ -46,6 +46,10 @@ struct Motion {
     float radius = 0.0f;
     float ratio = 1.0f;
     float step = 0.0f; // > 0: moves in steps of this size (stepper motors, deg or mm)
+    // Linear only: instead of translating its bodies, the travel moves a chain or
+    // belt along its own loop (see loopTravel()); usually it follows the driver
+    // sprocket / pulley with radius = its pitch radius.
+    bool alongLoop = false;
 
     bool moves(std::string_view bodyName) const;
     const char* unit() const noexcept { return kind == MotionKind::Circular ? "deg" : "mm"; }
@@ -72,6 +76,10 @@ float motionCycle(const Motion& m) noexcept;
 std::vector<Mat4> motionTransforms(const Scene& scene, float t);
 // The same for one body; `before` stops at that motion index (its outer motions only).
 Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::size_t before = static_cast<std::size_t>(-1));
+// Distance (mm) a chain / belt body has travelled along its loop at time t:
+// the sum of the enabled along-loop motions that move it.
+float loopTravel(const Scene& scene, std::size_t body, float t);
+
 // True when any enabled motion moves the body.
 bool isMoving(const Scene& scene, std::size_t body);
 

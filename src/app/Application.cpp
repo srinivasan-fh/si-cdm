@@ -8,6 +8,7 @@
 #include <imgui_impl_opengl3.h>
 
 #include "core/Command.hpp"
+#include "core/Library.hpp"
 #include "ui/Theme.hpp"
 #include "core/Extrude.hpp"
 
@@ -732,6 +733,7 @@ void Application::frame(float dt) {
     if (m_extrudeCurve >= 0) drawExtrudePreview();
     if (simulating()) {
         m_simTransforms = motionTransforms(m_doc.scene, m_uiState.simTime); // after scrubbing / panel edits
+        updateLoopShapes();
         drawSimulationOverlay();
     }
 
@@ -749,7 +751,8 @@ void Application::frame(float dt) {
         m_cam3D.setAspect(m_aspect);
         m_cam2D.setAspect(m_aspect);
         m_renderer->render(m_doc.scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve,
-                           m_uiState.selectedImage, simulating() ? &m_simTransforms : nullptr);
+                           m_uiState.selectedImage, simulating() ? &m_simTransforms : nullptr,
+                           simulating() && !m_loopOverrides.empty() ? &m_loopOverrides : nullptr);
     }
 
     ImGui::Render();
@@ -950,7 +953,7 @@ std::uint64_t Application::signatureOf(const Document& doc) {
         const float f[] = {m.axis.x, m.axis.y, m.axis.z, m.origin.x, m.origin.y, m.origin.z, m.speed, m.range, m.start,
                            m.eachCentre ? 1.0f : 0.0f, m.radius, m.ratio, m.step};
         mix(f, sizeof(f));
-        const int e[] = {static_cast<int>(m.kind), static_cast<int>(m.mode), m.enabled ? 1 : 0};
+        const int e[] = {static_cast<int>(m.kind), static_cast<int>(m.mode), m.enabled ? 1 : 0, m.alongLoop ? 1 : 0};
         mix(e, sizeof(e));
     }
     mix(&doc.state.plane, sizeof(doc.state.plane));
@@ -1414,6 +1417,32 @@ ImU32 toU32(ImVec4 c, float alpha = 1.0f) { return ImGui::ColorConvertFloat4ToU3
 
 } // namespace
 
+void Application::updateLoopShapes() {
+    // Chains and belts moved along their loop: rebuild their shape when the travel changes.
+    const auto& bodies = m_doc.scene.bodies();
+    m_loopShapes.resize(bodies.size());
+    m_loopOverrides.assign(bodies.size(), nullptr);
+    bool any = false;
+    for (std::size_t i = 0; i < bodies.size(); ++i) {
+        LoopShape& shape = m_loopShapes[i];
+        if (!isLoopKind(bodies[i].kind)) {
+            shape = LoopShape{};
+            continue;
+        }
+        const float travel = loopTravel(m_doc.scene, i, m_uiState.simTime);
+        if (travel == 0.0f) continue; // the stored mesh is the shape at rest
+        if (!shape.valid || shape.travel != travel || shape.revision != m_doc.scene.revision()) {
+            shape.mesh = loopMeshAt(bodies[i], travel);
+            shape.travel = travel;
+            shape.revision = m_doc.scene.revision();
+            shape.valid = true;
+        }
+        m_loopOverrides[i] = &shape.mesh;
+        any = true;
+    }
+    if (!any) m_loopOverrides.clear();
+}
+
 void Application::drawSimulationOverlay() const {
     const ImGuiIO& io = ImGui::GetIO();
     const OrbitCamera& cam = m_cam3D;
@@ -1484,6 +1513,13 @@ void Application::drawSimulationOverlay() const {
         for (std::size_t k = 0; k < motions.size(); ++k) {
             const Motion& m = motions[k];
             if (!m.enabled || groups[k].body < 0 || length(m.axis) < 1e-6f) continue;
+            if (m.alongLoop) { // chains / belts: no straight travel arrow, just the live value
+                char travel[96];
+                std::snprintf(travel, sizeof(travel), "%s  %.1f mm  %.0f mm/s", m.name.c_str(),
+                              static_cast<double>(motionValue(scene, m, t)), static_cast<double>(motionRate(scene, m, t)));
+                label(groups[k].centre, toU32(motionColor(k)), travel);
+                continue;
+            }
             const ImU32 c = toU32(motionColor(k));
             const Mat4 outer = bodyMotionTransform(scene, static_cast<std::size_t>(groups[k].body), t, k);
             const Vec3 dir = normalize(outer.transformDir(m.axis));

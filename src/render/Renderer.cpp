@@ -293,15 +293,24 @@ bool Renderer::valid() const noexcept {
            m_imageShader.valid();
 }
 
+namespace {
+
+void releaseMesh(GpuMesh& g) {
+    if (g.vbo) glDeleteBuffers(1, &g.vbo);
+    if (g.ibo) glDeleteBuffers(1, &g.ibo);
+    if (g.vao) glDeleteVertexArrays(1, &g.vao);
+    if (g.edgeVbo) glDeleteBuffers(1, &g.edgeVbo);
+    if (g.edgeVao) glDeleteVertexArrays(1, &g.edgeVao);
+    g = GpuMesh{};
+}
+
+} // namespace
+
 void Renderer::releaseMeshes() {
-    for (GpuMesh& g : m_meshes) {
-        glDeleteBuffers(1, &g.vbo);
-        glDeleteBuffers(1, &g.ibo);
-        glDeleteVertexArrays(1, &g.vao);
-        if (g.edgeVbo) glDeleteBuffers(1, &g.edgeVbo);
-        if (g.edgeVao) glDeleteVertexArrays(1, &g.edgeVao);
-    }
+    for (GpuMesh& g : m_meshes) releaseMesh(g);
     m_meshes.clear();
+    for (GpuMesh& g : m_streamed) releaseMesh(g);
+    m_streamed.clear();
 }
 
 void Renderer::upload(const Scene& scene) {
@@ -479,7 +488,7 @@ void Renderer::drawGrid(const OrbitCamera& cam, const ViewportSettings& s) {
 
 void Renderer::render(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s,
                       int fbWidth, int fbHeight, int selectedBody, int selectedCurve, int selectedImage,
-                      const std::vector<Mat4>* motion) {
+                      const std::vector<Mat4>* motion, const std::vector<const MeshData*>* overrides) {
     glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(s.backgroundBottom.x, s.backgroundBottom.y, s.backgroundBottom.z, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -494,6 +503,14 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     const Mat4 vp = cam.viewProjection();
     const auto& bodies = scene.bodies();
     const std::size_t count = std::min(bodies.size(), m_meshes.size());
+    // Shapes that change while simulating (chains / belts moving along their loop)
+    // are streamed each frame in place of the uploaded mesh.
+    m_streamed.resize(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        releaseMesh(m_streamed[i]);
+        if (overrides && i < overrides->size() && (*overrides)[i]) m_streamed[i] = uploadMesh(*(*overrides)[i]);
+    }
+    auto gpu = [&](std::size_t i) -> const GpuMesh& { return m_streamed[i].vao ? m_streamed[i] : m_meshes[i]; };
     auto model = [&](std::size_t i) {
         const Mat4 at = translate(bodies[i].offset);
         return motion && i < motion->size() ? (*motion)[i] * at : at;
@@ -519,8 +536,8 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_mesh.set("uColor", bodies[i].color);
             m_mesh.set("uModel", model(i));
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
-            glBindVertexArray(m_meshes[i].vao);
-            glDrawElements(GL_TRIANGLES, m_meshes[i].indexCount, GL_UNSIGNED_INT, nullptr);
+            glBindVertexArray(gpu(i).vao);
+            glDrawElements(GL_TRIANGLES, gpu(i).indexCount, GL_UNSIGNED_INT, nullptr);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
@@ -538,14 +555,14 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                 const Vec3 c = sel ? Vec3{0.35f, 0.70f, 1.0f} : bodies[i].color;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-                glBindVertexArray(m_meshes[i].vao);
-                glDrawElements(GL_TRIANGLES, m_meshes[i].indexCount, GL_UNSIGNED_INT, nullptr);
+                glBindVertexArray(gpu(i).vao);
+                glDrawElements(GL_TRIANGLES, gpu(i).indexCount, GL_UNSIGNED_INT, nullptr);
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            } else if (m_meshes[i].edgeVao) {
+            } else if (gpu(i).edgeVao) {
                 const Vec3 c = sel ? (hidden ? Vec3{0.35f, 0.70f, 1.0f} : Vec3{0.10f, 0.45f, 0.95f}) : s.edgeColor;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
-                glBindVertexArray(m_meshes[i].edgeVao);
-                glDrawArrays(GL_LINES, 0, m_meshes[i].edgeVertexCount);
+                glBindVertexArray(gpu(i).edgeVao);
+                glDrawArrays(GL_LINES, 0, gpu(i).edgeVertexCount);
             }
         }
     }

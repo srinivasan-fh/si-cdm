@@ -917,7 +917,7 @@ LoopPoint loopAt(const std::vector<LoopPoint>& l, float s, Vec2* dir) {
 
 // Rubber belt swept around the loop; zc = height of the belt centre.
 // type 0 flat, 1 V (trapezoid), 2 timing (flat with teeth inside, 2 mm pitch).
-MeshData beltAround(const std::vector<LoopPoint>& loop, int type, float width, float thick, float zc) {
+MeshData beltAround(const std::vector<LoopPoint>& loop, int type, float width, float thick, float zc, float phase = 0.0f) {
     std::vector<Vec2> sec; // (outward u, height v), counter-clockwise
     if (type == 1) sec = {{-thick * 0.5f, -width * 0.32f}, {thick * 0.5f, -width * 0.5f}, {thick * 0.5f, width * 0.5f}, {-thick * 0.5f, width * 0.32f}};
     else sec = {{-thick * 0.5f, -width * 0.5f}, {thick * 0.5f, -width * 0.5f}, {thick * 0.5f, width * 0.5f}, {-thick * 0.5f, width * 0.5f}};
@@ -944,12 +944,29 @@ MeshData beltAround(const std::vector<LoopPoint>& loop, int type, float width, f
         }
     }
     MeshData m = b.finish(40.0f);
+    const float L = loopLength(loop);
+    auto along = [&](float s) {
+        s = std::fmod(s + phase, L);
+        return s < 0.0f ? s + L : s;
+    };
+    if (type != 2) { // printed marks across the back, so a moving smooth belt shows it
+        const int marks = std::max(3, static_cast<int>(L / std::max(width * 8.0f, 20.0f)));
+        for (int k = 0; k < marks; ++k) {
+            Vec2 d;
+            const LoopPoint q = loopAt(loop, along(L * static_cast<float>(k) / static_cast<float>(marks)), &d);
+            const Vec2 o{d.y, -d.x};
+            const float half = type == 1 ? width * 0.45f : width * 0.42f;
+            MeshData mark = boxOf({-std::max(width * 0.08f, 0.6f), thick * 0.5f - 0.05f, -half},
+                                  {std::max(width * 0.08f, 0.6f), thick * 0.5f + std::max(thick * 0.08f, 0.15f), half});
+            mark.transform(frameOf({q.p.x, q.p.y, zc}, {d.x, d.y, 0}, {o.x, o.y, 0}, {0, 0, 1}));
+            m.append(mark);
+        }
+    }
     if (type == 2) { // teeth on the inside every 2 mm
-        const float L = loopLength(loop);
         const int teeth = std::max(4, static_cast<int>(L / 2.0f));
         for (int k = 0; k < teeth; ++k) {
             Vec2 d;
-            const LoopPoint q = loopAt(loop, L * static_cast<float>(k) / static_cast<float>(teeth), &d);
+            const LoopPoint q = loopAt(loop, along(L * static_cast<float>(k) / static_cast<float>(teeth)), &d);
             const Vec2 o{d.y, -d.x}; // outward (right of travel on a counter-clockwise loop)
             MeshData tooth = boxOf({-0.5f, -thick * 0.5f - 0.75f, -width * 0.5f}, {0.5f, -thick * 0.5f + 0.1f, width * 0.5f});
             tooth.transform(frameOf({q.p.x, q.p.y, zc}, {d.x, d.y, 0}, {o.x, o.y, 0}, {0, 0, 1}));
@@ -959,40 +976,63 @@ MeshData beltAround(const std::vector<LoopPoint>& loop, int type, float width, f
     return m;
 }
 
-// Steel roller chain along a loop (or straight when `loop` has two points):
-// pins every `pitch`, alternating inner and outer plates, rollers.
+// Steel roller chain through `pins` (closed loop or open run): rollers and pins,
+// alternating inner and outer figure-eight plates. Built from one template per
+// part (transformed copies), fast enough to rebuild every simulation frame.
 MeshData chainAlong(const std::vector<Vec2>& pins, bool closed, float pitch, float zc) {
     const float rr = pitch * 0.312f, wi = pitch * 0.625f * 0.5f, tp = pitch * 0.12f, ph = pitch * 0.47f;
+    // Templates: roller + pin at the origin; plate pairs from (0, 0) to (pitch, 0).
+    MeshData pinT = cylinderAt(0, 0, rr, zc - wi, zc + wi, 20);
+    pinT.append(cylinderAt(0, 0, pitch * 0.156f, zc - wi - 2.0f * tp - pitch * 0.05f, zc + wi + 2.0f * tp + pitch * 0.05f, 12));
+    std::vector<Vec2> plate;
+    {
+        const float wh = pitch * 0.34f, cut = 0.45f;
+        for (int s = 0; s <= 10; ++s) plate.push_back(polar(ph, kPi * 0.5f + cut + (kPi - 2.0f * cut) * static_cast<float>(s) / 10.0f));
+        plate.push_back({pitch * 0.5f, -wh});
+        for (int s = 0; s <= 10; ++s) {
+            const Vec2 q = polar(ph, -kPi * 0.5f + cut + (kPi - 2.0f * cut) * static_cast<float>(s) / 10.0f);
+            plate.push_back({pitch + q.x, q.y});
+        }
+        plate.push_back({pitch * 0.5f, wh});
+    }
+    MeshData innerT = prismOf(plate, zc + wi, zc + wi + tp);
+    innerT.append(prismOf(plate, zc - wi - tp, zc - wi));
+    MeshData outerT = prismOf(plate, zc + wi + tp, zc + wi + 2.0f * tp);
+    outerT.append(prismOf(plate, zc - wi - 2.0f * tp, zc - wi - tp));
+
     MeshData m;
     const std::size_t n = pins.size();
+    m.vertices.reserve(n * (pinT.vertices.size() + innerT.vertices.size()));
+    m.indices.reserve(n * (pinT.indices.size() + innerT.indices.size()));
+    auto place = [&m](const MeshData& t, const Mat4& x) {
+        MeshData copy = t;
+        copy.transform(x);
+        m.append(copy);
+    };
     for (std::size_t i = 0; i < n; ++i) {
         const Vec2 c = pins[i];
-        m.append(cylinderAt(c.x, c.y, rr, zc - wi, zc + wi, 20));                             // roller
-        m.append(cylinderAt(c.x, c.y, pitch * 0.156f, zc - wi - 2.0f * tp - pitch * 0.05f, zc + wi + 2.0f * tp + pitch * 0.05f, 12)); // pin
+        place(pinT, translate({c.x, c.y, 0}));
         if (!closed && i + 1 == n) break;
         const Vec2 d = pins[(i + 1) % n];
-        const float ang = std::atan2(d.y - c.y, d.x - c.x);
-        std::vector<Vec2> plate;
-        for (int s = 0; s <= 10; ++s) {
-            const Vec2 q = polar(ph, ang + kPi * 0.5f + kPi * static_cast<float>(s) / 10.0f);
-            plate.push_back({c.x + q.x, c.y + q.y});
-        }
-        for (int s = 0; s <= 10; ++s) {
-            const Vec2 q = polar(ph, ang - kPi * 0.5f + kPi * static_cast<float>(s) / 10.0f);
-            plate.push_back({d.x + q.x, d.y + q.y});
-        }
-        const float z0 = i % 2 == 0 ? wi : wi + tp; // inner / outer plates
-        m.append(prismOf(plate, zc + z0, zc + z0 + tp));
-        m.append(prismOf(plate, zc - z0 - tp, zc - z0));
+        const float chord = std::hypot(d.x - c.x, d.y - c.y);
+        const Mat4 x = translate({c.x, c.y, 0}) * rotateAxis({0, 0, 1}, std::atan2(d.y - c.y, d.x - c.x)) *
+                       scale(Vec3{chord / pitch, 1.0f, 1.0f});
+        place(i % 2 == 0 ? innerT : outerT, x);
     }
     return m;
 }
 
-std::vector<Vec2> pinsAround(const std::vector<LoopPoint>& loop, float pitch) {
+// Pins around the loop, moved `phase` mm along it. An even number of links keeps
+// the inner / outer plates alternating all the way round (the travel wraps cleanly).
+std::vector<Vec2> pinsAround(const std::vector<LoopPoint>& loop, float pitch, float phase = 0.0f) {
     const float L = loopLength(loop);
-    const int n = std::max(4, static_cast<int>(std::round(L / pitch)));
+    const int n = std::max(4, 2 * static_cast<int>(std::round(L / pitch * 0.5f)));
     std::vector<Vec2> pins;
-    for (int k = 0; k < n; ++k) pins.push_back(loopAt(loop, L * static_cast<float>(k) / static_cast<float>(n), nullptr).p);
+    for (int k = 0; k < n; ++k) {
+        float s = std::fmod(L * static_cast<float>(k) / static_cast<float>(n) + phase, L);
+        if (s < 0.0f) s += L;
+        pins.push_back(loopAt(loop, s, nullptr).p);
+    }
     return pins;
 }
 
@@ -1043,6 +1083,19 @@ std::vector<Vec2> gearOutline(float m, int z, float phase, float addendum, float
     return out;
 }
 
+bool isLoopKind(const std::string& k) { return k == "chain_loop" || k == "belt"; }
+
+MeshData loopMeshAt(const Body& b, float travel) {
+    if (!isLoopKind(b.kind)) return b.mesh;
+    std::vector<float> p = b.params;
+    const std::size_t phaseIndex = b.kind == "chain_loop" ? 5 : 7;
+    if (p.size() <= phaseIndex) p.resize(phaseIndex + 1, 0.0f);
+    p[phaseIndex] += travel / std::max(b.scale, 1e-6f); // travel is in world mm, params unscaled
+    MeshData m = buildLibraryPart(b.kind, p);
+    if (b.scale != 1.0f) m.transform(scale(Vec3{b.scale, b.scale, b.scale}));
+    return m;
+}
+
 bool isLibraryKind(const std::string& k) {
     return k == "gear" || k == "ring_gear" || k == "bevel_gear" || k == "rack" || k == "worm" || k == "dc_motor" ||
            k == "stepper_motor" || k == "servo_motor" || k == "ev_motor" || k == "ev_flange_motor" || k == "motor_rotor" ||
@@ -1085,9 +1138,9 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
         for (int i = 0; i <= std::max(1, static_cast<int>(p[1])); ++i) pins.push_back({p[0] * static_cast<float>(i), 0.0f});
         return chainAlong(pins, false, p[0], p[0] * 0.62f);
     }
-    if (k == "chain_loop" && ok(4)) return chainAlong(pinsAround(beltLoop(p[1], p[2], p[3], 360), p[0]), true, p[0], at(4));
+    if (k == "chain_loop" && ok(4)) return chainAlong(pinsAround(beltLoop(p[1], p[2], p[3], 360), p[0], at(5)), true, p[0], at(4));
     if (k == "belt" && p.size() >= 6 && p[1] > 0.0f && p[2] > 0.0f && p[3] > 0.0f && p[4] > 0.0f && p[5] > 0.0f)
-        return beltAround(beltLoop(p[1], p[2], p[3]), static_cast<int>(p[0]), p[4], p[5], at(6));
+        return beltAround(beltLoop(p[1], p[2], p[3]), static_cast<int>(p[0]), p[4], p[5], at(6), at(7));
     if (k == "o_ring" && ok(2)) return primitives::torus({0, 0, p[1] * 0.5f}, p[0] * 0.5f + p[1] * 0.5f, p[1] * 0.5f, 96, 24);
     MeshData m;
     if (k == "dc_motor") m = dcMotor();
@@ -1361,6 +1414,20 @@ Motion follower(const std::string& name, std::vector<std::string> bodies, const 
     return m;
 }
 
+// A chain / belt travelling along its loop with the driver, at its pitch radius.
+Motion loopTravelMotion(const std::string& name, const std::string& body, const std::string& driver, float radius) {
+    Motion m;
+    m.name = name;
+    m.kind = MotionKind::Linear;
+    m.bodies = {body};
+    m.axis = {1, 0, 0};
+    m.follow = driver;
+    m.radius = radius;
+    m.speed = 0.0f;
+    m.alongLoop = true;
+    return m;
+}
+
 } // namespace
 
 LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<std::string, float>& values,
@@ -1457,6 +1524,7 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
         c.bodies.push_back(part(name + " Chain", "chain_loop", {p, r1, r2, a, w * 0.5f}, o, kDarkSteel, name));
         c.motions.push_back(spin(s1 + " Drive", {s1}, o, v("rpm")));
         c.motions.push_back(follower(s2 + " Chain", {s2}, o + Vec3{a, 0, 0}, s1 + " Drive", z1 / z2));
+        c.motions.push_back(loopTravelMotion(name + " Chain Travel", name + " Chain", s1 + " Drive", r1));
         return c;
     }
     if (key == "pulley") {
@@ -1507,6 +1575,7 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
                                 o, kRubber, name));
         c.motions.push_back(spin(p1 + " Drive", {p1}, o, v("rpm")));
         c.motions.push_back(follower(p2 + " Belt", {p2}, o + Vec3{a, 0, 0}, p1 + " Drive", r1 / r2));
+        c.motions.push_back(loopTravelMotion(name + " Belt Travel", name + " Belt", p1 + " Drive", r1));
         return c;
     }
     if (key == "o_ring") {

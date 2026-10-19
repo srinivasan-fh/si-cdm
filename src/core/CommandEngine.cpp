@@ -487,6 +487,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         std::optional<MotionMode> mode;
         std::optional<std::vector<std::string>> targets;
         std::optional<bool> each; // EACH: every body turns about its own centre
+        std::optional<bool> path; // PATH: a linear motion moves a chain / belt along its loop
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
             const bool hasNext = i + 1 < a.size();
@@ -520,6 +521,8 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
                 if (!num(ratio)) return out.fail("RATIO needs a number (e.g. -0.5 for a 1:2 external mesh)");
             } else if (k == "step" || k == "steps") {
                 if (!num(step) || *step < 0.0f) return out.fail("STEP needs a size >= 0 (0 = smooth)");
+            } else if (k == "path" || k == "alongloop" || k == "travel_loop") {
+                path = true; // chain / belt: travel along its loop
             } else if (k == "each" || k == "own") {
                 each = true;
             } else if (k == "shared" || k == "common") {
@@ -575,6 +578,10 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         if (range && *range > 0.0f && !mode && m.mode == MotionMode::Continuous) m.mode = MotionMode::Oscillate;
         if (start) m.start = *start;
         if (each) m.eachCentre = *each;
+        if (path) {
+            if (m.kind != MotionKind::Linear) return out.fail("PATH is for linear motions (chains and belts)");
+            m.alongLoop = *path;
+        }
         if (follow && !follow->empty()) {
             const int d = findMotion(doc, *follow);
             if (d < 0 || motions[static_cast<std::size_t>(d)].kind != MotionKind::Circular)

@@ -301,6 +301,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         jm.set("start", m.start).set("enabled", m.enabled);
         if (!m.follow.empty()) jm.set("follow", m.follow).set("radius", m.radius).set("ratio", m.ratio);
         if (m.step > 0.0f) jm.set("step", m.step);
+        if (m.alongLoop) jm.set("along_loop", true);
         motions.push(jm);
     }
     doc.set("motions", motions);
@@ -421,6 +422,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         m.radius = std::max(jm["radius"].asFloat(), 0.0f);
         m.ratio = jm["ratio"].asFloat(1.0f);
         m.step = std::max(jm["step"].asFloat(), 0.0f);
+        m.alongLoop = jm["along_loop"].asBool(false);
         loaded.motions().push_back(std::move(m));
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);

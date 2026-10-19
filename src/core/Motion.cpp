@@ -71,7 +71,8 @@ Mat4 motionMatrix(const Motion& m, float t) noexcept { return motionMatrix(m, t,
 namespace {
 
 Mat4 matrixForValue(const Motion& m, float v, const Vec3& origin) noexcept {
-    if (!m.enabled || length(m.axis) < 1e-9f) return Mat4::identity();
+    // Travel along a loop changes the chain / belt shape, not its placement.
+    if (!m.enabled || m.alongLoop || length(m.axis) < 1e-9f) return Mat4::identity();
     if (m.kind == MotionKind::Linear) return translate(normalize(m.axis) * v);
     return translate(origin) * rotateAxis(m.axis, radians(v)) * translate(origin * -1.0f);
 }
@@ -171,6 +172,14 @@ Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::siz
     return out;
 }
 
+float loopTravel(const Scene& scene, std::size_t body, float t) {
+    if (body >= scene.bodies().size()) return 0.0f;
+    float s = 0.0f;
+    for (const Motion& m : scene.motions())
+        if (m.enabled && m.alongLoop && m.moves(scene.bodies()[body].name)) s += motionValue(scene, m, t);
+    return s;
+}
+
 bool isMoving(const Scene& scene, std::size_t body) {
     if (body >= scene.bodies().size()) return false;
     for (const Motion& m : scene.motions())
@@ -233,6 +242,11 @@ std::string describeMotion(const Motion& m) {
         std::snprintf(buf, sizeof(buf), "%g deg/s about (%g, %g, %g) through (%g, %g, %g)", static_cast<double>(m.speed),
                       static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z),
                       static_cast<double>(m.origin.x), static_cast<double>(m.origin.y), static_cast<double>(m.origin.z));
+    else if (m.alongLoop && !m.follow.empty())
+        std::snprintf(buf, sizeof(buf), "travels along its loop with %s (radius %g mm)", m.follow.c_str(),
+                      static_cast<double>(m.radius));
+    else if (m.alongLoop)
+        std::snprintf(buf, sizeof(buf), "travels along its loop at %g mm/s", static_cast<double>(m.speed));
     else if (!m.follow.empty() && m.radius > 0.0f)
         std::snprintf(buf, sizeof(buf), "rolls with %s (radius %g mm) along (%g, %g, %g)", m.follow.c_str(),
                       static_cast<double>(m.radius), static_cast<double>(a.x), static_cast<double>(a.y),

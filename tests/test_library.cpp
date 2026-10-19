@@ -402,3 +402,56 @@ TEST_CASE("sprockets, steel chain and belts") {
     REQUIRE(run(d, "PARAM \"Pulley 1\" TYPE FLAT DIAMETER 80").ok);
     CHECK_NEAR(body(d.scene, "Pulley 1")->bounds().max.x - body(d.scene, "Pulley 1")->bounds().min.x, 80, 0.5);
 }
+
+TEST_CASE("chains and belts travel along their loop with the driver") {
+    Document d;
+    REQUIRE(run(d, "PART CHAINDRIVE NAME CD TEETH1 12 TEETH2 24 RPM 10 @0,0,0").ok);
+    const Motion* travel = motion(d.scene, "CD Chain Travel");
+    const Motion* drive = motion(d.scene, "CD Driver Drive");
+    REQUIRE(travel && drive);
+    CHECK(travel->alongLoop);
+    std::size_t ci = 0;
+    while (d.scene.bodies()[ci].name != "CD Chain") ++ci;
+    const float r1 = 12.7f / (2.0f * std::sin(kPi / 12.0f));
+    // Travel = driver angle (rad) x pitch radius; the chain is not moved rigidly.
+    CHECK_NEAR(loopTravel(d.scene, ci, 0.7f), radians(motionValue(*drive, 0.7f)) * r1, 1e-3);
+    const Vec3 p = motionTransforms(d.scene, 0.7f)[ci].transformPoint({10, 20, 0});
+    CHECK_NEAR(p.x, 10, 1e-5);
+    CHECK_NEAR(p.y, 20, 1e-5);
+
+    // The shape changes with travel and comes back after a whole loop.
+    const Body& chain = d.scene.bodies()[ci];
+    const MeshData rest = loopMeshAt(chain, 0.0f);
+    const MeshData moved = loopMeshAt(chain, 5.0f);
+    REQUIRE(rest.vertices.size() == moved.vertices.size());
+    CHECK(length(rest.vertices[0].position - moved.vertices[0].position) > 1.0f);
+    float loopLen = 0.0f; // the chain's own loop: perimeter of the pitch-circle belt path
+    {
+        const auto& prm = chain.params;
+        const float r2 = prm[2], a = prm[3];
+        const float beta = std::asin((r1 - r2) / a);
+        loopLen = 2.0f * a * std::cos(beta) + r1 * (kPi + 2.0f * beta) + r2 * (kPi - 2.0f * beta);
+    }
+    const MeshData around = loopMeshAt(chain, loopLen);
+    CHECK(length(rest.vertices[0].position - around.vertices[0].position) < 0.5f);
+
+    Document b;
+    REQUIRE(run(b, "PART BELTDRIVE NAME BD TYPE TIMING").ok);
+    REQUIRE(motion(b.scene, "BD Belt Travel"));
+    CHECK(motion(b.scene, "BD Belt Travel")->alongLoop);
+    REQUIRE(run(b, "PART BELT NAME Loose").ok);
+    REQUIRE(run(b, "MOTION LINEAR Spin PATH SPEED 50 BODIES Loose").ok);
+    std::size_t li = 0;
+    while (b.scene.bodies()[li].name != "Loose") ++li;
+    CHECK_NEAR(loopTravel(b.scene, li, 2.0f), 100, 1e-3);
+    CHECK(!run(b, "MOTION CIRCLE Bad PATH BODIES Loose").ok);
+
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_loop_test.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(b.scene, b.state, path, &err));
+    Scene s;
+    ProjectState st;
+    REQUIRE(loadProject(s, st, path, &err, nullptr));
+    REQUIRE(motion(s, "Spin"));
+    CHECK(motion(s, "Spin")->alongLoop);
+}

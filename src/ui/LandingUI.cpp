@@ -1952,6 +1952,9 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 }
             }
             if (m.kind == MotionKind::Linear) {
+                ImGui::Checkbox("Travel along the chain / belt loop", &m.alongLoop);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Moves a chain or belt body around its own loop instead of sliding it");
                 ImGui::TextDisabled("Rolls with");
                 ImGui::SameLine(90);
                 ImGui::SetNextItemWidth(-1);

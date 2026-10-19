@@ -29,7 +29,15 @@ struct Body;
 //   ev_flange_motor: none (flange-mount traction motor, shaft along +X at z = 120)
 //   motor_rotor:   style (0 DC, 1 stepper, 3 / 4 traction): style shaft_length shafts rear_length shaft_dia fitting
 //                  style 2 (servo): style horn            (see partParams())
+//   tyre: diameter width rim_dia tread     alloy_rim / wheel_hub, caster_fork, roller_hub, wheel_rollers: wheel parts
+//   sprocket: pitch teeth width bore       pulley: type diameter width bore       chain: pitch links
+//   chain_loop: pitch r1 r2 centre z phase (pins on the loop around two pitch circles, shifted by phase mm)
+//   belt: type r1 r2 centre width thickness z phase                                 o_ring: inner_dia section
 bool isLibraryKind(const std::string& kind);
+// Chains and belts that can travel along their loop (chain_loop, belt).
+bool isLoopKind(const std::string& kind);
+// Mesh of a chain / belt body moved `travel` mm along its loop (scale applied).
+MeshData loopMeshAt(const Body& body, float travel);
 MeshData buildLibraryPart(const std::string& kind, const std::vector<float>& params);
 
 // Involute outline of a gear in the XY plane (counter-clockwise, star-shaped
