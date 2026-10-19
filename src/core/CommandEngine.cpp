@@ -1,6 +1,7 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/Extrude.hpp"
+#include "core/Library.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -203,7 +204,10 @@ std::vector<std::string> describeDocument(const Document& doc) {
                       static_cast<double>(b.offset.y), static_cast<double>(b.offset.z),
                       static_cast<double>(bb.max.x - bb.min.x), static_cast<double>(bb.max.y - bb.min.y),
                       static_cast<double>(bb.max.z - bb.min.z), b.visible ? "" : "  (hidden)");
-        l.push_back(buf);
+        std::string line = buf;
+        if (b.scale != 1.0f) line += fmt("  scale %g", b.scale);
+        if (!b.component.empty() && b.component != b.name) line += "  {" + b.component + "}";
+        l.push_back(line);
     }
     l.push_back("Sketch curves (" + std::to_string(doc.scene.sketch().curves().size()) + "):");
     for (const SketchCurve& c : doc.scene.sketch().curves())
@@ -442,7 +446,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         // Options; a motion that already has the name is updated, keeping what is not given.
         std::optional<std::string> name;
         std::optional<Vec3> axis, origin;
-        std::optional<float> speed, range, start, radius;
+        std::optional<float> speed, range, start, radius, ratio, step;
         std::optional<std::string> follow;
         std::optional<MotionMode> mode;
         std::optional<std::vector<std::string>> targets;
@@ -476,6 +480,10 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
                 follow = iequal(a[++i], "none") ? std::string() : a[i];
             } else if (k == "radius") {
                 if (!num(radius) || *radius < 0.0f) return out.fail("RADIUS needs a number >= 0 (0 = wheel size)");
+            } else if (k == "ratio") {
+                if (!num(ratio)) return out.fail("RATIO needs a number (e.g. -0.5 for a 1:2 external mesh)");
+            } else if (k == "step" || k == "steps") {
+                if (!num(step) || *step < 0.0f) return out.fail("STEP needs a size >= 0 (0 = smooth)");
             } else if (k == "each" || k == "own") {
                 each = true;
             } else if (k == "shared" || k == "common") {
@@ -533,14 +541,16 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         if (each) m.eachCentre = *each;
         if (follow && !follow->empty()) {
             const int d = findMotion(doc, *follow);
-            if (m.kind != MotionKind::Linear) return out.fail("FOLLOW is for linear motions");
             if (d < 0 || motions[static_cast<std::size_t>(d)].kind != MotionKind::Circular)
                 return out.fail("No circular motion named " + *follow);
+            if (iequal(motions[static_cast<std::size_t>(d)].name, m.name)) return out.fail("A motion cannot follow itself");
             m.follow = motions[static_cast<std::size_t>(d)].name;
         } else if (follow) {
             m.follow.clear();
         }
         if (radius) m.radius = *radius;
+        if (ratio) m.ratio = *ratio;
+        if (step) m.step = *step;
         if (origin) {
             m.origin = *origin;
             if (!each) m.eachCentre = false;
@@ -591,6 +601,139 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         if (!view->simulation(sub == "seek" ? "time" : sub == "reset" ? "stop" : sub, *v, &reply))
             return out.fail(reply.empty() ? "Simulation not available" : reply);
         out.say(reply);
+        return out;
+    }
+
+    // ---- Library -----------------------------------------------------------
+    if (cmd == "PART") {
+        if (a.empty()) {
+            out.say("Library (PART name [@x,y,z] [parameter value]...):");
+            for (const LibraryItem& it : libraryItems()) {
+                std::string params;
+                for (const LibraryParam& p : it.params) params += " " + toUpper(p.key) + " " + fmt("%g", p.value);
+                out.say(std::string("  ") + it.key + "  " + it.name + "  (" + it.category + ")  " + it.summary + "  ·" + params);
+            }
+            return out;
+        }
+        const LibraryItem* item = findLibraryItem(a[0]);
+        if (!item) return out.fail("No library part " + a[0] + " (PART lists them)");
+        std::map<std::string, float> values;
+        std::optional<Vec3> at;
+        std::string name;
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (!a[i].empty() && a[i][0] == '@') {
+                if (!(at = parseVec3(a[i].substr(1)))) return out.fail("Position needs @x,y,z");
+                continue;
+            }
+            if ((k == "at" || k == "position") && i + 1 < a.size()) {
+                if (!(at = parseVec3(a[++i]))) return out.fail("AT needs x,y,z");
+                continue;
+            }
+            if (k == "name" && i + 1 < a.size()) {
+                name = a[++i];
+                continue;
+            }
+            const LibraryParam* param = nullptr;
+            for (const LibraryParam& p : item->params)
+                if (k == p.key) param = &p;
+            if (param) {
+                const auto v = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
+                if (!v) return out.fail(std::string(param->label) + " needs a number");
+                if (*v < param->min || *v > param->max)
+                    return out.fail(std::string(param->label) + fmt(" must be %g to %g", param->min, param->max));
+                values[param->key] = *v;
+                ++i;
+            } else if (name.empty()) {
+                name = a[i];
+            } else {
+                std::string keys;
+                for (const LibraryParam& p : item->params) keys += std::string(keys.empty() ? "" : ", ") + toUpper(p.key);
+                return out.fail("Unknown parameter '" + a[i] + "' for " + item->name + " (" + keys + ")");
+            }
+        }
+        auto taken = [&](const std::string& n) {
+            for (const Body& b : doc.scene.bodies())
+                if (iequal(b.name, n) || iequal(b.component, n)) return true;
+            return false;
+        };
+        if (name.empty()) {
+            int n = 1;
+            while (taken(std::string(item->name) + " " + std::to_string(n))) ++n;
+            name = std::string(item->name) + " " + std::to_string(n);
+        } else if (taken(name)) {
+            return out.fail("A body or component named " + name + " already exists");
+        }
+        LibraryComponent c = makeLibraryComponent(*item, values, name, at.value_or(Vec3{}));
+        if (c.bodies.empty()) return out.fail("Could not build " + std::string(item->name));
+        if (!at && !doc.scene.bodies().empty()) {
+            // Beside the model: 30 mm to the right of everything, centred on y = 0.
+            AABB scene, part;
+            for (const Body& b : doc.scene.bodies()) scene.expand(b.bounds());
+            for (const Body& b : c.bodies) part.expand(b.bounds());
+            if (scene.valid() && part.valid()) {
+                const Vec3 d{scene.max.x + 30.0f - part.min.x, -part.center().y, 0.0f};
+                for (Body& b : c.bodies) b.offset += d;
+                for (Motion& m : c.motions) m.origin += d;
+            }
+        }
+        const std::size_t first = doc.scene.bodies().size();
+        for (Body& b : c.bodies) doc.scene.add(std::move(b));
+        for (Motion& m : c.motions) doc.scene.motions().push_back(std::move(m));
+        doc.selectedBody = static_cast<int>(first);
+        doc.selectedCurve = doc.selectedImage = -1;
+        markChanged(doc);
+        const std::size_t nb = doc.scene.bodies().size() - first;
+        out.say("Inserted " + name + "  (" + item->name + ", " + std::to_string(nb) + (nb == 1 ? " body" : " bodies") +
+                (c.motions.empty() ? std::string()
+                                   : ", " + std::to_string(c.motions.size()) + (c.motions.size() == 1 ? " motion" : " motions")) +
+                ")");
+        return out;
+    }
+    if (cmd == "SCALE") {
+        // SCALE [name] factor | SCALE [name] TO size
+        std::vector<std::string> words = a;
+        bool absolute = false;
+        std::optional<float> value;
+        if (!words.empty()) value = parseNumber(words.back());
+        if (!value || *value <= 0.0f) return usage();
+        words.pop_back();
+        if (!words.empty() && lower(words.back()) == "to") {
+            absolute = true;
+            words.pop_back();
+        }
+        const int bi = words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
+        auto& bodies = doc.scene.bodies();
+        const Body& picked = bodies[static_cast<std::size_t>(bi)];
+        const std::string comp = picked.component;
+        std::vector<std::size_t> targets;
+        for (std::size_t i = 0; i < bodies.size(); ++i)
+            if (static_cast<int>(i) == bi || (!comp.empty() && bodies[i].component == comp)) targets.push_back(i);
+        const float k = absolute ? *value / picked.scale : *value;
+        const Vec3 anchor = bodies[targets.front()].offset;
+        auto inGroup = [&](const std::string& n) {
+            for (std::size_t i : targets)
+                if (bodies[i].name == n) return true;
+            return false;
+        };
+        for (std::size_t i : targets) {
+            Body& b = bodies[i];
+            b.setScale(b.scale * k);
+            b.offset = anchor + (b.offset - anchor) * k;
+        }
+        // Motions of the component scale with it (axis points, roll radii).
+        for (Motion& m : doc.scene.motions()) {
+            bool all = !m.bodies.empty();
+            for (const std::string& n : m.bodies) all = all && n != "*" && inGroup(n);
+            if (!all) continue;
+            m.origin = anchor + (m.origin - anchor) * k;
+            m.radius *= k;
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        out.say((comp.empty() ? picked.name : comp) + fmt(" scaled x%g (size %g)", k, bodies[targets.front()].scale));
         return out;
     }
 

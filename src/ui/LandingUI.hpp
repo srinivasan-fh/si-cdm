@@ -7,6 +7,7 @@
 #include "ui/Toolbox.hpp"
 #include "ui/ViewCube.hpp"
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -22,7 +23,8 @@ ImVec4 motionColor(std::size_t i);
 struct UiState {
     ViewMode mode = ViewMode::Model3D;
     SketchPlane plane = SketchPlane::Top; // active sketch / drawing plane
-    bool showModelTree = false; // docked Model panel beside the tool rail
+    bool showModelTree = false; // docked panel beside the tool rail
+    int dockTab = 0;            // its page: 0 Model, 1 Library
     bool showControls = false;
     bool showAbout = false;
     bool snapGrid = true;
@@ -130,7 +132,8 @@ private:
     void drawFileTabs(UiCommands& cmd, const UiState& st);
     void requestClose(UiCommands& cmd, const UiState& st, int index);
     void drawRulers(const OrbitCamera& cam, const UiState& st);
-    float drawModelTree(Scene& scene, UiState& st, float x, float top, float bottom); // returns width
+    float drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float x, float top, float bottom); // returns width
+    void drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st);
     float drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom); // returns width
     void drawSimTransport(UiState& st);
     void drawCommandBar(UiCommands& cmd, UiState& st);
@@ -145,6 +148,7 @@ private:
     Toolbox m_toolbox;
     ViewCube m_viewCube;
     int m_shownFile = -1; // file tab id the tab bar currently shows
+    int m_shownDockTab = -1; // dock page the tab bar currently shows
     float m_toolboxWidth = 0.0f;
     float m_leftDockWidth = 0.0f; // rail + docked Model panel
     float m_menuHeight = 0.0f;
@@ -172,6 +176,11 @@ private:
     bool m_closeAskOpen = false;
     int m_closeAfterSave = -1;    // file tab id to close once Save As succeeds
     bool m_showMcp = false;
+
+    // Library page: selected item and its edited parameters.
+    std::string m_libSelected = "dc_motor";
+    std::map<std::string, std::map<std::string, float>> m_libValues;
+    char m_libSearch[64] = "";
 };
 
 } // namespace sicdm

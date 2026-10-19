@@ -37,11 +37,15 @@ struct Motion {
     MotionMode mode = MotionMode::Continuous;
     float start = 0.0f;              // delay before it starts (s)
     bool enabled = true;
-    // Linear only: travel is driven by this circular motion rolling a wheel of
-    // `radius` (0 = half the first driven body's size along the direction);
-    // speed, range and mode then come from that motion.
+    // Driven by another circular motion (speed, range and mode then come from it):
+    //  - linear: rolls with it on a wheel of `radius` (0 = half the first driven
+    //    body's size along the direction): rack and pinion, wheels on the ground;
+    //  - circular: turns `ratio` times its angle (gear trains: -z1/z2 for an
+    //    external mesh). Leaders may follow others in turn (motor -> gear -> gear).
     std::string follow;
     float radius = 0.0f;
+    float ratio = 1.0f;
+    float step = 0.0f; // > 0: moves in steps of this size (stepper motors, deg or mm)
 
     bool moves(std::string_view bodyName) const;
     const char* unit() const noexcept { return kind == MotionKind::Circular ? "deg" : "mm"; }

@@ -144,3 +144,21 @@ TEST_CASE("MCP motion tools add motions and report poses headless") {
     CHECK(!tool(s, "delete_motion", R"({"name":"Wheel spin"})")["isError"].asBool());
     CHECK(d.scene.motions().size() == 1);
 }
+
+TEST_CASE("MCP library tools insert, list and scale parts") {
+    Document d;
+    McpServer s(d, nullptr);
+    Json r = tool(s, "insert_part", R"({"part":"stepper_motor","name":"X Axis","position":[0,0,0],"params":{"size":2,"rpm":15}})");
+    CHECK(!r["isError"].asBool());
+    CHECK(d.scene.bodies().size() == 2);
+    CHECK_NEAR(d.scene.bodies()[0].scale, 2, 1e-6);
+    CHECK(d.scene.motions().size() == 1);
+    CHECK_NEAR(d.scene.motions()[0].speed, 90, 1e-4);
+    CHECK(tool(s, "insert_part", R"({"part":"flux_capacitor"})")["isError"].asBool());
+    CHECK(tool(s, "insert_part", R"({"part":"spur_gear","params":{"teeth":"many"}})")["isError"].asBool());
+    CHECK(tool(s, "list_parts", "{}")["content"][0]["text"].asString().find("planetary") != std::string::npos);
+    CHECK(!tool(s, "modify", R"({"name":"X Axis","scale":1})")["isError"].asBool());
+    CHECK_NEAR(d.scene.bodies()[1].scale, 1, 1e-6); // the rotor scales with its component
+    const Json sc = tool(s, "get_scene", "{}")["structuredContent"];
+    CHECK(sc["bodies"][1]["component"].asString() == "X Axis");
+}

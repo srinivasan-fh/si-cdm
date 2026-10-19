@@ -6,6 +6,8 @@
 
 #include <imgui.h>
 
+#include <cmath>
+
 namespace sicdm {
 
 namespace {
@@ -65,7 +67,7 @@ void Toolbox::handleShortcuts() {
     }
 }
 
-float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen) {
+float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen, int& panelTab) {
     m_drawing2D = drawing2D;
     const int cols = m_twoColumns ? 2 : 1;
     const float width = kPad * 2.0f + kSlot * static_cast<float>(cols) + kGap * static_cast<float>(cols - 1);
@@ -105,25 +107,54 @@ float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen) {
         if (hov) ImGui::SetTooltip(m_twoColumns ? "Single-column tools" : "Two-column tools");
     }
 
-    // Model panel toggle: a tree icon that docks the panel beside the rail.
-    {
-        ImGui::InvisibleButton("##modelpanel", {width - kPad * 2.0f, 26.0f});
+    // Panel toggles: Model (tree icon) and Library (gear icon) dock beside the rail.
+    // Two columns: side by side; one column: stacked.
+    auto panelButton = [&](const char* id, int tab, float w) {
+        ImGui::InvisibleButton(id, {w, 26.0f});
         const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
         const bool hovered = ImGui::IsItemHovered();
-        if (ImGui::IsItemClicked()) panelOpen = !panelOpen;
+        const bool on = panelOpen && panelTab == tab;
+        if (ImGui::IsItemClicked()) {
+            panelOpen = !on;
+            panelTab = tab;
+        }
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        if (panelOpen) dl->AddRectFilled(lo, hi, theme::kAccent, 4.0f);
+        if (on) dl->AddRectFilled(lo, hi, theme::kAccent, 4.0f);
         else if (hovered) dl->AddRectFilled(lo, hi, theme::kHover, 4.0f);
-        const ImU32 c = panelOpen ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 210, 218, 255);
-        const ImVec2 o{(lo.x + hi.x) * 0.5f - 7.0f, (lo.y + hi.y) * 0.5f - 6.0f};
-        // Root node + two indented children.
-        dl->AddRectFilled({o.x, o.y}, {o.x + 5, o.y + 3}, c);
-        dl->AddLine({o.x + 2, o.y + 3}, {o.x + 2, o.y + 11}, c);
-        dl->AddLine({o.x + 2, o.y + 6}, {o.x + 6, o.y + 6}, c);
-        dl->AddLine({o.x + 2, o.y + 11}, {o.x + 6, o.y + 11}, c);
-        dl->AddRectFilled({o.x + 7, o.y + 5}, {o.x + 14, o.y + 7.5f}, c);
-        dl->AddRectFilled({o.x + 7, o.y + 10}, {o.x + 14, o.y + 12.5f}, c);
-        if (hovered) ImGui::SetTooltip(panelOpen ? "Hide Model panel  (M)" : "Show Model panel  (M)");
+        const ImU32 c = on ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 210, 218, 255);
+        const ImVec2 mid{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f};
+        if (tab == 0) { // root node + two indented children
+            const ImVec2 o{mid.x - 7.0f, mid.y - 6.0f};
+            dl->AddRectFilled({o.x, o.y}, {o.x + 5, o.y + 3}, c);
+            dl->AddLine({o.x + 2, o.y + 3}, {o.x + 2, o.y + 11}, c);
+            dl->AddLine({o.x + 2, o.y + 6}, {o.x + 6, o.y + 6}, c);
+            dl->AddLine({o.x + 2, o.y + 11}, {o.x + 6, o.y + 11}, c);
+            dl->AddRectFilled({o.x + 7, o.y + 5}, {o.x + 14, o.y + 7.5f}, c);
+            dl->AddRectFilled({o.x + 7, o.y + 10}, {o.x + 14, o.y + 12.5f}, c);
+        } else { // gear
+            for (int t = 0; t < 8; ++t) {
+                const float a = static_cast<float>(t) * 0.785398f;
+                const ImVec2 d{std::cos(a), std::sin(a)};
+                dl->AddLine({mid.x + d.x * 4.5f, mid.y + d.y * 4.5f}, {mid.x + d.x * 7.5f, mid.y + d.y * 7.5f}, c, 2.4f);
+            }
+            dl->AddCircle(mid, 5.0f, c, 16, 2.0f);
+            dl->AddCircleFilled(mid, 1.6f, c);
+        }
+        if (hovered)
+            ImGui::SetTooltip(tab == 0 ? (on ? "Hide Model panel  (M)" : "Show Model panel  (M)")
+                                       : (on ? "Hide Library" : "Library: motors, gears, gear trains  (K)"));
+    };
+    {
+        const float full = width - kPad * 2.0f;
+        if (m_twoColumns) {
+            const float half = (full - kGap) * 0.5f;
+            panelButton("##modelpanel", 0, half);
+            ImGui::SameLine();
+            panelButton("##library", 1, half);
+        } else {
+            panelButton("##modelpanel", 0, full);
+            panelButton("##library", 1, full);
+        }
     }
 
     const auto groups = toolGroups();

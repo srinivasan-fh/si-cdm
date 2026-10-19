@@ -554,7 +554,12 @@ void Application::handleViewportInput() {
     if (viewKey(ImGuiKey_7, ImGuiKey_Keypad7)) cmd.view = ctrl ? StandardView::Bottom : StandardView::Top;
     if (viewKey(ImGuiKey_0, ImGuiKey_Keypad0)) cmd.view = StandardView::Isometric;
     if (ImGui::IsKeyPressed(ImGuiKey_F)) cmd.fit = true;
-    if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !ctrl) m_uiState.showModelTree = !m_uiState.showModelTree;
+    auto togglePage = [&](int page) { // M: Model page, K: Library page of the docked panel
+        m_uiState.showModelTree = !(m_uiState.showModelTree && m_uiState.dockTab == page);
+        m_uiState.dockTab = page;
+    };
+    if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !ctrl) togglePage(0);
+    if (ImGui::IsKeyPressed(ImGuiKey_K, false) && !ctrl) togglePage(1);
     if (ctrl) { // Ctrl/Cmd + key belongs to the menus, not to single-key shortcuts
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
         handleCommands(cmd);
@@ -918,6 +923,8 @@ std::uint64_t Application::signatureOf(const Document& doc) {
         mix(&b.offset, sizeof(b.offset));
         mix(&b.color, sizeof(b.color));
         mix(&b.visible, sizeof(b.visible));
+        mix(&b.scale, sizeof(b.scale));
+        mixStr(b.component);
         const std::size_t tris = b.mesh.indices.size();
         mix(&tris, sizeof(tris));
     }
@@ -939,8 +946,9 @@ std::uint64_t Application::signatureOf(const Document& doc) {
     for (const Motion& m : s.motions()) {
         mixStr(m.name);
         for (const std::string& b : m.bodies) mixStr(b);
+        mixStr(m.follow);
         const float f[] = {m.axis.x, m.axis.y, m.axis.z, m.origin.x, m.origin.y, m.origin.z, m.speed, m.range, m.start,
-                           m.eachCentre ? 1.0f : 0.0f};
+                           m.eachCentre ? 1.0f : 0.0f, m.radius, m.ratio, m.step};
         mix(f, sizeof(f));
         const int e[] = {static_cast<int>(m.kind), static_cast<int>(m.mode), m.enabled ? 1 : 0};
         mix(e, sizeof(e));

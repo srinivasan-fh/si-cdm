@@ -247,6 +247,8 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         jb.set("offset", vec3Json(b.offset));
         jb.set("color", vec3Json(b.color));
         jb.set("visible", b.visible);
+        if (b.scale != 1.0f) jb.set("scale", b.scale);
+        if (!b.component.empty()) jb.set("component", b.component);
         if (!isPrimitiveKind(b.kind)) {
             Json pos = Json::array(), nrm = Json::array(), idx = Json::array(), edges = Json::array();
             for (const Vertex& v : b.mesh.vertices) {
@@ -297,7 +299,8 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         jm.set("axis", vec3Json(m.axis)).set("origin", vec3Json(m.origin)).set("each_centre", m.eachCentre);
         jm.set("speed", m.speed).set("range", m.range).set("mode", motionModeKey(m.mode));
         jm.set("start", m.start).set("enabled", m.enabled);
-        if (!m.follow.empty()) jm.set("follow", m.follow).set("radius", m.radius);
+        if (!m.follow.empty()) jm.set("follow", m.follow).set("radius", m.radius).set("ratio", m.ratio);
+        if (m.step > 0.0f) jm.set("step", m.step);
         motions.push(jm);
     }
     doc.set("motions", motions);
@@ -360,6 +363,9 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             b.name = jb["name"].asString("Mesh");
             b.kind = "mesh";
         }
+        if (isPrimitiveKind(kind)) b.setScale(jb["scale"].asFloat(1.0f)); // meshes are stored already scaled
+        else b.scale = std::max(jb["scale"].asFloat(1.0f), 1e-6f);
+        b.component = jb["component"].asString();
         b.offset = jsonVec3(jb["offset"]);
         b.color = jsonVec3(jb["color"], b.color);
         b.visible = jb["visible"].asBool(true);
@@ -413,6 +419,8 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         m.enabled = jm["enabled"].asBool(true);
         m.follow = jm["follow"].asString();
         m.radius = std::max(jm["radius"].asFloat(), 0.0f);
+        m.ratio = jm["ratio"].asFloat(1.0f);
+        m.step = std::max(jm["step"].asFloat(), 0.0f);
         loaded.motions().push_back(std::move(m));
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);

@@ -96,10 +96,46 @@ SIM PLAY   SIM PAUSE   SIM STOP   SIM TIME 2.5   SIM SPEED 2   SIM DURATION 12  
 
 `SIM AT t` (also headless) reports every motion value and moving body position at time t.
 
+## Library: motors and gears
+
+![Library](docs/library.png)
+
+The gear button at the top of the tool rail (or `K`) opens the **Library** page of the docked panel:
+search, pick a part, set its parameters and click **Insert** (or double-click a part). Parts are
+parametric: they save as parameters and rebuild exactly when the project opens.
+
+| Category | Parts |
+| --- | --- |
+| Motors | **DC motor** (28 mm can, 3 mm shaft), **Stepper motor** (NEMA 17, 1.8° steps), **Servo motor** (standard servo, two-arm horn) |
+| Gears | **Spur**, **Helical**, **Herringbone**, **Bevel**, **Internal ring**, **Worm**, **Worm wheel**: involute teeth, 20° pressure angle, module / teeth / face width / bore |
+| Linear gears | **Gear rack** |
+| Gear trains | **Gear pair**, **Rack and pinion**, **Planetary set** (sun, 3 planets, carrier, ring), **Worm drive**: meshed, with linked motions |
+
+- **Motors** are two bodies, a fixed housing and a rotor (shaft with coupler, or servo horn), and come
+  with a **360° circular motion** on the rotor (speed in rpm, Loop 0–360°). Steppers move in 1.8°
+  steps; a servo with a sweep under 360° swings back and forth.
+- **Scalable:** every motor (and any body) has a **Size** factor, set in the Library before inserting,
+  or afterwards in *Properties → Scale* or with `SCALE`. A component scales as a whole: its bodies,
+  their spacing and its motions.
+- **Gear trains** drive each other: a circular motion can be *Driven by* another one at a ratio
+  (−z₁/z₂ for an external mesh), chained as far as you like (motor → gear → gear); a linear motion rolls
+  with a circular one (rack = pinion angle × pitch radius). Set it in the Motion Study panel or with
+  `MOTION ... FOLLOW name RATIO r`.
+
+```text
+PART                              (lists the library)
+PART DCMOTOR SIZE 1.5 RPM 60      PART STEPPER @100,0,0 RPM 30 STEP 1.8      PART SERVO NAME Pan SWEEP 180
+PART SPUR MODULE 2 TEETH 24 WIDTH 10 BORE 4      PART HELICAL TEETH 30 HELIX 20      PART RACK TEETH 40
+PART GEARPAIR TEETH1 16 TEETH2 48      PART PLANETARY SUN_TEETH 18 PLANET_TEETH 18      PART WORMDRIVE
+SCALE "DC Motor 1" 2      SCALE "Gear Pair 1 Driver" TO 1
+MOTION CIRCLE Output FOLLOW "DC Motor 1 Drive" RATIO -0.25 BODIES "Spur Gear 1"
+```
+
 ## Tools (left rail)
 
 Photoshop-style tool rail. `<<` / `>>` switches between two columns and one.
-The tree button at the top of the rail (or `M`) shows the **Model panel**, docked beside the rail:
+The tree button at the top of the rail (or `M`) shows the **Model panel**, docked beside the rail (its
+*Library* page holds motors and gears, see above):
 bodies, sketches and properties of the selection. It is hidden by default; drag its right edge to resize.
 Slots with a small corner triangle hold several tools: right-click or hold to open the flyout.
 
@@ -156,6 +192,7 @@ centre and opacity in the Model panel, or drag it with the Move tool.
 SI CDM includes a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents can read
 and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`, `create_solid`, `extrude`, `modify`, `delete`,
 `create_motion`, `delete_motion`, `simulate` (play / pause / seek, or body poses at a time — headless too),
+`insert_part`, `list_parts` (library motors, gears and gear trains; `modify` takes a `scale`),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

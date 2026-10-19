@@ -10,10 +10,11 @@
 
 using namespace sicdm;
 
-#define REQUIRE(c)      \
-    do {                \
-        CHECK(c);       \
-        if (!(c)) return; \
+#define REQUIRE(c)               \
+    do {                         \
+        const bool required_ = (c); \
+        CHECK(required_);        \
+        if (!required_) return;  \
     } while (0)
 
 namespace {

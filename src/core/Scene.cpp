@@ -21,6 +21,24 @@ Body makeBody(std::string name, std::string kind, std::vector<float> params, Vec
     return b;
 }
 
+void Body::rebuild() {
+    if (kind == "mesh") return;
+    mesh = buildPrimitive(kind, params);
+    if (scale != 1.0f) mesh.transform(sicdm::scale(Vec3{scale, scale, scale}));
+}
+
+void Body::setScale(float s) {
+    if (!(s > 0.0f) || s == scale) return;
+    if (kind == "mesh") {
+        const float k = s / scale;
+        mesh.transform(sicdm::scale(Vec3{k, k, k}));
+        scale = s;
+    } else {
+        scale = s;
+        rebuild();
+    }
+}
+
 std::array<Vec3, 4> ImageRef::corners() const noexcept {
     const PlaneFrame f = planeFrame(plane);
     const float hw = width * 0.5f, hh = height() * 0.5f;

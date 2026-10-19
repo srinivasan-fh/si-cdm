@@ -20,8 +20,14 @@ struct Body {
     Vec3 offset{}; // translation applied on top of the mesh
     std::string kind = "mesh"; // see buildPrimitive(); "mesh" stores triangles as-is
     std::vector<float> params;
+    float scale = 1.0f;     // uniform size factor about the body origin (library parts, SCALE)
+    std::string component;  // library component this body belongs to ("" = none)
 
     AABB bounds() const noexcept;
+    // Rebuilds a parametric body's mesh from kind, params and scale.
+    void rebuild();
+    // Sets the size factor (meshes are scaled in place).
+    void setScale(float s);
 };
 
 // Body made from an explicit mesh (kind "mesh").
@@ -90,6 +96,8 @@ public:
         return m_bodies.emplace_back(std::move(body));
     }
     void remove(std::size_t index);
+    // Call after changing a body's mesh in place (rebuild, setScale).
+    void touchBodies() noexcept { m_revision = nextRevision(); }
 
     // Bumped whenever bodies are added or removed (GPU buffers must be rebuilt).
     std::uint64_t revision() const noexcept { return m_revision; }

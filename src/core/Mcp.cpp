@@ -1,6 +1,7 @@
 #include "core/Mcp.hpp"
 
 #include "core/Command.hpp"
+#include "core/Library.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -167,6 +168,7 @@ Json McpServer::toolDefinitions() {
         p.set("color", numberArray(3, "Body colour [r,g,b] in 0..1"));
         p.set("width", prop("number", "Image width (mm)"));
         p.set("opacity", prop("number", "Image opacity 0..1"));
+        p.set("scale", prop("number", "Body: size factor (a library component scales as a whole, with its motions)"));
         tools.push(tool("modify", "Move, rename, recolour, show/hide a body, curve or image.", p, {"name"}));
     }
     {
@@ -184,6 +186,25 @@ Json McpServer::toolDefinitions() {
         p.set("roll", prop("number", "Roll the 3D view by degrees (0 levels it)"));
         p.set("fit", prop("boolean", "Zoom to fit everything"));
         tools.push(tool("set_view", "Change the window, plane, camera view or display mode of the app.", p, {}));
+    }
+    {
+        Json keys = Json::array();
+        for (const LibraryItem& it : libraryItems()) keys.push(it.key);
+        Json p = Json::object();
+        Json part = prop("string", "Library part (see list_parts)");
+        part.set("enum", keys);
+        p.set("part", part);
+        p.set("name", prop("string", "Component name (default e.g. \"DC Motor 1\")"));
+        p.set("position", numberArray(3, "[x,y,z] (default: beside the model)"));
+        Json params = Json::object();
+        params.set("type", "object").set("description",
+            "Part parameters by key, e.g. {\"size\": 1.5, \"rpm\": 60} or {\"module\": 2, \"teeth\": 24} (see list_parts)");
+        p.set("params", params);
+        tools.push(tool("insert_part",
+                        "Insert a library component: DC / stepper / servo motors (with a 360 deg drive motion), spur, "
+                        "helical, herringbone, bevel, internal ring and worm gears, racks, and linked gear trains.",
+                        p, {"part"}));
+        tools.push(tool("list_parts", "List the library parts with their parameters and defaults.", Json::object(), {}));
     }
     {
         Json p = Json::object();
@@ -264,6 +285,8 @@ Json McpServer::sceneJson() const {
         jb.set("name", b.name).set("kind", b.kind).set("params", params).set("position", vec3(b.offset));
         jb.set("bounds", bounds).set("color", vec3(b.color)).set("visible", b.visible);
         jb.set("triangles", b.mesh.indices.size() / 3);
+        jb.set("scale", b.scale);
+        if (!b.component.empty()) jb.set("component", b.component);
         jb.set("selected", static_cast<int>(i) == m_doc.selectedBody);
         bodies.push(jb);
     }
@@ -303,7 +326,8 @@ Json McpServer::sceneJson() const {
         jm.set("axis", vec3(m.axis)).set("origin", vec3(m.origin)).set("each_centre", m.eachCentre).set("speed", m.speed);
         jm.set("speed_unit", m.rateUnit()).set("range", m.range).set("mode", motionModeKey(m.mode));
         jm.set("start", m.start).set("enabled", m.enabled);
-        if (!m.follow.empty()) jm.set("follow", m.follow).set("radius", m.radius);
+        if (!m.follow.empty()) jm.set("follow", m.follow).set("ratio", m.ratio).set("radius", m.radius);
+        if (m.step > 0.0f) jm.set("step", m.step);
         motions.push(jm);
     }
     s.set("motions", motions);
@@ -412,6 +436,15 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             const Json& j = a[key];
             return Vec3{j[0].asFloat(), j[1].asFloat(), j[2].asFloat()};
         };
+        if (a["scale"].isNumber()) {
+            if (a["scale"].asNumber() <= 0) return textResult("scale must be > 0", true);
+            for (Body& b : bodies)
+                if (b.name == target) {
+                    const Json r = runLine("SCALE " + quote(target) + " TO " + num(a["scale"].asNumber()));
+                    if (r["isError"].asBool()) return r;
+                    break;
+                }
+        }
         for (Body& b : bodies)
             if (b.name == target) {
                 if (a["position"].isArray()) b.offset = v3("position");
@@ -481,6 +514,21 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["fit"].asBool()) ok = step("FIT") && ok;
         if (log.empty()) return textResult("Nothing to change", true);
         return textResult(log, !ok);
+    }
+    if (name == "list_parts") return runLine("PART");
+    if (name == "insert_part") {
+        if (!a["part"].isString()) return textResult("'part' is required (see list_parts)", true);
+        std::string line = "PART " + a["part"].asString();
+        if (a["name"].isString() && !a["name"].asString().empty()) line += " NAME " + quote(a["name"].asString());
+        if (a["position"].isArray())
+            line += " @" + num(a["position"][0].asNumber()) + "," + num(a["position"][1].asNumber()) + "," +
+                    num(a["position"][2].asNumber());
+        if (a["params"].isObject())
+            for (const auto& [k, v] : a["params"].members()) {
+                if (!v.isNumber()) return textResult("parameter '" + k + "' must be a number", true);
+                line += " " + k + " " + num(v.asNumber());
+            }
+        return runLine(line);
     }
     if (name == "create_motion") {
         const std::string kind = a["kind"].asString();

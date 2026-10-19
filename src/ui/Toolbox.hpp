@@ -15,8 +15,9 @@ public:
 
     // Draws the rail between `top` and `bottom` (screen y). Returns its width.
     // In the 2D drawing window, 3D-only tools are dimmed. `panelOpen` is the
-    // docked Model panel, toggled by the button at the top of the rail.
-    float draw(float top, float bottom, bool drawing2D, bool& panelOpen);
+    // docked panel and `panelTab` its page (0 Model, 1 Library), toggled by the
+    // buttons at the top of the rail.
+    float draw(float top, float bottom, bool drawing2D, bool& panelOpen, int& panelTab);
 
     ToolId active() const noexcept { return m_active; }
     void setActive(ToolId id);

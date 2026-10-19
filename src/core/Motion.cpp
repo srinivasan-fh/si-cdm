@@ -29,7 +29,9 @@ bool Motion::moves(std::string_view bodyName) const {
     return false;
 }
 
-float motionValue(const Motion& m, float t) noexcept {
+namespace {
+
+float smoothValue(const Motion& m, float t) noexcept {
     const float travel = std::max(t - m.start, 0.0f) * std::fabs(m.speed); // distance covered so far
     const float sign = m.speed < 0.0f ? -1.0f : 1.0f;
     if (!limited(m)) return sign * travel;
@@ -46,6 +48,13 @@ float motionValue(const Motion& m, float t) noexcept {
     return sign * travel;
 }
 
+} // namespace
+
+float motionValue(const Motion& m, float t) noexcept {
+    const float v = smoothValue(m, t);
+    return m.step > 0.0f ? std::trunc(v / m.step + 1e-4f * (v < 0.0f ? -1.0f : 1.0f)) * m.step : v;
+}
+
 float motionRate(const Motion& m, float t) noexcept {
     if (t < m.start || m.speed == 0.0f) return 0.0f;
     if (!limited(m)) return m.speed;
@@ -59,21 +68,32 @@ float motionRate(const Motion& m, float t) noexcept {
 
 Mat4 motionMatrix(const Motion& m, float t) noexcept { return motionMatrix(m, t, m.origin); }
 
-Mat4 motionMatrix(const Motion& m, float t, const Vec3& origin) noexcept {
+namespace {
+
+Mat4 matrixForValue(const Motion& m, float v, const Vec3& origin) noexcept {
     if (!m.enabled || length(m.axis) < 1e-9f) return Mat4::identity();
-    const float v = motionValue(m, t);
     if (m.kind == MotionKind::Linear) return translate(normalize(m.axis) * v);
     return translate(origin) * rotateAxis(m.axis, radians(v)) * translate(origin * -1.0f);
+}
+
+} // namespace
+
+Mat4 motionMatrix(const Motion& m, float t, const Vec3& origin) noexcept {
+    return matrixForValue(m, motionValue(m, t), origin);
 }
 
 namespace {
 
 const Motion* driverOf(const Scene& scene, const Motion& m) {
-    if (m.kind != MotionKind::Linear || m.follow.empty()) return nullptr;
+    if (m.follow.empty()) return nullptr;
     for (const Motion& d : scene.motions())
-        if (d.kind == MotionKind::Circular && d.enabled && iequals(d.name, m.follow)) return &d;
+        if (d.kind == MotionKind::Circular && d.enabled && &d != &m && iequals(d.name, m.follow)) return &d;
     return nullptr;
 }
+
+// Value / rate of m, following leaders up to `depth` levels (stops loops).
+float valueAt(const Scene& scene, const Motion& m, float t, int depth);
+float rateAt(const Scene& scene, const Motion& m, float t, int depth);
 
 // mm of travel per radian of the driving wheel.
 float rollRadius(const Scene& scene, const Motion& m, const Motion& driver) {
@@ -87,31 +107,40 @@ float rollRadius(const Scene& scene, const Motion& m, const Motion& driver) {
     return 0.0f;
 }
 
+float valueAt(const Scene& scene, const Motion& m, float t, int depth) {
+    if (m.follow.empty()) return motionValue(m, t);
+    const Motion* d = depth > 0 ? driverOf(scene, m) : nullptr;
+    if (!d) return 0.0f;
+    const float lead = valueAt(scene, *d, t, depth - 1);
+    return m.kind == MotionKind::Linear ? radians(lead) * rollRadius(scene, m, *d) : lead * m.ratio;
+}
+
+float rateAt(const Scene& scene, const Motion& m, float t, int depth) {
+    if (m.follow.empty()) return motionRate(m, t);
+    const Motion* d = depth > 0 ? driverOf(scene, m) : nullptr;
+    if (!d) return 0.0f;
+    const float lead = rateAt(scene, *d, t, depth - 1);
+    return m.kind == MotionKind::Linear ? radians(lead) * rollRadius(scene, m, *d) : lead * m.ratio;
+}
+
+constexpr int kMaxFollowDepth = 16;
+
 Mat4 sceneMatrix(const Scene& scene, const Motion& m, float t) {
-    if (m.enabled && !m.follow.empty() && length(m.axis) > 1e-9f)
-        return translate(normalize(m.axis) * motionValue(scene, m, t));
-    return motionMatrix(m, t);
+    return matrixForValue(m, valueAt(scene, m, t, kMaxFollowDepth), m.origin);
 }
 
 // Matrix of motion m for one body (its own centre when the motion asks for it).
 Mat4 matrixFor(const Scene& scene, const Motion& m, const Body& b, float t) {
-    return m.kind == MotionKind::Circular && m.eachCentre ? motionMatrix(m, t, b.bounds().center())
-                                                          : sceneMatrix(scene, m, t);
+    return m.kind == MotionKind::Circular && m.eachCentre
+               ? matrixForValue(m, valueAt(scene, m, t, kMaxFollowDepth), b.bounds().center())
+               : sceneMatrix(scene, m, t);
 }
 
 } // namespace
 
-float motionValue(const Scene& scene, const Motion& m, float t) {
-    if (m.follow.empty()) return motionValue(m, t);
-    const Motion* d = driverOf(scene, m);
-    return d ? radians(motionValue(*d, t)) * rollRadius(scene, m, *d) : 0.0f;
-}
+float motionValue(const Scene& scene, const Motion& m, float t) { return valueAt(scene, m, t, kMaxFollowDepth); }
 
-float motionRate(const Scene& scene, const Motion& m, float t) {
-    if (m.follow.empty()) return motionRate(m, t);
-    const Motion* d = driverOf(scene, m);
-    return d ? radians(motionRate(*d, t)) * rollRadius(scene, m, *d) : 0.0f;
-}
+float motionRate(const Scene& scene, const Motion& m, float t) { return rateAt(scene, m, t, kMaxFollowDepth); }
 
 float motionCycle(const Motion& m) noexcept {
     if (!limited(m) || m.speed == 0.0f) return 0.0f;
@@ -150,9 +179,12 @@ bool isMoving(const Scene& scene, std::size_t body) {
 }
 
 float suggestedDuration(const Scene& scene) noexcept {
+    // Motions that end (Once) or turn back (Oscillate) set the length; looping
+    // and continuous ones run on by themselves.
     float d = 0.0f;
     for (const Motion& m : scene.motions())
-        if (m.enabled) d = std::max(d, m.start + motionCycle(m));
+        if (m.enabled && m.follow.empty() && (m.mode == MotionMode::Once || m.mode == MotionMode::Oscillate))
+            d = std::max(d, m.start + motionCycle(m));
     return d > 0.05f ? d : 10.0f;
 }
 
@@ -189,7 +221,11 @@ std::optional<MotionMode> motionModeFromKey(std::string_view k) noexcept {
 std::string describeMotion(const Motion& m) {
     char buf[256];
     const Vec3 a = m.axis;
-    if (m.kind == MotionKind::Circular && m.eachCentre)
+    if (m.kind == MotionKind::Circular && !m.follow.empty())
+        std::snprintf(buf, sizeof(buf), "turns %g x %s about (%g, %g, %g)%s", static_cast<double>(m.ratio),
+                      m.follow.c_str(), static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z),
+                      m.eachCentre ? " through each body's centre" : "");
+    else if (m.kind == MotionKind::Circular && m.eachCentre)
         std::snprintf(buf, sizeof(buf), "%g deg/s about (%g, %g, %g) through each body's centre",
                       static_cast<double>(m.speed), static_cast<double>(a.x), static_cast<double>(a.y),
                       static_cast<double>(a.z));
@@ -216,6 +252,11 @@ std::string describeMotion(const Motion& m) {
     if (m.start > 0.0f) {
         char r[48];
         std::snprintf(r, sizeof(r), "  starts at %g s", static_cast<double>(m.start));
+        s += r;
+    }
+    if (m.step > 0.0f) {
+        char r[48];
+        std::snprintf(r, sizeof(r), "  steps of %g %s", static_cast<double>(m.step), m.unit());
         s += r;
     }
     std::string targets;

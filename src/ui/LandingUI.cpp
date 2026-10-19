@@ -1,6 +1,7 @@
 #include "ui/LandingUI.hpp"
 
 #include "core/Command.hpp"
+#include "core/Library.hpp"
 #include "ui/Theme.hpp"
 #include "ui/ToolIcons.hpp"
 
@@ -175,10 +176,10 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     drawCommandBar(cmd, st);
     const float railTop = mv->WorkPos.y + m_optionsHeight;
     const float bottom = mv->WorkPos.y + mv->WorkSize.y - m_statusHeight - m_commandHeight;
-    m_toolboxWidth = m_toolbox.draw(railTop, bottom, st.mode == ViewMode::Drawing2D, st.showModelTree);
+    m_toolboxWidth = m_toolbox.draw(railTop, bottom, st.mode == ViewMode::Drawing2D, st.showModelTree, st.dockTab);
     // The Model panel docks beside the rail; tabs, rulers and canvas start after it.
     m_leftDockWidth = m_toolboxWidth;
-    if (st.showModelTree) m_leftDockWidth += drawModelTree(scene, st, mv->WorkPos.x + m_toolboxWidth, railTop, bottom);
+    if (st.showModelTree) m_leftDockWidth += drawModelTree(cmd, scene, st, mv->WorkPos.x + m_toolboxWidth, railTop, bottom);
     drawFileTabs(cmd, st);
     // The Simulation window docks the motion study on the right.
     const float rightDock = st.mode == ViewMode::Simulation ? drawMotionPanel(scene, cmd, st, m_tabsBottom, bottom) : 0.0f;
@@ -276,7 +277,14 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         }
         ImGui::Separator();
         ImGui::MenuItem("Grid", "G", &vp.showGrid);
-        ImGui::MenuItem("Model Panel", "M", &st.showModelTree);
+        if (ImGui::MenuItem("Model Panel", "M", st.showModelTree && st.dockTab == 0)) {
+            st.showModelTree = !(st.showModelTree && st.dockTab == 0);
+            st.dockTab = 0;
+        }
+        if (ImGui::MenuItem("Library", "K", st.showModelTree && st.dockTab == 1)) {
+            st.showModelTree = !(st.showModelTree && st.dockTab == 1);
+            st.dockTab = 1;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Design")) {
@@ -658,19 +666,41 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
     dl->AddText(font, fs, {x0 + 2, y0 + 3}, text, "mm");
 }
 
-float LandingUI::drawModelTree(Scene& scene, UiState& st, float x, float top, float bottom) {
+float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float x, float top, float bottom) {
     // Docked full-height panel; only its right edge can be dragged to resize.
     const float height = std::max(bottom - top, 100.0f);
     ImGui::SetNextWindowPos({x, top}, ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints({200, height}, {440, height});
     ImGui::SetNextWindowSize({260, height}, ImGuiCond_FirstUseEver);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
-    const bool visible = ImGui::Begin("Model", &st.showModelTree, flags);
+    const bool visible = ImGui::Begin("##leftdock", nullptr, flags);
     ImGui::PopStyleVar();
     const float width = ImGui::GetWindowWidth();
     if (visible) {
+        // Page tabs (Model | Library) with a close button, like a docked DCC panel.
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {12, 5});
+        if (ImGui::BeginTabBar("##dockpages", ImGuiTabBarFlags_DrawSelectedOverline)) {
+            const char* pages[] = {"Model", "Library"};
+            for (int p = 0; p < 2; ++p) {
+                const ImGuiTabItemFlags f = st.dockTab == p && m_shownDockTab != p ? ImGuiTabItemFlags_SetSelected : 0;
+                const bool selected = ImGui::BeginTabItem(pages[p], nullptr, f);
+                if (ImGui::IsItemClicked()) st.dockTab = p; // tabs switch pages only when clicked
+                if (selected) {
+                    m_shownDockTab = p;
+                    ImGui::EndTabItem();
+                }
+            }
+            if (ImGui::TabItemButton("x", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) st.showModelTree = false;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close panel");
+            ImGui::EndTabBar();
+        }
+        ImGui::PopStyleVar();
+    }
+    if (visible && st.dockTab == 1) {
+        drawLibrary(cmd, scene, st);
+    } else if (visible) {
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
         if (ImGui::TreeNode("##root", "%s  (Part)", st.projectName.c_str())) {
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
@@ -750,7 +780,24 @@ float LandingUI::drawModelTree(Scene& scene, UiState& st, float x, float top, fl
             if (beginPropertyGrid("##bodyprops")) {
                 propertyRow("Name", "%s", b.name.c_str());
                 propertyRow("Type", "%s", b.kind.c_str());
-                propertyRow("Size", "%.1f x %.1f x %.1f mm", static_cast<double>(bb.max.x - bb.min.x),
+                if (!b.component.empty()) propertyRow("Component", "%s", b.component.c_str());
+                // Size factor: the whole library component scales with its motions.
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(theme::vec(theme::kTextDim), "Scale");
+                ImGui::TableNextColumn();
+                float scale = b.scale;
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::InputFloat("##scale", &scale, 0.1f, 0.5f, "x %.2f", ImGuiInputTextFlags_EnterReturnsTrue) &&
+                    scale > 0.01f && scale != b.scale) {
+                    char line[160];
+                    std::snprintf(line, sizeof(line), "SCALE \"%s\" TO %g", b.name.c_str(), static_cast<double>(scale));
+                    cmd.commands.push_back(line);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(b.component.empty() ? "Size factor (Enter or +/-)" : "Size factor of the whole component, motions included");
+                propertyRow("Extents", "%.1f x %.1f x %.1f mm", static_cast<double>(bb.max.x - bb.min.x),
                             static_cast<double>(bb.max.y - bb.min.y), static_cast<double>(bb.max.z - bb.min.z));
                 propertyRow("Position", "%.1f, %.1f, %.1f", static_cast<double>(b.offset.x),
                             static_cast<double>(b.offset.y), static_cast<double>(b.offset.z));
@@ -1266,6 +1313,209 @@ void LandingUI::drawAboutWindow(UiState& st) {
 
 
 // ---------------------------------------------------------------------------
+// Library
+
+namespace {
+
+// Small line-art thumbnail for a library item, centred on c with radius r.
+void drawLibraryIcon(ImDrawList* dl, const std::string& key, ImVec2 c, float r, ImU32 col) {
+    const float t = 1.4f;
+    auto gear = [&](ImVec2 at, float rr, int teeth, float phase = 0.0f) {
+        for (int i = 0; i < teeth; ++i) {
+            const float a = phase + 2.0f * kPi * static_cast<float>(i) / static_cast<float>(teeth);
+            const ImVec2 d{std::cos(a), std::sin(a)};
+            dl->AddLine({at.x + d.x * rr * 0.78f, at.y + d.y * rr * 0.78f}, {at.x + d.x * rr, at.y + d.y * rr}, col, rr * 0.28f);
+        }
+        dl->AddCircle(at, rr * 0.78f, col, 24, t);
+        dl->AddCircle(at, rr * 0.25f, col, 12, t);
+    };
+    auto comb = [&](float x0, float x1, float y, int n) {
+        dl->AddRect({x0, y}, {x1, y + r * 0.35f}, col, 1.0f, 0, t);
+        for (int i = 0; i < n; ++i) {
+            const float x = x0 + (x1 - x0) * (static_cast<float>(i) + 0.5f) / static_cast<float>(n);
+            dl->AddLine({x, y}, {x, y - r * 0.3f}, col, r * 0.16f);
+        }
+    };
+    auto screw = [&](float x0, float x1, float y, float h) {
+        dl->AddRect({x0, y - h}, {x1, y + h}, col, 2.0f, 0, t);
+        for (float x = x0 + h * 0.6f; x < x1 - h * 0.3f; x += h * 0.9f) dl->AddLine({x, y + h}, {x + h * 0.7f, y - h}, col, t);
+    };
+    if (key == "dc_motor") {
+        dl->AddRect({c.x - r * 0.75f, c.y - r * 0.55f}, {c.x + r * 0.45f, c.y + r * 0.55f}, col, r * 0.5f, 0, t);
+        dl->AddLine({c.x + r * 0.45f, c.y}, {c.x + r, c.y}, col, 2.2f);
+        dl->AddLine({c.x - r * 0.75f, c.y - r * 0.2f}, {c.x - r * 0.95f, c.y - r * 0.2f}, col, t);
+        dl->AddLine({c.x - r * 0.75f, c.y + r * 0.2f}, {c.x - r * 0.95f, c.y + r * 0.2f}, col, t);
+    } else if (key == "stepper_motor") {
+        const float h = r * 0.62f, k = r * 0.2f;
+        const ImVec2 o{c.x - r * 0.2f, c.y};
+        const ImVec2 pts[] = {{o.x - h + k, o.y - h}, {o.x + h - k, o.y - h}, {o.x + h, o.y - h + k}, {o.x + h, o.y + h - k},
+                              {o.x + h - k, o.y + h}, {o.x - h + k, o.y + h}, {o.x - h, o.y + h - k}, {o.x - h, o.y - h + k}};
+        dl->AddPolyline(pts, 8, col, ImDrawFlags_Closed, t);
+        dl->AddCircle(o, h * 0.45f, col, 16, t);
+        dl->AddLine({o.x + h, o.y}, {c.x + r, o.y}, col, 2.2f);
+    } else if (key == "servo_motor") {
+        dl->AddRect({c.x - r * 0.9f, c.y - r * 0.2f}, {c.x + r * 0.5f, c.y + r * 0.7f}, col, 2.0f, 0, t);
+        dl->AddLine({c.x - r, c.y + r * 0.05f}, {c.x + r * 0.6f, c.y + r * 0.05f}, col, t);
+        dl->AddLine({c.x - r * 0.1f, c.y - r * 0.2f}, {c.x - r * 0.1f, c.y - r * 0.45f}, col, 2.0f);
+        dl->AddLine({c.x - r * 0.75f, c.y - r * 0.55f}, {c.x + r * 0.55f, c.y - r * 0.55f}, col, 3.0f);
+    } else if (key == "spur_gear" || key == "worm_wheel") {
+        gear(c, r * 0.95f, 12);
+    } else if (key == "helical_gear" || key == "herringbone_gear") {
+        dl->AddRect({c.x - r * 0.9f, c.y - r * 0.6f}, {c.x + r * 0.9f, c.y + r * 0.6f}, col, 2.0f, 0, t);
+        for (int i = -3; i <= 3; ++i) {
+            const float x = c.x + static_cast<float>(i) * r * 0.26f;
+            if (key == "helical_gear") dl->AddLine({x - r * 0.2f, c.y + r * 0.6f}, {x + r * 0.2f, c.y - r * 0.6f}, col, t);
+            else {
+                dl->AddLine({x - r * 0.15f, c.y - r * 0.6f}, {x + r * 0.15f, c.y}, col, t);
+                dl->AddLine({x + r * 0.15f, c.y}, {x - r * 0.15f, c.y + r * 0.6f}, col, t);
+            }
+        }
+    } else if (key == "bevel_gear") {
+        const ImVec2 pts[] = {{c.x - r * 0.95f, c.y + r * 0.5f}, {c.x + r * 0.95f, c.y + r * 0.5f},
+                              {c.x + r * 0.45f, c.y - r * 0.5f}, {c.x - r * 0.45f, c.y - r * 0.5f}};
+        dl->AddPolyline(pts, 4, col, ImDrawFlags_Closed, t);
+        for (int i = -2; i <= 2; ++i)
+            dl->AddLine({c.x + static_cast<float>(i) * r * 0.36f, c.y + r * 0.5f},
+                        {c.x + static_cast<float>(i) * r * 0.18f, c.y - r * 0.5f}, col, t);
+    } else if (key == "ring_gear") {
+        dl->AddCircle(c, r * 0.95f, col, 32, t);
+        for (int i = 0; i < 16; ++i) {
+            const float a = 2.0f * kPi * static_cast<float>(i) / 16.0f;
+            const ImVec2 d{std::cos(a), std::sin(a)};
+            dl->AddLine({c.x + d.x * r * 0.75f, c.y + d.y * r * 0.75f}, {c.x + d.x * r * 0.55f, c.y + d.y * r * 0.55f}, col, 2.2f);
+        }
+        dl->AddCircle(c, r * 0.75f, col, 32, t);
+    } else if (key == "worm") {
+        screw(c.x - r, c.x + r, c.y, r * 0.4f);
+    } else if (key == "rack") {
+        comb(c.x - r, c.x + r, c.y, 6);
+    } else if (key == "gear_pair") {
+        gear({c.x - r * 0.45f, c.y + r * 0.1f}, r * 0.5f, 8);
+        gear({c.x + r * 0.42f, c.y - r * 0.05f}, r * 0.62f, 10, 0.3f);
+    } else if (key == "rack_pinion") {
+        gear({c.x, c.y - r * 0.3f}, r * 0.55f, 8);
+        comb(c.x - r, c.x + r, c.y + r * 0.55f, 6);
+    } else if (key == "planetary") {
+        dl->AddCircle(c, r * 0.95f, col, 32, t);
+        dl->AddCircle(c, r * 0.28f, col, 16, t);
+        for (int i = 0; i < 3; ++i) {
+            const float a = -kPi * 0.5f + 2.0f * kPi * static_cast<float>(i) / 3.0f;
+            dl->AddCircle({c.x + std::cos(a) * r * 0.6f, c.y + std::sin(a) * r * 0.6f}, r * 0.3f, col, 16, t);
+        }
+    } else if (key == "worm_drive") {
+        gear({c.x, c.y - r * 0.25f}, r * 0.62f, 10);
+        screw(c.x - r, c.x + r, c.y + r * 0.62f, r * 0.22f);
+    }
+}
+
+bool containsNoCase(const std::string& hay, const char* needle) {
+    if (!needle[0]) return true;
+    std::string h = hay, n = needle;
+    for (char& ch : h) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    for (char& ch : n) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return h.find(n) != std::string::npos;
+}
+
+} // namespace
+
+void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
+    (void)scene;
+    (void)st;
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##libsearch", "Search motors, gears...", m_libSearch, sizeof(m_libSearch));
+
+    const auto& items = libraryItems();
+    const LibraryItem* selected = findLibraryItem(m_libSelected);
+    // List on top, parameters of the selected part below.
+    const float paramsH = selected ? 96.0f + static_cast<float>(selected->params.size()) * (ImGui::GetFrameHeightWithSpacing()) : 0.0f;
+    ImGui::BeginChild("##liblist", {0, -paramsH});
+    constexpr float kRow = 44.0f;
+    const char* lastCategory = "";
+    for (const LibraryItem& it : items) {
+        if (!containsNoCase(std::string(it.name) + " " + it.category + " " + it.summary + " " + it.aliases, m_libSearch))
+            continue;
+        if (std::string(lastCategory) != it.category) {
+            theme::caption(it.category);
+            lastCategory = it.category;
+        }
+        ImGui::PushID(it.key);
+        const bool isSel = selected == &it;
+        if (ImGui::Selectable("##item", isSel, ImGuiSelectableFlags_AllowDoubleClick, {0, kRow})) {
+            m_libSelected = it.key;
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) cmd.commands.push_back(std::string("PART ") + it.key);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\nDouble-click to insert", it.name, it.summary);
+        const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        // Thumbnail tile.
+        const ImVec2 t0{lo.x + 4, lo.y + 4}, t1{lo.x + 4 + kRow - 8, hi.y - 4};
+        dl->AddRectFilled(t0, t1, theme::kField, 4.0f);
+        drawLibraryIcon(dl, it.key, {(t0.x + t1.x) * 0.5f, (t0.y + t1.y) * 0.5f}, (t1.x - t0.x) * 0.36f,
+                        isSel ? theme::kAccentText : theme::kTextDim);
+        const float tx = t1.x + 10;
+        dl->AddText(theme::font(theme::Font::Strong), ImGui::GetFontSize(), {tx, lo.y + 6}, theme::kText, it.name);
+        {
+            ImFont* small = theme::font(theme::Font::Small);
+            const float fs = small->FontSize * ImGui::GetIO().FontGlobalScale;
+            dl->PushClipRect({tx, lo.y}, {hi.x - 4, hi.y}, true);
+            dl->AddText(small, fs, {tx, lo.y + 24}, theme::kTextDim, it.summary);
+            dl->PopClipRect();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    if (!selected) return;
+    // Parameters of the selected part.
+    auto& values = m_libValues[selected->key];
+    theme::caption(selected->name);
+    if (beginPropertyGrid("##libparams")) {
+        for (const LibraryParam& p : selected->params) {
+            auto it = values.find(p.key);
+            if (it == values.end()) it = values.emplace(p.key, p.value).first;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(theme::vec(theme::kTextDim), "%s", p.label);
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(-1);
+            ImGui::PushID(p.key);
+            char fmt[32];
+            std::snprintf(fmt, sizeof(fmt), p.integer ? "%%.0f %s" : "%%.2f %s", p.unit);
+            const float speed = p.integer ? 0.1f : std::max((p.max - p.min) / 400.0f, 0.01f);
+            ImGui::DragFloat("##v", &it->second, speed, p.min, p.max, fmt, ImGuiSliderFlags_AlwaysClamp);
+            if (p.integer) it->second = std::round(it->second);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("Defaults", {half * 0.7f, 0})) values.clear();
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(theme::kAccent));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(theme::kAccentHover));
+    if (ImGui::Button("Insert", {-1, 0})) {
+        std::string line = std::string("PART ") + selected->key;
+        for (const LibraryParam& p : selected->params) {
+            const auto it = values.find(p.key);
+            if (it == values.end() || it->second == p.value) continue;
+            char num[48];
+            std::snprintf(num, sizeof(num), " %s %g", p.key, static_cast<double>(it->second));
+            line += num;
+        }
+        cmd.commands.push_back(line);
+    }
+    ImGui::PopStyleColor(2);
+    {
+        theme::ScopedFont small(theme::Font::Small);
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kTextFaint));
+        ImGui::TextWrapped("Placed beside the model; double-click a part to insert it with defaults. Motors spin in the "
+                           "Simulation window.");
+        ImGui::PopStyleColor();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Simulation window
 
 namespace {
@@ -1507,6 +1757,34 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             if (m.kind == MotionKind::Circular) {
                 ImGui::Checkbox("Each body about its own centre", &m.eachCentre);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("One motion spins every wheel about its own hub");
+            }
+            if (m.kind == MotionKind::Circular) {
+                // Gear trains: turn with another circular motion at a ratio.
+                ImGui::TextDisabled("Driven by");
+                ImGui::SameLine(90);
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::BeginCombo("##drivenby", m.follow.empty() ? "Own speed" : m.follow.c_str())) {
+                    if (ImGui::Selectable("Own speed", m.follow.empty())) m.follow.clear();
+                    for (const Motion& d : motions)
+                        if (&d != &m && d.kind == MotionKind::Circular && ImGui::Selectable(d.name.c_str(), d.name == m.follow))
+                            m.follow = d.name;
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns with another motion: angle = ratio x its angle");
+                if (!m.follow.empty()) {
+                    ImGui::TextDisabled("Ratio");
+                    ImGui::SameLine(90);
+                    ImGui::SetNextItemWidth(130);
+                    ImGui::DragFloat("##ratio", &m.ratio, 0.01f, -1000.0f, 1000.0f, "%.3f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("External mesh: -teeth(driver) / teeth(driven)");
+                } else {
+                    ImGui::TextDisabled("Step");
+                    ImGui::SameLine(90);
+                    ImGui::SetNextItemWidth(130);
+                    ImGui::DragFloat("##step", &m.step, 0.05f, 0.0f, 360.0f, m.step <= 0.0f ? "smooth" : "%.2f deg");
+                    m.step = std::max(m.step, 0.0f);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stepper motors: moves in steps of this angle (1.8 deg = 200 steps/rev)");
+                }
             }
             if (m.kind == MotionKind::Linear) {
                 ImGui::TextDisabled("Rolls with");
