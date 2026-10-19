@@ -26,10 +26,12 @@ In Xcode, select the **sicdm** scheme and press ⌘R.
 
 ![Launch splash](docs/splash.png)
 
-The app starts with a cinematic splash: a six-wheeled rover crossing a Martian plain at golden hour,
-rendered live on the GPU (ray-marched terrain with dunes, boulders and wheel ruts, a rover with
-rocker-bogie suspension, mast camera, arm and RTG, low sun with soft shadows, dusty aerial
-perspective, filmic grade, 2.39:1 letterbox). The bottom bar shows the real loading steps (graphics,
+The app starts with a cinematic splash: a four-wheeled crew rover (big treaded tyres on gold dish
+rims, raked windscreen, glowing headlamps, roof antenna, dish and mast camera) crossing the lunar plain
+under a black, star-filled sky, a crescent Earth over the horizon. It is rendered live on the GPU:
+ray-marched regolith with craters, boulders, tyre tracks and smooth highlands, a low hard sun with long
+shadows, lunar (Lommel-Seeliger) surface scattering, headlight beams with an anamorphic lens streak,
+filmic grade and grain, 2.39:1 letterbox, slow camera push-in. The bottom bar shows the real loading steps (graphics,
 fonts, shaders, part library, workspace, MCP server, the file being opened) with a progress line;
 the main window appears when loading is done. Click or press Esc to skip it.
 
