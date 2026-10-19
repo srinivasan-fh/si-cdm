@@ -1,3 +1,5 @@
+<img src="resources/icon/sicdm_256.png" width="96" alt="SI CDM icon" align="right">
+
 # SI CDM
 
 A high-performance CAD / CAM desktop application written in C++20.
@@ -19,6 +21,30 @@ Requires CMake 3.24+ (`brew install cmake`) and, on macOS, Xcode 15+.
 ```
 
 In Xcode, select the **sicdm** scheme and press ⌘R.
+
+## Launch: icon and splash screen
+
+![Launch splash](docs/splash.png)
+
+The app starts with a cinematic splash: a six-wheeled rover crossing a Martian plain at golden hour,
+rendered live on the GPU (ray-marched terrain with dunes, boulders and wheel ruts, a rover with
+rocker-bogie suspension, mast camera, arm and RTG, low sun with soft shadows, dusty aerial
+perspective, filmic grade, 2.39:1 letterbox). The bottom bar shows the real loading steps (graphics,
+fonts, shaders, part library, workspace, MCP server, the file being opened) with a progress line;
+the main window appears when loading is done. Click or press Esc to skip it.
+
+```bash
+sicdm --no-splash            # start straight into the workbench
+sicdm --splash-seconds 6     # keep the splash up longer (default 3.2 s minimum)
+```
+
+The splash renders at a resolution adapted to the GPU, so it stays smooth on integrated graphics.
+`--screenshot` runs never show it.
+
+The app icon (a machined blue part over the rim of Mars, ringed by an orbit, on a deep-space squircle) is drawn by
+`tools/make_icon.py` (Python + Pillow + NumPy) into `resources/icon/*.png` and
+`resources/macos/SICDM.icns`. The macOS bundle uses the `.icns` for the Dock and Finder; on
+Windows and Linux the PNGs are compiled into the app and set as the window icon.
 
 ## Interface
 

@@ -40,6 +40,16 @@ bool Application::init() {
     glfwSetErrorCallback(glfwErrorCallback);
     if (!glfwInit()) return false;
 
+    // Launch splash while the workbench loads (not for scripted screenshots).
+    if (m_options.splash && m_options.screenshotPath.empty()) {
+        m_splash = std::make_unique<Splash>(m_options.splashSeconds);
+        if (!m_splash->ok()) m_splash.reset();
+    }
+    auto progress = [this](float p, const std::string& status) {
+        if (m_splash) m_splash->step(p, status.c_str());
+    };
+    progress(0.06f, "Initialising graphics");
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -48,9 +58,12 @@ bool Application::init() {
 #if defined(__APPLE__)
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
 #endif
+    if (m_splash) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // shown when the splash closes
 
     m_window = glfwCreateWindow(m_options.width, m_options.height, "SI CDM — CAD / CAM Workbench", nullptr, nullptr);
+    glfwDefaultWindowHints();
     if (!m_window) return false;
+    applyWindowIcon(m_window);
     glfwMakeContextCurrent(m_window);
     glfwSwapInterval(1);
 
@@ -92,6 +105,7 @@ bool Application::init() {
     glfwSetCursorEnterCallback(m_window, ImGui_ImplGlfw_CursorEnterCallback);
     ImGui_ImplOpenGL3_Init("#version 410 core");
     m_imguiReady = true;
+    progress(0.22f, "Loading fonts and interface theme");
 
     m_renderer = std::make_unique<Renderer>();
     if (!m_renderer->valid()) {
@@ -101,6 +115,9 @@ bool Application::init() {
 
     m_uiState.gpuName = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     m_uiState.glVersion = std::string("OpenGL ") + reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    progress(0.4f, "Compiling viewport shaders");
+
+    progress(0.55f, "Indexing part library  \xC2\xB7  " + std::to_string(libraryItems().size()) + " components");
 
     m_files.push_back(FileTab{});
     m_files.back().id = m_nextFileId++;
@@ -116,6 +133,7 @@ bool Application::init() {
     m_cam3D.setStandardView(StandardView::Isometric, false);
     m_cam3D.fitToBounds(m_doc.scene.bounds(), false);
     m_cam3D.zoom(-1.5f); // leave some breathing room on the landing page
+    progress(0.7f, "Preparing workspace");
 
     // 2D drawing window: flat drafting background, hidden-line bodies,
     // sketches drawn over everything on the active plane.
@@ -137,6 +155,7 @@ bool Application::init() {
         if (std::filesystem::exists(candidate, ec)) m_uiState.mcpExecutable = candidate.string();
     }
     if (m_options.mcpPort > 0) {
+        progress(0.8f, "Starting MCP server for AI agents");
         m_uiState.mcpPort = m_options.mcpPort;
         toggleMcp();
     }
@@ -153,6 +172,7 @@ bool Application::init() {
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
     m_savedSignature = contentSignature(); // the demo part counts as unmodified
     if (!m_options.openPath.empty()) {
+        progress(0.88f, "Opening " + std::filesystem::path(m_options.openPath).filename().string());
         // A project opens in its own tab next to the demo; other files import into the demo.
         const FileKind kind = fileKindOf(m_options.openPath);
         runCommandLine((kind == FileKind::Project ? "OPEN \"" : "IMPORT \"") + m_options.openPath + "\"");
@@ -160,10 +180,12 @@ bool Application::init() {
     }
     refreshFileTabs();
     updateTitle();
+    progress(0.96f, "Restoring interface");
     return true;
 }
 
 void Application::shutdown() {
+    m_splash.reset();
     m_mcpHttp.stop();
     m_renderer.reset();
     if (m_imguiReady) {
@@ -1738,6 +1760,14 @@ bool Application::saveScreenshot(const std::string& path) const {
 
 int Application::run() {
     if (!init()) return 1;
+    if (m_splash) {
+        m_splash->finish();
+        m_splash.reset();
+        glfwMakeContextCurrent(m_window);
+        glfwShowWindow(m_window);
+        glfwFocusWindow(m_window);
+        m_framesToRender = std::max(m_framesToRender, 3);
+    }
 
     using clock = std::chrono::steady_clock;
     auto last = clock::now();

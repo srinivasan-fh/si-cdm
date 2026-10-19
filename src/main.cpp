@@ -10,6 +10,10 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
             options.screenshotPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--no-splash") == 0) {
+            options.splash = false;
+        } else if (std::strcmp(argv[i], "--splash-seconds") == 0 && i + 1 < argc) {
+            options.splashSeconds = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(argv[i], "--2d") == 0) {
             options.start2D = true;
         } else if (std::strcmp(argv[i], "--mcp-port") == 0 && i + 1 < argc) {
@@ -19,7 +23,7 @@ int main(int argc, char** argv) {
             options.height = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--help") == 0) {
             std::printf("Usage: %s [file.sicdm | file.stl | image.png ...] [--size W H] [--2d] [--mcp-port N]\n"
-                        "          [--screenshot out.ppm]\n",
+                        "          [--no-splash] [--splash-seconds S] [--screenshot out.ppm]\n",
                         argv[0]);
             return 0;
         } else if (argv[i][0] != '-') {

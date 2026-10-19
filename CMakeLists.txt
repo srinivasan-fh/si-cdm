@@ -69,6 +69,7 @@ if(SICDM_BUILD_APP)
         src/app/Application.cpp
         src/app/McpHttpServer.cpp
         src/app/SketchController.cpp
+        src/app/Splash.cpp
         src/render/Renderer.cpp
         src/render/Shader.cpp
         src/ui/FileDialog.cpp
@@ -82,9 +83,13 @@ if(SICDM_BUILD_APP)
     if(APPLE)
         set(SICDM_BUNDLE_NAME "SI CDM")
         set(SICDM_BUNDLE_ID "com.sicdm.workbench")
-        add_executable(sicdm MACOSX_BUNDLE ${SICDM_APP_SOURCES} ${SICDM_FONT_SOURCE})
+        # App icon (Dock, Finder, Launchpad), rendered by tools/make_icon.py.
+        set(SICDM_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/SICDM.icns")
+        set_source_files_properties(${SICDM_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+        add_executable(sicdm MACOSX_BUNDLE ${SICDM_APP_SOURCES} ${SICDM_FONT_SOURCE} ${SICDM_ICNS})
         set_target_properties(sicdm PROPERTIES
             OUTPUT_NAME "SICDM"
+            MACOSX_BUNDLE_ICON_FILE "SICDM.icns"
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/Info.plist.in"
             MACOSX_BUNDLE_BUNDLE_NAME "${SICDM_BUNDLE_NAME}"
             MACOSX_BUNDLE_GUI_IDENTIFIER "${SICDM_BUNDLE_ID}"
@@ -105,11 +110,13 @@ if(SICDM_BUILD_APP)
     target_compile_definitions(sicdm PRIVATE SICDM_VERSION="${PROJECT_VERSION}")
     find_package(Threads REQUIRED)
     target_link_libraries(sicdm PRIVATE sicdm_core sicdm_imgui glfw OpenGL::GL Threads::Threads)
+    target_include_directories(sicdm SYSTEM PRIVATE third_party/stb) # window icon / splash logo decoding
     sicdm_set_compile_options(sicdm)
 
     if(CMAKE_GENERATOR STREQUAL "Xcode")
         source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src PREFIX "Sources" FILES ${SICDM_APP_SOURCES})
         source_group("Generated" FILES ${SICDM_FONT_SOURCE})
+        source_group("Resources" FILES ${SICDM_ICNS})
     endif()
 endif()
 

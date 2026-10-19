@@ -6,6 +6,7 @@
 #include "core/Scene.hpp"
 #include "app/McpHttpServer.hpp"
 #include "app/SketchController.hpp"
+#include "app/Splash.hpp"
 #include "render/Renderer.hpp"
 #include "ui/LandingUI.hpp"
 
@@ -26,6 +27,8 @@ struct AppOptions {
     int mcpPort = 0;            // > 0: start the MCP HTTP server for AI agents
     std::string openPath;       // project or file to open at startup
     std::string executablePath; // argv[0], for MCP setup hints
+    bool splash = true;         // cinematic launch splash with loading progress
+    float splashSeconds = 3.2f; // shortest time the splash stays up
 };
 
 class Application final : public ViewHost {
@@ -153,6 +156,7 @@ private:
     float m_aspect = 1.0f;
     SketchController m_sketcher;
     std::unique_ptr<Renderer> m_renderer;
+    std::unique_ptr<Splash> m_splash; // only while launching
     LandingUI m_ui;
     UiState m_uiState;
 
