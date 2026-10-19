@@ -31,9 +31,12 @@ rims, raked windscreen, glowing headlamps, roof antenna, dish and mast camera) c
 under a black, star-filled sky, a crescent Earth over the horizon. It is rendered live on the GPU:
 ray-marched regolith with craters, boulders, tyre tracks and smooth highlands, a low hard sun with long
 shadows, lunar (Lommel-Seeliger) surface scattering, headlight beams with an anamorphic lens streak,
-filmic grade and grain, 2.39:1 letterbox, slow camera push-in. The bottom bar shows the real loading steps (graphics,
-fonts, shaders, part library, workspace, MCP server, the file being opened) with a progress line;
-the main window appears when loading is done. Click or press Esc to skip it.
+filmic grade and grain, slow camera push-in. Over it, a digital-twin network of glowing nodes and links
+drifts and is revealed left to right with a scanning sweep. The rounded, borderless window carries the
+headline "Super Intelligence Computer Designing and Manufacturing", the SI CDM title card (icon,
+brushed-metal title, "Super Intelligence CAD · CAM · CAE · Digital Twin") and a status panel with the real
+loading step and subsystem (graphics, fonts, shaders, part library, workspace, MCP server, the file being
+opened), the percentage and a glowing progress bar; the main window appears when loading is done. Click or press Esc to skip it.
 
 ```bash
 sicdm --no-splash            # start straight into the workbench

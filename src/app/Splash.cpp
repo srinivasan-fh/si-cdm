@@ -14,7 +14,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 #ifndef SICDM_VERSION
 #define SICDM_VERSION "dev"
@@ -26,7 +29,9 @@ namespace {
 
 constexpr int kWidth = 960;  // window points
 constexpr int kHeight = 540;
-constexpr float kCinemaAspect = 2.39f;
+constexpr float kTopBar = 36.0f;    // window points
+constexpr float kBottomBar = 66.0f;
+constexpr float kCorner = 14.0f;    // window corner radius
 
 const char* kFullscreenVS = R"(#version 410 core
 out vec2 vUv;
@@ -34,6 +39,22 @@ void main() {
     vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
     vUv = p;
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+
+// Rounded window background (premultiplied alpha, the corners stay clear).
+const char* kFrameFS = R"(#version 410 core
+in vec2 vUv;
+out vec4 frag;
+uniform vec2 uSize;
+uniform float uRadius;
+uniform vec3 uColor;
+void main() {
+    vec2 p = (vUv - 0.5) * uSize;
+    vec2 q = abs(p) - (0.5 * uSize - uRadius);
+    float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uRadius;
+    float a = clamp(0.5 - d, 0.0, 1.0);
+    frag = vec4(uColor * a, a);
 }
 )";
 
@@ -632,6 +653,7 @@ Splash::Splash(float minSeconds) : m_minSeconds(minSeconds) {
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     glfwWindowHint(GLFW_FLOATING, GLFW_TRUE);
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE); // rounded corners
 #if defined(__APPLE__)
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
 #endif
@@ -655,6 +677,7 @@ Splash::Splash(float minSeconds) : m_minSeconds(minSeconds) {
 
     m_scene = std::make_unique<Shader>(kFullscreenVS, kSceneFS);
     m_blit = std::make_unique<Shader>(kFullscreenVS, kBlitFS);
+    m_frame = std::make_unique<Shader>(kFullscreenVS, kFrameFS);
     glGenVertexArrays(1, &m_vao);
 
     // Logo texture.
@@ -697,6 +720,10 @@ Splash::Splash(float minSeconds) : m_minSeconds(minSeconds) {
     m_fontSmall = add(fonts::Inter_Regular, 11.5f);
     m_fontCaption = add(fonts::Inter_SemiBold, 10.5f);
     m_fontMono = add(fonts::JetBrainsMono_Regular, 11.5f);
+    m_fontHeadline = add(fonts::Inter_SemiBold, 17.0f);
+    m_fontHeadlineLight = add(fonts::Inter_Regular, 17.0f);
+    m_fontSubtitle = add(fonts::Inter_Regular, 15.0f);
+    m_fontStatus = add(fonts::Inter_SemiBold, 12.0f);
     io.FontGlobalScale = 1.0f / fbScale;
     ImGui_ImplGlfw_InitForOpenGL(m_window, false);
     ImGui_ImplOpenGL3_Init("#version 410 core");
@@ -718,6 +745,7 @@ Splash::~Splash() {
         ImGui::DestroyContext(m_imgui);
         m_scene.reset();
         m_blit.reset();
+        m_frame.reset();
         if (m_vao) glDeleteVertexArrays(1, &m_vao);
         if (m_fbo) glDeleteFramebuffers(1, &m_fbo);
         if (m_fboTex) glDeleteTextures(1, &m_fboTex);
@@ -728,10 +756,10 @@ Splash::~Splash() {
     glfwDestroyWindow(m_window);
 }
 
-void Splash::step(float progress, const char* status) {
+void Splash::step(float progress, const char* status, const char* detail) {
     if (!m_window) return;
     m_target = std::max(m_target, std::clamp(progress, 0.0f, 1.0f));
-    m_steps.push_back({m_target, status});
+    m_steps.push_back({m_target, status, detail ? detail : ""});
     frame();
 }
 
@@ -743,6 +771,7 @@ bool Splash::skipRequested() const {
 
 void Splash::finish() {
     if (!m_window) return;
+    m_steps.push_back({std::max(m_target, 0.975f), "Calibrating super intelligence core", "Design optimization"});
     m_target = 1.0f;
     constexpr float kHold = 0.35f, kFade = 0.55f;
     double readyAt = -1.0;
@@ -782,15 +811,27 @@ void Splash::frame() {
     int fbw = 0, fbh = 0, ww = 0, wh = 0;
     glfwGetFramebufferSize(m_window, &fbw, &fbh);
     glfwGetWindowSize(m_window, &ww, &wh);
-    const float imageHeight = std::floor(static_cast<float>(fbw) / kCinemaAspect);
-    const float imageTop = std::floor((static_cast<float>(fbh) - imageHeight) * 0.5f);
+    const float px = wh > 0 ? static_cast<float>(fbh) / static_cast<float>(wh) : 1.0f; // pixels per point
+    const float ui = static_cast<float>(wh) / static_cast<float>(kHeight);              // monitor scaling
+    const float imageTop = std::floor(kTopBar * ui * px);
+    const float imageBottom = std::floor(kBottomBar * ui * px);
+    const float imageHeight = static_cast<float>(fbh) - imageTop - imageBottom;
 
     glViewport(0, 0, fbw, fbh);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
-    glClearColor(0.012f * fade, 0.013f * fade, 0.016f * fade, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    if (fade > 0.0f) drawScene(fbw, fbh, imageTop, imageHeight, fade);
+    glBindVertexArray(m_vao);
+    if (m_frame && m_frame->valid()) {
+        m_frame->bind();
+        m_frame->set("uSize", Vec2{static_cast<float>(fbw), static_cast<float>(fbh)});
+        m_frame->set("uRadius", kCorner * ui * px);
+        m_frame->set("uColor", Vec3{0.043f, 0.046f, 0.053f});
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    glBindVertexArray(0);
+    if (fade > 0.0f) drawScene(fbw, imageBottom, imageHeight, fade);
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -807,9 +848,8 @@ void Splash::frame() {
     glfwPollEvents();
 }
 
-void Splash::drawScene(int fbw, int fbh, float imageTop, float imageHeight, float fade) {
-    (void)fbh;
-    if (!m_scene || !m_scene->valid()) return;
+void Splash::drawScene(int fbw, float imageY, float imageHeight, float fade) {
+    if (!m_scene || !m_scene->valid() || imageHeight < 4.0f) return;
     const int w = std::max(16, static_cast<int>(static_cast<float>(fbw) * m_renderScale));
     const int h = std::max(9, static_cast<int>(imageHeight * m_renderScale));
     if (w != m_fboW || h != m_fboH) {
@@ -844,30 +884,92 @@ void Splash::drawScene(int fbw, int fbh, float imageTop, float imageHeight, floa
     else if (ms < 8.0f) m_renderScale = std::min(1.0f, m_renderScale * 1.05f);
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, static_cast<GLint>(imageTop), fbw, static_cast<GLsizei>(imageHeight));
+    glViewport(0, static_cast<GLint>(imageY), fbw, static_cast<GLsizei>(imageHeight));
     m_blit->bind();
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_fboTex);
     glUniform1i(glGetUniformLocation(m_blit->program(), "uTex"), 0);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
-    glViewport(0, 0, fbw, fbh);
 }
+
+namespace {
+
+ImU32 mixColor(ImU32 a, ImU32 b, float t) {
+    auto ch = [&](int shift) {
+        const float x = static_cast<float>((a >> shift) & 0xFF), y = static_cast<float>((b >> shift) & 0xFF);
+        return static_cast<ImU32>(std::clamp(x + (y - x) * t, 0.0f, 255.0f)) << shift;
+    };
+    return ch(0) | ch(8) | ch(16) | ch(24);
+}
+
+std::string upper(std::string s) {
+    for (char& c : s)
+        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    return s;
+}
+
+// Digital-twin network over the scene: nodes drift on small orbits and link to
+// their neighbours, revealed left to right while a scan band sweeps across.
+struct Node {
+    float u, v;        // image-relative base position
+    float ax, ay;      // orbit amplitude
+    float wx, wy, ph;  // orbit speed and phase
+    float size;
+};
+
+const std::vector<Node>& networkNodes() {
+    static const std::vector<Node> nodes = [] {
+        std::vector<Node> out;
+        std::uint32_t seed = 0x5EEDu;
+        auto rnd = [&] {
+            seed = seed * 1664525u + 1013904223u;
+            return static_cast<float>((seed >> 8) & 0xFFFFFF) / static_cast<float>(0xFFFFFF);
+        };
+        for (int i = 0; i < 96; ++i) {
+            Node n{};
+            if (i < 66) {          // terrain and sky on the left, denser low down
+                n.u = rnd() * 0.58f;
+                n.v = 0.08f + std::pow(rnd(), 0.7f) * 0.88f;
+            } else {               // wrapping the rover on the right
+                n.u = 0.5f + rnd() * 0.36f;
+                n.v = 0.3f + rnd() * 0.62f;
+            }
+            n.ax = 0.004f + rnd() * 0.012f;
+            n.ay = 0.004f + rnd() * 0.012f;
+            n.wx = 0.25f + rnd() * 0.5f;
+            n.wy = 0.25f + rnd() * 0.5f;
+            n.ph = rnd() * 6.2831853f;
+            n.size = rnd() < 0.12f ? 1.0f : 0.0f; // a few hub nodes
+            out.push_back(n);
+        }
+        return out;
+    }();
+    return nodes;
+}
+
+} // namespace
 
 void Splash::drawOverlay(float fade) {
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     const ImVec2 size = ImGui::GetIO().DisplaySize;
-    const float imageH = std::floor(size.x / kCinemaAspect);
-    const float barTop = std::floor((size.y - imageH) * 0.5f);   // top letterbox height
-    const float bottomY = barTop + imageH;                         // bottom letterbox starts here
+    const float scale = ImGui::GetIO().FontGlobalScale;
+    const float ui = m_fontBody->FontSize * scale / 13.0f;
+    const float top = std::floor(kTopBar * ui);
+    const float bottomY = size.y - std::floor(kBottomBar * ui);   // status panel starts here
+    const float imageH = bottomY - top;
     const float elapsed = static_cast<float>(glfwGetTime() - m_start);
-    const float pad = 28.0f;
+    const float pad = 24.0f * ui;
+    const float closing = m_closing >= 0.0f ? 1.0f - easeOutCubic(m_closing / 0.55f) : 1.0f;
 
-    auto text = [&](ImFont* font, float px, ImVec2 pos, ImU32 col, const char* s, float tracking = 0.0f) {
+    auto fs = [&](ImFont* f) { return f->FontSize * scale; };
+    auto text = [&](ImFont* font, ImVec2 pos, ImU32 col, const char* s, float tracking = 0.0f, float px = 0.0f) {
+        if (px <= 0.0f) px = fs(font);
         if (tracking == 0.0f) {
             dl->AddText(font, px, pos, col, s);
-            return;
+            return font->CalcTextSizeA(px, 1e9f, 0.0f, s).x;
         }
+        const float x0 = pos.x;
         for (const char* c = s; *c;) { // one UTF-8 character at a time
             const auto lead = static_cast<unsigned char>(*c);
             const int n = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
@@ -875,85 +977,178 @@ void Splash::drawOverlay(float fade) {
             pos.x += font->CalcTextSizeA(px, 1e9f, 0.0f, c, c + n).x + tracking;
             c += n;
         }
+        return pos.x - x0;
     };
-    auto width = [&](ImFont* font, float px, const char* s, float tracking = 0.0f) {
-        float w = font->CalcTextSizeA(px, 1e9f, 0.0f, s).x;
-        if (tracking != 0.0f) w += tracking * static_cast<float>(std::char_traits<char>::length(s));
-        return w;
-    };
-    const float scale = ImGui::GetIO().FontGlobalScale;
-    const float body = m_fontBody->FontSize * scale, small = m_fontSmall->FontSize * scale;
-    const float caption = m_fontCaption->FontSize * scale, mono = m_fontMono->FontSize * scale;
-    const float title = m_fontTitle->FontSize * scale;
-    const float ui = body / 13.0f;
-
-    // Top letterbox: mission slate.
-    {
-        const float y = std::floor(barTop * 0.5f - caption * 0.5f);
-        text(m_fontCaption, caption, ImVec2(pad, y), withAlpha(theme::kTextFaint, fade), "SI CDM  \xC2\xB7  ENGINEERING WORKBENCH",
-             1.6f * ui);
-        const char* slate = "LUNAR DAY 214  \xC2\xB7  MARE IMBRIUM  \xC2\xB7  32.8\xC2\xB0N 15.6\xC2\xB0W";
-        text(m_fontMono, mono, ImVec2(size.x - pad - width(m_fontMono, mono, slate), y - 1.0f),
-             withAlpha(theme::kTextFaint, fade), slate);
-    }
-
-    // Title card over the image, rising in after the scene fades up.
-    {
-        const float a = easeOutCubic((elapsed - 0.5f) / 1.2f) * fade;
-        const float rise = (1.0f - easeOutCubic((elapsed - 0.5f) / 1.4f)) * 14.0f * ui;
-        const float logo = 56.0f * ui;
-        const float x = pad + 8.0f * ui;
-        const float y = bottomY - 30.0f * ui - logo + rise;
-        // Soft scrim so the type reads on any frame.
-        const ImU32 dark = IM_COL32(4, 4, 6, static_cast<int>(150 * a));
-        const ImU32 clear = IM_COL32(4, 4, 6, 0);
-        dl->AddRectFilledMultiColor(ImVec2(0, bottomY - 150.0f * ui), ImVec2(size.x * 0.62f, bottomY), clear, clear, clear,
-                                    dark);
-        if (m_logoTex)
-            dl->AddImage(static_cast<ImTextureID>(m_logoTex), ImVec2(x, y), ImVec2(x + logo, y + logo), ImVec2(0, 0),
-                         ImVec2(1, 1), IM_COL32(255, 255, 255, static_cast<int>(255 * a)));
-        const float tx = x + logo + 16.0f * ui;
-        text(m_fontTitle, title, ImVec2(tx + 1.0f, y - 6.0f * ui + 2.0f), IM_COL32(0, 0, 0, static_cast<int>(110 * a)), "SI CDM",
-             3.0f * ui);
-        text(m_fontTitle, title, ImVec2(tx, y - 6.0f * ui), withAlpha(theme::rgb(244, 245, 247), a), "SI CDM", 3.0f * ui);
-        text(m_fontCaption, caption * 1.15f, ImVec2(tx + 2.0f, y + title - 2.0f * ui),
-             withAlpha(theme::rgb(190, 198, 210), a * 0.95f), "CAD  \xC2\xB7  CAM  \xC2\xB7  MOTION SIMULATION", 2.4f * ui);
-    }
-
-    // Bottom letterbox: progress line on the image edge, status and percentage.
-    {
-        const float a = fade;
-        const float lineY = bottomY;
-        const float fillX = size.x * m_shown;
-        dl->AddRectFilled(ImVec2(0, lineY), ImVec2(size.x, lineY + 2.0f * ui), IM_COL32(255, 255, 255, static_cast<int>(18 * a)));
-        dl->AddRectFilled(ImVec2(0, lineY), ImVec2(fillX, lineY + 2.0f * ui), withAlpha(theme::kAccentHover, a));
-        // Glow at the leading edge.
-        for (int i = 0; i < 6; ++i) {
-            const float r = (3.0f + 3.0f * static_cast<float>(i)) * ui;
-            dl->AddCircleFilled(ImVec2(fillX, lineY + 1.0f * ui), r,
-                                withAlpha(theme::kAccentText, a * 0.10f * static_cast<float>(6 - i) / 6.0f), 24);
+    auto width = [&](ImFont* font, const char* s) { return font->CalcTextSizeA(fs(font), 1e9f, 0.0f, s).x; };
+    // Text with a vertical colour gradient (brushed-metal title).
+    auto gradientText = [&](ImFont* font, ImVec2 pos, ImU32 topCol, ImU32 bottomCol, const char* s, float tracking) {
+        const int start = dl->VtxBuffer.Size;
+        text(font, pos, topCol, s, tracking);
+        const float h = fs(font);
+        for (int i = start; i < dl->VtxBuffer.Size; ++i) {
+            ImDrawVert& v = dl->VtxBuffer[i];
+            const float t = std::clamp((v.pos.y - pos.y - h * 0.2f) / (h * 0.7f), 0.0f, 1.0f);
+            v.col = mixColor(topCol, bottomCol, t);
         }
+    };
 
-        const char* status = m_steps.empty() ? "Starting" : m_steps.front().status.c_str();
-        for (const Step& s : m_steps)
-            if (s.at <= m_shown + 0.02f) status = s.status.c_str();
-        if (m_closing >= 0.0f || m_shown >= 0.999f) status = "Ready";
-        const float y = lineY + ((size.y - lineY) - body) * 0.5f;
-        // Activity pulse before the status.
-        const float pulse = 0.5f + 0.5f * std::sin(elapsed * 5.0f);
-        dl->AddCircleFilled(ImVec2(pad + 3.0f * ui, y + body * 0.55f), 3.0f * ui,
-                            withAlpha(m_shown >= 0.999f ? theme::kSuccess : theme::kAccentText, a * (0.45f + 0.55f * pulse)),
-                            16);
-        text(m_fontBody, body, ImVec2(pad + 14.0f * ui, y), withAlpha(theme::kText, a), status);
-        char pct[16];
-        std::snprintf(pct, sizeof pct, "%3d%%", static_cast<int>(std::round(m_shown * 100.0f)));
-        const float pw = width(m_fontMono, mono, pct);
-        text(m_fontMono, mono, ImVec2(size.x - pad - pw, y + 1.0f), withAlpha(theme::kText, a), pct);
-        char version[48];
-        std::snprintf(version, sizeof version, "Version %s", SICDM_VERSION);
-        const float vw = width(m_fontSmall, small, version);
-        text(m_fontSmall, small, ImVec2(size.x - pad - pw - 18.0f * ui - vw, y + 1.5f), withAlpha(theme::kTextFaint, a), version);
+    // ---- digital-twin network over the scene
+    {
+        const float reveal = (elapsed - 0.7f) * 0.55f; // front moving left to right
+        const float scan = std::fmod(elapsed * 0.16f, 1.5f) - 0.25f;
+        const auto& nodes = networkNodes();
+        std::vector<ImVec2> pts(nodes.size());
+        std::vector<float> vis(nodes.size());
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            const Node& n = nodes[i];
+            const float u = n.u + n.ax * std::sin(elapsed * n.wx + n.ph);
+            const float v = n.v + n.ay * std::cos(elapsed * n.wy + n.ph * 1.7f);
+            pts[i] = ImVec2(u * size.x, top + v * imageH);
+            vis[i] = std::clamp((reveal - u) / 0.12f, 0.0f, 1.0f) * fade * closing;
+        }
+        const float link = 0.185f * size.x;
+        const ImU32 lineCol = theme::rgb(150, 200, 255);
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            if (vis[i] <= 0.0f) continue;
+            for (std::size_t j = i + 1; j < nodes.size(); ++j) {
+                if (vis[j] <= 0.0f) continue;
+                const float dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+                const float d = std::sqrt(dx * dx + dy * dy);
+                if (d > link) continue;
+                const float um = (pts[i].x + pts[j].x) * 0.5f / size.x;
+                const float band = std::exp(-std::pow((um - scan) / 0.09f, 2.0f));
+                const float a = std::pow(1.0f - d / link, 1.3f) * (0.5f + 0.5f * band) * std::min(vis[i], vis[j]);
+                dl->AddLine(pts[i], pts[j], withAlpha(lineCol, a), 1.15f * ui);
+            }
+        }
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            if (vis[i] <= 0.0f) continue;
+            const float band = std::exp(-std::pow((pts[i].x / size.x - scan) / 0.09f, 2.0f));
+            const float hub = nodes[i].size;
+            const float pulse = hub > 0.0f ? 0.6f + 0.4f * std::sin(elapsed * 3.0f + nodes[i].ph) : 1.0f;
+            dl->AddCircleFilled(pts[i], (6.0f + 6.0f * hub) * ui, withAlpha(theme::rgb(120, 180, 255), 0.16f * vis[i] * pulse), 16);
+            dl->AddCircleFilled(pts[i], (1.9f + 1.4f * hub) * ui,
+                                withAlpha(theme::rgb(220, 238, 255), (0.75f + 0.25f * band) * vis[i]), 12);
+        }
     }
+
+    // ---- top bar: product line and mission slate
+    {
+        const float y = std::floor((top - fs(m_fontStatus)) * 0.5f);
+        const float a = fade * 0.5f + 0.5f;
+        float x = pad;
+        x += text(m_fontStatus, ImVec2(x, y), withAlpha(theme::rgb(236, 238, 242), a), "SI CDM", 1.0f * ui);
+        text(m_fontBody, ImVec2(x + 2.0f * ui, y - 0.5f * ui), withAlpha(theme::kTextDim, a), "  \xC2\xB7  ENGINEERING WORKBENCH",
+             0.9f * ui, 12.0f * ui);
+        const char* slate = "LUNAR DAY 214  \xC2\xB7  MARE IMBRIUM  \xC2\xB7  52.8\xC2\xB0N 15.6\xC2\xB0W";
+        text(m_fontMono, ImVec2(size.x - pad - width(m_fontMono, slate), y - 1.0f), withAlpha(theme::kTextDim, a), slate);
+        dl->AddLine(ImVec2(0, top - 0.5f), ImVec2(size.x, top - 0.5f), IM_COL32(255, 255, 255, static_cast<int>(16 * a)));
+    }
+
+    // ---- headline and title card over the image
+    {
+        const float a = easeOutCubic((elapsed - 0.4f) / 1.2f) * fade;
+        const float rise = (1.0f - easeOutCubic((elapsed - 0.4f) / 1.4f)) * 12.0f * ui;
+        const ImU32 shadow = IM_COL32(0, 0, 0, static_cast<int>(140 * a));
+
+        // Headline across the top of the frame.
+        const float hy = top + 16.0f * ui + rise * 0.5f;
+        const char* strong = "SUPER INTELLIGENCE ";
+        const char* light = "COMPUTER DESIGNING AND MANUFACTURING";
+        float hx = pad;
+        text(m_fontHeadline, ImVec2(hx + 1.0f, hy + 1.5f), shadow, strong, 0.6f * ui);
+        hx += text(m_fontHeadline, ImVec2(hx, hy), withAlpha(theme::rgb(246, 247, 250), a), strong, 0.6f * ui);
+        text(m_fontHeadlineLight, ImVec2(hx + 1.0f, hy + 1.5f), shadow, light, 0.6f * ui);
+        text(m_fontHeadlineLight, ImVec2(hx, hy), withAlpha(theme::rgb(222, 228, 236), a), light, 0.6f * ui);
+
+        // Scrim so the title reads on any frame.
+        const ImU32 dark = IM_COL32(4, 5, 8, static_cast<int>(170 * a));
+        const ImU32 clear = IM_COL32(4, 5, 8, 0);
+        dl->AddRectFilledMultiColor(ImVec2(0, bottomY - 140.0f * ui), ImVec2(size.x * 0.66f, bottomY), clear, clear, clear, dark);
+        const ImU32 headDark = IM_COL32(4, 5, 8, static_cast<int>(110 * a));
+        dl->AddRectFilledMultiColor(ImVec2(0, top), ImVec2(size.x, top + 64.0f * ui), headDark, headDark, clear, clear);
+
+        const float logo = 62.0f * ui;
+        const float x = pad;
+        const float y = bottomY - 22.0f * ui - logo + rise;
+        if (m_logoTex)
+            dl->AddImage(static_cast<ImTextureID>(m_logoTex), ImVec2(x - 4.0f * ui, y - 4.0f * ui),
+                         ImVec2(x + logo + 4.0f * ui, y + logo + 4.0f * ui), ImVec2(0, 0), ImVec2(1, 1),
+                         IM_COL32(255, 255, 255, static_cast<int>(255 * a)));
+        const float tx = x + logo + 14.0f * ui;
+        const float ty = y - 8.0f * ui;
+        text(m_fontTitle, ImVec2(tx + 1.0f, ty + 2.0f), shadow, "SI CDM", 3.0f * ui);
+        gradientText(m_fontTitle, ImVec2(tx, ty), withAlpha(theme::rgb(250, 251, 253), a),
+                     withAlpha(theme::rgb(150, 158, 172), a), "SI CDM", 3.0f * ui);
+        const float sy = ty + fs(m_fontTitle) + 2.0f * ui;
+        const char* subtitle = "Super Intelligence CAD  \xC2\xB7  CAM  \xC2\xB7  CAE  \xC2\xB7  DIGITAL TWIN";
+        text(m_fontSubtitle, ImVec2(tx + 1.0f, sy + 1.0f), IM_COL32(0, 0, 0, static_cast<int>(90 * a)), subtitle);
+        text(m_fontSubtitle, ImVec2(tx, sy), withAlpha(theme::rgb(214, 220, 230), a), subtitle);
+    }
+
+    // ---- status panel: current step, subsystem, percentage, progress bar
+    {
+        const float a = fade * 0.6f + 0.4f * closing;
+        dl->AddRectFilled(ImVec2(0, bottomY), ImVec2(size.x, size.y), IM_COL32(24, 26, 31, static_cast<int>(255 * a)),
+                          kCorner * ui, ImDrawFlags_RoundCornersBottom);
+        dl->AddLine(ImVec2(0, bottomY), ImVec2(size.x, bottomY), IM_COL32(150, 190, 255, static_cast<int>(60 * a)), 1.0f);
+
+        std::string status = "Starting", detail;
+        for (const Step& s : m_steps)
+            if (s.at <= m_shown + 0.02f) {
+                status = s.status;
+                detail = s.detail;
+            }
+        const bool done = m_closing >= 0.0f || m_shown >= 0.999f;
+        if (done) {
+            status = "Ready";
+            detail = "All systems nominal";
+        }
+        const float rowY = bottomY + 15.0f * ui;
+        const float pulse = 0.5f + 0.5f * std::sin(elapsed * 5.0f);
+        float x = pad;
+        auto item = [&](const std::string& label, bool primary) {
+            const ImU32 dot = done ? theme::kSuccess : theme::kAccentText;
+            dl->AddCircleFilled(ImVec2(x + 3.0f * ui, rowY + fs(m_fontStatus) * 0.55f), 3.0f * ui,
+                                withAlpha(dot, a * (primary ? 0.45f + 0.55f * pulse : 0.8f)), 16);
+            const std::string s = upper(label) + (done ? "" : "...");
+            x += 13.0f * ui;
+            x += text(m_fontStatus, ImVec2(x, rowY), withAlpha(primary ? theme::kText : theme::kTextDim, a), s.c_str(), 0.5f * ui);
+            x += 22.0f * ui;
+        };
+        item(status, true);
+        if (!detail.empty()) item(detail, false);
+
+        char pct[16];
+        std::snprintf(pct, sizeof pct, "%.1f%%", static_cast<double>(m_shown * 100.0f));
+        const float pw = width(m_fontStatus, pct) + 0.5f * ui * 5.0f;
+        text(m_fontStatus, ImVec2(size.x - pad - pw, rowY), withAlpha(theme::kText, a), pct, 0.5f * ui);
+        char version[48];
+        std::snprintf(version, sizeof version, "v%s", SICDM_VERSION);
+        text(m_fontSmall, ImVec2(size.x - pad - pw - 14.0f * ui - width(m_fontSmall, version), rowY + 1.0f),
+             withAlpha(theme::kTextFaint, a), version);
+
+        // Progress bar: rounded track, gradient fill, glowing head.
+        const float by = bottomY + 42.0f * ui, bh = 5.0f * ui;
+        const float bx0 = pad, bx1 = size.x - pad;
+        const float fill = bx0 + (bx1 - bx0) * m_shown;
+        dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(255, 255, 255, static_cast<int>(20 * a)), bh * 0.5f);
+        if (fill > bx0 + bh) {
+            dl->AddRectFilledMultiColor(ImVec2(bx0 + bh * 0.5f, by), ImVec2(fill - bh * 0.5f, by + bh),
+                                        withAlpha(theme::rgb(40, 110, 220), a), withAlpha(theme::rgb(120, 190, 255), a),
+                                        withAlpha(theme::rgb(120, 190, 255), a), withAlpha(theme::rgb(40, 110, 220), a));
+            dl->AddCircleFilled(ImVec2(bx0 + bh * 0.5f, by + bh * 0.5f), bh * 0.5f, withAlpha(theme::rgb(40, 110, 220), a), 12);
+            dl->AddCircleFilled(ImVec2(fill - bh * 0.5f, by + bh * 0.5f), bh * 0.5f, withAlpha(theme::rgb(140, 200, 255), a), 12);
+            for (int i = 0; i < 6; ++i) {
+                const float r = (3.0f + 3.0f * static_cast<float>(i)) * ui;
+                dl->AddCircleFilled(ImVec2(fill - bh * 0.5f, by + bh * 0.5f), r,
+                                    withAlpha(theme::kAccentText, a * 0.09f * static_cast<float>(6 - i) / 6.0f), 24);
+            }
+        }
+    }
+
+    // ---- window frame: hairline border on the rounded edge
+    dl->AddRect(ImVec2(0.5f, 0.5f), ImVec2(size.x - 0.5f, size.y - 0.5f), IM_COL32(255, 255, 255, 34), kCorner * ui, 0, 1.0f);
 }
 
 } // namespace sicdm

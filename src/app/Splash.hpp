@@ -34,8 +34,9 @@ public:
     bool ok() const { return m_window != nullptr; }
 
     // Reports a loading step: the bar moves towards `progress` (0..1) and
-    // `status` shows once the bar gets there. Draws a frame.
-    void step(float progress, const char* status);
+    // `status` (with the subsystem `detail`) shows once the bar gets there.
+    // Draws a frame.
+    void step(float progress, const char* status, const char* detail = "");
 
     // Plays the bar to 100 %, waits out the minimum time (a click or Esc skips),
     // fades out and closes the window.
@@ -43,7 +44,7 @@ public:
 
 private:
     void frame();
-    void drawScene(int fbw, int fbh, float imageTop, float imageHeight, float fade);
+    void drawScene(int fbw, float imageY, float imageHeight, float fade); // imageY from the bottom
     void drawOverlay(float fade);
     bool skipRequested() const;
 
@@ -51,6 +52,7 @@ private:
     ImGuiContext* m_imgui = nullptr;
     std::unique_ptr<Shader> m_scene;
     std::unique_ptr<Shader> m_blit;
+    std::unique_ptr<Shader> m_frame; // rounded window background
     unsigned m_vao = 0;
     unsigned m_fbo = 0, m_fboTex = 0;
     int m_fboW = 0, m_fboH = 0;
@@ -61,6 +63,10 @@ private:
     ImFont* m_fontSmall = nullptr;
     ImFont* m_fontCaption = nullptr;
     ImFont* m_fontMono = nullptr;
+    ImFont* m_fontHeadline = nullptr;      // SemiBold 17
+    ImFont* m_fontHeadlineLight = nullptr; // Regular 17
+    ImFont* m_fontSubtitle = nullptr;      // Regular 15
+    ImFont* m_fontStatus = nullptr;        // SemiBold 12
 
     double m_start = 0.0, m_last = 0.0;
     float m_minSeconds;
@@ -69,6 +75,7 @@ private:
     struct Step {
         float at;
         std::string status;
+        std::string detail;
     };
     std::vector<Step> m_steps;
 };

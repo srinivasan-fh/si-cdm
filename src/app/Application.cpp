@@ -45,10 +45,10 @@ bool Application::init() {
         m_splash = std::make_unique<Splash>(m_options.splashSeconds);
         if (!m_splash->ok()) m_splash.reset();
     }
-    auto progress = [this](float p, const std::string& status) {
-        if (m_splash) m_splash->step(p, status.c_str());
+    auto progress = [this](float p, const std::string& status, const char* subsystem) {
+        if (m_splash) m_splash->step(p, status.c_str(), subsystem);
     };
-    progress(0.06f, "Initialising graphics");
+    progress(0.06f, "Initialising graphics", "GPU context");
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
@@ -105,7 +105,7 @@ bool Application::init() {
     glfwSetCursorEnterCallback(m_window, ImGui_ImplGlfw_CursorEnterCallback);
     ImGui_ImplOpenGL3_Init("#version 410 core");
     m_imguiReady = true;
-    progress(0.22f, "Loading fonts and interface theme");
+    progress(0.22f, "Loading fonts and interface theme", "Interface");
 
     m_renderer = std::make_unique<Renderer>();
     if (!m_renderer->valid()) {
@@ -115,9 +115,9 @@ bool Application::init() {
 
     m_uiState.gpuName = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     m_uiState.glVersion = std::string("OpenGL ") + reinterpret_cast<const char*>(glGetString(GL_VERSION));
-    progress(0.4f, "Compiling viewport shaders");
+    progress(0.4f, "Compiling viewport shaders", "Render pipeline");
 
-    progress(0.55f, "Indexing part library  \xC2\xB7  " + std::to_string(libraryItems().size()) + " components");
+    progress(0.55f, "Indexing part library", (std::to_string(libraryItems().size()) + " components").c_str());
 
     m_files.push_back(FileTab{});
     m_files.back().id = m_nextFileId++;
@@ -133,7 +133,7 @@ bool Application::init() {
     m_cam3D.setStandardView(StandardView::Isometric, false);
     m_cam3D.fitToBounds(m_doc.scene.bounds(), false);
     m_cam3D.zoom(-1.5f); // leave some breathing room on the landing page
-    progress(0.7f, "Preparing workspace");
+    progress(0.7f, "Preparing workspace", "Digital twin");
 
     // 2D drawing window: flat drafting background, hidden-line bodies,
     // sketches drawn over everything on the active plane.
@@ -155,7 +155,7 @@ bool Application::init() {
         if (std::filesystem::exists(candidate, ec)) m_uiState.mcpExecutable = candidate.string();
     }
     if (m_options.mcpPort > 0) {
-        progress(0.8f, "Starting MCP server for AI agents");
+        progress(0.8f, "Starting MCP server", "AI agent bridge");
         m_uiState.mcpPort = m_options.mcpPort;
         toggleMcp();
     }
@@ -172,7 +172,7 @@ bool Application::init() {
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
     m_savedSignature = contentSignature(); // the demo part counts as unmodified
     if (!m_options.openPath.empty()) {
-        progress(0.88f, "Opening " + std::filesystem::path(m_options.openPath).filename().string());
+        progress(0.88f, "Opening " + std::filesystem::path(m_options.openPath).filename().string(), "Project");
         // A project opens in its own tab next to the demo; other files import into the demo.
         const FileKind kind = fileKindOf(m_options.openPath);
         runCommandLine((kind == FileKind::Project ? "OPEN \"" : "IMPORT \"") + m_options.openPath + "\"");
@@ -180,7 +180,7 @@ bool Application::init() {
     }
     refreshFileTabs();
     updateTitle();
-    progress(0.96f, "Restoring interface");
+    progress(0.96f, "Restoring interface", "Workspace");
     return true;
 }
 
