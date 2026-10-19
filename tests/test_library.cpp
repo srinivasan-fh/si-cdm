@@ -455,3 +455,122 @@ TEST_CASE("chains and belts travel along their loop with the driver") {
     REQUIRE(motion(s, "Spin"));
     CHECK(motion(s, "Spin")->alongLoop);
 }
+
+TEST_CASE("robot hand: links, DC motors in the forearm, joints within their limits") {
+    for (const char* k : {"phalanx", "robot_palm", "robot_forearm"})
+        CHECK(!buildLibraryPart(k, withDefaults(k, {})).indices.empty());
+
+    Document d;
+    REQUIRE(run(d, "PART ROBOTHAND").ok);
+    // Palm + grip pad, forearm, 15 links + grip pads, 6 hand + 2 wrist motors (housing + rotor each).
+    CHECK(d.scene.bodies().size() == 3 + 2 * 15 + 2 * 8);
+    CHECK(motion(d.scene, "Robot Hand 1 Index DIP")->moves("Robot Hand 1 Index Distal Pad")); // pads move with their link
+    REQUIRE(body(d.scene, "Robot Hand 1 Motor Index Flex") && body(d.scene, "Robot Hand 1 Motor Thumb CMC"));
+    CHECK(body(d.scene, "Robot Hand 1 Motor Index Flex")->kind == "dc_motor");
+    CHECK(d.scene.motions().front().name == "Robot Hand 1 Motor Wrist Flex Drive"); // wrist outermost
+
+    const Motion* drive = motion(d.scene, "Robot Hand 1 Motor Index Flex Drive");
+    REQUIRE(drive);
+    CHECK(drive->mode == MotionMode::Oscillate);
+    CHECK_NEAR(drive->range, 4 * 90, 1e-4); // gear x MCP limit
+    const float closed = drive->range / drive->speed;
+    const std::pair<const char*, float> limits[] = {{"Index MCP", 90}, {"Index PIP", 100}, {"Index DIP", 80},
+                                                    {"Thumb MCP", 50}, {"Thumb IP", 80},   {"Wrist Flex", 80}};
+    for (const auto& [joint, limit] : limits) {
+        const Motion* j = motion(d.scene, std::string("Robot Hand 1 ") + joint);
+        REQUIRE(j);
+        const Motion* lead = motion(d.scene, j->follow);
+        REQUIRE(lead);
+        CHECK_NEAR(motionValue(d.scene, *j, lead->range / lead->speed), limit, 1e-2);
+        for (float t = 0; t < 12; t += 0.07f) {
+            const float a = motionValue(d.scene, *j, t);
+            CHECK(a >= -1e-3f && a <= limit + 1e-2f);
+        }
+    }
+
+    // The chain holds together: the PIP point moves the same with the proximal and middle links.
+    const auto tf = motionTransforms(d.scene, closed * 0.6f);
+    std::size_t prox = 0, mid = 0, tip = 0;
+    for (std::size_t i = 0; i < d.scene.bodies().size(); ++i) {
+        const std::string& n = d.scene.bodies()[i].name;
+        if (n == "Robot Hand 1 Index Proximal") prox = i;
+        if (n == "Robot Hand 1 Index Middle") mid = i;
+        if (n == "Robot Hand 1 Index Distal") tip = i;
+    }
+    const Vec3 pipPoint = d.scene.bodies()[mid].offset;
+    const Vec3 a = tf[prox].transformPoint(pipPoint), b = tf[mid].transformPoint(pipPoint);
+    CHECK_NEAR(length(a - b), 0, 1e-2);
+    // Flexion curls the fingertip toward the palm side (-Z).
+    const Vec3 tipPoint = d.scene.bodies()[tip].bounds().max;
+    CHECK(tf[tip].transformPoint(tipPoint).z < tipPoint.z - 20.0f);
+
+    REQUIRE(run(d, "PART ROBOTHAND DRIVE 1 WRIST 0 HAND 1 @400,0,0").ok);
+    int motors = 0;
+    for (const Body& m : d.scene.bodies())
+        if (m.component == "Robot Hand 2" && m.kind == "dc_motor") ++motors;
+    CHECK(motors == 15);
+    // Left hand: the thumb is on the +X side of the palm.
+    CHECK(body(d.scene, "Robot Hand 2 Thumb Distal")->bounds().center().x > 400 + 40);
+    CHECK(body(d.scene, "Robot Hand 1 Thumb Distal")->bounds().center().x < -40);
+}
+
+TEST_CASE("robot finger joints can follow a separately placed DC motor") {
+    Document d;
+    REQUIRE(run(d, "PART ROBOTFINGER FINGER 2 PIP 90").ok);
+    REQUIRE(motion(d.scene, "Robot Finger 1 Ring PIP"));
+    CHECK(body(d.scene, "Robot Finger 1 Ring Distal"));
+    REQUIRE(run(d, "PART DCMOTOR @0,200,0").ok);
+    REQUIRE(run(d, "MOTION CIRCLE \"DC Motor 1 Drive\" RANGE 180 OSC").ok);
+    REQUIRE(run(d, "MOTION CIRCLE \"Robot Finger 1 Ring PIP\" FOLLOW \"DC Motor 1 Drive\" RATIO 0.5").ok);
+    const Motion* pip = motion(d.scene, "Robot Finger 1 Ring PIP");
+    const Motion* dc = motion(d.scene, "DC Motor 1 Drive");
+    REQUIRE(pip && dc);
+    CHECK_NEAR(motionValue(d.scene, *pip, 180.0f / dc->speed), 90, 1e-2);
+    REQUIRE(run(d, "PART ROBOTTHUMB DRIVE 1").ok);
+    CHECK(motion(d.scene, "Robot Thumb 1 Thumb IP"));
+}
+
+TEST_CASE("robot arm: shoulder to hand, every joint on a DC motor within its limit") {
+    Document d;
+    REQUIRE(run(d, "PART ROBOTARM").ok);
+    REQUIRE(body(d.scene, "Robot Arm 1 Upper Arm") && body(d.scene, "Robot Arm 1 Shoulder"));
+    CHECK(body(d.scene, "Robot Arm 1 Motor Elbow")->kind == "dc_motor");
+    // Shoulder joints are outermost, then elbow, forearm rotation, wrist, fingers.
+    std::vector<std::string> joints;
+    for (const Motion& m : d.scene.motions())
+        if (!m.follow.empty()) joints.push_back(m.name);
+    REQUIRE(joints.size() > 7);
+    const char* order[] = {"Shoulder Flex", "Shoulder Abduction", "Shoulder Rotation", "Elbow", "Forearm Rotation", "Wrist Flex"};
+    for (std::size_t i = 0; i < 6; ++i) CHECK(joints[i] == std::string("Robot Arm 1 ") + order[i]);
+
+    const std::pair<const char*, float> limits[] = {
+        {"Shoulder Flex", 90}, {"Shoulder Abduction", 90}, {"Shoulder Rotation", 70}, {"Elbow", 145}, {"Forearm Rotation", 160}};
+    for (const auto& [joint, limit] : limits) {
+        const Motion* j = motion(d.scene, std::string("Robot Arm 1 ") + joint);
+        REQUIRE(j);
+        const Motion* lead = motion(d.scene, j->follow);
+        REQUIRE(lead);
+        CHECK_NEAR(motionValue(d.scene, *j, lead->range / lead->speed), limit, 1e-2);
+    }
+    // Shoulder 300 mm + forearm 250 mm: the wrist is 550 mm ahead of the shoulder joint.
+    const Body* palm = body(d.scene, "Robot Arm 1 Palm");
+    const Body* upper = body(d.scene, "Robot Arm 1 Upper Arm");
+    REQUIRE(palm && upper);
+    CHECK_NEAR(palm->offset.y - upper->offset.y, 550, 1e-3);
+    // Raising the shoulder lifts the hand; the pedestal stays put.
+    const Motion* raise = motion(d.scene, "Robot Arm 1 Shoulder Flex");
+    const float t = motion(d.scene, raise->follow)->range / motion(d.scene, raise->follow)->speed;
+    for (Motion& m : d.scene.motions()) m.enabled = m.name == raise->name || m.name == raise->follow;
+    const auto tf = motionTransforms(d.scene, t);
+    std::size_t pi = 0, si = 0;
+    for (std::size_t i = 0; i < d.scene.bodies().size(); ++i) {
+        if (d.scene.bodies()[i].name == "Robot Arm 1 Palm") pi = i;
+        if (d.scene.bodies()[i].name == "Robot Arm 1 Shoulder") si = i;
+    }
+    CHECK_NEAR(tf[pi].transformPoint(palm->offset).z - palm->offset.z, 550, 1e-2); // arm straight up
+    CHECK_NEAR(length(tf[si].transformPoint(Vec3{}) - Vec3{}), 0, 1e-4);
+
+    REQUIRE(run(d, "PART ROBOTARM HAND LEFT DRIVE 1 @800,0,0").ok);
+    CHECK(run(d, "PART UPPERARM @0,900,0").ok);
+    CHECK(run(d, "PART SHOULDER @300,900,0").ok);
+}

@@ -596,6 +596,160 @@ MeshData motorRotor(const std::vector<float>& raw) {
 }
 
 // ---------------------------------------------------------------------------
+// Robot hand (right hand, palm down: fingers along +Y, palm facing -Z, thumb
+// toward -X, wrist axis along X through the origin). Every link's origin is
+// its proximal joint, so each joint is a circular motion through a body offset.
+
+// MCP knuckles of the index, middle, ring and little fingers on the 84 x 96 mm palm.
+constexpr Vec2 kKnuckles[4] = {{-27.0f, 97.0f}, {-7.0f, 100.0f}, {12.0f, 97.0f}, {29.0f, 91.0f}};
+constexpr float kPalmWidth = 84.0f, kPalmLength = 96.0f;
+
+// Sculpted shells (Figure 02 style) are swept along +Y through rounded-rectangle
+// sections: half width hw (X), half thickness ht (Z) centred at z = zc.
+struct Section {
+    float y, hw, ht, zc;
+};
+
+// Superellipse (exponent 4): flat sides with round corners.
+Vec2 roundCorner(float a) {
+    const float c = std::cos(a), s = std::sin(a);
+    return {std::copysign(std::sqrt(std::fabs(c)), c), std::copysign(std::sqrt(std::fabs(s)), s)};
+}
+
+MeshData sweepY(const std::vector<Section>& secs, int n = 40) {
+    Builder b;
+    auto ring = [&](const Section& q) {
+        std::vector<Vec3> r(static_cast<std::size_t>(n));
+        for (int k = 0; k < n; ++k) {
+            const Vec2 u = roundCorner(2.0f * kPi * static_cast<float>(k) / static_cast<float>(n));
+            r[static_cast<std::size_t>(k)] = {q.hw * u.x, q.y, q.zc + q.ht * u.y};
+        }
+        return r;
+    };
+    std::vector<Vec3> lo = ring(secs.front());
+    for (std::size_t i = 0; i < lo.size(); ++i)
+        b.tri({0, secs.front().y, secs.front().zc}, lo[i], lo[(i + 1) % lo.size()], {0, -1, 0});
+    for (std::size_t s = 1; s < secs.size(); ++s) {
+        const std::vector<Vec3> hi = ring(secs[s]);
+        for (std::size_t i = 0; i < lo.size(); ++i) {
+            const std::size_t j = (i + 1) % lo.size();
+            const Vec3 mid = (lo[i] + hi[j]) * 0.5f;
+            b.quad(lo[i], lo[j], hi[j], hi[i], {mid.x, 0, mid.z - secs[s].zc});
+        }
+        lo = hi;
+    }
+    for (std::size_t i = 0; i < lo.size(); ++i) b.tri({0, secs.back().y, secs.back().zc}, lo[i], lo[(i + 1) % lo.size()], {0, 1, 0});
+    return b.finish(30.0f);
+}
+
+// Sections of a link from y0 to y1, tapering from (hw0, ht0) to (hw1, ht1), its ends
+// rounded over r0 / r1 mm (down to 30 % of the section).
+std::vector<Section> roundedSpan(float y0, float y1, float hw0, float hw1, float ht0, float ht1, float r0, float r1) {
+    const float span = y1 - y0;
+    r0 = std::min(r0, span * 0.45f);
+    r1 = std::min(r1, span * 0.45f);
+    std::vector<Section> out;
+    auto add = [&](float y, float k) {
+        const float u = (y - y0) / span;
+        out.push_back({y, (hw0 + (hw1 - hw0) * u) * k, (ht0 + (ht1 - ht0) * u) * k, 0.0f});
+    };
+    constexpr int kRound = 6;
+    for (int i = 0; i <= kRound; ++i) {
+        const float a = kPi * 0.5f * static_cast<float>(i) / kRound;
+        add(y0 + r0 * (1.0f - std::cos(a)), 0.3f + 0.7f * std::sin(a));
+    }
+    for (int i = 1; i < 4; ++i) add(y0 + r0 + (span - r0 - r1) * static_cast<float>(i) / 4.0f, 1.0f);
+    for (int i = kRound; i >= 0; --i) {
+        const float a = kPi * 0.5f * static_cast<float>(i) / kRound;
+        add(y1 - r1 * (1.0f - std::cos(a)), 0.3f + 0.7f * std::sin(a));
+    }
+    return out;
+}
+
+// Rounded-rectangle grip pad on the palm side (-Z), from y0 to y1, `hw` half wide.
+MeshData gripPad(float x, float y0, float y1, float hw, float zBottom, float zTop) {
+    std::vector<Vec2> loop;
+    for (int k = 0; k < 32; ++k) {
+        const Vec2 u = roundCorner(2.0f * kPi * static_cast<float>(k) / 32.0f);
+        loop.push_back({x + hw * u.x, (y0 + y1) * 0.5f + (y1 - y0) * 0.5f * u.y});
+    }
+    return prismOf(loop, zBottom, zTop);
+}
+
+// Palm shell: wrist neck, domed back, thenar bulge at the thumb, rounded knuckle
+// end; or (pad) the grip pad of the palm.
+MeshData robotPalm(float w, float len, float t, bool left, bool pad) {
+    const float side = left ? 1.0f : -1.0f; // thumb side
+    if (pad) return gripPad(side * -0.04f * w, 0.38f * len, 0.82f * len, 0.3f * w, -t * 0.5f - 0.8f, -t * 0.36f);
+    // y / length, half width / width, half thickness / thickness, dome / thickness
+    constexpr float kProfile[][4] = {{0.04f, 0.27f, 0.30f, 0.0f}, {0.11f, 0.34f, 0.40f, 0.0f}, {0.23f, 0.43f, 0.47f, 0.03f},
+                                     {0.42f, 0.49f, 0.52f, 0.05f}, {0.62f, 0.50f, 0.53f, 0.05f}, {0.80f, 0.50f, 0.50f, 0.03f},
+                                     {0.90f, 0.49f, 0.46f, 0.02f}, {0.96f, 0.46f, 0.38f, 0.0f},  {1.0f, 0.40f, 0.24f, 0.0f}};
+    std::vector<Section> secs;
+    for (const auto& q : kProfile) secs.push_back({q[0] * len, q[1] * w, q[2] * t, q[3] * t});
+    MeshData m = sweepY(secs, 48);
+    MeshData thenar = primitives::sphere({0, 0, 0}, 1.0f, 40, 20);
+    thenar.transform(translate({side * 0.34f * w, 0.3f * len, -0.12f * t}) * scale(Vec3{0.2f * w, 0.28f * len, 0.4f * t}));
+    m.append(thenar);
+    m.append(cylX(-0.28f * w, 0.28f * w, t * 0.36f, 0, 0, 32)); // wrist knuckle
+    return m;
+}
+
+// Finger / thumb link along +Y from its hinge pin, turned `yaw` deg about Z: a
+// rounded shell (bullet nose on the fingertip) or (pad) its palm-side grip pad.
+MeshData phalanx(float len, float w, float t, float yaw, bool tip, bool pad) {
+    const float y0 = t * 0.22f, y1 = tip ? len : len - 1.5f;
+    const float r1 = tip ? w * 0.55f : t * 0.22f;
+    MeshData m;
+    if (pad) {
+        const float p0 = y0 + (tip ? (y1 - y0) * 0.25f : 2.0f), p1 = y1 - (tip ? r1 * 0.5f : 2.5f);
+        m = gripPad(0, p0, p1, w * 0.34f, -t * 0.5f - 0.6f, -t * 0.36f);
+    } else {
+        m = sweepY(roundedSpan(y0, y1, w * 0.5f, w * 0.45f, t * 0.5f, t * 0.45f, t * 0.22f, r1));
+        m.append(cylX(-w * 0.32f, w * 0.32f, t * 0.28f, 0, 0, 24)); // hinge pin
+    }
+    m.transform(rotateAxis({0, 0, 1}, radians(yaw)));
+    return m;
+}
+
+// Rounded motor deck (top at z = t / 2) reaching back along -Y, with a yoke holding
+// the palm or a digit on the hinge axis (X through the origin) and, optionally, the
+// round wrist actuator puck behind the yoke.
+MeshData robotForearm(float w, float len, float t, float clevis, bool puck) {
+    MeshData m = sweepY(roundedSpan(-len, -t * 0.6f, w * 0.5f, w * 0.5f, t * 0.5f, t * 0.5f, t * 0.4f, t * 0.4f));
+    for (float s : {-1.0f, 1.0f}) {
+        const float x0 = s > 0 ? clevis : -clevis - 4.0f;
+        m.append(boxOf({x0, -t * 0.6f - 1.0f, -t * 0.4f}, {x0 + 4.0f, 0.0f, t * 0.4f}));
+        m.append(cylX(x0, x0 + 4.0f, t * 0.4f, 0, 0, 32));
+    }
+    if (puck) {
+        const float y = -2.0f * t, r = 1.3f * t;
+        m.append(cylinderAt(0, y, r, -t * 0.5f, t * 0.9f, 64));
+        m.append(cylinderAt(0, y, r * 1.06f, t * 0.05f, t * 0.2f, 64)); // flange ring
+        m.append(cylinderAt(0, y, r * 0.8f, t * 0.9f, t * 1.0f, 48));   // cap
+    }
+    return m;
+}
+
+// Upper arm along +Y: shoulder ball at the origin, round bar, elbow hub (axis X) at `len`.
+MeshData armLink(float len, float r) {
+    MeshData m = primitives::sphere({0, 0, 0}, r * 1.3f, 48, 24);
+    MeshData bar = primitives::cylinder({0, 0, 0}, r, len, 48);
+    bar.transform(rotateAxis({1, 0, 0}, -kPi * 0.5f));
+    m.append(bar);
+    m.append(cylX(-r * 1.1f, r * 1.1f, r * 1.1f, len, 0, 48));
+    return m;
+}
+
+// Shoulder pedestal under the joint (origin): base plate on the ground `height` below it, column, cradle.
+MeshData robotShoulder(float height, float w) {
+    MeshData m = boxOf({-w * 0.5f, -w * 0.8f, -height}, {w * 0.5f, w * 0.35f, -height + 16.0f});
+    m.append(boxOf({-25.0f, -25.0f, -height + 16.0f}, {25.0f, 25.0f, -48.0f}));
+    m.append(cylinderAt(0, 0, 34.0f, -52.0f, -40.0f, 48));
+    return m;
+}
+
+// ---------------------------------------------------------------------------
 // Wheels and tyres (axis along +Y, standing on z = 0, centre at z = radius;
 // positive rotation about +Y rolls toward +X), chains and belts (axis +Z).
 
@@ -1101,7 +1255,8 @@ bool isLibraryKind(const std::string& k) {
            k == "stepper_motor" || k == "servo_motor" || k == "ev_motor" || k == "ev_flange_motor" || k == "motor_rotor" ||
            k == "tyre" || k == "alloy_rim" || k == "wheel_hub" || k == "caster_fork" || k == "wheel_rollers" ||
            k == "roller_hub" || k == "sprocket" || k == "pulley" || k == "chain" || k == "chain_loop" || k == "belt" ||
-           k == "o_ring";
+           k == "o_ring" || k == "phalanx" || k == "robot_palm" || k == "robot_forearm" || k == "arm_link" ||
+           k == "robot_shoulder";
 }
 
 MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
@@ -1142,6 +1297,11 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "belt" && p.size() >= 6 && p[1] > 0.0f && p[2] > 0.0f && p[3] > 0.0f && p[4] > 0.0f && p[5] > 0.0f)
         return beltAround(beltLoop(p[1], p[2], p[3]), static_cast<int>(p[0]), p[4], p[5], at(6), at(7));
     if (k == "o_ring" && ok(2)) return primitives::torus({0, 0, p[1] * 0.5f}, p[0] * 0.5f + p[1] * 0.5f, p[1] * 0.5f, 96, 24);
+    if (k == "phalanx" && ok(3)) return phalanx(p[0], p[1], p[2], at(3), at(4) >= 0.5f, at(5) >= 0.5f);
+    if (k == "robot_palm" && ok(3)) return robotPalm(p[0], p[1], p[2], at(3) >= 0.5f, at(4) >= 0.5f);
+    if (k == "robot_forearm" && ok(4)) return robotForearm(p[0], p[1], p[2], p[3], at(4) >= 0.5f);
+    if (k == "arm_link" && ok(2)) return armLink(p[0], p[1]);
+    if (k == "robot_shoulder" && ok(2)) return robotShoulder(p[0], p[1]);
     MeshData m;
     if (k == "dc_motor") m = dcMotor();
     else if (k == "stepper_motor") m = stepperMotor();
@@ -1201,6 +1361,21 @@ std::vector<LibraryParam> partParams(const std::string& k, const std::vector<flo
                 {"bore", "Bore", 6.0f, 0.0f, 500.0f, "mm"}};
     if (k == "chain") return {{"pitch", "Pitch", 12.7f, 2.0f, 200.0f, "mm"}, {"links", "Links", 20.0f, 1.0f, 2000.0f, "", true}};
     if (k == "o_ring") return {{"inner_dia", "Inner diameter", 40.0f, 1.0f, 5000.0f, "mm"}, {"section", "Section", 4.0f, 0.3f, 200.0f, "mm"}};
+    if (k == "phalanx")
+        return {{"length", "Length", 40.0f, 5.0f, 300.0f, "mm"}, {"width", "Width", 19.0f, 3.0f, 100.0f, "mm"},
+                {"thickness", "Thickness", 16.0f, 3.0f, 100.0f, "mm"}, {"yaw", "Yaw", 0.0f, -90.0f, 90.0f, "deg"},
+                {"tip", "Fingertip", 0.0f, 0.0f, 1.0f, "", true, "No|Yes"}, {"pad", "Part", 0.0f, 0.0f, 1.0f, "", true, "Shell|Grip pad"}};
+    if (k == "robot_palm")
+        return {{"width", "Width", 84.0f, 20.0f, 500.0f, "mm"}, {"length", "Length", 96.0f, 20.0f, 500.0f, "mm"},
+                {"thickness", "Thickness", 26.0f, 5.0f, 200.0f, "mm"}, {"hand", "Hand", 0.0f, 0.0f, 1.0f, "", true, "Right|Left"},
+                {"pad", "Part", 0.0f, 0.0f, 1.0f, "", true, "Shell|Grip pad"}};
+    if (k == "robot_forearm")
+        return {{"width", "Width", 70.0f, 10.0f, 500.0f, "mm"}, {"length", "Length", 130.0f, 20.0f, 1000.0f, "mm"},
+                {"thickness", "Thickness", 22.0f, 5.0f, 200.0f, "mm"}, {"clevis", "Clevis half gap", 24.5f, 2.0f, 250.0f, "mm"},
+                {"puck", "Wrist actuator", 1.0f, 0.0f, 1.0f, "", true, "No|Yes"}};
+    if (k == "arm_link") return {{"length", "Length", 300.0f, 20.0f, 2000.0f, "mm"}, {"radius", "Radius", 32.0f, 3.0f, 300.0f, "mm"}};
+    if (k == "robot_shoulder")
+        return {{"height", "Joint height", 220.0f, 60.0f, 3000.0f, "mm"}, {"width", "Base width", 140.0f, 60.0f, 2000.0f, "mm"}};
     if (k == "gear")
         return {module, teeth, width, bore, {"helix", "Helix angle", 0.0f, -45.0f, 45.0f, "deg"},
                 {"style", "Tooth form", 0.0f, 0.0f, 2.0f, "", true, "Spur|Helical|Herringbone"}, phase};
@@ -1234,6 +1409,20 @@ const std::vector<LibraryItem>& libraryItems() {
         auto rpm = [](float v) { return LibraryParam{"rpm", "Speed", v, -6000.0f, 6000.0f, "rpm"}; };
         const LibraryParam shafts{"shafts", "Shafts", 1.0f, 0.0f, 2.0f, "", true, "None|Single|Dual"};
         const LibraryParam fitting{"fitting", "Shaft end", 1.0f, 0.0f, 1.0f, "", true, "Plain|Coupler"};
+        // Robot hand: default flexion limits (deg) from human active range of motion;
+        // the max is the mechanical hard stop. 0 deg = straight (no hyperextension).
+        const LibraryParam side{"hand", "Hand", 0.0f, 0.0f, 1.0f, "", true, "Right|Left"};
+        const LibraryParam handRpm{"rpm", "Motor speed", 30.0f, 1.0f, 600.0f, "rpm"};
+        const LibraryParam gear{"gear", "Motor turns per joint turn", 4.0f, 1.0f, 100.0f, "x"};
+        const LibraryParam mcp{"mcp", "MCP flexion", 90.0f, 1.0f, 110.0f, "deg"};
+        const LibraryParam pip{"pip", "PIP flexion", 100.0f, 1.0f, 120.0f, "deg"};
+        const LibraryParam dip{"dip", "DIP flexion", 80.0f, 1.0f, 90.0f, "deg"};
+        const LibraryParam abduction{"abduction", "MCP abduction", 20.0f, 1.0f, 30.0f, "deg"};
+        const LibraryParam thumbCmc{"thumb_cmc", "Thumb CMC opposition", 60.0f, 1.0f, 90.0f, "deg"};
+        const LibraryParam thumbMcp{"thumb_mcp", "Thumb MCP flexion", 50.0f, 1.0f, 70.0f, "deg"};
+        const LibraryParam thumbIp{"thumb_ip", "Thumb IP flexion", 80.0f, 1.0f, 90.0f, "deg"};
+        const LibraryParam wristFlex{"wrist_flex", "Wrist flexion", 80.0f, 1.0f, 90.0f, "deg"};
+        const LibraryParam wristDev{"wrist_dev", "Wrist ulnar deviation", 30.0f, 1.0f, 45.0f, "deg"};
         return std::vector<LibraryItem>{
             {"dc_motor", "DCMOTOR DC", "DC Motor", "Motors", "28 mm brushed motor; single or dual shaft; spins 360 deg",
              {size, rpm(120.0f), shafts, {"shaft_length", "Shaft length", 14.0f, 0.5f, 500.0f, "mm"},
@@ -1339,6 +1528,43 @@ const std::vector<LibraryItem>& libraryItems() {
               {"planet_teeth", "Planet teeth", 18.0f, 6.0f, 300.0f, "", true}, width, rpm(20.0f)}},
             {"worm_drive", "WORMDRIVE WORMGEAR", "Worm Drive", "Gear trains", "Worm turning a worm wheel at 90 deg",
              {module, teeth(30.0f, 10.0f), {"starts", "Starts", 1.0f, 1.0f, 8.0f, "", true}, width, rpm(60.0f)}},
+            {"robot_hand", "ROBOTHAND HAND HUMANOIDHAND", "Robot Hand", "Robot arm & hand",
+             "Humanoid hand: palm, 4 fingers, thumb, wrist; DC gear motors in the forearm",
+             {size, side, {"drive", "Drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"},
+              {"wrist", "Wrist", 1.0f, 0.0f, 1.0f, "", true, "Fixed|2 DOF (2 motors)"}, handRpm, gear, mcp, pip, dip, abduction,
+              thumbCmc, thumbMcp, thumbIp, wristFlex, wristDev}},
+            {"robot_arm", "ROBOTARM ARM HUMANOIDARM", "Robot Arm", "Robot arm & hand",
+             "Shoulder (3 DOF) to hand: elbow, forearm rotation, 2-DOF wrist; DC gear motors",
+             {size, side, {"drive", "Hand drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"},
+              handRpm, gear, {"shoulder_flex", "Shoulder flexion (raise)", 90.0f, 1.0f, 100.0f, "deg"},
+              {"shoulder_abd", "Shoulder horizontal abduction", 90.0f, 1.0f, 120.0f, "deg"},
+              {"shoulder_rot", "Shoulder internal rotation", 70.0f, 1.0f, 90.0f, "deg"},
+              {"elbow", "Elbow flexion", 145.0f, 1.0f, 150.0f, "deg"},
+              {"forearm_rot", "Forearm supination", 160.0f, 1.0f, 180.0f, "deg"}, wristFlex, wristDev, mcp, pip, dip,
+              abduction, thumbCmc, thumbMcp, thumbIp}},
+            {"robot_finger", "ROBOTFINGER FINGER", "Robot Finger", "Robot arm & hand",
+             "Three-link finger (MCP, PIP, DIP) on a motor base",
+             {size, {"finger", "Finger", 0.0f, 0.0f, 3.0f, "", true, "Index|Middle|Ring|Little"},
+              {"drive", "Drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (1 motor)|Fully actuated (3 motors)"}, handRpm, gear,
+              mcp, pip, dip, abduction}},
+            {"robot_thumb", "ROBOTTHUMB THUMB", "Robot Thumb", "Robot arm & hand",
+             "Opposable thumb (CMC, MCP, IP) on a motor base",
+             {size, side, {"drive", "Drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (2 motors)|Fully actuated (3 motors)"},
+              handRpm, gear, thumbCmc, thumbMcp, thumbIp}},
+            {"finger_link", "PHALANX FINGERLINK LINK", "Finger Link (Phalanx)", "Robot arm & hand",
+             "One hinged finger / thumb segment; joint at its origin",
+             {{"length", "Length", 40.0f, 5.0f, 300.0f, "mm"}, {"width", "Width", 19.0f, 3.0f, 100.0f, "mm"},
+              {"thickness", "Thickness", 16.0f, 3.0f, 100.0f, "mm"}, {"tip", "Fingertip", 0.0f, 0.0f, 1.0f, "", true, "No|Yes"}}},
+            {"robot_palm", "PALM", "Robot Palm", "Robot arm & hand", "Palm plate with MCP knuckle line and wrist knuckle",
+             {{"width", "Width", 84.0f, 20.0f, 500.0f, "mm"}, {"length", "Length", 96.0f, 20.0f, 500.0f, "mm"},
+              {"thickness", "Thickness", 26.0f, 5.0f, 200.0f, "mm"}, side}},
+            {"robot_forearm", "FOREARM MOTORDECK", "Robot Forearm", "Robot arm & hand", "Motor deck with the wrist clevis",
+             {{"width", "Width", 70.0f, 10.0f, 500.0f, "mm"}, {"length", "Length", 130.0f, 20.0f, 1000.0f, "mm"},
+              {"thickness", "Thickness", 22.0f, 5.0f, 200.0f, "mm"}, {"clevis", "Clevis half gap", 24.5f, 2.0f, 250.0f, "mm"}}},
+            {"upper_arm", "UPPERARM ARMLINK HUMERUS", "Upper Arm Link", "Robot arm & hand", "Shoulder ball, round bar, elbow hub",
+             {{"length", "Length", 300.0f, 20.0f, 2000.0f, "mm"}, {"radius", "Radius", 32.0f, 3.0f, 300.0f, "mm"}}},
+            {"robot_shoulder", "SHOULDER PEDESTAL", "Shoulder Pedestal", "Robot arm & hand", "Base plate and column under the shoulder joint",
+             {{"height", "Joint height", 220.0f, 60.0f, 3000.0f, "mm"}, {"width", "Base width", 140.0f, 60.0f, 2000.0f, "mm"}}},
         };
     }();
     return items;
@@ -1428,6 +1654,109 @@ Motion loopTravelMotion(const std::string& name, const std::string& body, const 
     return m;
 }
 
+// Robot hand digits: link lengths (proximal to distal; the thumb starts with its
+// metacarpal) and widths in mm, adult hand (Buryanov & Kotiuk 2010 bone lengths,
+// distal links include the fingertip pad).
+struct DigitSpec {
+    const char* name;
+    float len[3], width[3];
+};
+const DigitSpec kFingers[4] = {{"Index", {39.8f, 22.4f, 18.5f}, {19.0f, 17.5f, 16.0f}},
+                               {"Middle", {44.6f, 26.3f, 20.0f}, {19.5f, 18.0f, 16.5f}},
+                               {"Ring", {41.4f, 25.7f, 19.5f}, {18.0f, 16.5f, 15.5f}},
+                               {"Little", {32.7f, 18.1f, 17.5f}, {16.0f, 14.5f, 13.5f}}};
+const DigitSpec kThumb{"Thumb", {46.0f, 31.0f, 26.0f}, {24.0f, 21.0f, 19.5f}};
+constexpr float kFingerYaw[4] = {5.0f, 0.0f, -4.0f, -9.0f}; // rest splay, + toward the thumb
+constexpr float kThumbYaw = 40.0f;
+// Robot arm (adult, mm): humerus and forearm lengths, shoulder joint height on its pedestal.
+constexpr float kUpperArm = 300.0f, kForearm = 250.0f, kShoulderHeight = 220.0f;
+const Vec3 kHandShell{0.20f, 0.21f, 0.23f}; // satin black shell
+const Vec3 kHandPad{0.60f, 0.62f, 0.65f};    // grey grip pads
+
+// Builds the links, DC gear motors and joints of a hand component. Each joint
+// follows its motor drive at 1 / gear; the drive sweeps back and forth over
+// gear x the joint limit, so the joint flexes 0 -> limit -> 0.
+struct HandBuilder {
+    LibraryComponent& c;
+    Vec3 o;
+    float s, gear, rpm;
+    bool left;
+    std::vector<Vec3> slots; // motor positions (right hand, size 1)
+    std::size_t used = 0;
+
+    Vec3 pos(const Vec3& p) const { return o + Vec3{left ? -p.x : p.x, p.y, p.z} * s; }
+    Vec3 axis(const Vec3& a) const { return left ? Vec3{a.x, -a.y, -a.z} : a; } // mirrored rotation axis
+
+    // DC gear motor `size` x the library motor, in the next slot or at `where`.
+    std::string motor(const std::string& label, float jointLimit, float size = 0.5f, std::optional<Vec3> where = {}) {
+        const Vec3 at = pos(where ? *where : slots[std::min(used++, slots.size() - 1)]);
+        const std::string m = c.name + " Motor " + label;
+        c.bodies.push_back(part(m, "dc_motor", {}, at, kSteel, c.name, size * s));
+        c.bodies.push_back(part(m + " Rotor", "motor_rotor", {0, 6, 1, 5, 3, 1}, at, kSteel, c.name, size * s));
+        Motion d = spin(m + " Drive", {m + " Rotor"}, at, rpm);
+        d.range = gear * jointLimit;
+        d.mode = MotionMode::Oscillate;
+        c.motions.push_back(d);
+        return d.name;
+    }
+    void joint(const std::string& label, std::vector<std::string> bodies, const Vec3& at, const Vec3& ax,
+               const std::string& drive, float ratio) {
+        c.motions.push_back(follower(c.name + " " + label, std::move(bodies), pos(at), drive, ratio, axis(ax)));
+    }
+
+    // Finger: MCP abduction + flexion, PIP, DIP (DIP always coupled to PIP).
+    // Thumb: CMC opposition, MCP, IP. Returns the link names.
+    std::vector<std::string> digit(const DigitSpec& d, const Vec3& base, float yaw, bool thumb, bool full,
+                                   const std::function<float(const char*)>& v, float radial = 1.0f) {
+        const float a = radians(yaw);
+        const Vec3 dir{-std::sin(a), std::cos(a), 0}, flex{-std::cos(a), -std::sin(a), 0};
+        const char* links[3] = {thumb ? "Metacarpal" : "Proximal", thumb ? "Proximal" : "Middle", "Distal"};
+        std::vector<std::string> names; // shell and grip pad of each link
+        Vec3 j[3] = {base};
+        for (int k = 0; k < 3; ++k) {
+            if (k > 0) j[k] = j[k - 1] + dir * d.len[k - 1];
+            const std::string link = c.name + " " + d.name + " " + links[k];
+            const float w = d.width[k];
+            for (float pad : {0.0f, 1.0f}) {
+                names.push_back(pad > 0 ? link + " Pad" : link);
+                c.bodies.push_back(part(names.back(), "phalanx", {d.len[k], w, 0.85f * w, left ? -yaw : yaw, k == 2 ? 1.0f : 0.0f, pad},
+                                        pos(j[k]), pad > 0 ? kHandPad : kHandShell, c.name, s));
+            }
+        }
+        const std::string n = d.name;
+        const std::vector<std::string> all = names, outer(names.begin() + 2, names.end()), tip(names.begin() + 4, names.end());
+        if (thumb) {
+            const float b = radians(yaw - kThumbYaw);
+            const Vec3 opposition{std::sin(b), -std::cos(b), 0}; // swings the thumb under the palm
+            const float cmc = v("thumb_cmc"), mcp = v("thumb_mcp"), ip = v("thumb_ip");
+            joint(n + " CMC", all, j[0], opposition, motor(n + " CMC", cmc), 1.0f / gear);
+            if (full) {
+                joint(n + " MCP", outer, j[1], flex, motor(n + " MCP", mcp), 1.0f / gear);
+                joint(n + " IP", tip, j[2], flex, motor(n + " IP", ip), 1.0f / gear);
+            } else {
+                const std::string drive = motor(n + " Flex", mcp);
+                joint(n + " MCP", outer, j[1], flex, drive, 1.0f / gear);
+                joint(n + " IP", tip, j[2], flex, drive, ip / (gear * mcp));
+            }
+            return names;
+        }
+        const float mcp = v("mcp"), pip = v("pip"), dip = v("dip");
+        if (full) {
+            joint(n + " Abduction", all, j[0], {0, 0, radial}, motor(n + " Abduction", v("abduction")), 1.0f / gear);
+            joint(n + " MCP", all, j[0], flex, motor(n + " MCP", mcp), 1.0f / gear);
+            const std::string drive = motor(n + " PIP", pip);
+            joint(n + " PIP", outer, j[1], flex, drive, 1.0f / gear);
+            joint(n + " DIP", tip, j[2], flex, drive, dip / (gear * pip));
+        } else {
+            const std::string drive = motor(n + " Flex", mcp);
+            joint(n + " MCP", all, j[0], flex, drive, 1.0f / gear);
+            joint(n + " PIP", outer, j[1], flex, drive, pip / (gear * mcp));
+            joint(n + " DIP", tip, j[2], flex, drive, dip / (gear * mcp));
+        }
+        return names;
+    }
+};
+
 } // namespace
 
 LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<std::string, float>& values,
@@ -1469,6 +1798,89 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
             m.mode = MotionMode::Oscillate;
         }
         c.motions.push_back(m);
+        return c;
+    }
+
+    // Robot hand: links on hinge joints, each joint driven by a DC gear motor in the forearm / base.
+    if (key == "robot_hand" || key == "robot_arm" || key == "robot_finger" || key == "robot_thumb") {
+        const bool left = v("hand") >= 0.5f, full = v("drive") >= 0.5f, arm = key == "robot_arm";
+        // The builder works from the wrist; an arm stands on its pedestal at `o` with the wrist ahead of the shoulder.
+        const Vec3 wrist = arm ? Vec3{0, kUpperArm + kForearm, kShoulderHeight} : Vec3{0, 0, 15.0f};
+        HandBuilder h{c, o + wrist * v("size"), v("size"), v("gear"), v("rpm"), left, {}};
+        if (key == "robot_finger" || key == "robot_thumb") {
+            const bool thumb = key == "robot_thumb";
+            const DigitSpec& d = thumb ? kThumb : kFingers[static_cast<int>(v("finger"))];
+            for (int k = 0; k < 3; ++k) h.slots.push_back({0, -24.0f - 17.0f * static_cast<float>(k), 11.5f});
+            c.bodies.push_back(part(name + " Base", "robot_forearm", {d.width[0] + 12.0f, 72, 16, d.width[0] * 0.5f + 0.5f, 0},
+                                    h.o, kDarkSteel, name, h.s));
+            h.digit(d, {}, thumb ? kThumbYaw : 0.0f, thumb, full, v);
+            return c;
+        }
+        for (int r = 0; r < 5; ++r)
+            for (int k = 0; k < 4; ++k)
+                h.slots.push_back({-25.5f + 17.0f * static_cast<float>(k), -76.0f - 17.0f * static_cast<float>(r), 14.5f});
+        c.bodies.push_back(part(name + " Palm", "robot_palm", {kPalmWidth, kPalmLength, 26, left ? 1.0f : 0.0f}, h.o, kHandShell, name, h.s));
+        c.bodies.push_back(part(name + " Palm Pad", "robot_palm", {kPalmWidth, kPalmLength, 26, left ? 1.0f : 0.0f, 1}, h.o, kHandPad, name, h.s));
+        c.bodies.push_back(part(name + " Forearm", "robot_forearm", {70, arm ? kForearm : 180.0f, 22, 24.5f, 1}, h.o, kDarkSteel, name, h.s));
+        std::vector<std::string> carried{name + " Palm", name + " Palm Pad"};
+        for (int i = 0; i < 4; ++i) {
+            const auto links = h.digit(kFingers[i], {kKnuckles[i].x, kKnuckles[i].y, 0}, kFingerYaw[i], false, full, v,
+                                       i < 2 ? 1.0f : -1.0f); // index and middle abduct toward the thumb
+            carried.insert(carried.end(), links.begin(), links.end());
+        }
+        const auto thumb = h.digit(kThumb, {-30, 20, -6}, kThumbYaw, true, full, v);
+        carried.insert(carried.end(), thumb.begin(), thumb.end());
+        if (arm || v("wrist") >= 0.5f) { // the wrist carries the whole hand: its joints go first (outermost)
+            const std::size_t n = c.motions.size();
+            h.joint("Wrist Flex", carried, {}, {-1, 0, 0}, h.motor("Wrist Flex", v("wrist_flex")), 1.0f / h.gear);
+            h.joint("Wrist Deviation", carried, {}, {0, 0, -1}, h.motor("Wrist Deviation", v("wrist_dev")), 1.0f / h.gear);
+            std::rotate(c.motions.begin(), c.motions.begin() + static_cast<std::ptrdiff_t>(n), c.motions.end());
+        }
+        if (arm) { // shoulder pitch, yaw, roll -> elbow -> forearm rotation, outermost first
+            const std::size_t n = c.motions.size();
+            const Vec3 elbow{0, -kForearm, 0}, shoulder{0, -kForearm - kUpperArm, 0};
+            const std::string supination = h.motor("Forearm Rotation", v("forearm_rot"));
+            std::vector<std::string> forearm;
+            for (const Body& b : c.bodies) forearm.push_back(b.name);
+            const std::string elbowDrive = h.motor("Elbow", v("elbow"), 1.2f, shoulder + Vec3{0, 100, 40.4f});
+            c.bodies.push_back(part(name + " Upper Arm", "arm_link", {kUpperArm, 32}, h.pos(shoulder), kHandShell, name, h.s));
+            std::vector<std::string> upper;
+            for (const Body& b : c.bodies) upper.push_back(b.name);
+            c.bodies.push_back(part(name + " Shoulder", "robot_shoulder", {kShoulderHeight, 140}, h.pos(shoulder), kDarkSteel, name, h.s));
+            auto torso = [&](const char* label, float x, const char* limit) { // shoulder motors on the pedestal
+                return h.motor(label, v(limit), 1.2f, shoulder + Vec3{x, -70, 24.4f - kShoulderHeight});
+            };
+            h.joint("Shoulder Flex", upper, shoulder, {1, 0, 0}, torso("Shoulder Flex", -40, "shoulder_flex"), 1.0f / h.gear);
+            h.joint("Shoulder Abduction", upper, shoulder, {0, 0, -1}, torso("Shoulder Abduction", 0, "shoulder_abd"), 1.0f / h.gear);
+            h.joint("Shoulder Rotation", upper, shoulder, {0, -1, 0}, torso("Shoulder Rotation", 40, "shoulder_rot"), 1.0f / h.gear);
+            h.joint("Elbow", forearm, elbow, {1, 0, 0}, elbowDrive, 1.0f / h.gear);
+            h.joint("Forearm Rotation", forearm, {}, {0, 1, 0}, supination, 1.0f / h.gear);
+            std::rotate(c.motions.begin(), c.motions.begin() + static_cast<std::ptrdiff_t>(n), c.motions.end());
+        }
+        return c;
+    }
+    if (key == "finger_link") {
+        for (float pad : {0.0f, 1.0f})
+            c.bodies.push_back(part(pad > 0 ? name + " Pad" : name, "phalanx", {v("length"), v("width"), v("thickness"), 0, v("tip"), pad}, o,
+                                    pad > 0 ? kHandPad : kHandShell, name));
+        return c;
+    }
+    if (key == "robot_palm") {
+        for (float pad : {0.0f, 1.0f})
+            c.bodies.push_back(part(pad > 0 ? name + " Pad" : name, "robot_palm", {v("width"), v("length"), v("thickness"), v("hand"), pad}, o,
+                                    pad > 0 ? kHandPad : kHandShell, name));
+        return c;
+    }
+    if (key == "upper_arm") {
+        c.bodies.push_back(part(name, "arm_link", {v("length"), v("radius")}, o, kHandShell, name));
+        return c;
+    }
+    if (key == "robot_shoulder") {
+        c.bodies.push_back(part(name, "robot_shoulder", {v("height"), v("width")}, o + Vec3{0, 0, v("height")}, kDarkSteel, name));
+        return c;
+    }
+    if (key == "robot_forearm") {
+        c.bodies.push_back(part(name, "robot_forearm", {v("width"), v("length"), v("thickness"), v("clevis"), 1}, o, kDarkSteel, name));
         return c;
     }
 

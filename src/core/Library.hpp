@@ -33,6 +33,9 @@ struct Body;
 //   sprocket: pitch teeth width bore       pulley: type diameter width bore       chain: pitch links
 //   chain_loop: pitch r1 r2 centre z phase (pins on the loop around two pitch circles, shifted by phase mm)
 //   belt: type r1 r2 centre width thickness z phase                                 o_ring: inner_dia section
+//   phalanx: length width thickness yaw tip pad   robot_palm: width length thickness hand(0 right, 1 left) pad
+//   (pad 1 = the grip pad instead of the shell)   robot_forearm: width length thickness clevis puck   (robot hand links: joint axis along X through the origin)
+//   arm_link: length radius (shoulder ball at the origin, elbow hub at y = length)   robot_shoulder: height width
 bool isLibraryKind(const std::string& kind);
 // Chains and belts that can travel along their loop (chain_loop, belt).
 bool isLoopKind(const std::string& kind);

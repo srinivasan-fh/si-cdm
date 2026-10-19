@@ -179,6 +179,7 @@ private:
 
     // Library page: selected item and its edited parameters.
     std::string m_libSelected = "dc_motor";
+    bool m_libParamsOpen = true;
     std::map<std::string, std::map<std::string, float>> m_libValues;
     char m_libSearch[64] = "";
 };

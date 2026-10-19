@@ -1561,6 +1561,71 @@ void drawLibraryIcon(ImDrawList* dl, const std::string& key, ImVec2 c, float r, 
         dl->PathArcTo(b, rb, -kPi * 0.5f, kPi * 0.5f, 12);
         dl->PathStroke(col, 0, links ? 2.2f : 1.8f);
     };
+    // Robot arm & hand: links as bars with a joint ring at their base.
+    auto link = [&](ImVec2 a, ImVec2 b, float w) {
+        dl->AddLine(a, b, col, w);
+        dl->AddCircle(a, w * 0.75f, col, 12, t);
+    };
+    auto digit = [&](ImVec2 base, float angle, float len, float w, int links) {
+        const ImVec2 d{std::sin(angle), -std::cos(angle)};
+        for (int i = 0; i < links; ++i) {
+            const ImVec2 b{base.x + d.x * len, base.y + d.y * len};
+            link(base, b, w);
+            base = b;
+            len *= 0.72f;
+        }
+    };
+    auto hand = [&](ImVec2 at, float s) { // palm up the page, thumb to the left
+        dl->AddRect({at.x - s * 0.5f, at.y - s * 0.1f}, {at.x + s * 0.5f, at.y + s * 0.65f}, col, s * 0.12f, 0, t);
+        const float len[] = {0.38f, 0.44f, 0.4f, 0.3f};
+        for (int i = 0; i < 4; ++i)
+            digit({at.x + s * (-0.36f + 0.24f * static_cast<float>(i)), at.y - s * 0.16f}, 0.0f, s * len[i], s * 0.13f, 3);
+        digit({at.x - s * 0.56f, at.y + s * 0.4f}, -0.9f, s * 0.34f, s * 0.14f, 2);
+    };
+    if (key == "robot_hand") return hand({c.x, c.y + r * 0.2f}, r * 1.05f);
+    if (key == "robot_finger" || key == "robot_thumb") {
+        const bool thumb = key == "robot_thumb";
+        dl->AddLine({c.x - r * 0.7f, c.y + r * 0.85f}, {c.x + r * 0.7f, c.y + r * 0.85f}, col, 2.4f); // motor base
+        digit({c.x - (thumb ? r * 0.3f : 0.0f), c.y + r * 0.7f}, thumb ? 0.5f : 0.0f, r * (thumb ? 0.75f : 0.72f), r * 0.24f, 3);
+        return;
+    }
+    if (key == "finger_link") {
+        link({c.x - r * 0.6f, c.y + r * 0.45f}, {c.x + r * 0.55f, c.y - r * 0.4f}, r * 0.38f);
+        return;
+    }
+    if (key == "robot_palm") {
+        const ImVec2 pts[] = {{c.x - r * 0.45f, c.y + r * 0.85f}, {c.x + r * 0.45f, c.y + r * 0.85f}, {c.x + r * 0.8f, c.y + r * 0.2f},
+                              {c.x + r * 0.6f, c.y - r * 0.6f}, {c.x - r * 0.1f, c.y - r * 0.8f}, {c.x - r * 0.7f, c.y - r * 0.6f},
+                              {c.x - r * 0.8f, c.y + r * 0.2f}};
+        dl->AddPolyline(pts, 7, col, ImDrawFlags_Closed, t);
+        for (int i = 0; i < 4; ++i) dl->AddCircle({c.x + r * (-0.52f + 0.36f * static_cast<float>(i)), c.y - r * 0.55f}, r * 0.12f, col, 10, t);
+        return;
+    }
+    if (key == "robot_forearm") {
+        dl->AddRect({c.x - r * 0.95f, c.y - r * 0.3f}, {c.x + r * 0.55f, c.y + r * 0.3f}, col, 2.0f, 0, t);
+        for (int i = 0; i < 3; ++i) dl->AddCircle({c.x + r * (-0.65f + 0.4f * static_cast<float>(i)), c.y}, r * 0.14f, col, 12, t);
+        dl->AddLine({c.x + r * 0.55f, c.y - r * 0.22f}, {c.x + r * 0.9f, c.y - r * 0.22f}, col, 2.4f); // clevis
+        dl->AddLine({c.x + r * 0.55f, c.y + r * 0.22f}, {c.x + r * 0.9f, c.y + r * 0.22f}, col, 2.4f);
+        return;
+    }
+    if (key == "upper_arm") {
+        dl->AddCircle({c.x - r * 0.65f, c.y + r * 0.45f}, r * 0.3f, col, 20, t);
+        dl->AddLine({c.x - r * 0.42f, c.y + r * 0.25f}, {c.x + r * 0.5f, c.y - r * 0.45f}, col, r * 0.3f);
+        dl->AddCircle({c.x + r * 0.62f, c.y - r * 0.55f}, r * 0.24f, col, 16, t);
+        return;
+    }
+    if (key == "robot_shoulder" || key == "robot_arm") {
+        const ImVec2 ball{c.x - r * 0.55f, c.y - r * 0.05f};
+        dl->AddLine({c.x - r * 0.95f, c.y + r * 0.9f}, {c.x - r * 0.15f, c.y + r * 0.9f}, col, 2.6f); // base plate
+        dl->AddRect({ball.x - r * 0.14f, ball.y + r * 0.25f}, {ball.x + r * 0.14f, c.y + r * 0.88f}, col, 1.0f, 0, t);
+        dl->AddCircle(ball, r * 0.24f, col, 20, t);
+        if (key == "robot_shoulder") return;
+        const ImVec2 elbow{c.x + r * 0.05f, c.y - r * 0.7f}, wrist{c.x + r * 0.55f, c.y - r * 0.05f};
+        dl->AddLine({ball.x + r * 0.16f, ball.y - r * 0.18f}, elbow, col, r * 0.2f);
+        link(elbow, wrist, r * 0.16f);
+        hand({wrist.x + r * 0.2f, wrist.y + r * 0.08f}, r * 0.42f);
+        return;
+    }
     if (key == "car_wheel" || key == "robot_wheel" || key == "tyre") {
         tyreIcon(c, r * 0.85f, true);
         if (key == "car_wheel")
@@ -1724,8 +1789,8 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
     ImGui::InputTextWithHint("##libsearch", "Search motors, gears...", m_libSearch, sizeof(m_libSearch));
 
     const auto& items = libraryItems();
-    const LibraryItem* selected = findLibraryItem(m_libSelected);
-    // List on top, parameters of the selected part below.
+    const LibraryItem* selected = m_libParamsOpen ? findLibraryItem(m_libSelected) : nullptr;
+    // List on top, parameters of the selected part below (closed with x, reopened by picking a part).
     const float paramsH = selected ? 96.0f + static_cast<float>(selected->params.size()) * (ImGui::GetFrameHeightWithSpacing()) : 0.0f;
     ImGui::BeginChild("##liblist", {0, -paramsH});
     constexpr float kRow = 44.0f;
@@ -1738,9 +1803,10 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
             lastCategory = it.category;
         }
         ImGui::PushID(it.key);
-        const bool isSel = selected == &it;
+        const bool isSel = m_libSelected == it.key;
         if (ImGui::Selectable("##item", isSel, ImGuiSelectableFlags_AllowDoubleClick, {0, kRow})) {
             m_libSelected = it.key;
+            m_libParamsOpen = true;
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) cmd.commands.push_back(std::string("PART ") + it.key);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\nDouble-click to insert", it.name, it.summary);
@@ -1767,7 +1833,11 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
     if (!selected) return;
     // Parameters of the selected part.
     auto& values = m_libValues[selected->key];
+    const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
     theme::caption(selected->name);
+    ImGui::SameLine(right - ImGui::CalcTextSize("x").x - ImGui::GetStyle().FramePadding.x * 2.0f);
+    if (ImGui::SmallButton("x##libclose")) m_libParamsOpen = false;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide the parameters");
     if (beginPropertyGrid("##libparams")) {
         for (const LibraryParam& p : selected->params) {
             auto it = values.find(p.key);
