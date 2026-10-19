@@ -43,7 +43,7 @@ sicdm --splash-seconds 6     # keep the splash up longer (default 3.2 s minimum)
 The splash renders at a resolution adapted to the GPU, so it stays smooth on integrated graphics.
 `--screenshot` runs never show it.
 
-The app icon (a machined blue part over the rim of Mars, ringed by an orbit, on a deep-space squircle) is drawn by
+The app icon (the crew rover from the splash, gold rims and glowing headlamps, on the lunar horizon under a crescent Earth) is drawn by
 `tools/make_icon.py` (Python + Pillow + NumPy) into `resources/icon/*.png` and
 `resources/macos/SICDM.icns`. The macOS bundle uses the `.icns` for the Dock and Finder; on
 Windows and Linux the PNGs are compiled into the app and set as the window icon.
