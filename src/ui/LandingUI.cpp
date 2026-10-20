@@ -1583,6 +1583,113 @@ void drawLibraryIcon(ImDrawList* dl, const std::string& key, ImVec2 c, float r, 
         digit({at.x - s * 0.56f, at.y + s * 0.4f}, -0.9f, s * 0.34f, s * 0.14f, 2);
     };
     if (key == "robot_hand") return hand({c.x, c.y + r * 0.2f}, r * 1.05f);
+    // Humanoid body: rounded shells with a joint ring at each pivot.
+    auto rrect = [&](float x0, float y0, float x1, float y1, float round) {
+        dl->AddRect({c.x + r * x0, c.y + r * y0}, {c.x + r * x1, c.y + r * y1}, col, r * round, 0, t);
+    };
+    auto joint = [&](float x, float y, float rad) { dl->AddCircle({c.x + r * x, c.y + r * y}, r * rad, col, 16, t); };
+    auto bar = [&](float x0, float y0, float x1, float y1, float w) {
+        dl->AddLine({c.x + r * x0, c.y + r * y0}, {c.x + r * x1, c.y + r * y1}, col, r * w);
+    };
+    auto head = [&](float x, float y, float s) { // rounded skull with a visor line
+        rrect(x - 0.42f * s, y - 0.5f * s, x + 0.42f * s, y + 0.5f * s, 0.36f * s);
+        bar(x - 0.26f * s, y - 0.04f * s, x + 0.26f * s, y - 0.04f * s, 0.12f * s);
+    };
+    auto bellows = [&](float x0, float x1, float y0, float y1, int folds) {
+        for (int i = 0; i <= folds; ++i) {
+            const float y = y0 + (y1 - y0) * static_cast<float>(i) / static_cast<float>(folds);
+            const float in = i % 2 ? 0.0f : 0.06f;
+            bar(x0 + in, y, x1 - in, y, 0.05f);
+        }
+    };
+    auto heart = [&](float x, float y, float rad) {
+        joint(x, y, rad);
+        for (int i = 0; i < 6; ++i) {
+            const float a = kPi / 3.0f * static_cast<float>(i);
+            bar(x, y, x + std::cos(a) * rad * 0.8f, y + std::sin(a) * rad * 0.8f, 0.04f);
+        }
+    };
+    auto leg = [&](float x, float y, float h) { // hip at (x, y), foot on y + h
+        joint(x, y, 0.1f * h);
+        bar(x, y + 0.08f * h, x, y + 0.48f * h, 0.16f * h);
+        joint(x, y + 0.5f * h, 0.08f * h);
+        bar(x, y + 0.56f * h, x, y + 0.92f * h, 0.13f * h);
+        bar(x - 0.06f * h, y + 0.98f * h, x + 0.16f * h, y + 0.98f * h, 0.07f * h);
+    };
+    if (key == "humanoid") {
+        head(0, -0.82f, 0.32f);
+        bar(0, -0.64f, 0, -0.56f, 0.06f);
+        rrect(-0.3f, -0.56f, 0.3f, -0.08f, 0.1f);
+        heart(0, -0.34f, 0.08f);
+        rrect(-0.24f, -0.02f, 0.24f, 0.14f, 0.06f);
+        for (float x : {-0.42f, 0.42f}) bar(x, -0.48f, x * 1.08f, 0.22f, 0.1f);
+        for (float x : {-0.13f, 0.13f}) leg(x, 0.16f, 0.8f);
+        return;
+    }
+    if (key == "robot_head_neck") {
+        head(0, -0.38f, 0.8f);
+        bar(0, 0.04f, 0, 0.42f, 0.18f);
+        joint(0, 0.42f, 0.1f);
+        bar(-0.55f, 0.85f, 0.55f, 0.85f, 0.08f);
+        rrect(-0.14f, 0.5f, 0.14f, 0.82f, 0.02f);
+        return;
+    }
+    if (key == "robot_torso") {
+        rrect(-0.6f, -0.9f, 0.6f, -0.12f, 0.2f);
+        heart(0, -0.5f, 0.14f);
+        bellows(-0.42f, 0.42f, -0.08f, 0.12f, 3);
+        rrect(-0.45f, 0.16f, 0.45f, 0.46f, 0.1f);
+        rrect(-0.5f, 0.52f, 0.5f, 0.86f, 0.18f);
+        return;
+    }
+    if (key == "robot_leg") {
+        leg(0, -0.8f, 1.7f);
+        return;
+    }
+    if (key == "robot_head") return head(0, 0, 1.6f);
+    if (key == "robot_neck") {
+        rrect(-0.24f, -0.8f, 0.24f, 0.8f, 0.05f);
+        rrect(-0.38f, 0.55f, 0.38f, 0.8f, 0.04f);
+        rrect(-0.32f, -0.8f, 0.32f, -0.6f, 0.04f);
+        return;
+    }
+    if (key == "robot_chest") {
+        rrect(-0.6f, -0.7f, 0.6f, 0.8f, 0.3f);
+        joint(-0.68f, -0.5f, 0.2f);
+        joint(0.68f, -0.5f, 0.2f);
+        return;
+    }
+    if (key == "robot_heart") {
+        heart(0, 0, 0.75f);
+        joint(0, 0, 0.9f);
+        return;
+    }
+    if (key == "robot_gut") {
+        for (int i = 0; i < 3; ++i) rrect(-0.75f, -0.75f + 0.52f * static_cast<float>(i), 0.75f, -0.33f + 0.52f * static_cast<float>(i), 0.12f);
+        return;
+    }
+    if (key == "robot_midriff") return bellows(-0.75f, 0.75f, -0.6f, 0.6f, 6);
+    if (key == "robot_pelvis") {
+        rrect(-0.75f, -0.6f, 0.75f, 0.4f, 0.3f);
+        joint(-0.45f, 0.4f, 0.22f);
+        joint(0.45f, 0.4f, 0.22f);
+        return;
+    }
+    if (key == "robot_thigh" || key == "robot_shin") {
+        const bool thigh = key == "robot_thigh";
+        joint(0, -0.75f, thigh ? 0.24f : 0.18f);
+        bar(0, -0.55f, 0, 0.7f, thigh ? 0.4f : 0.32f);
+        if (!thigh) joint(0, 0.85f, 0.12f);
+        return;
+    }
+    if (key == "robot_foot") {
+        const ImVec2 pts[] = {{c.x - r * 0.8f, c.y + r * 0.45f}, {c.x - r * 0.8f, c.y - r * 0.1f}, {c.x - r * 0.45f, c.y - r * 0.45f},
+                              {c.x - r * 0.1f, c.y - r * 0.4f}, {c.x + r * 0.45f, c.y + r * 0.05f}, {c.x + r * 0.45f, c.y + r * 0.45f}};
+        dl->AddPolyline(pts, 6, col, ImDrawFlags_Closed, t);
+        rrect(0.5f, 0.1f, 0.9f, 0.45f, 0.15f); // toe
+        joint(-0.45f, -0.15f, 0.14f);         // ankle
+        return;
+    }
     if (key == "robot_finger" || key == "robot_thumb") {
         const bool thumb = key == "robot_thumb";
         dl->AddLine({c.x - r * 0.7f, c.y + r * 0.85f}, {c.x + r * 0.7f, c.y + r * 0.85f}, col, 2.4f); // motor base

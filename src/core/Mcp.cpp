@@ -304,6 +304,7 @@ Json McpServer::sceneJson() const {
         jb.set("bounds", bounds).set("color", vec3(b.color)).set("visible", b.visible);
         jb.set("triangles", b.mesh.indices.size() / 3);
         jb.set("scale", b.scale);
+        if (b.rotation.x != 0.0f || b.rotation.y != 0.0f || b.rotation.z != 0.0f) jb.set("rotation", vec3(b.rotation));
         if (!b.component.empty()) jb.set("component", b.component);
         jb.set("selected", static_cast<int>(i) == m_doc.selectedBody);
         bodies.push(jb);

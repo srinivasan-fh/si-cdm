@@ -36,6 +36,11 @@ struct Body;
 //   phalanx: length width thickness yaw tip pad   robot_palm: width length thickness hand(0 right, 1 left) pad
 //   (pad 1 = the grip pad instead of the shell)   robot_forearm: width length thickness clevis puck   (robot hand links: joint axis along X through the origin)
 //   arm_link: length radius (shoulder ball at the origin, elbow hub at y = length)   robot_shoulder: height width
+//   Humanoid body (faces +Y; origin on the joint the part turns about):
+//   robot_head: width depth height part(0 shell, 1 visor)   robot_neck: length radius   robot_chest: width depth height
+//   robot_heart: radius part(0 housing, 1 core, 2 pump impeller)   robot_gut: width depth height part(0 plates, 1 core)
+//   robot_midriff: width depth height   robot_pelvis: width depth height hip_spacing   robot_thigh / robot_shin: length width depth
+//   robot_foot: length width ankle part(0 foot, 1 toe on its joint, 2 foot sole, 3 toe sole)
 bool isLibraryKind(const std::string& kind);
 // Chains and belts that can travel along their loop (chain_loop, belt).
 bool isLoopKind(const std::string& kind);

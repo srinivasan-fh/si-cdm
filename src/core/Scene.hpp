@@ -21,6 +21,7 @@ struct Body {
     std::string kind = "mesh"; // see buildPrimitive(); "mesh" stores triangles as-is
     std::vector<float> params;
     float scale = 1.0f;     // uniform size factor about the body origin (library parts, SCALE)
+    Vec3 rotation{};        // degrees about X, then Y, then Z, about the body origin (mesh bodies keep it baked in)
     std::string component;  // library component this body belongs to ("" = none)
 
     AABB bounds() const noexcept;
@@ -28,7 +29,12 @@ struct Body {
     void rebuild();
     // Sets the size factor (meshes are scaled in place).
     void setScale(float s);
+    // Sets the orientation (degrees about X, then Y, then Z).
+    void setRotation(const Vec3& degrees);
 };
+
+// Rotation by `degrees` about X, then Y, then Z (Rz * Ry * Rx).
+Mat4 eulerRotation(const Vec3& degrees) noexcept;
 
 // Body made from an explicit mesh (kind "mesh").
 Body meshBody(std::string name, MeshData mesh, Vec3 color = {0.72f, 0.75f, 0.80f});

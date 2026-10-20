@@ -144,6 +144,7 @@ parametric: they save as parameters and rebuild exactly when the project opens.
 | Chains & belts | **Sprocket** (ANSI 40 by default), **Steel roller chain** (plates, pins, rollers), **Chain drive**, **Pulley** (V-groove / timing GT2 / flat), **Rubber belt** (flat / V / timing), **Belt drive**, **O-ring / rubber band** |
 | Gear trains | **Gear pair**, **Rack and pinion**, **Planetary set** (sun, 3 planets, carrier, ring), **Worm drive**: meshed, with linked motions |
 | Robot arm & hand | **Robot arm** (shoulder pedestal with 3-DOF shoulder, upper arm, elbow, forearm rotation and the hand), **Robot hand** (palm, 4 fingers, opposable thumb, 2-DOF wrist; underactuated 6 motors or fully actuated 15), **Robot finger**, **Robot thumb**, **Finger link (phalanx)**, **Robot palm**, **Robot forearm**, **Upper arm link**, **Shoulder pedestal**: DC gear motors drive every joint within human-based limits, see [docs/robot-arm.md](docs/robot-arm.md) |
+| Humanoid body | **Humanoid robot** (head to toe, 1.83 m: 20 body + 14 arm joints and two hands; range-of-motion, march-in-place or still demo), **Robot head & neck**, **Robot upper body** (pelvis, gut, midriff, chest, heart), **Robot leg**, and the single **head**, **neck**, **chest**, **heart (power core)**, **gut (abdomen)**, **midriff**, **pelvis (low hip)**, **thigh**, **shin**, **foot**: every joint on a DC gear motor within human range of motion, see [docs/humanoid-body.md](docs/humanoid-body.md) |
 
 - **Motors** are two bodies, a fixed housing and a rotor (shaft with coupler, or servo horn), and come
   with a **360° circular motion** on the rotor (speed in rpm, Loop 0–360°). Steppers move in 1.8°
@@ -175,6 +176,9 @@ parametric: they save as parameters and rebuild exactly when the project opens.
   `1 / GEAR` and stop at their mechanical limit (MCP 90°, PIP 100°, DIP 80° by default); any joint
   can be re-wired to your own motor with `MOTION ... FOLLOW`. Anatomy mapping, limits and wiring:
   [docs/robot-arm.md](docs/robot-arm.md).
+- **Humanoid body** joints (neck ×3, waist, trunk ×2, hip ×3, knee, ankle ×2, toe; shoulders ×3 on the
+  chest) work the same way, within human range of motion; the Humanoid Robot puts it all together, head
+  to toe. Anatomy mapping, limits and demos: [docs/humanoid-body.md](docs/humanoid-body.md).
 
 ```text
 PART                              (lists the library)

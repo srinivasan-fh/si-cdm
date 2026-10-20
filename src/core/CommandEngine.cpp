@@ -248,6 +248,8 @@ std::vector<std::string> describeDocument(const Document& doc) {
                            lengthsText({bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z}, " x ") +
                            (b.visible ? "" : "  (hidden)");
         if (b.scale != 1.0f) line += fmt("  scale %g", b.scale);
+        if (b.rotation.x != 0.0f || b.rotation.y != 0.0f || b.rotation.z != 0.0f)
+            line += fmt("  rotated (%g, %g, %g) deg", b.rotation.x, b.rotation.y, b.rotation.z);
         if (!b.component.empty() && b.component != b.name) line += "  {" + b.component + "}";
         l.push_back(line);
     }

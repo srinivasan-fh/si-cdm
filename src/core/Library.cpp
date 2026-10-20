@@ -4,9 +4,11 @@
 #include "core/Scene.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <functional>
+#include <limits>
 
 namespace sicdm {
 
@@ -750,6 +752,194 @@ MeshData robotShoulder(float height, float w) {
 }
 
 // ---------------------------------------------------------------------------
+// Humanoid body parts are built facing +Y, Z up, right side toward +X (size 1 = an adult of about
+// 1.8 m). Every part's origin is the joint it turns about: the head pivot, the
+// neck base, the waist, the trunk joint, the hip, knee, ankle and toe joints.
+
+// Shell section across the body at height h along the sweep: half width hw (X),
+// half depth hd (Y), centre moved `fwd` toward the front (+Y).
+struct BodySection {
+    float h, hw, hd, fwd;
+};
+
+// Rounded-box shell swept up (+Z) or, with `down`, down (-Z) through `secs`
+// (h increasing), with domed ends rounded over r0 (first) and r1 (last) mm.
+MeshData bodyShell(std::vector<BodySection> secs, float r0, float r1, bool down = false, int n = 48) {
+    std::vector<BodySection> all;
+    constexpr int kSteps = 6;
+    const BodySection a = secs.front(), b = secs.back();
+    auto scaled = [](const BodySection& q, float h, float k) { return BodySection{h, q.hw * k, q.hd * k, q.fwd}; };
+    for (int i = kSteps; i >= 1 && r0 > 0.0f; --i) { // dome from the pole to the first section
+        const float phi = kPi * 0.5f * static_cast<float>(i) / kSteps;
+        all.push_back(scaled(a, a.h - r0 * std::sin(phi), 0.3f + 0.7f * std::cos(phi)));
+    }
+    all.insert(all.end(), secs.begin(), secs.end());
+    for (int i = 1; i <= kSteps && r1 > 0.0f; ++i) {
+        const float phi = kPi * 0.5f * static_cast<float>(i) / kSteps;
+        all.push_back(scaled(b, b.h + r1 * std::sin(phi), 0.3f + 0.7f * std::cos(phi)));
+    }
+    std::vector<Section> s;
+    for (const BodySection& q : all) s.push_back({q.h, q.hw, q.hd, down ? q.fwd : -q.fwd});
+    MeshData m = sweepY(s, n);
+    m.transform(rotateAxis({1, 0, 0}, down ? -kPi * 0.5f : kPi * 0.5f));
+    return m;
+}
+
+MeshData ellipsoid(const Vec3& c, const Vec3& r, int seg = 40, int rings = 20) {
+    MeshData m = primitives::sphere({0, 0, 0}, 1.0f, seg, rings);
+    m.transform(translate(c) * scale(r));
+    return m;
+}
+
+// Cylinder along +Y from y0 to y1 through (x, z).
+MeshData cylY(float y0, float y1, float r, float x, float z, int seg = 48) {
+    MeshData m = primitives::cylinder({0, 0, 0}, r, y1 - y0, seg);
+    m.transform(translate({x, y0, z}) * rotateAxis({1, 0, 0}, -kPi * 0.5f));
+    return m;
+}
+
+// Head on the neck pivot (origin): rounded skull, ear sensor pods; or (visor) the
+// dark face shield.
+MeshData robotHead(float w, float d, float h, bool visor) {
+    const float sx = w / 160.0f, sy = d / 200.0f, sz = h / 230.0f;
+    const float z0 = -15.0f * sz; // chin
+    if (visor) return ellipsoid({0, (0.47f * 200.0f + 4.0f) * sy, z0 + 0.56f * h}, {0.40f * w, 0.09f * d, 0.17f * h});
+    auto sec = [&](float u, float kw, float kd, float f) { return BodySection{z0 + u * h, kw * w, kd * d, f * d}; };
+    MeshData m = bodyShell({sec(0.10f, 0.36f, 0.40f, 0.06f), sec(0.25f, 0.46f, 0.47f, 0.04f), sec(0.45f, 0.50f, 0.50f, 0.02f),
+                            sec(0.65f, 0.50f, 0.50f, 0.0f), sec(0.80f, 0.47f, 0.48f, -0.02f)},
+                           0.10f * h, 0.16f * h);
+    m.append(cylX(-0.53f * w, 0.53f * w, 0.12f * h, -0.02f * d, z0 + 0.52f * h)); // ear sensor pods
+    m.append(cylinderAt(0, -0.05f * d, 34.0f * std::min(sx, sy), z0 - 5.0f * sz, z0 + 0.12f * h)); // neck socket
+    return m;
+}
+
+// Neck column on its base joint (origin), length up +Z, with joint rings.
+MeshData robotNeck(float len, float r) {
+    MeshData m = cylinderAt(0, 0, r, 0, len, 48);
+    m.append(cylinderAt(0, 0, r * 1.35f, 0, 0.14f * len, 48));
+    m.append(cylinderAt(0, 0, r * 1.2f, 0.86f * len, len, 48));
+    m.append(boxOf({-r * 0.45f, r * 0.6f, 0.2f * len}, {r * 0.45f, r * 1.12f, 0.8f * len})); // throat cable cover
+    return m;
+}
+
+// Thorax from its bottom (origin, on the trunk joint) to the neck base at `h`:
+// rib cage, shoulder caps over the shoulder joints.
+MeshData robotChest(float w, float d, float h) {
+    const float sx = w / 380.0f, sy = d / 230.0f, sz = h / 300.0f;
+    auto sec = [&](float z, float hw, float hd, float f) { return BodySection{z * sz, hw * sx, hd * sy, f * sy}; };
+    MeshData m = bodyShell({sec(0, 125, 85, 0), sec(50, 150, 100, 8), sec(130, 172, 112, 12), sec(200, 182, 110, 8),
+                            sec(240, 180, 100, 0), sec(262, 165, 88, -5)},
+                           8.0f * sz, 38.0f * sz);
+    for (float side : {-1.0f, 1.0f}) m.append(ellipsoid({side * 182.0f * sx, -5.0f * sy, 235.0f * sz}, Vec3{62, 64, 62} * sx));
+    return m;
+}
+
+// Power core ("heart") facing +Y from its back face (origin): housing ring, glowing
+// core, or the coolant pump impeller in front of the core.
+MeshData robotHeart(float r, int part) {
+    MeshData m;
+    if (part == 1) return cylY(2.0f, 7.0f, r * 0.74f, 0, 0, 64);
+    if (part == 2) {
+        m = cylY(7.0f, 13.0f, r * 0.2f, 0, 0, 32);
+        for (int i = 0; i < 6; ++i) {
+            MeshData blade = boxOf({-r * 0.07f, 8.0f, r * 0.15f}, {r * 0.07f, 11.0f, r * 0.66f});
+            blade.transform(rotateAxis({0, 1, 0}, kPi / 3.0f * static_cast<float>(i)) * rotateAxis({0, 0, 1}, radians(25.0f)));
+            m.append(blade);
+        }
+        return m;
+    }
+    m = primitives::tube({0, 0, 0}, r, r * 0.76f, 16.0f, 64);
+    m.transform(rotateAxis({1, 0, 0}, -kPi * 0.5f)); // along +Y
+    m.append(cylY(0.0f, 2.0f, r, 0, 0, 64));          // back plate
+    return m;
+}
+
+// Abdomen ("gut") above the waist joint (origin): stacked armour plates, or the
+// dark battery core showing between them.
+MeshData robotGut(float w, float d, float h, bool core) {
+    if (core) return bodyShell({{0, 0.42f * w, 0.40f * d, 0}, {h, 0.42f * w, 0.40f * d, 0}}, 0, 0);
+    MeshData m;
+    constexpr int kPlates = 3;
+    const float gap = 0.04f * h, ph = (h - gap * (kPlates - 1)) / kPlates;
+    for (int i = 0; i < kPlates; ++i) {
+        const float z0 = static_cast<float>(i) * (ph + gap), k = 0.96f + 0.02f * static_cast<float>(i);
+        m.append(bodyShell({{z0 + 4.0f, 0.48f * w * k, 0.48f * d * k, 0.03f * d}, {z0 + ph - 4.0f, 0.49f * w * k, 0.49f * d * k, 0.03f * d}},
+                           4.0f, 4.0f));
+    }
+    return m;
+}
+
+// Midriff above the trunk joint (origin): flexible bellows boot over the lumbar actuator.
+MeshData robotMidriff(float w, float d, float h) {
+    std::vector<BodySection> secs;
+    constexpr int kFolds = 8;
+    for (int i = 0; i <= kFolds; ++i) {
+        const float k = i % 2 ? 1.0f : 0.92f;
+        secs.push_back({h * static_cast<float>(i) / kFolds, 0.5f * w * k, 0.5f * d * k, 0});
+    }
+    return bodyShell(secs, 0, 0);
+}
+
+// Pelvis ("low hip") centred between the hip joints (origin, hips at x = +-spacing / 2),
+// up to the waist at `h`: hip joint housings and the waist bearing on top.
+MeshData robotPelvis(float w, float d, float h, float spacing) {
+    const float sx = w / 280.0f, sy = d / 180.0f, sz = h / 120.0f;
+    auto sec = [&](float z, float hw, float hd, float f) { return BodySection{z * sz, hw * sx, hd * sy, f * sy}; };
+    MeshData m = bodyShell({sec(-70, 70, 62, 0), sec(-30, 118, 82, 0), sec(30, 138, 90, -6), sec(90, 132, 86, -4), sec(112, 124, 82, 0)},
+                           20.0f * sz, 6.0f * sz);
+    m.append(cylX(-spacing * 0.5f - 52.0f * sx, spacing * 0.5f + 52.0f * sx, 48.0f * sz, 0, 0)); // hip axle housings
+    m.append(cylinderAt(0, 0, 100.0f * std::min(sx, sy), h - 4.0f, h + 6.0f, 64));             // waist bearing
+    return m;
+}
+
+// Thigh (femur) hanging from the hip joint (origin) to the knee at -len.
+MeshData robotThigh(float len, float w, float d) {
+    const float sx = w / 130.0f, sy = d / 140.0f, sz = len / 430.0f;
+    auto sec = [&](float z, float hw, float hd, float f) { return BodySection{z * sz, hw * sx, hd * sy, f * sy}; };
+    MeshData m = bodyShell({sec(30, 60, 64, 4), sec(80, 66, 72, 8), sec(200, 63, 70, 10), sec(320, 54, 60, 6), sec(380, 49, 53, 2)},
+                           28.0f * sz, 30.0f * sz, true);
+    m.append(primitives::sphere({0, 0, 0}, 50.0f * sx, 40, 20)); // hip ball
+    return m;
+}
+
+// Lower leg (shin and calf) from the knee joint (origin) to the ankle at -len.
+MeshData robotShin(float len, float w, float d) {
+    const float sx = w / 100.0f, sy = d / 110.0f, sz = len / 420.0f;
+    auto sec = [&](float z, float hw, float hd, float f) { return BodySection{z * sz, hw * sx, hd * sy, f * sy}; };
+    MeshData m = bodyShell({sec(30, 49, 52, -2), sec(110, 52, 60, -10), sec(220, 46, 52, -6), sec(330, 38, 40, -2), sec(380, 34, 36, 0)},
+                           24.0f * sz, 18.0f * sz, true);
+    m.append(cylX(-56.0f * sx, 56.0f * sx, 40.0f * sx, 0, 0));                  // knee hub
+    m.append(ellipsoid({0, 42.0f * sy, -16.0f * sz}, Vec3{34, 18, 40} * sx)); // knee cap
+    m.append(cylX(-44.0f * sx, 44.0f * sx, 22.0f * sx, 0, -len));            // ankle pin
+    return m;
+}
+
+// Foot on the ankle joint (origin, sole at -ankle): part 0 foot (heel to the ball),
+// 1 toe (origin on the toe joint), 2 / 3 their rubber soles.
+MeshData robotFoot(float len, float w, float ankle, int part) {
+    const float sy = len / 250.0f, sx = w / 100.0f, sz = ankle / 85.0f;
+    const float toeY = 126.0f * sy, toeZ = -70.0f * sz, sole = 5.0f * sz;
+    auto shell = [&](std::initializer_list<std::array<float, 3>> rows, float bottom, float y0, float z0) {
+        std::vector<Section> s;
+        for (const auto& r : rows) {
+            const float top = r[2] * sz - z0;
+            s.push_back({r[0] * sy - y0, r[1] * sx, (top - bottom) * 0.5f, (top + bottom) * 0.5f});
+        }
+        return sweepY(s, 40);
+    };
+    if (part == 2) return gripPad(0, -60.0f * sy, 122.0f * sy, 44.0f * sx, -ankle, -ankle + sole + 1.0f);
+    if (part == 3) return gripPad(0, 2.0f * sy, 58.0f * sy, 42.0f * sx, -ankle - toeZ, -ankle - toeZ + sole + 1.0f);
+    const float bottom = -ankle + sole;
+    if (part == 1) // toe, relative to its joint
+        return shell({{126, 46, -58}, {136, 47, -57}, {160, 45, -60}, {178, 38, -64}, {186, 26, -68}}, bottom - toeZ, toeY, toeZ);
+    MeshData m = shell({{-64, 20, -55}, {-58, 32, -30}, {-45, 38, -5}, {-20, 42, 12}, {10, 44, 12}, {50, 46, -20}, {95, 49, -44},
+                        {118, 48, -52}, {124, 46, -54}},
+                       bottom, 0, 0);
+    m.append(cylX(-48.0f * sx, 48.0f * sx, 26.0f * sz, 0, 0)); // ankle hub
+    return m;
+}
+
+// ---------------------------------------------------------------------------
 // Wheels and tyres (axis along +Y, standing on z = 0, centre at z = radius;
 // positive rotation about +Y rolls toward +X), chains and belts (axis +Z).
 
@@ -1256,7 +1446,9 @@ bool isLibraryKind(const std::string& k) {
            k == "tyre" || k == "alloy_rim" || k == "wheel_hub" || k == "caster_fork" || k == "wheel_rollers" ||
            k == "roller_hub" || k == "sprocket" || k == "pulley" || k == "chain" || k == "chain_loop" || k == "belt" ||
            k == "o_ring" || k == "phalanx" || k == "robot_palm" || k == "robot_forearm" || k == "arm_link" ||
-           k == "robot_shoulder";
+           k == "robot_shoulder" || k == "robot_head" || k == "robot_neck" || k == "robot_chest" || k == "robot_heart" ||
+           k == "robot_gut" || k == "robot_midriff" || k == "robot_pelvis" || k == "robot_thigh" || k == "robot_shin" ||
+           k == "robot_foot";
 }
 
 MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
@@ -1302,6 +1494,16 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "robot_forearm" && ok(4)) return robotForearm(p[0], p[1], p[2], p[3], at(4) >= 0.5f);
     if (k == "arm_link" && ok(2)) return armLink(p[0], p[1]);
     if (k == "robot_shoulder" && ok(2)) return robotShoulder(p[0], p[1]);
+    if (k == "robot_head" && ok(3)) return robotHead(p[0], p[1], p[2], at(3) >= 0.5f);
+    if (k == "robot_neck" && ok(2)) return robotNeck(p[0], p[1]);
+    if (k == "robot_chest" && ok(3)) return robotChest(p[0], p[1], p[2]);
+    if (k == "robot_heart" && ok(1)) return robotHeart(p[0], static_cast<int>(at(1)));
+    if (k == "robot_gut" && ok(3)) return robotGut(p[0], p[1], p[2], at(3) >= 0.5f);
+    if (k == "robot_midriff" && ok(3)) return robotMidriff(p[0], p[1], p[2]);
+    if (k == "robot_pelvis" && ok(4)) return robotPelvis(p[0], p[1], p[2], p[3]);
+    if (k == "robot_thigh" && ok(3)) return robotThigh(p[0], p[1], p[2]);
+    if (k == "robot_shin" && ok(3)) return robotShin(p[0], p[1], p[2]);
+    if (k == "robot_foot" && ok(3)) return robotFoot(p[0], p[1], p[2], static_cast<int>(at(3)));
     MeshData m;
     if (k == "dc_motor") m = dcMotor();
     else if (k == "stepper_motor") m = stepperMotor();
@@ -1376,6 +1578,34 @@ std::vector<LibraryParam> partParams(const std::string& k, const std::vector<flo
     if (k == "arm_link") return {{"length", "Length", 300.0f, 20.0f, 2000.0f, "mm"}, {"radius", "Radius", 32.0f, 3.0f, 300.0f, "mm"}};
     if (k == "robot_shoulder")
         return {{"height", "Joint height", 220.0f, 60.0f, 3000.0f, "mm"}, {"width", "Base width", 140.0f, 60.0f, 2000.0f, "mm"}};
+    if (k == "robot_head")
+        return {{"width", "Width", 160.0f, 40.0f, 1000.0f, "mm"}, {"depth", "Depth", 200.0f, 40.0f, 1000.0f, "mm"},
+                {"height", "Height", 230.0f, 40.0f, 1000.0f, "mm"}, {"part", "Part", 0.0f, 0.0f, 1.0f, "", true, "Shell|Visor"}};
+    if (k == "robot_neck") return {{"length", "Length", 90.0f, 10.0f, 1000.0f, "mm"}, {"radius", "Radius", 34.0f, 5.0f, 300.0f, "mm"}};
+    if (k == "robot_chest")
+        return {{"width", "Width", 380.0f, 80.0f, 3000.0f, "mm"}, {"depth", "Depth", 230.0f, 50.0f, 2000.0f, "mm"},
+                {"height", "Height", 300.0f, 50.0f, 3000.0f, "mm"}};
+    if (k == "robot_heart")
+        return {{"radius", "Radius", 46.0f, 5.0f, 500.0f, "mm"}, {"part", "Part", 0.0f, 0.0f, 2.0f, "", true, "Housing|Core|Pump impeller"}};
+    if (k == "robot_gut")
+        return {{"width", "Width", 260.0f, 50.0f, 3000.0f, "mm"}, {"depth", "Depth", 180.0f, 40.0f, 2000.0f, "mm"},
+                {"height", "Height", 150.0f, 20.0f, 2000.0f, "mm"}, {"part", "Part", 0.0f, 0.0f, 1.0f, "", true, "Armour plates|Battery core"}};
+    if (k == "robot_midriff")
+        return {{"width", "Width", 230.0f, 40.0f, 3000.0f, "mm"}, {"depth", "Depth", 160.0f, 30.0f, 2000.0f, "mm"},
+                {"height", "Height", 60.0f, 10.0f, 1000.0f, "mm"}};
+    if (k == "robot_pelvis")
+        return {{"width", "Width", 280.0f, 60.0f, 3000.0f, "mm"}, {"depth", "Depth", 180.0f, 40.0f, 2000.0f, "mm"},
+                {"height", "Waist above hips", 120.0f, 20.0f, 2000.0f, "mm"}, {"hip_spacing", "Hip spacing", 190.0f, 40.0f, 2000.0f, "mm"}};
+    if (k == "robot_thigh")
+        return {{"length", "Length", 430.0f, 50.0f, 3000.0f, "mm"}, {"width", "Width", 130.0f, 20.0f, 1000.0f, "mm"},
+                {"depth", "Depth", 140.0f, 20.0f, 1000.0f, "mm"}};
+    if (k == "robot_shin")
+        return {{"length", "Length", 420.0f, 50.0f, 3000.0f, "mm"}, {"width", "Width", 100.0f, 20.0f, 1000.0f, "mm"},
+                {"depth", "Depth", 110.0f, 20.0f, 1000.0f, "mm"}};
+    if (k == "robot_foot")
+        return {{"length", "Length", 250.0f, 50.0f, 2000.0f, "mm"}, {"width", "Width", 100.0f, 20.0f, 1000.0f, "mm"},
+                {"ankle", "Ankle height", 85.0f, 20.0f, 1000.0f, "mm"},
+                {"part", "Part", 0.0f, 0.0f, 3.0f, "", true, "Foot|Toe|Foot sole|Toe sole"}};
     if (k == "gear")
         return {module, teeth, width, bore, {"helix", "Helix angle", 0.0f, -45.0f, 45.0f, "deg"},
                 {"style", "Tooth form", 0.0f, 0.0f, 2.0f, "", true, "Spur|Helical|Herringbone"}, phase};
@@ -1423,6 +1653,26 @@ const std::vector<LibraryItem>& libraryItems() {
         const LibraryParam thumbIp{"thumb_ip", "Thumb IP flexion", 80.0f, 1.0f, 90.0f, "deg"};
         const LibraryParam wristFlex{"wrist_flex", "Wrist flexion", 80.0f, 1.0f, 90.0f, "deg"};
         const LibraryParam wristDev{"wrist_dev", "Wrist ulnar deviation", 30.0f, 1.0f, 45.0f, "deg"};
+        // Humanoid body: default sweeps from human active range of motion (from the
+        // standing pose); the max is the mechanical hard stop.
+        const LibraryParam finish{"finish", "Finish", 0.0f, 0.0f, 1.0f, "", true, "White shells|Black shells"};
+        const LibraryParam neckYaw{"neck_yaw", "Neck rotation (turn)", 70.0f, 1.0f, 80.0f, "deg"};
+        const LibraryParam neckPitch{"neck_pitch", "Neck flexion (nod)", 45.0f, 1.0f, 60.0f, "deg"};
+        const LibraryParam neckRoll{"neck_roll", "Neck lateral flexion (tilt)", 40.0f, 1.0f, 45.0f, "deg"};
+        const LibraryParam waistRot{"waist_rot", "Trunk rotation (waist)", 40.0f, 1.0f, 45.0f, "deg"};
+        const LibraryParam trunkFlex{"trunk_flex", "Trunk flexion (bend forward)", 60.0f, 1.0f, 80.0f, "deg"};
+        const LibraryParam trunkBend{"trunk_bend", "Trunk lateral flexion", 25.0f, 1.0f, 35.0f, "deg"};
+        const LibraryParam heartRate{"heart_rate", "Heart pump", 72.0f, 0.0f, 300.0f, "rpm"};
+        const LibraryParam hipFlex{"hip_flex", "Hip flexion", 90.0f, 1.0f, 120.0f, "deg"};
+        const LibraryParam hipAbd{"hip_abd", "Hip abduction", 40.0f, 1.0f, 45.0f, "deg"};
+        const LibraryParam hipRot{"hip_rot", "Hip internal rotation", 35.0f, 1.0f, 45.0f, "deg"};
+        const LibraryParam kneeFlex{"knee", "Knee flexion", 130.0f, 1.0f, 140.0f, "deg"};
+        const LibraryParam anklePitch{"ankle_pitch", "Ankle plantarflexion", 45.0f, 1.0f, 50.0f, "deg"};
+        const LibraryParam ankleRoll{"ankle_roll", "Ankle inversion", 30.0f, 1.0f, 35.0f, "deg"};
+        const LibraryParam toeExt{"toe", "Toe extension", 60.0f, 1.0f, 70.0f, "deg"};
+        auto mm = [](const char* key, const char* label, float value, float lo, float hi) {
+            return LibraryParam{key, label, value, lo, hi, "mm"};
+        };
         return std::vector<LibraryItem>{
             {"dc_motor", "DCMOTOR DC", "DC Motor", "Motors", "28 mm brushed motor; single or dual shaft; spins 360 deg",
              {size, rpm(120.0f), shafts, {"shaft_length", "Shaft length", 14.0f, 0.5f, 500.0f, "mm"},
@@ -1565,6 +1815,48 @@ const std::vector<LibraryItem>& libraryItems() {
              {{"length", "Length", 300.0f, 20.0f, 2000.0f, "mm"}, {"radius", "Radius", 32.0f, 3.0f, 300.0f, "mm"}}},
             {"robot_shoulder", "SHOULDER PEDESTAL", "Shoulder Pedestal", "Robot arm & hand", "Base plate and column under the shoulder joint",
              {{"height", "Joint height", 220.0f, 60.0f, 3000.0f, "mm"}, {"width", "Base width", 140.0f, 60.0f, 2000.0f, "mm"}}},
+            {"humanoid", "HUMANOID HUMANOIDROBOT ANDROID ROBOTBODY", "Humanoid Robot", "Humanoid body",
+             "Head to toe, 1.83 m: 20 body + 14 arm joints and two hands, every joint on a DC gear motor",
+             {size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
+              {"drive", "Hand drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"}, handRpm, gear,
+              neckYaw, neckPitch, neckRoll, waistRot, trunkFlex, trunkBend, heartRate,
+              {"shoulder_flex", "Shoulder flexion (forward)", 90.0f, 1.0f, 180.0f, "deg"},
+              {"shoulder_abd", "Shoulder abduction (sideways)", 90.0f, 1.0f, 180.0f, "deg"},
+              {"shoulder_rot", "Shoulder internal rotation", 70.0f, 1.0f, 90.0f, "deg"}, {"elbow", "Elbow flexion", 145.0f, 1.0f, 150.0f, "deg"},
+              {"forearm_rot", "Forearm supination", 160.0f, 1.0f, 180.0f, "deg"}, wristFlex, wristDev, hipFlex, hipAbd, hipRot, kneeFlex,
+              anklePitch, ankleRoll, toeExt, mcp, pip, dip, abduction, thumbCmc, thumbMcp, thumbIp}},
+            {"robot_head_neck", "ROBOTHEADNECK HEADNECK HEADANDNECK", "Robot Head & Neck", "Humanoid body",
+             "Head with visor on a 3-DOF neck (turn, nod, tilt); DC gear motors in the base",
+             {size, finish, handRpm, gear, neckYaw, neckPitch, neckRoll}},
+            {"robot_torso", "ROBOTTORSO TORSO UPPERBODY", "Robot Upper Body", "Humanoid body",
+             "Pelvis, gut, midriff, chest and heart: waist rotation, trunk flexion and side bend",
+             {size, finish, handRpm, gear, waistRot, trunkFlex, trunkBend, heartRate}},
+            {"robot_leg", "ROBOTLEG LEG", "Robot Leg", "Humanoid body",
+             "Hip (3 DOF), knee, ankle (2 DOF) and toe on DC gear motors, on a hip mount",
+             {size, finish, {"side", "Side", 0.0f, 0.0f, 1.0f, "", true, "Right|Left"}, handRpm, gear, hipFlex, hipAbd, hipRot, kneeFlex,
+              anklePitch, ankleRoll, toeExt}},
+            {"robot_head", "ROBOTHEAD HEAD SKULL", "Robot Head", "Humanoid body", "Rounded head shell, dark visor, ear sensor pods",
+             {mm("width", "Width", 160, 40, 1000), mm("depth", "Depth", 200, 40, 1000), mm("height", "Height", 230, 40, 1000)}},
+            {"robot_neck", "NECK", "Robot Neck", "Humanoid body", "Neck column with joint rings; base joint at its origin",
+             {mm("length", "Length", 90, 10, 1000), mm("radius", "Radius", 34, 5, 300)}},
+            {"robot_chest", "CHEST THORAX RIBCAGE", "Robot Chest", "Humanoid body", "Thorax shell with shoulder caps, from the trunk joint up",
+             {mm("width", "Width", 380, 80, 3000), mm("depth", "Depth", 230, 50, 2000), mm("height", "Height", 300, 50, 3000)}},
+            {"robot_heart", "HEART POWERCORE CORE", "Robot Heart (Power Core)", "Humanoid body",
+             "Glowing power core with a coolant pump turning at the heart rate",
+             {mm("radius", "Radius", 46, 5, 500), heartRate}},
+            {"robot_gut", "GUT ABDOMEN BELLY", "Robot Gut (Abdomen)", "Humanoid body", "Armour plates over the battery core, above the waist joint",
+             {mm("width", "Width", 260, 50, 3000), mm("depth", "Depth", 180, 40, 2000), mm("height", "Height", 150, 20, 2000)}},
+            {"robot_midriff", "MIDRIFF WAIST BELLOWS", "Robot Midriff", "Humanoid body", "Bellows boot over the trunk (lumbar) joint",
+             {mm("width", "Width", 230, 40, 3000), mm("depth", "Depth", 160, 30, 2000), mm("height", "Height", 60, 10, 1000)}},
+            {"robot_pelvis", "PELVIS LOWHIP HIPS", "Robot Pelvis (Low Hip)", "Humanoid body", "Hip joint housings and the waist bearing",
+             {mm("width", "Width", 280, 60, 3000), mm("depth", "Depth", 180, 40, 2000), mm("height", "Waist above hips", 120, 20, 2000),
+              mm("hip_spacing", "Hip spacing", 190, 40, 2000)}},
+            {"robot_thigh", "THIGH FEMUR", "Robot Thigh", "Humanoid body", "Thigh shell from the hip ball to the knee",
+             {mm("length", "Length", 430, 50, 3000), mm("width", "Width", 130, 20, 1000), mm("depth", "Depth", 140, 20, 1000)}},
+            {"robot_shin", "SHIN LOWERLEG TIBIA CALF", "Robot Shin (Lower Leg)", "Humanoid body", "Knee hub, knee cap, calf, ankle pin",
+             {mm("length", "Length", 420, 50, 3000), mm("width", "Width", 100, 20, 1000), mm("depth", "Depth", 110, 20, 1000)}},
+            {"robot_foot", "FOOT", "Robot Foot", "Humanoid body", "Foot and hinged toe with rubber soles; ankle joint at its origin",
+             {mm("length", "Length", 250, 50, 2000), mm("width", "Width", 100, 20, 1000), mm("ankle", "Ankle height", 85, 20, 1000)}},
         };
     }();
     return items;
@@ -1757,6 +2049,308 @@ struct HandBuilder {
     }
 };
 
+// Hand on its forearm (wrist joints if `wrist`) and, for an arm, the upper arm with the
+// elbow and forearm-rotation joints; `pedestal` adds the shoulder pedestal and its three
+// joints. Returns the bodies a torso's shoulder joints carry (an arm without pedestal).
+std::vector<std::string> buildHandArm(HandBuilder& h, const std::function<float(const char*)>& v, bool full, bool arm, bool wrist,
+                                      bool pedestal) {
+    std::vector<std::string> upper;
+    for (int r = 0; r < 5; ++r)
+        for (int k = 0; k < 4; ++k)
+            h.slots.push_back({-25.5f + 17.0f * static_cast<float>(k), -76.0f - 17.0f * static_cast<float>(r), 14.5f});
+    h.c.bodies.push_back(part(h.c.name + " Palm", "robot_palm", {kPalmWidth, kPalmLength, 26, h.left ? 1.0f : 0.0f}, h.o, kHandShell, h.c.name, h.s));
+    h.c.bodies.push_back(part(h.c.name + " Palm Pad", "robot_palm", {kPalmWidth, kPalmLength, 26, h.left ? 1.0f : 0.0f, 1}, h.o, kHandPad, h.c.name, h.s));
+    h.c.bodies.push_back(part(h.c.name + " Forearm", "robot_forearm", {70, arm ? kForearm : 180.0f, 22, 24.5f, 1}, h.o, kDarkSteel, h.c.name, h.s));
+    std::vector<std::string> carried{h.c.name + " Palm", h.c.name + " Palm Pad"};
+    for (int i = 0; i < 4; ++i) {
+        const auto links = h.digit(kFingers[i], {kKnuckles[i].x, kKnuckles[i].y, 0}, kFingerYaw[i], false, full, v,
+                                   i < 2 ? 1.0f : -1.0f); // index and middle abduct toward the thumb
+        carried.insert(carried.end(), links.begin(), links.end());
+    }
+    const auto thumb = h.digit(kThumb, {-30, 20, -6}, kThumbYaw, true, full, v);
+    carried.insert(carried.end(), thumb.begin(), thumb.end());
+    if (wrist) { // the wrist carries the whole hand: its joints go first (outermost)
+        const std::size_t n = h.c.motions.size();
+        h.joint("Wrist Flex", carried, {}, {-1, 0, 0}, h.motor("Wrist Flex", v("wrist_flex")), 1.0f / h.gear);
+        h.joint("Wrist Deviation", carried, {}, {0, 0, -1}, h.motor("Wrist Deviation", v("wrist_dev")), 1.0f / h.gear);
+        std::rotate(h.c.motions.begin(), h.c.motions.begin() + static_cast<std::ptrdiff_t>(n), h.c.motions.end());
+    }
+    if (arm) { // shoulder pitch, yaw, roll -> elbow -> forearm rotation, outermost first
+        const std::size_t n = h.c.motions.size();
+        const Vec3 elbow{0, -kForearm, 0}, shoulder{0, -kForearm - kUpperArm, 0};
+        const std::string supination = h.motor("Forearm Rotation", v("forearm_rot"));
+        std::vector<std::string> forearm;
+        for (const Body& b : h.c.bodies) forearm.push_back(b.name);
+        const std::string elbowDrive = h.motor("Elbow", v("elbow"), 1.2f, shoulder + Vec3{0, 100, 40.4f});
+        h.c.bodies.push_back(part(h.c.name + " Upper Arm", "arm_link", {kUpperArm, 32}, h.pos(shoulder), kHandShell, h.c.name, h.s));
+        for (const Body& b : h.c.bodies) upper.push_back(b.name);
+        if (!pedestal) { // a torso supplies the shoulder joints and their motors
+            h.joint("Elbow", forearm, elbow, {1, 0, 0}, elbowDrive, 1.0f / h.gear);
+            h.joint("Forearm Rotation", forearm, {}, {0, 1, 0}, supination, 1.0f / h.gear);
+            std::rotate(h.c.motions.begin(), h.c.motions.begin() + static_cast<std::ptrdiff_t>(n), h.c.motions.end());
+            return upper;
+        }
+        h.c.bodies.push_back(part(h.c.name + " Shoulder", "robot_shoulder", {kShoulderHeight, 140}, h.pos(shoulder), kDarkSteel, h.c.name, h.s));
+        auto torso = [&](const char* label, float x, const char* limit) { // shoulder motors on the pedestal
+            return h.motor(label, v(limit), 1.2f, shoulder + Vec3{x, -70, 24.4f - kShoulderHeight});
+        };
+        h.joint("Shoulder Flex", upper, shoulder, {1, 0, 0}, torso("Shoulder Flex", -40, "shoulder_flex"), 1.0f / h.gear);
+        h.joint("Shoulder Abduction", upper, shoulder, {0, 0, -1}, torso("Shoulder Abduction", 0, "shoulder_abd"), 1.0f / h.gear);
+        h.joint("Shoulder Rotation", upper, shoulder, {0, -1, 0}, torso("Shoulder Rotation", 40, "shoulder_rot"), 1.0f / h.gear);
+        h.joint("Elbow", forearm, elbow, {1, 0, 0}, elbowDrive, 1.0f / h.gear);
+        h.joint("Forearm Rotation", forearm, {}, {0, 1, 0}, supination, 1.0f / h.gear);
+        std::rotate(h.c.motions.begin(), h.c.motions.begin() + static_cast<std::ptrdiff_t>(n), h.c.motions.end());
+    }
+    return upper;
+}
+
+// Joints first, motor drives last: a drive spins its rotor about the rotor's own axis
+// only after every joint that carries the motor has moved it (the first motion in the
+// list is the outermost).
+void settleDrives(LibraryComponent& c) {
+    std::stable_partition(c.motions.begin(), c.motions.end(), [](const Motion& m) { return !m.follow.empty(); });
+}
+
+// Humanoid body (adult proportions, mm at size 1; built facing +Y with the feet on
+// z = 0, then turned to face -Y, toward the Front view).
+
+// Turns a whole component 180 deg about the vertical axis through `pivot`.
+void faceFront(LibraryComponent& c, const Vec3& pivot) {
+    const Mat4 turn = rotateAxis({0, 0, 1}, kPi);
+    for (Body& b : c.bodies) {
+        b.offset = pivot + turn.transformDir(b.offset - pivot);
+        b.setRotation({b.rotation.x, b.rotation.y, b.rotation.z + 180.0f}); // Rz(180) * (Rz Ry Rx)
+    }
+    for (Motion& m : c.motions) {
+        m.origin = pivot + turn.transformDir(m.origin - pivot);
+        m.axis = turn.transformDir(m.axis);
+    }
+}
+constexpr float kAnkleZ = 85.0f, kShin = 420.0f, kThigh = 430.0f, kHipZ = kAnkleZ + kShin + kThigh, kHipX = 95.0f;
+constexpr float kWaistUp = 120.0f, kGut = 130.0f, kMidriff = 60.0f, kChest = 290.0f, kNeck = 80.0f;
+constexpr float kWaistZ = kHipZ + kWaistUp, kTrunkZ = kWaistZ + kGut, kChestZ = kTrunkZ + kMidriff, kNeckZ = kChestZ + kChest;
+constexpr float kShoulderX = 200.0f, kShoulderZ = kChestZ + 225.0f;
+const Vec3 kBodyWhite{0.84f, 0.85f, 0.87f};
+const Vec3 kVisor{0.04f, 0.05f, 0.07f};
+const Vec3 kCoreGlow{0.30f, 0.86f, 1.0f};
+
+// Builds the humanoid parts of `key` into `c`: "humanoid" (all), "robot_head_neck",
+// "robot_torso" (pelvis to chest) or "robot_leg". Every joint is driven by a DC gear
+// motor (see HandBuilder): the drive oscillates over gear x limit, the joint follows
+// at 1 / gear, so it sweeps 0 -> limit -> 0 within its human range of motion.
+void buildHumanoid(LibraryComponent& c, const std::string& key, const std::function<float(const char*)>& v, const Vec3& o) {
+    const bool all = key == "humanoid", headOnly = key == "robot_head_neck", legOnly = key == "robot_leg";
+    const bool torso = all || key == "robot_torso", head = all || headOnly, legs = all || legOnly;
+    const float s = v("size"), gear = v("gear"), rpm = v("rpm");
+    const bool black = v("finish") >= 0.5f;
+    const Vec3 shell = black ? kHandShell : kBodyWhite, accent = black ? kDarkSteel : kHandShell;
+    // A head on its own stands its neck base on a 220 mm pedestal.
+    const Vec3 origin = headOnly ? o + Vec3{0, 0, 220.0f - kNeckZ} * s : o;
+    HandBuilder h{c, origin, s, gear, rpm, false, {}};
+    auto add = [&](const std::string& label, const char* kind, std::vector<float> p, const Vec3& at, const Vec3& col,
+                   std::vector<std::string>* group) {
+        c.bodies.push_back(part(c.name + " " + label, kind, std::move(p), h.pos(at), col, c.name, s));
+        if (group) group->push_back(c.bodies.back().name);
+    };
+    // DC gear motor for a joint; its housing and rotor ride with `group`.
+    auto motor = [&](HandBuilder& b, const std::string& label, const char* limit, float size, const Vec3& at,
+                     std::vector<std::string>* group) {
+        const std::string drive = b.motor(label, v(limit), size, at);
+        if (group) group->insert(group->end(), {c.bodies[c.bodies.size() - 2].name, c.bodies.back().name});
+        return drive;
+    };
+    auto stand = [&](float topZ, float y) { // test-rig post behind a part, on a base plate
+        c.bodies.push_back(part(c.name + " Stand", "box", {-24, y - 24, 0, 24, y + 24, topZ}, origin, kDarkSteel, c.name, s));
+        c.bodies.push_back(part(c.name + " Stand Base", "box", {-130, y - 120, 0, 130, y + 40, 14}, origin, kDarkSteel, c.name, s));
+    };
+
+    // ---- torso: pelvis (root) -> waist -> gut -> trunk joint -> midriff -> chest + heart
+    std::vector<std::string> upper, aboveTrunk, neckHead, headOnlyBodies; // bodies each joint carries
+    if (torso || legOnly) add(legOnly ? "Hip Mount" : "Pelvis", "robot_pelvis", {280, 180, kWaistUp, 2 * kHipX},
+                              {legOnly ? (v("side") >= 0.5f ? kHipX : -kHipX) : 0.0f, 0, kHipZ}, shell, nullptr);
+    std::string waistDrive, flexDrive, bendDrive;
+    if (torso) {
+        if (!all) stand(kHipZ, -125.0f);
+        waistDrive = motor(h, "Waist Rotation", "waist_rot", 1.6f, {0, -104, kHipZ + 40}, nullptr);
+        add("Gut", "robot_gut", {260, 180, kGut, 0}, {0, 0, kWaistZ}, shell, &upper);
+        add("Gut Core", "robot_gut", {260, 180, kGut, 1}, {0, 0, kWaistZ}, accent, &upper);
+        flexDrive = motor(h, "Trunk Flex", "trunk_flex", 1.3f, {-36, -98, kWaistZ + 40}, &upper);
+        bendDrive = motor(h, "Trunk Bend", "trunk_bend", 1.3f, {36, -98, kWaistZ + 40}, &upper);
+        add("Midriff", "robot_midriff", {230, 160, kMidriff}, {0, 0, kTrunkZ}, accent, &aboveTrunk);
+        add("Chest", "robot_chest", {380, 230, kChest}, {0, 0, kChestZ}, shell, &aboveTrunk);
+        const Vec3 heart{0, 114, kChestZ + 135};
+        add("Heart Housing", "robot_heart", {46, 0}, heart, accent, &aboveTrunk);
+        add("Heart Core", "robot_heart", {46, 1}, heart, kCoreGlow, &aboveTrunk);
+        add("Heart Pump", "robot_heart", {46, 2}, heart, kSteel, &aboveTrunk);
+        // The coolant pump turns at the heart rate (beats per minute as rpm).
+        c.motions.push_back(spin(c.name + " Heart Pump", {c.name + " Heart Pump"}, h.pos(heart), v("heart_rate"), {0, 1, 0}));
+    }
+    // ---- head and neck
+    std::string yawDrive, pitchDrive, rollDrive;
+    if (head) {
+        if (headOnly) {
+            c.bodies.push_back(part(c.name + " Pedestal", "robot_shoulder", {220, 140}, h.pos({0, 0, kNeckZ}), kDarkSteel, c.name, s));
+            yawDrive = motor(h, "Neck Yaw", "neck_yaw", 0.9f, {-40, -70, kNeckZ - 200}, nullptr);
+            pitchDrive = motor(h, "Neck Pitch", "neck_pitch", 0.9f, {0, -70, kNeckZ - 200}, nullptr);
+            rollDrive = motor(h, "Neck Roll", "neck_roll", 0.9f, {40, -70, kNeckZ - 200}, nullptr);
+        } else { // on the upper back, under the neck
+            yawDrive = motor(h, "Neck Yaw", "neck_yaw", 0.9f, {-34, -104, kNeckZ - 70}, &aboveTrunk);
+            pitchDrive = motor(h, "Neck Pitch", "neck_pitch", 0.9f, {0, -108, kNeckZ - 70}, &aboveTrunk);
+            rollDrive = motor(h, "Neck Roll", "neck_roll", 0.9f, {34, -104, kNeckZ - 70}, &aboveTrunk);
+        }
+        add("Neck", "robot_neck", {kNeck, 34}, {0, 0, kNeckZ}, accent, &neckHead);
+        add("Head", "robot_head", {160, 200, 230, 0}, {0, 0, kNeckZ + kNeck}, shell, &headOnlyBodies);
+        add("Visor", "robot_head", {160, 200, 230, 1}, {0, 0, kNeckZ + kNeck}, kVisor, &headOnlyBodies);
+        neckHead.insert(neckHead.end(), headOnlyBodies.begin(), headOnlyBodies.end());
+        aboveTrunk.insert(aboveTrunk.end(), neckHead.begin(), neckHead.end());
+    }
+    // ---- arms hang from the shoulders: the robot arm (built along +Y, palm down)
+    // turned -90 deg about X, so the elbow bends forward and the palm faces back.
+    struct Shoulder {
+        std::string flex, abd, rot;
+        std::vector<std::string> arm;
+        std::vector<Motion> joints;
+    };
+    std::vector<Shoulder> shoulders;
+    if (all) {
+        const Vec3 euler{-90, 0, 0};
+        const Mat4 turn = eulerRotation(euler);
+        for (int side = 0; side < 2; ++side) {
+            const bool left = side == 1;
+            const std::string label = left ? "Left " : "Right ";
+            LibraryComponent arm;
+            arm.name = c.name + " " + label + "Arm";
+            HandBuilder ah{arm, {0, kUpperArm + kForearm, kShoulderHeight}, 1.0f, gear, rpm, left, {}};
+            ah.o = ah.o * s;
+            ah.s = s;
+            Shoulder sh;
+            sh.arm = buildHandArm(ah, v, v("drive") >= 0.5f, true, true, false);
+            const Vec3 native = Vec3{0, 0, kShoulderHeight} * s;
+            const Vec3 at = h.pos({left ? -kShoulderX : kShoulderX, -5, kShoulderZ});
+            for (Body& b : arm.bodies) {
+                b.offset = at + turn.transformDir(b.offset - native);
+                b.setRotation(euler);
+                b.component = c.name;
+                c.bodies.push_back(std::move(b));
+            }
+            for (Motion& m : arm.motions) {
+                m.origin = at + turn.transformDir(m.origin - native);
+                m.axis = turn.transformDir(m.axis);
+            }
+            sh.joints = std::move(arm.motions);
+            HandBuilder sideH{c, origin, s, gear, rpm, left, {}};
+            const float x = 150.0f;
+            sh.flex = motor(sideH, label + "Shoulder Flex", "shoulder_flex", 1.2f, {x - 40, -98, kShoulderZ - 60}, &aboveTrunk);
+            sh.abd = motor(sideH, label + "Shoulder Abduction", "shoulder_abd", 1.2f, {x, -90, kShoulderZ - 60}, &aboveTrunk);
+            sh.rot = motor(sideH, label + "Shoulder Rotation", "shoulder_rot", 1.2f, {x + 36, -76, kShoulderZ - 60}, &aboveTrunk);
+            aboveTrunk.insert(aboveTrunk.end(), sh.arm.begin(), sh.arm.end());
+            shoulders.push_back(std::move(sh));
+        }
+    }
+    upper.insert(upper.end(), aboveTrunk.begin(), aboveTrunk.end());
+
+    // ---- joints, outermost first
+    if (torso) {
+        h.joint("Waist Rotation", upper, {0, 0, kWaistZ}, {0, 0, 1}, waistDrive, 1.0f / gear);
+        h.joint("Trunk Flex", aboveTrunk, {0, 0, kTrunkZ}, {-1, 0, 0}, flexDrive, 1.0f / gear);
+        h.joint("Trunk Bend", aboveTrunk, {0, 0, kTrunkZ}, {0, 1, 0}, bendDrive, 1.0f / gear);
+    }
+    if (head) {
+        h.joint("Neck Yaw", neckHead, {0, 0, kNeckZ}, {0, 0, 1}, yawDrive, 1.0f / gear);
+        h.joint("Neck Pitch", headOnlyBodies, {0, 0, kNeckZ + kNeck}, {-1, 0, 0}, pitchDrive, 1.0f / gear);
+        h.joint("Neck Roll", headOnlyBodies, {0, 0, kNeckZ + kNeck}, {0, 1, 0}, rollDrive, 1.0f / gear);
+    }
+    for (std::size_t i = 0; i < shoulders.size(); ++i) {
+        Shoulder& sh = shoulders[i];
+        HandBuilder sideH{c, origin, s, gear, rpm, i == 1, {}};
+        const std::string label = i == 1 ? "Left " : "Right ";
+        const Vec3 at{kShoulderX, -5, kShoulderZ};
+        sideH.joint(label + "Shoulder Flex", sh.arm, at, {1, 0, 0}, sh.flex, 1.0f / gear);
+        sideH.joint(label + "Shoulder Abduction", sh.arm, at, {0, -1, 0}, sh.abd, 1.0f / gear);
+        sideH.joint(label + "Shoulder Rotation", sh.arm, at, {0, 0, 1}, sh.rot, 1.0f / gear);
+    }
+    for (Shoulder& sh : shoulders) c.motions.insert(c.motions.end(), sh.joints.begin(), sh.joints.end());
+
+    // ---- legs hang from the hip joints
+    if (legs) {
+        if (legOnly) stand(kHipZ + 60.0f, -125.0f);
+        for (int side = 0; side < 2; ++side) {
+            const bool left = legOnly ? v("side") >= 0.5f : side == 1;
+            if (legOnly && side == 1) break;
+            const std::string label = legOnly ? "" : (left ? "Left " : "Right ");
+            HandBuilder lh{c, origin + Vec3{legOnly ? 0.0f : (left ? -kHipX : kHipX), 0, kHipZ} * s, s, gear, rpm, left, {}};
+            std::vector<std::string> thigh, shin, foot, toe;
+            auto leg = [&](const std::string& part_, const char* kind, std::vector<float> p, const Vec3& at, const Vec3& col,
+                           std::vector<std::string>& group) {
+                c.bodies.push_back(part(c.name + " " + label + part_, kind, std::move(p), lh.pos(at), col, c.name, s));
+                group.push_back(c.bodies.back().name);
+            };
+            const Vec3 knee{0, 0, -kThigh}, ankle{0, 0, -kThigh - kShin}, toeJoint = ankle + Vec3{0, 126, -70};
+            leg("Thigh", "robot_thigh", {kThigh, 130, 140}, {}, shell, thigh);
+            leg("Shin", "robot_shin", {kShin, 100, 110}, knee, shell, shin);
+            leg("Foot", "robot_foot", {250, 100, kAnkleZ, 0}, ankle, shell, foot);
+            leg("Foot Sole", "robot_foot", {250, 100, kAnkleZ, 2}, ankle, kRubber, foot);
+            leg("Toe", "robot_foot", {250, 100, kAnkleZ, 1}, toeJoint, shell, toe);
+            leg("Toe Sole", "robot_foot", {250, 100, kAnkleZ, 3}, toeJoint, kRubber, toe);
+            // Hip motors on the side of the pelvis, knee motor behind the thigh, ankle
+            // motors in the calf, toe motor on the instep.
+            const std::string hipFlex = motor(lh, label + "Hip Flex", "hip_flex", 1.4f, {62, -46, 34}, nullptr);
+            const std::string hipAbd = motor(lh, label + "Hip Abduction", "hip_abd", 1.4f, {66, 0, 34}, nullptr);
+            const std::string hipRot = motor(lh, label + "Hip Rotation", "hip_rot", 1.4f, {62, 46, 34}, nullptr);
+            const std::string kneeDrive = motor(lh, label + "Knee", "knee", 1.4f, {0, -72, -150}, &thigh);
+            const std::string pitch = motor(lh, label + "Ankle Pitch", "ankle_pitch", 1.0f, {-16, -66, -kThigh - 120}, &shin);
+            const std::string roll = motor(lh, label + "Ankle Roll", "ankle_roll", 1.0f, {16, -66, -kThigh - 120}, &shin);
+            const std::string toeDrive = motor(lh, label + "Toe", "toe", 0.6f, ankle + Vec3{0, 72, -34}, &foot);
+            foot.insert(foot.end(), toe.begin(), toe.end());
+            shin.insert(shin.end(), foot.begin(), foot.end());
+            thigh.insert(thigh.end(), shin.begin(), shin.end());
+            lh.joint(label + "Hip Flex", thigh, {}, {1, 0, 0}, hipFlex, 1.0f / gear);
+            lh.joint(label + "Hip Abduction", thigh, {}, {0, -1, 0}, hipAbd, 1.0f / gear);
+            lh.joint(label + "Hip Rotation", thigh, {}, {0, 0, 1}, hipRot, 1.0f / gear);
+            lh.joint(label + "Knee", shin, knee, {-1, 0, 0}, kneeDrive, 1.0f / gear);
+            lh.joint(label + "Ankle Pitch", foot, ankle, {-1, 0, 0}, pitch, 1.0f / gear);
+            lh.joint(label + "Ankle Roll", foot, ankle, {0, 1, 0}, roll, 1.0f / gear);
+            lh.joint(label + "Toe", toe, toeJoint, {1, 0, 0}, toeDrive, 1.0f / gear);
+        }
+    }
+    settleDrives(c);
+    faceFront(c, o);
+
+    // ---- demo: range of motion (every joint), march in place, or still
+    const int demo = all ? static_cast<int>(v("demo")) : 0;
+    if (demo == 0) return;
+    const std::string pump = c.name + " Heart Pump";
+    struct Step {
+        const char* joint;
+        float sweep;
+        bool late; // starts half a stride later
+    };
+    // Legs alternate; each arm swings with the opposite leg.
+    static const Step kMarch[] = {{"Right Hip Flex", 50, false},      {"Right Knee", 75, false},          {"Right Ankle Pitch", 15, false},
+                                  {"Left Hip Flex", 50, true},        {"Left Knee", 75, true},            {"Left Ankle Pitch", 15, true},
+                                  {"Right Shoulder Flex", 30, true},  {"Right Arm Elbow", 30, true},      {"Left Shoulder Flex", 30, false},
+                                  {"Left Arm Elbow", 30, false}};
+    constexpr float kStride = 0.7f; // s from foot down to knee up
+    std::vector<std::string> keep{pump};
+    for (Motion& m : c.motions) {
+        if (m.follow.empty()) continue;
+        const Step* step = nullptr;
+        for (const Step& st : kMarch)
+            if (demo == 1 && m.name == c.name + " " + st.joint) step = &st;
+        m.enabled = step != nullptr;
+        if (!step) continue;
+        for (Motion& d : c.motions)
+            if (d.name == m.follow) {
+                d.range = gear * step->sweep;
+                d.speed = d.range / kStride;
+                d.start = step->late ? kStride : 0.0f;
+            }
+        keep.push_back(m.follow);
+    }
+    for (Motion& m : c.motions)
+        if (m.follow.empty()) m.enabled = std::find(keep.begin(), keep.end(), m.name) != keep.end();
+}
+
 } // namespace
 
 LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<std::string, float>& values,
@@ -1816,47 +2410,62 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
             h.digit(d, {}, thumb ? kThumbYaw : 0.0f, thumb, full, v);
             return c;
         }
-        for (int r = 0; r < 5; ++r)
-            for (int k = 0; k < 4; ++k)
-                h.slots.push_back({-25.5f + 17.0f * static_cast<float>(k), -76.0f - 17.0f * static_cast<float>(r), 14.5f});
-        c.bodies.push_back(part(name + " Palm", "robot_palm", {kPalmWidth, kPalmLength, 26, left ? 1.0f : 0.0f}, h.o, kHandShell, name, h.s));
-        c.bodies.push_back(part(name + " Palm Pad", "robot_palm", {kPalmWidth, kPalmLength, 26, left ? 1.0f : 0.0f, 1}, h.o, kHandPad, name, h.s));
-        c.bodies.push_back(part(name + " Forearm", "robot_forearm", {70, arm ? kForearm : 180.0f, 22, 24.5f, 1}, h.o, kDarkSteel, name, h.s));
-        std::vector<std::string> carried{name + " Palm", name + " Palm Pad"};
-        for (int i = 0; i < 4; ++i) {
-            const auto links = h.digit(kFingers[i], {kKnuckles[i].x, kKnuckles[i].y, 0}, kFingerYaw[i], false, full, v,
-                                       i < 2 ? 1.0f : -1.0f); // index and middle abduct toward the thumb
-            carried.insert(carried.end(), links.begin(), links.end());
-        }
-        const auto thumb = h.digit(kThumb, {-30, 20, -6}, kThumbYaw, true, full, v);
-        carried.insert(carried.end(), thumb.begin(), thumb.end());
-        if (arm || v("wrist") >= 0.5f) { // the wrist carries the whole hand: its joints go first (outermost)
-            const std::size_t n = c.motions.size();
-            h.joint("Wrist Flex", carried, {}, {-1, 0, 0}, h.motor("Wrist Flex", v("wrist_flex")), 1.0f / h.gear);
-            h.joint("Wrist Deviation", carried, {}, {0, 0, -1}, h.motor("Wrist Deviation", v("wrist_dev")), 1.0f / h.gear);
-            std::rotate(c.motions.begin(), c.motions.begin() + static_cast<std::ptrdiff_t>(n), c.motions.end());
-        }
-        if (arm) { // shoulder pitch, yaw, roll -> elbow -> forearm rotation, outermost first
-            const std::size_t n = c.motions.size();
-            const Vec3 elbow{0, -kForearm, 0}, shoulder{0, -kForearm - kUpperArm, 0};
-            const std::string supination = h.motor("Forearm Rotation", v("forearm_rot"));
-            std::vector<std::string> forearm;
-            for (const Body& b : c.bodies) forearm.push_back(b.name);
-            const std::string elbowDrive = h.motor("Elbow", v("elbow"), 1.2f, shoulder + Vec3{0, 100, 40.4f});
-            c.bodies.push_back(part(name + " Upper Arm", "arm_link", {kUpperArm, 32}, h.pos(shoulder), kHandShell, name, h.s));
-            std::vector<std::string> upper;
-            for (const Body& b : c.bodies) upper.push_back(b.name);
-            c.bodies.push_back(part(name + " Shoulder", "robot_shoulder", {kShoulderHeight, 140}, h.pos(shoulder), kDarkSteel, name, h.s));
-            auto torso = [&](const char* label, float x, const char* limit) { // shoulder motors on the pedestal
-                return h.motor(label, v(limit), 1.2f, shoulder + Vec3{x, -70, 24.4f - kShoulderHeight});
-            };
-            h.joint("Shoulder Flex", upper, shoulder, {1, 0, 0}, torso("Shoulder Flex", -40, "shoulder_flex"), 1.0f / h.gear);
-            h.joint("Shoulder Abduction", upper, shoulder, {0, 0, -1}, torso("Shoulder Abduction", 0, "shoulder_abd"), 1.0f / h.gear);
-            h.joint("Shoulder Rotation", upper, shoulder, {0, -1, 0}, torso("Shoulder Rotation", 40, "shoulder_rot"), 1.0f / h.gear);
-            h.joint("Elbow", forearm, elbow, {1, 0, 0}, elbowDrive, 1.0f / h.gear);
-            h.joint("Forearm Rotation", forearm, {}, {0, 1, 0}, supination, 1.0f / h.gear);
-            std::rotate(c.motions.begin(), c.motions.begin() + static_cast<std::ptrdiff_t>(n), c.motions.end());
-        }
+        buildHandArm(h, v, full, arm, arm || v("wrist") >= 0.5f, arm);
+        settleDrives(c);
+        return c;
+    }
+    // Humanoid body: head and neck, torso (pelvis, gut, midriff, chest, heart), legs, or all of it.
+    if (key == "humanoid" || key == "robot_head_neck" || key == "robot_torso" || key == "robot_leg") {
+        buildHumanoid(c, key, v, o);
+        return c;
+    }
+    // Single humanoid parts (white shells, dark joint parts), set down on the ground at `o`.
+    auto restOnGround = [&] {
+        float lowest = std::numeric_limits<float>::max();
+        for (const Body& b : c.bodies) lowest = std::min(lowest, b.bounds().min.z);
+        faceFront(c, o);
+        const Vec3 lift{0, 0, o.z - lowest};
+        for (Body& b : c.bodies) b.offset += lift;
+        for (Motion& m : c.motions) m.origin += lift;
+    };
+    if (key == "robot_head") {
+        c.bodies.push_back(part(name, "robot_head", {v("width"), v("depth"), v("height"), 0}, o, kBodyWhite, name));
+        c.bodies.push_back(part(name + " Visor", "robot_head", {v("width"), v("depth"), v("height"), 1}, o, kVisor, name));
+        restOnGround();
+        return c;
+    }
+    if (key == "robot_heart") {
+        const float r = v("radius");
+        c.bodies.push_back(part(name + " Housing", "robot_heart", {r, 0}, o, kHandShell, name));
+        c.bodies.push_back(part(name + " Core", "robot_heart", {r, 1}, o, kCoreGlow, name));
+        c.bodies.push_back(part(name + " Pump", "robot_heart", {r, 2}, o, kSteel, name));
+        c.motions.push_back(spin(name + " Pump", {name + " Pump"}, o, v("heart_rate"), {0, 1, 0}));
+        restOnGround();
+        return c;
+    }
+    if (key == "robot_gut") {
+        c.bodies.push_back(part(name, "robot_gut", {v("width"), v("depth"), v("height"), 0}, o, kBodyWhite, name));
+        c.bodies.push_back(part(name + " Core", "robot_gut", {v("width"), v("depth"), v("height"), 1}, o, kHandShell, name));
+        restOnGround();
+        return c;
+    }
+    if (key == "robot_foot") {
+        const float len = v("length"), w = v("width"), a = v("ankle");
+        const Vec3 toeJoint = o + Vec3{0, 126.0f * len / 250.0f, -70.0f * a / 85.0f};
+        c.bodies.push_back(part(name, "robot_foot", {len, w, a, 0}, o, kBodyWhite, name));
+        c.bodies.push_back(part(name + " Sole", "robot_foot", {len, w, a, 2}, o, kRubber, name));
+        c.bodies.push_back(part(name + " Toe", "robot_foot", {len, w, a, 1}, toeJoint, kBodyWhite, name));
+        c.bodies.push_back(part(name + " Toe Sole", "robot_foot", {len, w, a, 3}, toeJoint, kRubber, name));
+        restOnGround();
+        return c;
+    }
+    if (key == "robot_neck" || key == "robot_chest" || key == "robot_midriff" || key == "robot_pelvis" || key == "robot_thigh" ||
+        key == "robot_shin") {
+        std::vector<float> p;
+        for (const LibraryParam& q : item.params) p.push_back(v(q.key));
+        const bool dark = key == "robot_neck" || key == "robot_midriff";
+        c.bodies.push_back(part(name, key, p, o, dark ? kHandShell : kBodyWhite, name));
+        restOnGround();
         return c;
     }
     if (key == "finger_link") {

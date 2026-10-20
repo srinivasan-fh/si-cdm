@@ -254,6 +254,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         jb.set("color", vec3Json(b.color));
         jb.set("visible", b.visible);
         if (b.scale != 1.0f) jb.set("scale", b.scale);
+        if (b.rotation.x != 0.0f || b.rotation.y != 0.0f || b.rotation.z != 0.0f) jb.set("rotation", vec3Json(b.rotation));
         if (!b.component.empty()) jb.set("component", b.component);
         if (!isPrimitiveKind(b.kind)) {
             Json pos = Json::array(), nrm = Json::array(), idx = Json::array(), edges = Json::array();
@@ -370,8 +371,17 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             b.name = jb["name"].asString("Mesh");
             b.kind = "mesh";
         }
-        if (isPrimitiveKind(kind)) b.setScale(jb["scale"].asFloat(1.0f)); // meshes are stored already scaled
-        else b.scale = std::max(jb["scale"].asFloat(1.0f), 1e-6f);
+        const Vec3 rotation = jsonVec3(jb["rotation"]);
+        if (isPrimitiveKind(kind)) { // meshes are stored already rotated and scaled
+            if (rotation.x != 0.0f || rotation.y != 0.0f || rotation.z != 0.0f) {
+                b.rotation = rotation;
+                b.rebuild();
+            }
+            b.setScale(jb["scale"].asFloat(1.0f));
+        } else {
+            b.scale = std::max(jb["scale"].asFloat(1.0f), 1e-6f);
+            b.rotation = rotation;
+        }
         b.component = jb["component"].asString();
         b.offset = jsonVec3(jb["offset"]);
         b.color = jsonVec3(jb["color"], b.color);

@@ -21,10 +21,25 @@ Body makeBody(std::string name, std::string kind, std::vector<float> params, Vec
     return b;
 }
 
+Mat4 eulerRotation(const Vec3& d) noexcept {
+    return rotateAxis({0, 0, 1}, radians(d.z)) * rotateAxis({0, 1, 0}, radians(d.y)) * rotateAxis({1, 0, 0}, radians(d.x));
+}
+
 void Body::rebuild() {
     if (kind == "mesh") return;
     mesh = buildPrimitive(kind, params);
+    if (rotation.x != 0.0f || rotation.y != 0.0f || rotation.z != 0.0f) mesh.transform(eulerRotation(rotation));
     if (scale != 1.0f) mesh.transform(sicdm::scale(Vec3{scale, scale, scale}));
+}
+
+void Body::setRotation(const Vec3& degrees) {
+    if (kind == "mesh") { // undo the old orientation, apply the new one
+        mesh.transform(eulerRotation(degrees) * inverse(eulerRotation(rotation)));
+        rotation = degrees;
+        return;
+    }
+    rotation = degrees;
+    rebuild();
 }
 
 void Body::setScale(float s) {

@@ -956,6 +956,7 @@ std::uint64_t Application::signatureOf(const Document& doc) {
         mix(&b.color, sizeof(b.color));
         mix(&b.visible, sizeof(b.visible));
         mix(&b.scale, sizeof(b.scale));
+        mix(&b.rotation, sizeof(b.rotation));
         mixStr(b.component);
         const std::size_t tris = b.mesh.indices.size();
         mix(&tris, sizeof(tris));

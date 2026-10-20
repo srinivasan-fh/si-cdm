@@ -46,6 +46,29 @@ bool watertight(const MeshData& m) {
     return !edges.empty();
 }
 
+// Union of closed solids (parts built from several touching shapes): no open edge,
+// every edge used an even number of times.
+bool closedSurfaces(const MeshData& m) {
+    std::map<std::tuple<long, long, long>, std::uint32_t> weld;
+    std::vector<std::uint32_t> id(m.vertices.size());
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+        const Vec3& p = m.vertices[i].position;
+        const auto k = std::make_tuple(std::lround(p.x * 1e3f), std::lround(p.y * 1e3f), std::lround(p.z * 1e3f));
+        id[i] = weld.emplace(k, static_cast<std::uint32_t>(weld.size())).first->second;
+    }
+    std::map<std::pair<std::uint32_t, std::uint32_t>, int> edges;
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3)
+        for (int e = 0; e < 3; ++e) {
+            auto a = id[m.indices[t + e]], b = id[m.indices[t + (e + 1) % 3]];
+            if (a == b) continue;
+            if (a > b) std::swap(a, b);
+            ++edges[{a, b}];
+        }
+    for (const auto& [e, n] : edges)
+        if (n % 2 != 0) return false;
+    return !edges.empty();
+}
+
 const Body* body(const Scene& s, const std::string& name) {
     for (const Body& b : s.bodies())
         if (b.name == name) return &b;
@@ -467,7 +490,7 @@ TEST_CASE("robot hand: links, DC motors in the forearm, joints within their limi
     CHECK(motion(d.scene, "Robot Hand 1 Index DIP")->moves("Robot Hand 1 Index Distal Pad")); // pads move with their link
     REQUIRE(body(d.scene, "Robot Hand 1 Motor Index Flex") && body(d.scene, "Robot Hand 1 Motor Thumb CMC"));
     CHECK(body(d.scene, "Robot Hand 1 Motor Index Flex")->kind == "dc_motor");
-    CHECK(d.scene.motions().front().name == "Robot Hand 1 Motor Wrist Flex Drive"); // wrist outermost
+    CHECK(d.scene.motions().front().name == "Robot Hand 1 Wrist Flex"); // wrist outermost, motor drives last
 
     const Motion* drive = motion(d.scene, "Robot Hand 1 Motor Index Flex Drive");
     REQUIRE(drive);
@@ -573,4 +596,192 @@ TEST_CASE("robot arm: shoulder to hand, every joint on a DC motor within its lim
     REQUIRE(run(d, "PART ROBOTARM HAND LEFT DRIVE 1 @800,0,0").ok);
     CHECK(run(d, "PART UPPERARM @0,900,0").ok);
     CHECK(run(d, "PART SHOULDER @300,900,0").ok);
+}
+
+// ---- humanoid body -----------------------------------------------------------
+
+namespace {
+
+std::size_t bodyIndex(const Scene& s, const std::string& name) {
+    for (std::size_t i = 0; i < s.bodies().size(); ++i)
+        if (s.bodies()[i].name == name) return i;
+    return s.bodies().size();
+}
+
+// Where a point fixed to body `name` (given at rest) is at time t.
+Vec3 track(const Scene& s, const std::vector<Mat4>& tf, const std::string& name, const Vec3& p) {
+    return tf[bodyIndex(s, name)].transformPoint(p);
+}
+
+} // namespace
+
+TEST_CASE("humanoid body parts are closed solids") {
+    for (const char* k : {"robot_head", "robot_neck", "robot_chest", "robot_heart", "robot_gut", "robot_midriff", "robot_pelvis",
+                          "robot_thigh", "robot_shin", "robot_foot"}) {
+        const std::vector<float> p = withDefaults(k, {});
+        const MeshData m = buildLibraryPart(k, p);
+        CHECK(!m.indices.empty());
+        CHECK(closedSurfaces(m));
+        CHECK(isLibraryKind(k));
+    }
+    for (int part = 1; part <= 3; ++part) CHECK(closedSurfaces(buildLibraryPart("robot_foot", {250, 100, 85, static_cast<float>(part)})));
+    CHECK(closedSurfaces(buildLibraryPart("robot_head", {160, 200, 230, 1})));
+    CHECK(closedSurfaces(buildLibraryPart("robot_heart", {46, 2})));
+}
+
+TEST_CASE("humanoid robot: head to toe, standing, facing the front view") {
+    Document d;
+    REQUIRE(run(d, "PART HUMANOID").ok);
+    const Scene& s = d.scene;
+    const std::string n = "Humanoid Robot 1 ";
+    for (const char* part : {"Head", "Visor", "Neck", "Chest", "Heart Core", "Gut", "Midriff", "Pelvis", "Right Thigh", "Left Shin",
+                             "Right Foot", "Left Toe", "Right Arm Upper Arm", "Left Arm Palm", "Right Arm Index Distal"})
+        CHECK(body(s, n + part));
+    AABB all;
+    for (const Body& b : s.bodies()) all.expand(b.bounds());
+    CHECK_NEAR(all.min.z, 0, 1e-3);           // soles on the ground
+    CHECK(all.max.z > 1780 && all.max.z < 1880); // about 1.83 m
+    CHECK(body(s, n + "Visor")->bounds().center().y < -80);       // the face looks toward -Y (Front view)
+    CHECK(body(s, n + "Right Foot")->bounds().center().x < 0);    // its right side is on the viewer's left
+    CHECK(body(s, n + "Right Arm Palm")->bounds().center().x < -150);
+    CHECK(body(s, n + "Right Arm Palm")->bounds().max.z < 1000);  // arms hang beside the thighs
+    CHECK(body(s, n + "Motor Right Knee")->kind == "dc_motor");
+}
+
+TEST_CASE("humanoid joints follow DC gear motors and stay within human range of motion") {
+    Document d;
+    REQUIRE(run(d, "PART HUMANOID KNEE 120 NECK_YAW 60").ok);
+    const Scene& s = d.scene;
+    const std::string n = "Humanoid Robot 1 ";
+    const std::pair<const char*, float> limits[] = {
+        {"Neck Yaw", 60},          {"Neck Pitch", 45},         {"Neck Roll", 40},           {"Waist Rotation", 40},
+        {"Trunk Flex", 60},        {"Trunk Bend", 25},         {"Right Shoulder Flex", 90}, {"Left Shoulder Abduction", 90},
+        {"Right Shoulder Rotation", 70}, {"Right Arm Elbow", 145}, {"Left Arm Wrist Flex", 80}, {"Right Hip Flex", 90},
+        {"Left Hip Abduction", 40}, {"Right Hip Rotation", 35}, {"Left Knee", 120},           {"Right Ankle Pitch", 45},
+        {"Left Ankle Roll", 30},   {"Right Toe", 60},          {"Left Arm Index PIP", 100}};
+    for (const auto& [joint, limit] : limits) {
+        const Motion* j = motion(s, n + joint);
+        REQUIRE(j);
+        const Motion* lead = motion(s, j->follow);
+        REQUIRE(lead);
+        CHECK(lead->name.find("Motor") != std::string::npos);
+        CHECK_NEAR(motionValue(s, *j, lead->range / lead->speed), limit, 1e-2);
+        for (float t = 0; t < 12; t += 0.13f) {
+            const float a = motionValue(s, *j, t);
+            CHECK(a >= -1e-3f && a <= limit + 1e-2f);
+        }
+    }
+    // Every joint comes before every motor drive: rotors stay in their housings while the body moves.
+    bool drives = false;
+    for (const Motion& m : s.motions()) {
+        if (m.follow.empty()) drives = true;
+        else CHECK(!drives);
+    }
+    for (float t : {0.9f, 2.3f, 4.1f}) {
+        const auto tf = motionTransforms(s, t);
+        for (const Body& b : s.bodies()) {
+            if (b.kind != "dc_motor") continue;
+            const Vec3 a = track(s, tf, b.name, b.offset), r = track(s, tf, b.name + " Rotor", b.offset);
+            CHECK_NEAR(length(a - r), 0, 1e-2);
+        }
+        // The chain holds at the knee, ankle, shoulder and neck.
+        const Body* knee = body(s, n + "Right Shin");
+        CHECK_NEAR(length(track(s, tf, n + "Right Thigh", knee->offset) - track(s, tf, n + "Right Shin", knee->offset)), 0, 1e-2);
+        const Body* foot = body(s, n + "Left Foot");
+        CHECK_NEAR(length(track(s, tf, n + "Left Shin", foot->offset) - track(s, tf, n + "Left Foot", foot->offset)), 0, 1e-2);
+        const Body* arm = body(s, n + "Right Arm Upper Arm");
+        CHECK_NEAR(length(track(s, tf, n + "Chest", arm->offset) - track(s, tf, n + "Right Arm Upper Arm", arm->offset)), 0, 1e-2);
+        const Body* head = body(s, n + "Head");
+        CHECK_NEAR(length(track(s, tf, n + "Neck", head->offset) - track(s, tf, n + "Head", head->offset)), 0, 1e-2);
+    }
+    // Directions: hip and shoulder flexion swing the limb forward (-Y), trunk flexion bends forward.
+    auto only = [&](Document& doc, const std::string& joint) {
+        for (Motion& m : doc.scene.motions()) m.enabled = m.name == n + joint || m.name == motion(s, n + joint)->follow;
+        const Motion* lead = motion(doc.scene, motion(doc.scene, n + joint)->follow);
+        return motionTransforms(doc.scene, lead->range / lead->speed);
+    };
+    Document e = d;
+    auto tf = only(e, "Right Hip Flex");
+    const Body* toe = body(s, n + "Right Toe");
+    CHECK(track(s, tf, toe->name, toe->bounds().center()).y < toe->bounds().center().y - 500);
+    tf = only(e, "Left Shoulder Flex");
+    const Body* palm = body(s, n + "Left Arm Palm");
+    CHECK(track(s, tf, palm->name, palm->bounds().center()).y < -400);
+    tf = only(e, "Trunk Flex");
+    const Body* visor = body(s, n + "Visor");
+    CHECK(track(s, tf, visor->name, visor->bounds().center()).y < visor->bounds().center().y - 200);
+    tf = only(e, "Right Knee");
+    const Body* heel = body(s, n + "Right Foot");
+    CHECK(track(s, tf, heel->name, heel->bounds().center()).y > heel->bounds().center().y + 200); // heel comes up behind
+}
+
+TEST_CASE("humanoid demos: march in place alternates the legs, still holds the pose") {
+    Document d;
+    REQUIRE(run(d, "PART HUMANOID DEMO 1").ok);
+    const Scene& s = d.scene;
+    const std::string n = "Humanoid Robot 1 ";
+    CHECK(!motion(s, n + "Neck Yaw")->enabled);
+    CHECK(motion(s, n + "Heart Pump")->enabled);
+    const float stride = 0.7f;
+    CHECK_NEAR(motionValue(s, *motion(s, n + "Right Hip Flex"), stride), 50, 1e-2);
+    CHECK_NEAR(motionValue(s, *motion(s, n + "Left Hip Flex"), stride), 0, 1e-2);
+    CHECK_NEAR(motionValue(s, *motion(s, n + "Left Hip Flex"), 2 * stride), 50, 1e-2);
+    CHECK_NEAR(motionValue(s, *motion(s, n + "Right Hip Flex"), 2 * stride), 0, 1e-2);
+    CHECK_NEAR(motionValue(s, *motion(s, n + "Left Shoulder Flex"), stride), 30, 1e-2); // opposite arm swings forward
+    REQUIRE(run(d, "PART HUMANOID DEMO STILL @2000,0,0").ok);
+    for (const Motion& m : d.scene.motions())
+        if (m.name.rfind("Humanoid Robot 2", 0) == 0) CHECK(m.enabled == (m.name == "Humanoid Robot 2 Heart Pump"));
+}
+
+TEST_CASE("head and neck, upper body and leg on their own") {
+    Document d;
+    REQUIRE(run(d, "PART ROBOTHEADNECK").ok);
+    CHECK(motion(d.scene, "Robot Head & Neck 1 Neck Pitch"));
+    CHECK(body(d.scene, "Robot Head & Neck 1 Pedestal"));
+    REQUIRE(run(d, "PART TORSO @800,0,0 HEART_RATE 90").ok);
+    CHECK(motion(d.scene, "Robot Upper Body 1 Trunk Bend"));
+    CHECK_NEAR(motion(d.scene, "Robot Upper Body 1 Heart Pump")->speed, 90 * 6, 1e-3);
+    REQUIRE(run(d, "PART LEG SIDE LEFT @-800,0,0").ok);
+    REQUIRE(body(d.scene, "Robot Leg 1 Foot") && body(d.scene, "Robot Leg 1 Hip Mount"));
+    CHECK_NEAR(body(d.scene, "Robot Leg 1 Foot Sole")->bounds().min.z, 0, 1e-3);
+    CHECK(motion(d.scene, "Robot Leg 1 Ankle Roll"));
+    for (const char* part : {"HEAD", "NECK", "CHEST", "HEART", "GUT", "MIDRIFF", "PELVIS", "THIGH", "SHIN", "FOOT"}) {
+        Document one;
+        REQUIRE(run(one, std::string("PART ") + part).ok);
+        AABB box;
+        for (const Body& b : one.scene.bodies()) box.expand(b.bounds());
+        CHECK_NEAR(box.min.z, 0, 1e-3); // set down on the ground
+    }
+}
+
+TEST_CASE("body rotation is applied to the mesh and saved with the project") {
+    Document d;
+    REQUIRE(run(d, "PART THIGH").ok);
+    Body& b = d.scene.bodies().back();
+    const AABB before = b.bounds();
+    b.setRotation({90, 0, 0});
+    CHECK(std::fabs((b.bounds().max.y - b.bounds().min.y) - (before.max.z - before.min.z)) < 1.0f); // length now along Y
+    const auto path = (std::filesystem::temp_directory_path() / "sicdm_rotation_test.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene loaded;
+    ProjectState st;
+    REQUIRE(loadProject(loaded, st, path, &err));
+    REQUIRE(!loaded.bodies().empty());
+    CHECK(loaded.bodies().back().rotation.x == 90.0f);
+    CHECK_NEAR(loaded.bodies().back().bounds().max.y, b.bounds().max.y, 1e-2);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("robot arm motor rotors stay in their housings while the arm moves") {
+    Document d;
+    REQUIRE(run(d, "PART ROBOTARM").ok);
+    for (float t : {1.5f, 3.0f}) {
+        const auto tf = motionTransforms(d.scene, t);
+        for (const char* m : {"Robot Arm 1 Motor Elbow", "Robot Arm 1 Motor Forearm Rotation"}) {
+            const Body* h = body(d.scene, m);
+            REQUIRE(h);
+            CHECK_NEAR(length(track(d.scene, tf, m, h->offset) - track(d.scene, tf, std::string(m) + " Rotor", h->offset)), 0, 1e-2);
+        }
+    }
 }
