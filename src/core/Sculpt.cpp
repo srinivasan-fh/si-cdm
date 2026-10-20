@@ -370,7 +370,10 @@ bool SculptMesh::splitEdges(const std::vector<std::uint64_t>& edges, std::size_t
 
 void SculptMesh::refineRegion(const Vec3& centre, float radius, float detail) {
     const float r2 = radius * radius, d2 = detail * detail;
-    for (int pass = 0; pass < 8; ++pass) {
+    // What one dab may add: about the brush's disc at the detail size, with room.
+    const float cells = radius / std::max(detail, 1e-6f);
+    const std::size_t budget = std::min<std::size_t>(m_t.size() + static_cast<std::size_t>(std::min(64.0f * cells * cells, 2e6f)) + 2000, 4000000);
+    for (int pass = 0; pass < 16; ++pass) {
         std::vector<std::uint64_t> edges;
         for (const auto& t : m_t) {
             const Vec3 &a = m_p[t[0]], &b = m_p[t[1]], &c = m_p[t[2]];
@@ -383,15 +386,34 @@ void SculptMesh::refineRegion(const Vec3& centre, float radius, float detail) {
             // Slivers left by booleans are not split: a midpoint could land on another vertex.
             const Vec3 cr = cross(b - a, c - a);
             if (dot(cr, cr) <= d2 * d2 * 1e-8) continue;
+            // Edges that pass under the brush, and the longest edge of each triangle the
+            // brush touches (longest-edge bisection: local, and the triangles stay
+            // well shaped). Splitting every long edge of a touched triangle would fan
+            // refinement far out along a coarse mesh.
+            int longest = 0;
+            float longestL2 = 0.0f;
             for (int e = 0; e < 3; ++e) {
                 const Vec3 d = m_p[t[(e + 1) % 3]] - m_p[t[e]];
-                if (dot(d, d) > d2) edges.push_back(edgeKey(t[e], t[(e + 1) % 3]));
+                if (dot(d, d) > longestL2) {
+                    longestL2 = dot(d, d);
+                    longest = e;
+                }
+            }
+            if (longestL2 > d2) edges.push_back(edgeKey(t[longest], t[(longest + 1) % 3]));
+            for (int e = 0; e < 3; ++e) {
+                const Vec3 &p0 = m_p[t[e]], &p1 = m_p[t[(e + 1) % 3]];
+                const Vec3 d = p1 - p0;
+                const float l2 = dot(d, d);
+                if (l2 <= d2) continue;
+                const float u = std::clamp(dot(centre - p0, d) / l2, 0.0f, 1.0f);
+                const Vec3 w = p0 + d * u - centre;
+                if (dot(w, w) <= r2) edges.push_back(edgeKey(t[e], t[(e + 1) % 3]));
             }
         }
         if (edges.empty()) break;
         std::sort(edges.begin(), edges.end());
         edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
-        if (!splitEdges(edges, 4000000)) break;
+        if (!splitEdges(edges, budget)) break;
     }
 }
 
@@ -416,15 +438,37 @@ std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float r
     const float min2 = minEdge * minEdge, r2 = radius * radius;
     std::size_t total = 0;
     for (int pass = 0; pass < 12; ++pass) {
+        // The triangles that can take part: under the brush, every triangle on an edge
+        // short enough to go has a corner within radius + minEdge of the centre (so
+        // the rings of the edge's ends are complete); else all of them.
+        std::vector<std::uint32_t> local;
+        if (radius > 0) {
+            const float reach2 = (radius + minEdge) * (radius + minEdge);
+            for (std::size_t i = 0; i < m_t.size(); ++i)
+                for (std::uint32_t v : m_t[i]) {
+                    const Vec3 q = m_p[v] - centre;
+                    if (dot(q, q) <= reach2) {
+                        local.push_back(static_cast<std::uint32_t>(i));
+                        break;
+                    }
+                }
+        } else {
+            local.resize(m_t.size());
+            for (std::size_t i = 0; i < local.size(); ++i) local[i] = static_cast<std::uint32_t>(i);
+        }
+        if (local.empty()) break;
         // Vertex -> triangles, and open-border vertices (left alone).
         std::vector<std::vector<std::uint32_t>> around(m_p.size());
-        for (std::size_t i = 0; i < m_t.size(); ++i)
-            for (std::uint32_t v : m_t[i]) around[v].push_back(static_cast<std::uint32_t>(i));
-        // Edge use counts by sorting the edge keys.
+        for (std::uint32_t i : local)
+            for (std::uint32_t v : m_t[i]) around[v].push_back(i);
+        // Edge use counts by sorting the edge keys (an edge at the rim of the local set
+        // counts once: its ends are out of reach and so never collapse).
         std::vector<std::uint64_t> keys;
-        keys.reserve(m_t.size() * 3);
-        for (const auto& t : m_t)
+        keys.reserve(local.size() * 3);
+        for (std::uint32_t i : local) {
+            const auto& t = m_t[i];
             for (int e = 0; e < 3; ++e) keys.push_back(edgeKey(t[static_cast<std::size_t>(e)], t[static_cast<std::size_t>((e + 1) % 3)]));
+        }
         std::sort(keys.begin(), keys.end());
         std::vector<std::pair<std::uint64_t, int>> count;
         for (std::size_t i = 0; i < keys.size();) {
@@ -549,7 +593,7 @@ std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float r
 }
 
 void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
-    const float R = std::max(s.radius, 1e-3f), R2 = R * R;
+    const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f}), R2 = R * R;
     std::vector<std::pair<std::uint32_t, float>> region;
     for (std::size_t i = 0; i < m_p.size(); ++i) {
         const Vec3 d = m_p[i] - centre;
@@ -572,7 +616,7 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
     N = normalize(N);
 
     const float sign = s.invert ? -1.0f : 1.0f;
-    const float st = std::clamp(s.strength, 0.0f, 1.0f);
+    const float st = std::isfinite(s.strength) ? std::clamp(s.strength, 0.0f, 1.0f) : 0.0f;
     const float k = st * 0.1f * R; // displacement per dab at the centre
 
     std::vector<Vec3> avg;
@@ -632,7 +676,9 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
 
 void SculptMesh::dab(const Vec3& centre, const SculptSettings& s) {
     if (s.brush == SculptBrush::Grab || m_t.empty()) return;
-    const float R = std::max(s.radius, 1e-3f);
+    // A brush no smaller than 0.2% of the body: below that, dynamic topology
+    // would refine without end.
+    const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
     const float detail = std::max(s.detail > 0 ? s.detail : R * 0.25f, m_size * 2e-4f);
     // Mirror only when the two dabs do not overlap much (no double strength on the plane).
     const bool mirror = s.symmetryX && std::fabs(centre.x - m_mirrorX) > R * 0.25f;
@@ -653,7 +699,7 @@ void SculptMesh::dab(const Vec3& centre, const SculptSettings& s) {
 
 void SculptMesh::beginGrab(const Vec3& centre, const SculptSettings& s) {
     m_grab.clear();
-    const float R = std::max(s.radius, 1e-3f);
+    const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
     if (s.refine) { // something to hold on to, even on a coarse block
         const float detail = std::max(s.detail > 0 ? s.detail : R * 0.25f, m_size * 2e-4f);
         refineRegion(centre, R, detail);
@@ -750,7 +796,10 @@ void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSetti
         sm.beginGrab(sm.closestPoint(points.front()), s);
         sm.grabTo(delta);
     } else {
-        const float spacing = std::max(s.radius * 0.25f, 1e-3f);
+        // At most ~1000 dabs a stroke, whatever the radius.
+        float total = 0.0f;
+        for (std::size_t i = 1; i < points.size(); ++i) total += length(points[i] - points[i - 1]);
+        const float spacing = std::max({s.radius * 0.25f, total / 1000.0f, 1e-3f});
         sm.dab(sm.closestPoint(points.front()), s);
         float carry = 0.0f;
         for (std::size_t i = 1; i < points.size(); ++i) {
@@ -1262,6 +1311,8 @@ public:
         m_ptEdge.assign(P.size(), 0);
         seg[0].resize(a.t.size());
         seg[1].resize(b.t.size());
+        coplanar[0].assign(a.t.size(), 0);
+        coplanar[1].assign(b.t.size(), 0);
     }
 
     // Intersects every pair of triangles whose boxes overlap.
@@ -1290,12 +1341,15 @@ public:
     // Re-triangulates every cut triangle of mesh `side`; returns all its triangles
     // (global point ids) with corner normals, and adds the seam edges to `seam`.
     void triangulate(int side, std::vector<std::array<std::uint32_t, 3>>& outT, std::vector<std::array<D3, 3>>& outN,
-                     std::vector<char>& outCut);
+                     std::vector<char>& outCut, std::vector<char>& outFlat);
 
     bool isSeam(std::uint32_t a, std::uint32_t b) const { return m_seam.count(edgeKey(a, b)) != 0; }
 
     std::vector<D3> P;
     std::vector<std::vector<std::pair<std::uint32_t, std::uint32_t>>> seg[2];
+    // Per triangle: it lies in the plane of a triangle of the other mesh that it
+    // overlaps (faces in contact), so it may lie on the other's surface.
+    std::vector<char> coplanar[2];
 
 private:
     std::uint32_t gid(int mesh, std::uint32_t v) const { return m_base[mesh] + v; }
@@ -1357,7 +1411,16 @@ private:
         const IMesh& A = *m_m[0];
         const IMesh& B = *m_m[1];
         bool sa[3], sb[3];
-        for (int i = 0; i < 3; ++i) sa[i] = side(1, tb, 0, A.t[ta][static_cast<std::size_t>(i)]) >= 0;
+        bool flat = true;
+        for (int i = 0; i < 3; ++i) {
+            const Wide d = side(1, tb, 0, A.t[ta][static_cast<std::size_t>(i)]);
+            sa[i] = d >= 0;
+            flat = flat && d == 0;
+        }
+        if (flat) { // coplanar: no seam, but both faces are classified with care
+            coplanar[0][ta] = coplanar[1][tb] = 1;
+            return;
+        }
         if (sa[0] == sa[1] && sa[1] == sa[2]) return;
         for (int i = 0; i < 3; ++i) sb[i] = side(0, ta, 1, B.t[tb][static_cast<std::size_t>(i)]) >= 0;
         if (sb[0] == sb[1] && sb[1] == sb[2]) return;
@@ -1629,11 +1692,19 @@ public:
 };
 
 void Arrangement::triangulate(int sideIdx, std::vector<std::array<std::uint32_t, 3>>& outT,
-                              std::vector<std::array<D3, 3>>& outN, std::vector<char>& outCut) {
+                              std::vector<std::array<D3, 3>>& outN, std::vector<char>& outCut, std::vector<char>& outFlat) {
     const IMesh& X = *m_m[sideIdx];
     for (std::size_t ti = 0; ti < X.t.size(); ++ti) {
         const auto& t = X.t[ti];
         const auto& segs = seg[sideIdx][ti];
+        const std::size_t first = outT.size();
+        struct Flag { // every piece of a coplanar triangle is flagged
+            std::vector<char>& out;
+            const std::vector<std::array<std::uint32_t, 3>>& tris;
+            std::size_t from;
+            char value;
+            ~Flag() { out.resize(tris.size(), 0); std::fill(out.begin() + static_cast<std::ptrdiff_t>(from), out.end(), value); }
+        } flag{outFlat, outT, first, coplanar[sideIdx][ti]};
         if (segs.empty()) {
             outT.push_back({gid(sideIdx, t[0]), gid(sideIdx, t[1]), gid(sideIdx, t[2])});
             outN.push_back(X.n[ti]);
@@ -1828,15 +1899,15 @@ bool meshBoolean(MeshData& a, const MeshData& b, BooleanOp op) {
     arr.intersectAll();
     std::vector<std::array<std::uint32_t, 3>> tA, tB;
     std::vector<std::array<D3, 3>> nA, nB;
-    std::vector<char> cutA, cutB;
-    arr.triangulate(0, tA, nA, cutA);
-    arr.triangulate(1, tB, nB, cutB);
+    std::vector<char> cutA, cutB, flatA, flatB;
+    arr.triangulate(0, tA, nA, cutA, flatA);
+    arr.triangulate(1, tB, nB, cutB, flatB);
     const WindingField windA(trianglesOf(A)), windB(trianglesOf(B));
     const double delta = scale * 1e-6;
 
     // One winding test per region (its largest triangle), not per triangle.
     auto keepMask = [&](const std::vector<std::array<std::uint32_t, 3>>& tris, const std::vector<char>& cut,
-                        const WindingField& other, double offsetSign, bool keepInside) {
+                        const std::vector<char>& flat, const WindingField& other, double offsetSign, bool keepInside, bool isA) {
         const std::vector<std::uint32_t> reg = regions(tris, cut, arr);
         // Each region is tested at the incentre of its fattest triangle (largest inradius),
         // the point furthest from its edges, and so from the seams.
@@ -1851,7 +1922,13 @@ bool meshBoolean(MeshData& a, const MeshData& b, BooleanOp op) {
             const double l0 = dlen(p2 - p1), l1 = dlen(p0 - p2), l2 = dlen(p1 - p0), sum = l0 + l1 + l2;
             return sum > 0 ? (p0 * l0 + p1 * l1 + p2 * l2) * (1.0 / sum) : p0;
         };
+        // Representatives off the contact faces where the region has any: a point on a
+        // face the other mesh shares cannot tell inside from outside.
+        std::unordered_map<std::uint32_t, char> hasOff;
+        for (std::size_t i = 0; i < tris.size(); ++i)
+            if (!flat[i]) hasOff[reg[i]] = 1;
         for (std::size_t i = 0; i < tris.size(); ++i) {
+            if (flat[i] && hasOff.count(reg[i])) continue;
             const double r = inradius(tris[i]);
             auto& bst = biggest[reg[i]];
             if (r >= bst.first) bst = {r, static_cast<std::uint32_t>(i)};
@@ -1907,10 +1984,25 @@ bool meshBoolean(MeshData& a, const MeshData& b, BooleanOp op) {
         }
         std::vector<char> mask(tris.size());
         for (std::size_t i = 0; i < tris.size(); ++i) mask[i] = keep[reg[i]];
+        // Pieces lying on the other's surface (faces in contact): one copy of a face
+        // both solids share on the same side stays in a union or an intersection; faces
+        // where the solids meet back to back go, except A's in a subtraction.
+        for (std::size_t i = 0; i < tris.size(); ++i) {
+            if (!flat[i]) continue;
+            const auto& t = tris[i];
+            const double r = inradius(t);
+            if (!(r > 0)) continue;
+            const D3 c = incentre(t);
+            const double w = other(c);
+            if (std::fabs(w - 0.5) > 0.25) continue; // beside the other's face: as its region
+            const D3 n = dnorm(dcross(arr.P[t[1]] - arr.P[t[0]], arr.P[t[2]] - arr.P[t[0]]));
+            const bool same = other(c + n * std::min(delta, r * 0.01)) < 0.5; // the other solid is behind it too
+            mask[i] = static_cast<char>(isA && (same ? op != BooleanOp::Subtract : op == BooleanOp::Subtract));
+        }
         return mask;
     };
-    const std::vector<char> keepA = keepMask(tA, cutA, windB, -1.0, op == BooleanOp::Intersect);
-    const std::vector<char> keepB = keepMask(tB, cutB, windA, 1.0, op != BooleanOp::Union);
+    const std::vector<char> keepA = keepMask(tA, cutA, flatA, windB, -1.0, op == BooleanOp::Intersect, true);
+    const std::vector<char> keepB = keepMask(tB, cutB, flatB, windA, 1.0, op != BooleanOp::Union, false);
 
     std::vector<OutTri> soup;
     for (std::size_t i = 0; i < tA.size(); ++i)
@@ -2116,7 +2208,11 @@ void setWorldMesh(Body& body, MeshData m) {
 // meshBoolean, retried with the tool nudged by a hundred-thousandth of its size when
 // a coincidence (faces or edges exactly on each other) leaves the result unclosed.
 bool robustBoolean(MeshData& a, const MeshData& tool, BooleanOp op) {
-    const bool closedInput = openEdgeCount(a) == 0; // (cutters close up within the boolean)
+    // Closed once welded (round primitives have seams of nearly equal points); the
+    // cutters close up within the boolean.
+    Body input;
+    input.mesh = a;
+    const bool closedInput = SculptMesh(input).openEdges() == 0;
     MeshData best;
     std::size_t bestOpen = static_cast<std::size_t>(-1);
     const AABB tb = tool.bounds();
