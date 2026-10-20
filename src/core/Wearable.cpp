@@ -418,30 +418,43 @@ std::optional<Body> armorFor(const Body& source, float clearance, float thicknes
     const float reach = band + h * 2.0f;
     // The signed distance to the body (far voxels: `reach`; they are never armour).
     std::vector<float> f(static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz), reach);
-    // Only voxels within reach of some triangle can be in the armour.
-    std::vector<char> nearMask(f.size(), 0);
-    for (const auto& t : grid.tris) {
-        AABB tb;
-        for (const Vec3& v : t) tb.expand(v);
-        const int x0 = std::max(0, static_cast<int>((tb.min.x - reach - origin.x) / h)), x1 = std::min(nx - 1, static_cast<int>((tb.max.x + reach - origin.x) / h));
-        const int y0 = std::max(0, static_cast<int>((tb.min.y - reach - origin.y) / h)), y1 = std::min(ny - 1, static_cast<int>((tb.max.y + reach - origin.y) / h));
-        const int z0 = std::max(0, static_cast<int>((tb.min.z - reach - origin.z) / h)), z1 = std::min(nz - 1, static_cast<int>((tb.max.z + reach - origin.z) / h));
-        for (int x = x0; x <= x1; ++x)
-            for (int y = y0; y <= y1; ++y)
-                for (int z = z0; z <= z1; ++z)
-                    nearMask[(static_cast<std::size_t>(x) * static_cast<std::size_t>(ny) + static_cast<std::size_t>(y)) * static_cast<std::size_t>(nz) + static_cast<std::size_t>(z)] = 1;
-    }
+    // Exact distances only where they matter: near the surface (the flood's barrier)
+    // and around the two faces, within the blur's reach. A coarse pass (every 4th
+    // voxel) bounds the rest: the distance changes by at most the step to the nearest
+    // coarse sample, so a voxel well inside the gap or well outside keeps an estimate.
+    const auto sx = static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz), sy = static_cast<std::size_t>(nz);
+    auto centreOf = [&](int x, int y, int z) {
+        return origin + Vec3{(static_cast<float>(x) + 0.5f) * h, (static_cast<float>(y) + 0.5f) * h, (static_cast<float>(z) + 0.5f) * h};
+    };
+    constexpr int kStep = 4;
+    const float slack = 3.0f * h * 1.7321f; // up to 3 voxels from a coarse sample on each axis
+    const float far = band + 4.0f * h;      // beyond this: never armour, never blurred into it
+    const int cx = (nx - 1) / kStep + 1, cy = (ny - 1) / kStep + 1, cz = (nz - 1) / kStep + 1;
+    std::vector<float> coarse(static_cast<std::size_t>(cx) * static_cast<std::size_t>(cy) * static_cast<std::size_t>(cz));
+    for (int x = 0; x < cx; ++x)
+        for (int y = 0; y < cy; ++y)
+            for (int z = 0; z < cz; ++z) {
+                const auto d = grid.nearest(centreOf(x * kStep, y * kStep, z * kStep), far + slack);
+                coarse[(static_cast<std::size_t>(x) * static_cast<std::size_t>(cy) + static_cast<std::size_t>(y)) * static_cast<std::size_t>(cz) +
+                       static_cast<std::size_t>(z)] = d ? *d : far + slack;
+            }
     for (int x = 0; x < nx; ++x)
         for (int y = 0; y < ny; ++y)
             for (int z = 0; z < nz; ++z) {
-                if (!nearMask[(static_cast<std::size_t>(x) * static_cast<std::size_t>(ny) + static_cast<std::size_t>(y)) * static_cast<std::size_t>(nz) + static_cast<std::size_t>(z)])
+                const int kx = std::min((x + kStep / 2) / kStep, cx - 1), ky = std::min((y + kStep / 2) / kStep, cy - 1),
+                          kz = std::min((z + kStep / 2) / kStep, cz - 1);
+                const float dc = coarse[(static_cast<std::size_t>(kx) * static_cast<std::size_t>(cy) + static_cast<std::size_t>(ky)) *
+                                            static_cast<std::size_t>(cz) +
+                                        static_cast<std::size_t>(kz)];
+                const float lo = dc - slack, hi = dc + slack;
+                const std::size_t i = static_cast<std::size_t>(x) * sx + static_cast<std::size_t>(y) * sy + static_cast<std::size_t>(z);
+                if (lo > far) continue; // stays `reach`
+                const bool needed = lo <= 2.0f * h || (hi >= clearance - 4.0f * h && lo <= far);
+                if (!needed) {
+                    f[i] = std::min(dc, reach); // in the gap between the body and the inner face
                     continue;
-                const Vec3 p = origin + Vec3{(static_cast<float>(x) + 0.5f) * h, (static_cast<float>(y) + 0.5f) * h,
-                                             (static_cast<float>(z) + 0.5f) * h};
-                const auto d = grid.nearest(p, reach);
-                if (!d) continue;
-                f[(static_cast<std::size_t>(x) * static_cast<std::size_t>(ny) + static_cast<std::size_t>(y)) * static_cast<std::size_t>(nz) +
-                  static_cast<std::size_t>(z)] = *d;
+                }
+                if (const auto d = grid.nearest(centreOf(x, y, z), reach)) f[i] = *d;
             }
     // Outside: what a flood from the grid's border reaches without crossing the layer
     // of voxels within one cell of the surface. Topological, so the noisy inside /
@@ -450,7 +463,6 @@ std::optional<Body> armorFor(const Body& source, float clearance, float thicknes
     {
         std::vector<char> outside(f.size(), 0);
         std::vector<std::size_t> stack;
-        const auto sx = static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz), sy = static_cast<std::size_t>(nz);
         auto open = [&](int x, int y, int z) {
             const std::size_t i = static_cast<std::size_t>(x) * sx + static_cast<std::size_t>(y) * sy + static_cast<std::size_t>(z);
             if (outside[i] || f[i] <= h) return;
@@ -491,7 +503,6 @@ std::optional<Body> armorFor(const Body& source, float clearance, float thicknes
     // distance.
     {
         std::vector<float> tmp(f.size());
-        const auto sx = static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz), sy = static_cast<std::size_t>(nz);
         for (int pass = 0; pass < 2; ++pass)
             for (int axis = 0; axis < 3; ++axis) {
                 const int n = axis == 0 ? nx : axis == 1 ? ny : nz;

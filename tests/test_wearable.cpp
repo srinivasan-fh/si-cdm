@@ -174,3 +174,26 @@ TEST_CASE("joints swing a part and the interference check finds the collision") 
     CHECK(rep.pairs.empty());
     CHECK(rep.restOverlaps == 1);
 }
+
+TEST_CASE("shell and lighten take round primitives and refuse impossible walls") {
+    Body ball = makeBody("Ball", "sphere", {30});
+    std::string error;
+    LightenOptions lo;
+    double before = 0, after = 0;
+    REQUIRE(lightenBody(ball, lo, &error, &before, &after));
+    CHECK(after < before * 0.8);
+    CHECK(SculptMesh(ball).openEdges() == 0); // the sphere's own seam welds shut
+
+    Body rod = makeBody("Rod", "cylinder", {20, 60});
+    ShellOptions so;
+    so.thickness = 3;
+    REQUIRE(shellBody(rod, so, &error));
+    CHECK(openEdgeCount(rod.mesh) == 0);
+
+    Body slab = makeBody("Slab", "box", {0, 0, 0, 60, 40, 10});
+    so.thickness = 6; // two 6 mm walls in a 10 mm slab leave no cavity
+    CHECK(!shellBody(slab, so, &error));
+    CHECK(error.find("no cavity") != std::string::npos);
+    so.outward = true; // outwards it is fine
+    CHECK(shellBody(slab, so, &error));
+}

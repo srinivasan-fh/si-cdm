@@ -108,7 +108,9 @@ public:
         m_revision = nextRevision();
         return m_bodies.emplace_back(std::move(body));
     }
-    void remove(std::size_t index);
+    void remove(std::size_t index); // bodies attached to it are let go
+    // Renames a body; what refers to it by name (attachments, motions) follows.
+    void renameBody(std::size_t index, const std::string& name);
     // Call after changing a body's mesh in place (rebuild, setScale).
     void touchBodies() noexcept { m_revision = nextRevision(); }
 

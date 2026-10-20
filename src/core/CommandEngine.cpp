@@ -1375,6 +1375,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                 offBody = vecText(p) + fmt(" is %g mm away from ", length(q - p)) + body.name;
             return q;
         };
+        if (body.mesh.indices.empty()) return out.fail(body.name + " has no surface to work on");
         doc.scene.pushUndo(toUpper(cmd) + " on " + body.name);
         if (cmd == "SCULPT") {
             if (refineOnly) {
@@ -1496,7 +1497,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                     for (++i; i < a.size(); ++i) {
                         const int b = findBody(doc, a[i]);
                         if (b < 0) return out.fail("No body named " + a[i]);
-                        set.push_back(static_cast<std::size_t>(b));
+                        if (std::find(set.begin(), set.end(), static_cast<std::size_t>(b)) == set.end()) set.push_back(static_cast<std::size_t>(b));
                     }
                 } else {
                     return usage();
@@ -1536,7 +1537,12 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                     merge = true;
                 } else if (k == "part") {
                     std::vector<std::string> w;
-                    for (++i; i < a.size() && !isKey(a[i]) && !iequal(a[i], "merge"); ++i) w.push_back(a[i]);
+                    // Words up to the next ARMOR option (so "ball" or "hinge" can be part words).
+                    for (++i; i < a.size(); ++i) {
+                        const std::string q = lower(a[i]);
+                        if (!quotedArg(i) && (q == "clearance" || q == "thickness" || q == "merge")) break;
+                        w.push_back(a[i]);
+                    }
                     --i;
                     partWord = lower(joinArgs(w));
                     if (partWord.empty()) return out.fail("PART needs a word, e.g. PART Forearm");
@@ -1671,6 +1677,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             if (!at) return out.fail("JOINT needs AT x,y,z (the pivot)");
             const int pi = parentWords.empty() ? -1 : findBody(doc, joinArgs(parentWords));
             if (!parentWords.empty() && pi < 0) return out.fail("No body named " + joinArgs(parentWords));
+            if (pi == ci) return out.fail("A part cannot hinge on itself: TO names the part it is jointed to");
             doc.scene.pushUndo("JOINT");
             auto& bodies = doc.scene.bodies();
             const std::string child = bodies[static_cast<std::size_t>(ci)].name;

@@ -214,3 +214,63 @@ TEST_CASE("a quoted name is a name even when it reads like a keyword") {
     REQUIRE(run(d, R"(BOOLEAN "Ball" UNION "Arm, \"left\"" KEEP)").ok);
     CHECK(d.scene.bodies().size() == 2);
 }
+
+TEST_CASE("booleans of bodies that touch face to face, and far from the origin") {
+    // Side by side along x: one shared face, opposite normals.
+    for (const BooleanOp op : {BooleanOp::Union, BooleanOp::Intersect}) {
+        Body a = makeBody("A", "box", {0, 0, 0, 10, 10, 10});
+        const Body b = makeBody("B", "box", {10, 0, 0, 20, 10, 10});
+        std::string error;
+        const bool ok = bodyBoolean(a, b, op, &error);
+        if (op == BooleanOp::Union) {
+            REQUIRE(ok);
+            CHECK_NEAR(meshVolume(a.mesh), 2000.0, 1e-3);
+            CHECK(openEdgeCount(a.mesh) == 0);
+        } else {
+            CHECK(!ok || std::fabs(meshVolume(a.mesh)) < 1e-3); // touching solids share no volume
+        }
+    }
+    // A face shared on the same side: a slab cut off the end of a block.
+    Body a = makeBody("A", "box", {0, 0, 0, 10, 10, 10});
+    const Body b = makeBody("B", "box", {0, 0, 0, 4, 10, 10});
+    std::string error;
+    REQUIRE(bodyBoolean(a, b, BooleanOp::Subtract, &error));
+    CHECK_NEAR(meshVolume(a.mesh), 600.0, 600.0 * 1e-4); // partly shared side faces: the nudged retry
+    CHECK(openEdgeCount(a.mesh) == 0);
+
+    // Far out, a boolean is as exact as at the origin (it runs in the body's frame).
+    Body far = makeBody("F", "box", {0, 0, 0, 10, 10, 10});
+    Body other = makeBody("G", "box", {5, 5, 5, 15, 15, 15});
+    far.offset = other.offset = {1e5f, 1e5f, 0};
+    REQUIRE(bodyBoolean(far, other, BooleanOp::Intersect, &error));
+    CHECK_NEAR(meshVolume(far.mesh), 125.0, 1e-3);
+
+    // A channel that doubles back within its own width is refused, not half-cut.
+    Body plate = makeBody("P", "box", {0, 0, 0, 100, 100, 20});
+    CHECK(!cutChannel(plate, {{20, 50, 20}, {80, 50, 20}, {80, 54, 20}, {20, 54, 20}},
+                      {{0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}}, 6, 3, &error));
+    CHECK(plate.mesh.indices.size() == 36);
+}
+
+TEST_CASE("undo keeps later work and restores motions") {
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 10 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 60 40 10 @70,0,0").ok);
+    const std::size_t motions = d.scene.motions().size();
+    REQUIRE(run(d, "JOINT \"Block 2\" TO \"Block 1\" AT 35,0,5 AXIS Y RANGE -30 30").ok);
+    CHECK(d.scene.motions().size() == motions + 1);
+    CHECK(!run(d, "JOINT \"Block 2\" TO \"Block 2\" AT 35,0,5").ok); // not on itself
+    // A move after the joint survives its undo; the swing goes with the pin.
+    d.scene.bodies()[0].offset.x += 5;
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.motions().size() == motions);
+    CHECK(d.scene.bodies().size() == 2);
+    CHECK_NEAR(d.scene.bodies()[0].offset.x, 5, 1e-4);
+
+    // A body added after an edit is not swept away by its undo.
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 5,0,10 DIAMETER 6").ok);
+    REQUIRE(run(d, "SPHERE 10 @300,0,0").ok);
+    const auto r = run(d, "UNDO");
+    CHECK(!r.ok);
+    CHECK(d.scene.bodies().size() == 3);
+}

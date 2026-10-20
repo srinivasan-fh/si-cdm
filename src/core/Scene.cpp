@@ -189,8 +189,28 @@ AABB Body::bounds() const noexcept {
 
 void Scene::remove(std::size_t index) {
     if (index >= m_bodies.size()) return;
+    const std::string name = m_bodies[index].name;
     m_bodies.erase(m_bodies.begin() + static_cast<std::ptrdiff_t>(index));
+    // Nothing stays attached to a body that is gone (a later one of that name would
+    // otherwise pick up its armour and pins).
+    bool another = false;
+    for (const Body& b : m_bodies) another = another || b.name == name;
+    if (!another)
+        for (Body& b : m_bodies)
+            if (b.attachedTo == name) b.attachedTo.clear();
     m_revision = nextRevision();
+}
+
+void Scene::renameBody(std::size_t index, const std::string& name) {
+    if (index >= m_bodies.size() || name.empty()) return;
+    const std::string old = m_bodies[index].name;
+    if (old == name) return;
+    m_bodies[index].name = name;
+    for (Body& b : m_bodies)
+        if (b.attachedTo == old) b.attachedTo = name;
+    for (Motion& m : m_motions)
+        for (std::string& b : m.bodies)
+            if (b == old) b = name;
 }
 
 std::optional<RayHit> Scene::raycast(const Ray& ray, const std::vector<Mat4>* transforms) const noexcept {

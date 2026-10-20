@@ -2198,12 +2198,6 @@ MeshData worldMesh(const Body& body) {
 
 namespace {
 
-void setWorldMesh(Body& body, MeshData m) {
-    if (body.offset.x != 0 || body.offset.y != 0 || body.offset.z != 0) m.transform(translate(-body.offset));
-    body.mesh = std::move(m);
-    body.kind = "mesh";
-    body.params.clear();
-}
 
 // meshBoolean, retried with the tool nudged by a hundred-thousandth of its size when
 // a coincidence (faces or edges exactly on each other) leaves the result unclosed.
@@ -2238,8 +2232,18 @@ bool robustBoolean(MeshData& a, const MeshData& tool, BooleanOp op) {
     return true;
 }
 
-bool applyCut(Body& body, const MeshData& tool, BooleanOp op, const char* what, std::string* error) {
-    MeshData a = worldMesh(body);
+// Cuts and booleans run in the body's own frame (its mesh as stored, the tool moved
+// into it): far from the origin, world floats would lose the detail.
+void setLocalMesh(Body& body, MeshData m) {
+    body.mesh = std::move(m);
+    body.kind = "mesh";
+    body.params.clear();
+}
+
+bool applyCut(Body& body, const MeshData& worldTool, BooleanOp op, const char* what, std::string* error) {
+    MeshData a = body.mesh;
+    MeshData tool = worldTool;
+    if (body.offset.x != 0 || body.offset.y != 0 || body.offset.z != 0) tool.transform(translate(-body.offset));
     const AABB ab = a.bounds(), tb = tool.bounds();
     if (ab.max.x < tb.min.x || ab.min.x > tb.max.x || ab.max.y < tb.min.y || ab.min.y > tb.max.y ||
         ab.max.z < tb.min.z || ab.min.z > tb.max.z) {
@@ -2258,7 +2262,14 @@ bool applyCut(Body& body, const MeshData& tool, BooleanOp op, const char* what, 
         if (error) *error = std::string("The ") + what + " does not touch " + body.name;
         return false;
     }
-    setWorldMesh(body, std::move(a));
+    // A cut that adds material, or an addition that removes it, is no solid result
+    // (a tool running through itself, a broken input): keep the body as it was.
+    const double slack = 1e-6 * std::max(std::fabs(before), 1.0);
+    if ((op == BooleanOp::Subtract && after > before + slack) || (op == BooleanOp::Union && after < before - slack) || !(after > 0)) {
+        if (error) *error = std::string("The ") + what + " did not give a clean solid; " + body.name + " is unchanged";
+        return false;
+    }
+    setLocalMesh(body, std::move(a));
     return true;
 }
 
@@ -2354,6 +2365,16 @@ bool cutChannel(Body& body, const std::vector<Vec3>& path, const std::vector<Vec
         even = std::move(s);
     }
     if (even.size() < 2) even.push_back(line.back());
+    // A path that comes back within its own width (a hairpin, a crossing) would make
+    // the tube run through itself: the cut would not be a solid.
+    for (std::size_t i = 0; i < even.size(); ++i)
+        for (std::size_t j = i + 5; j < even.size(); ++j) {
+            const Vec3 q = even[j] - even[i];
+            if (dot(q, q) < width * width * 0.98f) {
+                if (error) *error = "The channel path comes back within its own width: draw it as separate channels";
+                return false;
+            }
+        }
     return applyCut(body, cutterTube(even, r, 24), BooleanOp::Subtract, "channel", error);
 }
 
@@ -2422,14 +2443,17 @@ bool addBoss(Body& body, const Vec3& at, const Vec3& normal, BossShape shape, fl
 }
 
 bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error) {
-    MeshData m = worldMesh(a);
-    if (!robustBoolean(m, worldMesh(b), op)) {
+    MeshData m = a.mesh; // in a's frame (see applyCut)
+    MeshData other = b.mesh;
+    const Vec3 shift = b.offset - a.offset;
+    if (shift.x != 0 || shift.y != 0 || shift.z != 0) other.transform(translate(shift));
+    if (!robustBoolean(m, other, op)) {
         if (error)
             *error = op == BooleanOp::Subtract ? b.name + " does not overlap " + a.name + " or removes all of it"
                                                : "The bodies do not overlap";
         return false;
     }
-    setWorldMesh(a, std::move(m));
+    setLocalMesh(a, std::move(m));
     return true;
 }
 

@@ -40,6 +40,13 @@ exactly 100·80·60 − 92·72·52 mm³ and closed.
   sets of one field never cross, so the shell is closed even when the wall is only a voxel or two
   thick.
 
+**Limits.**
+
+- The wall must be at least half a voxel thick. That is about 2 mm on the humanoid's chest plate
+  and under 1 mm on a forearm; the command names the minimum.
+- A large clearance costs little: exact distances are computed only near the surface and the two
+  faces, and a coarse pass bounds the rest.
+
 `MERGE` makes one shell around several parts, for example a chest plate over the chest and both
 shoulder motors. The armour is named `Armor <part>`, remembers the part it is attached to (saved with
 the project), and takes the part's transform in every motion and in physics.
@@ -60,7 +67,12 @@ the project), and takes the part's transform in every motion and in physics.
   lattice wall.
 - The void is marched, smoothed and simplified, then added to the body as an inner, inverted surface.
 
-A 80 × 80 × 40 block with a 2 mm skin, a 12 mm cell and a 1.2 mm wall comes out 60–80 % lighter. It
+`LIGHTEN` checks what its voxels can resolve. The skin must be at least half a voxel. The cell must
+be at least four voxels. The wall must be at least half a voxel and less than half the cell. Spheres,
+cylinders, cones and tori count as closed: their seams are welded with a tolerance.
+`SHELL` refuses an inward wall that would leave no cavity, and suggests `OUTWARD` instead.
+
+An 80 × 80 × 40 block with a 2 mm skin, a 12 mm cell and a 1.2 mm wall comes out 60–80 % lighter. It
 stays closed and printable. Its outer surface is untouched.
 
 **Interference.**

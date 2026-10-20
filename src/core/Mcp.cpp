@@ -627,13 +627,13 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                     break;
                 }
         }
-        for (Body& b : bodies)
-            if (b.name == target) {
+        for (std::size_t bi = 0; bi < bodies.size(); ++bi)
+            if (Body& b = bodies[bi]; b.name == target) {
                 if (a["position"].isArray()) b.offset = v3("position");
                 if (a["move_by"].isArray()) b.offset += v3("move_by");
                 if (a["visible"].isBool()) b.visible = a["visible"].asBool();
                 if (a["color"].isArray()) b.color = v3("color");
-                rename(b.name);
+                if (a["rename"].isString() && !a["rename"].asString().empty()) m_doc.scene.renameBody(bi, a["rename"].asString());
                 m_doc.dirty = m_changed = true;
                 return textResult("Updated body " + b.name, false);
             }
@@ -734,7 +734,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["open_point"].isArray())
                 line += " OPEN " + vec(a["open_point"]) + (a["open_normal"].isArray() ? " NORMAL " + vec(a["open_normal"]) : "");
         } else if (op == "armor") {
-            line = "ARMOR " + body + (a["part"].isString() ? " PART " + a["part"].asString() : "") +
+            line = "ARMOR " + body + (a["part"].isString() ? " PART " + quote(a["part"].asString()) : "") +
                    (a["part"].isString() && a["merge"].asBool() ? " MERGE" : "") + opt("clearance", "CLEARANCE") +
                    opt("thickness", "THICKNESS");
         } else if (op == "joint") {

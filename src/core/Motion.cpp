@@ -285,13 +285,20 @@ void applyAttachments(const Scene& scene, std::vector<Mat4>& tf) {
     if (!any) return;
     std::unordered_map<std::string, std::size_t> byName;
     for (std::size_t i = 0; i < bodies.size(); ++i) byName.emplace(bodies[i].name, i);
-    // Chains (a pin on armour on a part) settle within a few rounds.
-    for (int round = 0; round < 4; ++round)
-        for (std::size_t i = 0; i < bodies.size() && i < tf.size(); ++i) {
-            if (bodies[i].attachedTo.empty()) continue;
-            const auto it = byName.find(bodies[i].attachedTo);
-            if (it != byName.end() && it->second != i && it->second < tf.size()) tf[i] = tf[it->second];
+    // Each attached body takes the transform of the end of its chain (a pin on armour
+    // on a part: the part's); a cycle (only a hand-edited file has one) stops there.
+    const std::vector<Mat4> own = tf;
+    for (std::size_t i = 0; i < bodies.size() && i < tf.size(); ++i) {
+        std::size_t root = i;
+        for (std::size_t step = 0; step <= bodies.size(); ++step) {
+            if (bodies[root].attachedTo.empty()) break;
+            const auto it = byName.find(bodies[root].attachedTo);
+            if (it == byName.end() || it->second == root) break;
+            root = it->second;
+            if (root == i) break; // cycle
         }
+        if (root != i && root < own.size()) tf[i] = own[root];
+    }
 }
 
 Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::size_t before,

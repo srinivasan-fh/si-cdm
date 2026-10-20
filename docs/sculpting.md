@@ -26,9 +26,15 @@ Drag over a body. **Ctrl** inverts the brush, **Shift** smooths with any brush, 
 The settings are radius, strength (0 to 1), **Symmetry X** (mirrors the stroke across the body's centre)
 and **Dyntopo**.
 
-**Dynamic topology.** Each dab first splits every edge under the brush that is longer than the detail
-size (default: a quarter of the radius). The splits stay conforming, so the surface stays closed. A
-12-triangle block can be sculpted as freely as a dense scan.
+**Dynamic topology.** Each dab first splits the edges that pass under the brush and are longer than
+the detail size (default: a quarter of the radius), and the longest edge of each triangle it touches.
+After the dab it collapses edges under the brush that became much shorter than the detail. The splits
+stay conforming, so the surface stays closed. A 12-triangle block can be sculpted as freely as a dense
+scan.
+
+- One dab may add only about as many triangles as its own disc needs.
+- A stroke has at most about 1000 dabs.
+- The brush is never smaller than 0.2 % of the body's size, so a tiny radius cannot run away.
 
 **How a dab works.**
 
@@ -68,8 +74,35 @@ Hard CAD edges stay crisp in the shading: normals are smoothed only across edges
 **Results.** Holes, pockets, bosses and two-body booleans on clean solids come out with the exact
 volume (for example a Ø20 through hole removes exactly its 48-sided prism) and with no open edges.
 
-**Limits.** Self-intersecting input can leave a few open edges. A brush stroke folded through itself
-is an example. The command reports them ("N open edges"), and `UNDO` restores the body.
+**Faces in contact.** Bodies that touch face to face (blocks side by side, a slab cut off the end of a
+block) are handled with the coplanar rule:
+
+- Where both solids lie on the same side of a shared face, one copy stays in a union or intersection.
+- Where they meet back to back, both faces go.
+
+A region's test point is never taken on such a face. Faces that only partly overlap go through a
+retry with the tool nudged by a hundred-thousandth of its size. That result is closed, and its
+volume is accurate to about 1e-5.
+
+**Precision.** Booleans and cuts run in the body's own frame, so a part far from the origin is cut
+as exactly as one at it.
+
+**Limits.**
+
+- Self-intersecting input can leave a few open edges, for example a brush stroke folded through
+  itself. The command reports them ("N open edges").
+- A cut that would add material, or an addition that would remove it, is refused, and the body is
+  left unchanged.
+- A channel path that comes back within its own width is refused. Draw it as separate channels.
+
+**Undo.**
+
+- `UNDO` steps back through the last 16 shape edits (sculpt, cuts, booleans, armour, joints, shells,
+  lattices), within about 2 million vertices of history.
+- A joint's swing goes with its pin.
+- Moves, colours and renames made since the edit are kept.
+- If bodies were added, removed or rebuilt since the edit, `UNDO` says so and does nothing, rather
+  than sweep them away.
 
 **Export.** Results are ordinary triangle meshes. `EXPORT part.stl` sends them to a slicer for 3D
 printing, or to CAM for CNC machining.
