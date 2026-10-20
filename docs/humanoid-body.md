@@ -68,6 +68,7 @@ the return side is fixed by the standard.
 | --- | --- | --- |
 | **Male Humanoid Robot** (`HUMANOID`, `MALE`) | Head, neck, chest, heart, midriff, gut, pelvis, 2 legs, 2 arms with hands, 20 + 14 + hand motors; ultra-muscular build | `HEIGHT` 1676.4 to 1828.8 mm (5.5 to 6 ft, default 1752.6 = 5 ft 9 in), `FACE` Full black glass / Half black glass, `SUIT` None / Armour / Futuristic, `GLOVES`, `SHOES`, `HELMET`, `SIZE`, `FINISH` White / Black shells, `DEMO` Range of motion / March in place / Still, `DRIVE` (hands), `RPM`, `GEAR`, every limit above, `HEART_RATE` |
 | **Female Humanoid Robot** (`HUMANOID_FEMALE`, `FEMALE`) | The same parts, joints and motors; ultra-slim build | `HEIGHT` 1371.6 to 1676.4 mm (4.5 to 5.5 ft, default 1524 = 5 ft), and the same options as the male |
+| **Skeleton Robot** (`SKELETON`) | A human skeleton, bone for bone (below), on the same 64 joints | `HEIGHT` 1450 to 2000 mm (default 1750), `MOTORS` Hidden / Visible, `FINISH` Natural bone / Titanium, `SIZE`, `DEMO`, `DRIVE`, `RPM`, `GEAR`, every limit above |
 | **Robot Head & Neck** (`HEADNECK`) | Head, visor, neck on a pedestal, 3 motors | `SIZE`, `FINISH`, `RPM`, `GEAR`, `NECK_YAW` `NECK_PITCH` `NECK_ROLL` |
 | **Robot Upper Body** (`TORSO`) | Pelvis on a stand, gut, midriff, chest, heart, 3 motors | `SIZE`, `FINISH`, `RPM`, `GEAR`, `WAIST_ROT` `TRUNK_FLEX` `TRUNK_BEND`, `HEART_RATE` |
 | **Robot Leg** (`LEG`) | Hip mount on a stand, thigh, shin, foot, toe, 7 motors | `SIZE`, `FINISH`, `SIDE` Right / Left, `RPM`, `GEAR`, hip, knee, ankle and toe limits |
@@ -113,6 +114,41 @@ oval shape (elliptic sections, not a deep box), and the body below it scales to 
 | --- | --- |
 | **Full black glass** (default) | One smooth dark glass over the whole face, brow to chin, following the head's curve. |
 | **Half black glass** | A dark glass band across the eyes, wrapping round toward the ears, RoboCop style. The lower face is smooth shell. |
+
+## Skeleton Robot
+
+`PART SKELETON` builds a robot that copies the human skeleton:
+
+![Skeleton Robot: front, three-quarter, walking](skeleton.png)
+
+| Region | Bones |
+| --- | --- |
+| Head | Skull: the cranium with its base, upper face, upper jaw, brow ridge, nasal bones, cheekbones and zygomatic arches, mastoids, the lower jaw (mandible) and chin, and 28 teeth. The eye sockets and nasal opening are dark recesses. |
+| Neck | 7 cervical vertebrae, C7 to C1 |
+| Chest | 12 thoracic vertebrae (T12 to T1) in a gentle backward curve, and 12 pairs of ribs sloping down to the front. Ribs 1 to 7 reach the sternum through their cartilage, 8 to 10 join the cartilage above, and 11 and 12 float. Sternum (manubrium, body, xiphoid). |
+| Shoulders | Collarbones (S-curved), shoulder blades (blade, spine, acromion, coracoid, glenoid socket) |
+| Arms and hands | Humerus (head, tubercle, trochlea, epicondyles); radius on the thumb side and ulna with the elbow point; 8 wrist bones; 4 metacarpals; and the phalanges of every finger and the thumb |
+| Lower back and hips | 5 lumbar vertebrae (L5 to L1) in a gentle forward curve. The pelvis has the hip bones (iliac blades and crests, sockets, pubic and ischial rami, sit bones), pubic symphysis, sacrum and coccyx. |
+| Legs and feet | Femur (head, neck, trochanters, condyles), kneecap, tibia (plateau, tuberosity, inner ankle) and fibula (outer ankle). The ankle bones are the talus, heel bone, navicular, cuboid and three cuneiforms, then 5 metatarsals and the toe phalanges. |
+
+Each vertebra has its body, spinous and transverse processes and the arch round the spinal canal. The
+bones ride on the humanoid's joints, each with the joint that moves it:
+
+- **Lower back:** the lowest two lumbar vertebrae stay with the pelvis; the upper three turn with the waist.
+- **Chest:** the thoracic spine, ribs, sternum, collarbones and shoulder blades bend with the trunk.
+- **Neck and skull:** the cervical spine turns with the neck; the skull nods and tilts.
+- **Limbs:** each limb bone, finger bone and toe bone follows its own joint.
+
+So postures, gestures, the walk and the standard ranges of motion all work as on the humanoids. The drive
+motors are there but hidden (`MOTORS VISIBLE` shows them), and the soles that touch the floor are not
+drawn.
+
+```text
+PART SKELETON                          1.75 m, natural bone
+PART SKELETON HEIGHT 1600 FINISH TITANIUM
+PART SKELETON MOTORS VISIBLE           see the drive motors at work
+POSE squat      GESTURE walk      POSE hand_fist
+```
 
 ## Outfits: suits, gloves, shoes and a helmet
 

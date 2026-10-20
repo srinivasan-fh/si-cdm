@@ -1631,6 +1631,23 @@ void drawLibraryIcon(ImDrawList* dl, const std::string& key, ImVec2 c, float r, 
         for (float x : {-0.14f, 0.14f}) leg(x, 0.16f, 0.8f);
         return;
     }
+    if (key == "skeleton_robot") { // skull, spine, ribs, pelvis and limb bones
+        head(0, -0.82f, 0.26f);
+        bar(0, -0.68f, 0, 0.06f, 0.035f);                                             // spine
+        for (int i = 0; i < 5; ++i) {                                                 // ribs
+            const float y = -0.54f + 0.09f * static_cast<float>(i), w = 0.2f - 0.012f * static_cast<float>(i * i);
+            bar(-w, y + 0.02f, w, y + 0.02f, 0.025f);
+        }
+        bar(-0.26f, -0.6f, 0.26f, -0.6f, 0.03f);                                      // collarbones
+        rrect(-0.2f, 0.04f, 0.2f, 0.14f, 0.05f);                                      // pelvis
+        for (float x : {-0.3f, 0.3f}) bar(x, -0.58f, x * 1.1f, 0.2f, 0.035f);         // arms
+        for (float x : {-0.11f, 0.11f}) {
+            bar(x, 0.14f, x, 0.56f, 0.04f);
+            bar(x, 0.58f, x, 0.92f, 0.035f);
+            bar(x - 0.04f, 0.97f, x + 0.12f, 0.97f, 0.035f);
+        }
+        return;
+    }
     if (key == "humanoid_female") { // slim: narrow shoulders and waist, curved hips
         head(0, -0.8f, 0.27f);
         bar(0, -0.66f, 0, -0.56f, 0.05f);

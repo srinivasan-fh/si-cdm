@@ -4,6 +4,7 @@
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
 #include "core/Library.hpp"
+#include "core/Pose.hpp"
 #include "core/Scene.hpp"
 
 #include <cmath>
@@ -1031,4 +1032,72 @@ TEST_CASE("humanoid faces: full black glass or half black glass, on a real-size 
         CHECK_NEAR(f.head.max.z - f.head.min.z, 215 * (0.97 + 5.0 / 230), 4.0);
         CHECK(f.head.max.y - f.head.min.y < 190.0f);
     }
+}
+
+TEST_CASE("skeleton robot: the human skeleton bone for bone, on the humanoid's joints") {
+    Document d;
+    REQUIRE(run(d, "PART skeleton").ok);
+    const Scene& s = d.scene;
+    const std::string n = "Skeleton Robot 1 ";
+    // Bones: skull, 7 cervical + 12 thoracic + 5 lumbar vertebrae, 12 pairs of ribs, sternum,
+    // clavicles, scapulae, pelvis, and both arms, hands and legs.
+    for (int i = 1; i <= 7; ++i) CHECK(body(s, n + "C" + std::to_string(i)));
+    for (int i = 1; i <= 12; ++i) {
+        CHECK(body(s, n + "T" + std::to_string(i)));
+        CHECK(body(s, n + "Right Rib " + std::to_string(i)));
+        CHECK(body(s, n + "Left Rib " + std::to_string(i)));
+    }
+    for (int i = 1; i <= 5; ++i) CHECK(body(s, n + "L" + std::to_string(i)));
+    for (const char* bone : {"Skull", "Skull Sockets", "Sternum", "Right Clavicle", "Left Scapula", "Pelvis", "Right Thigh", "Left Shin",
+                             "Right Foot", "Left Toe", "Right Arm Upper Arm", "Left Arm Forearm", "Right Arm Palm", "Left Arm Index Distal",
+                             "Right Arm Thumb Metacarpal"})
+        CHECK(body(s, n + bone) && body(s, n + bone)->kind == "robot_bone");
+    // Height to the top of the skull, standing on the (undrawn) soles.
+    AABB all;
+    for (const Body& b : s.bodies()) all.expand(b.bounds());
+    CHECK_NEAR(all.min.z, 0, 1e-3);
+    CHECK_NEAR(all.max.z, 1750, 1.0);
+    Document tall;
+    REQUIRE(run(tall, "PART skeleton HEIGHT 1900").ok);
+    AABB t;
+    for (const Body& b : tall.scene.bodies()) t.expand(b.bounds());
+    CHECK_NEAR(t.max.z, 1900, 1.0);
+    // The drive motors work out of sight unless asked for; grip pads and soles are not drawn.
+    int motors = 0, shown = 0;
+    for (const Body& b : s.bodies())
+        if (b.kind == "dc_motor") ++motors, shown += b.visible ? 1 : 0;
+    CHECK(motors >= 40);
+    CHECK(shown == 0);
+    CHECK(!body(s, n + "Right Foot Sole")->visible);
+    CHECK(!body(s, n + "Right Arm Index Proximal Pad")->visible);
+    Document vis;
+    REQUIRE(run(vis, "PART skeleton MOTORS VISIBLE").ok);
+    for (const Body& b : vis.scene.bodies())
+        if (b.kind == "dc_motor") CHECK(b.visible);
+    // The same 64 joints as the humanoids, each bone on its joints: the skull nods with the
+    // neck, the ribs bend with the trunk, the shin bones with the knee.
+    auto moves = [&](const std::string& motion, const std::string& bone) {
+        for (const Motion& m : s.motions())
+            if (m.name == n + motion) return std::find(m.bodies.begin(), m.bodies.end(), n + bone) != m.bodies.end();
+        return false;
+    };
+    CHECK(moves("Neck Pitch", "Skull"));
+    CHECK(!moves("Neck Pitch", "C7"));
+    CHECK(moves("Neck Yaw", "C3"));
+    CHECK(moves("Trunk Flex", "Right Rib 5"));
+    CHECK(moves("Trunk Flex", "Sternum"));
+    CHECK(!moves("Trunk Flex", "L4"));
+    CHECK(moves("Waist Rotation", "L2"));
+    CHECK(!moves("Waist Rotation", "Pelvis"));
+    CHECK(moves("Right Knee", "Right Shin"));
+    CHECK(moves("Right Hip Flex", "Right Thigh"));
+    CHECK(moves("Right Shoulder Flex", "Right Arm Upper Arm"));
+    CHECK(moves("Right Arm Index PIP", "Right Arm Index Middle"));
+    const auto robot = findRobot(s, "Skeleton Robot 1");
+    REQUIRE(robot.has_value());
+    CHECK(robot->joints.size() == 64);
+    // Postures, gestures and the walk work as on the humanoids.
+    CHECK(run(d, "POSE squat").ok);
+    CHECK(run(d, "GESTURE walk").ok);
+    CHECK(run(d, "POSE hand_fist").ok);
 }

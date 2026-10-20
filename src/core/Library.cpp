@@ -1545,6 +1545,295 @@ MeshData loopMeshAt(const Body& b, float travel) {
     return m;
 }
 
+// ---------------------------------------------------------------------------
+// Human skeleton bones (the Skeleton Robot). Every bone is built in the frame of the joint
+// it turns about, like the humanoid shells (Z up, the body facing +Y, its right side +X;
+// `side` +1 right, -1 left), at the reference adult of 1.82 m (mm).
+
+// Smooth round tube through `pts` with radius r[i] at each point, capped at both ends.
+MeshData tubeAlong(const std::vector<Vec3>& pts, const std::vector<float>& r, int seg = 14) {
+    MeshData m;
+    const std::size_t n = pts.size();
+    if (n < 2) return m;
+    Vec3 prevN{};
+    std::vector<std::uint32_t> ringStart;
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec3 t = normalize(pts[std::min(i + 1, n - 1)] - pts[i > 0 ? i - 1 : 0]);
+        Vec3 nn = i == 0 ? cross(t, std::fabs(t.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0}) : prevN - t * dot(prevN, t);
+        nn = normalize(nn);
+        prevN = nn;
+        const Vec3 bn = cross(t, nn);
+        ringStart.push_back(static_cast<std::uint32_t>(m.vertices.size()));
+        for (int k = 0; k < seg; ++k) {
+            const float a = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(seg);
+            const Vec3 dir = nn * std::cos(a) + bn * std::sin(a);
+            m.vertices.push_back({pts[i] + dir * r[std::min(i, r.size() - 1)], dir});
+        }
+    }
+    for (std::size_t i = 0; i + 1 < n; ++i)
+        for (int k = 0; k < seg; ++k) {
+            const std::uint32_t a = ringStart[i] + static_cast<std::uint32_t>(k),
+                                b = ringStart[i] + static_cast<std::uint32_t>((k + 1) % seg),
+                                c = ringStart[i + 1] + static_cast<std::uint32_t>((k + 1) % seg),
+                                d = ringStart[i + 1] + static_cast<std::uint32_t>(k);
+            m.indices.insert(m.indices.end(), {a, b, c, a, c, d});
+        }
+    for (int end = 0; end < 2; ++end) { // caps
+        const std::size_t i = end == 0 ? 0 : n - 1;
+        const Vec3 t = normalize(pts[end == 0 ? 1 : n - 1] - pts[end == 0 ? 0 : n - 2]) * (end == 0 ? -1.0f : 1.0f);
+        const auto centre = static_cast<std::uint32_t>(m.vertices.size());
+        m.vertices.push_back({pts[i], t});
+        for (int k = 0; k < seg; ++k) {
+            const std::uint32_t a = ringStart[i] + static_cast<std::uint32_t>(k), b = ringStart[i] + static_cast<std::uint32_t>((k + 1) % seg);
+            if (end == 0) m.indices.insert(m.indices.end(), {centre, b, a});
+            else m.indices.insert(m.indices.end(), {centre, a, b});
+        }
+    }
+    m.computeFeatureEdges(60.0f);
+    return m;
+}
+
+// A long bone from a to b: a shaft narrowing toward its middle, with rounded ends.
+MeshData longBone(const Vec3& a, const Vec3& b, float r, float endA, float endB) {
+    const Vec3 d = b - a;
+    MeshData m = tubeAlong({a, a + d * 0.2f, a + d * 0.5f, a + d * 0.8f, b}, {r * 1.15f, r, r * 0.88f, r, r * 1.15f});
+    m.append(ellipsoid(a, {endA, endA, endA}, 20, 10));
+    m.append(ellipsoid(b, {endB, endB, endB}, 20, 10));
+    return m;
+}
+
+// Thin plate through three corners (a scapula blade), `t` thick.
+MeshData plate(const Vec3& a, const Vec3& b, const Vec3& c, float t) {
+    const Vec3 n = normalize(cross(b - a, c - a)) * (t * 0.5f);
+    Builder bd;
+    bd.tri(a + n, b + n, c + n, n);
+    bd.tri(a - n, b - n, c - n, n * -1.0f);
+    const Vec3 corners[3] = {a, b, c};
+    for (int i = 0; i < 3; ++i) {
+        const Vec3 p = corners[i], q = corners[(i + 1) % 3], mid = (p + q) * 0.5f - (a + b + c) * (1.0f / 3.0f);
+        bd.quad(p + n, q + n, q - n, p - n, mid);
+    }
+    return bd.finish(30.0f);
+}
+
+MeshData rotated(MeshData m, const Vec3& axis, float deg, const Vec3& about) {
+    m.transform(translate(about) * rotateAxis(axis, radians(deg)) * translate(about * -1.0f));
+    return m;
+}
+
+enum BoneType {
+    kBonePhalanx, kBonePalm, kBoneForearm, kBoneHumerus, kBoneFemur, kBoneShin, kBoneFoot, kBoneToes, kBonePelvis,
+    kBoneVertebra, kBoneRib, kBoneSternum, kBoneClavicle, kBoneScapula, kBoneSkull, kBoneSockets
+};
+
+// p[0] = bone type, then its parameters (see each case).
+MeshData skeletonBone(const std::vector<float>& p) {
+    auto at = [&](std::size_t i, float fallback = 0.0f) { return i < p.size() ? p[i] : fallback; };
+    const int type = static_cast<int>(at(0));
+    MeshData m;
+    switch (type) {
+    case kBonePhalanx: { // len, width, yaw, tip: finger / thumb bone along +Y from its hinge
+        const float len = at(1, 30), w = at(2, 16), r = 0.2f * w;
+        m = longBone({0, 0.12f * len, 0}, {0, 0.9f * len, 0}, r, 0.3f * w, 0.25f * w);
+        if (at(4) >= 0.5f) m.append(ellipsoid({0, 0.95f * len, -0.04f * w}, {0.26f * w, 0.12f * len, 0.16f * w}, 16, 8)); // tuft
+        m.transform(rotateAxis({0, 0, 1}, radians(at(3))));
+        return m;
+    }
+    case kBonePalm: { // width, length, left: carpals and the four metacarpals to the knuckles
+        const float side = at(3) >= 0.5f ? -1.0f : 1.0f, len = at(2, 96) / 96.0f, wk = at(1, 84) / 84.0f;
+        for (int i = 0; i < 8; ++i) { // two rows of carpals
+            const float x = (-24.0f + 16.0f * static_cast<float>(i % 4)) * wk, y = (i < 4 ? 8.0f : 24.0f) * len;
+            m.append(ellipsoid({side * x, y, 0}, Vec3{8, 8, 7} * wk, 16, 8));
+        }
+        for (int k = 0; k < 4; ++k) {
+            const Vec3 base{side * (-18.0f + 12.0f * static_cast<float>(k)) * wk, 34.0f * len, 0};
+            const Vec3 head{side * kKnuckles[k].x * wk, (kKnuckles[k].y - 8.0f) * len, 0};
+            m.append(longBone(base, head, 4.5f * wk, 6.0f * wk, 7.0f * wk));
+        }
+        return m;
+    }
+    case kBoneForearm: { // length, side: radius (thumb side) and ulna from the wrist (origin) to the elbow at -len
+        const float len = at(1, 250), side = at(2, 1);
+        m = longBone({side * -16.0f, -14.0f, 0}, {side * -12.0f, -len + 18.0f, 0}, 7.0f, 12.0f, 9.0f);   // radius
+        m.append(ellipsoid({side * -16.0f, -12.0f, 0}, {15, 11, 10}, 20, 10));                         // its wide wrist end
+        m.append(longBone({side * 12.0f, -16.0f, 0}, {side * 12.0f, -len - 6.0f, -2.0f}, 7.0f, 7.0f, 11.0f)); // ulna
+        m.append(ellipsoid({side * 10.0f, -len - 10.0f, -6.0f}, {11, 14, 11}, 20, 10));                 // olecranon (elbow point)
+        return m;
+    }
+    case kBoneHumerus: { // length: the shoulder ball at the origin, the elbow condyles at +len
+        const float len = at(1, 300);
+        m = longBone({0, 18.0f, 0}, {0, len - 22.0f, 0}, 11.0f, 14.0f, 14.0f);
+        m.append(ellipsoid({0, 0, 0}, {24, 24, 24}, 28, 14));      // head
+        m.append(ellipsoid({0, 12, -14}, {15, 14, 13}, 20, 10));   // greater tubercle
+        m.append(cylX(-24.0f, 24.0f, 12.0f, len, 0, 32));          // trochlea and capitulum
+        for (float x : {-29.0f, 29.0f}) m.append(ellipsoid({x, len - 4.0f, 0}, {8, 10, 9}, 16, 8)); // epicondyles
+        return m;
+    }
+    case kBoneFemur: { // length, side: hip ball at the origin, condyles at the knee (-len)
+        const float k = at(1, 430) / 430.0f, side = at(2, 1);
+        m = ellipsoid({0, 0, 0}, {23, 23, 23}, 28, 14);                                                   // head
+        m.append(tubeAlong({{0, 0, 0}, {side * 22.0f, -2, -14.0f * k}, {side * 45.0f, -5, -32.0f * k}}, {12, 13, 15}));   // neck
+        m.append(ellipsoid({side * 55.0f, -8, -26.0f * k}, {18, 20, 26.0f * k}, 20, 10));                  // greater trochanter
+        m.append(ellipsoid({side * 22.0f, -12, -72.0f * k}, {9, 9, 12}, 16, 8));                           // lesser trochanter
+        m.append(tubeAlong({{side * 46.0f, -2, -45.0f * k}, {side * 30.0f, 6, -200.0f * k}, {side * 8.0f, 2, -385.0f * k}}, {15, 12, 15}));
+        for (float c : {-21.0f, 21.0f}) m.append(ellipsoid({side * 6.0f + c, -4, -412.0f * k}, {19, 27, 19.0f * k}, 20, 10)); // condyles
+        return m;
+    }
+    case kBoneShin: { // length, side: tibia, fibula and the kneecap, the knee at the origin
+        const float k = at(1, 420) / 420.0f, side = at(2, 1);
+        m = ellipsoid({0, 0, -12.0f * k}, {38, 28, 12.0f * k}, 28, 12);                                   // tibial plateau
+        m.append(ellipsoid({0, 24, -48.0f * k}, {10, 8, 14.0f * k}, 16, 8));                               // tuberosity
+        m.append(tubeAlong({{0, 2, -22.0f * k}, {0, 5, -200.0f * k}, {side * -4.0f, 0, -390.0f * k}}, {16, 11, 13}));
+        m.append(ellipsoid({side * -18.0f, 0, -405.0f * k}, {10, 10, 14.0f * k}, 16, 8));                  // medial malleolus
+        m.append(longBone({side * 30.0f, -10, -32.0f * k}, {side * 27.0f, -7, -405.0f * k}, 5.5f, 10.0f, 9.0f)); // fibula
+        m.append(ellipsoid({side * 27.0f, -6, -415.0f * k}, {9, 10, 15.0f * k}, 16, 8));                   // lateral malleolus
+        m.append(ellipsoid({0, 44, 12.0f * k}, {20, 9, 24.0f * k}, 20, 10));                               // patella (kneecap)
+        return m;
+    }
+    case kBoneFoot: { // side: tarsals and metatarsals, the ankle at the origin, sole 85 below
+        const float side = at(1, 1);
+        m = ellipsoid({0, 0, -22}, {22, 30, 17}, 24, 12);                       // talus
+        m.append(ellipsoid({side * 4.0f, -42, -55}, {23, 38, 27}, 24, 12));     // calcaneus (heel)
+        m.append(ellipsoid({side * -12.0f, 32, -40}, {16, 11, 14}, 16, 8));     // navicular
+        m.append(ellipsoid({side * 20.0f, 34, -58}, {14, 18, 13}, 16, 8));      // cuboid
+        for (float x : {-22.0f, -8.0f, 6.0f}) m.append(ellipsoid({side * x, 55, -50}, {9, 12, 11}, 16, 8)); // cuneiforms
+        const float x0[5] = {-24, -10, 2, 13, 24}, x1[5] = {-30, -14, 0, 14, 28}, r[5] = {8, 5, 5, 4.5f, 4.5f};
+        for (int i = 0; i < 5; ++i) m.append(longBone({side * x0[i], 62, -55}, {side * x1[i], 120, -73}, r[i], r[i] + 2, r[i] + 3));
+        return m;
+    }
+    case kBoneToes: { // side: the toe phalanges from the toe joint (origin)
+        const float side = at(1, 1);
+        m = longBone({side * -30.0f, 4, -4}, {side * -31.0f, 30, -6}, 6.5f, 7.5f, 7.0f); // big toe
+        m.append(longBone({side * -31.0f, 35, -6}, {side * -31.0f, 54, -8}, 5.5f, 6.5f, 6.0f));
+        const float x[4] = {-14, 0, 14, 28}, len[4] = {28, 24, 20, 17};
+        for (int i = 0; i < 4; ++i) {
+            float y = 3.0f;
+            for (float f : {0.5f, 0.28f, 0.22f}) {
+                const float l = len[i] * f;
+                m.append(longBone({side * x[i], y, -4}, {side * x[i], y + l, -6}, 3.4f, 4.2f, 3.8f));
+                y += l + 2.0f;
+            }
+        }
+        return m;
+    }
+    case kBonePelvis: { // hip spacing: hip bones, sacrum and coccyx, centred between the hip joints (origin)
+        const float hx = at(1, 190) * 0.5f;
+        for (float side : {-1.0f, 1.0f}) {
+            MeshData acet = primitives::torus({0, 0, 0}, 27.0f, 6.0f, 32, 12); // acetabulum (hip socket rim)
+            acet.transform(translate({side * hx * 0.9f, 0, 0}) * rotateAxis({0, 1, 0}, kPi * 0.5f));
+            m.append(acet);
+            // Ilium: a fan-shaped blade rising from the hip socket and flaring out and forward,
+            // with its rim (the iliac crest) along the top.
+            // The blade runs from the sacrum (back, inner) to the front hip point (outer, forward).
+            MeshData wing = ellipsoid({0, 0, 0}, {60, 7, 56}, 32, 16);
+            wing.transform(translate({side * 78.0f, -8, 74}) * rotateAxis({0, 0, 1}, radians(side * 43.0f)) *
+                           rotateAxis({1, 0, 0}, radians(-12.0f)));
+            m.append(wing);
+            m.append(tubeAlong({{side * 38.0f, -48, 104}, {side * 84.0f, -12, 126}, {side * 118.0f, 26, 102}}, {7, 8, 7})); // iliac crest
+            m.append(ellipsoid({side * 120.0f, 30, 98}, {9, 9, 9}, 12, 6)); // front hip point (anterior superior iliac spine)
+            m.append(tubeAlong({{side * hx * 0.95f, 32, -4}, {side * hx * 0.98f, 10, 24}, {side * hx * 0.95f, -4, 40}}, {12, 14, 14})); // body over the socket
+            m.append(tubeAlong({{side * hx * 0.85f, 18, -12}, {side * 40.0f, 52, -22}, {side * 10.0f, 62, -28}}, {10, 9, 9})); // superior pubic ramus
+            m.append(tubeAlong({{side * 10.0f, 60, -44}, {side * 38.0f, 30, -60}, {side * hx * 0.62f, -14, -58}}, {8, 8, 12})); // inferior ramus
+            m.append(tubeAlong({{side * hx * 0.62f, -14, -58}, {side * hx * 0.8f, -16, -30}, {side * hx * 0.88f, -10, -8}}, {12, 11, 11})); // ischium
+            m.append(ellipsoid({side * hx * 0.62f, -18, -62}, {16, 14, 12}, 16, 8)); // ischial tuberosity
+        }
+        m.append(ellipsoid({0, 62, -36}, {14, 9, 18}, 16, 8));                    // pubic symphysis
+        // Sacrum: a curved triangle of fused vertebrae between the hip bones, its base under L5.
+        m.append(plate({-44, -48, 86}, {44, -48, 86}, {0, -64, 2}, 16.0f));
+        m.append(tubeAlong({{-40, -46, 86}, {0, -42, 90}, {40, -46, 86}}, {9, 11, 9}, 12)); // its base (promontory)
+        m.append(tubeAlong({{0, -58, 4}, {0, -56, -18}, {0, -46, -32}}, {9, 6, 4})); // coccyx
+        return m;
+    }
+    case kBoneVertebra: { // body radius, body height, region (0 lumbar, 1 thoracic, 2 cervical); the body's base at the origin
+        const float rb = at(1, 20), h = at(2, 26);
+        const int region = static_cast<int>(at(3));
+        m = tubeAlong({{0, 0, 0}, {0, 0, h * 0.5f}, {0, 0, h}}, {rb, rb * 0.92f, rb}, 20);
+        const float back = region == 2 ? 1.6f : 2.2f, down = region == 1 ? -1.4f : -0.2f;
+        m.append(tubeAlong({{0, -rb * 0.9f, h * 0.55f}, {0, -rb * back, h * (0.5f + down * 0.5f)}}, {rb * 0.25f, rb * 0.18f}, 10)); // spinous process
+        for (float side : {-1.0f, 1.0f}) {
+            m.append(tubeAlong({{side * rb * 0.5f, -rb * 0.75f, h * 0.55f}, {side * rb * (region == 0 ? 1.7f : 1.35f), -rb * 1.05f, h * 0.6f}},
+                               {rb * 0.18f, rb * 0.14f}, 10)); // transverse process
+            m.append(tubeAlong({{side * rb * 0.45f, -rb * 0.6f, h * 0.5f}, {side * rb * 0.25f, -rb * 1.1f, h * 0.55f}, {0, -rb * 1.15f, h * 0.55f}},
+                               {rb * 0.16f, rb * 0.16f, rb * 0.16f}, 10)); // arch around the spinal canal
+        }
+        return m;
+    }
+    case kBoneRib: { // rib number 1-12, side: from its vertebra (origin) round to the front
+        const int i = std::clamp(static_cast<int>(at(1, 1)), 1, 12);
+        const float side = at(2, 1);
+        static const float a[12] = {58, 78, 92, 105, 115, 122, 126, 128, 126, 118, 104, 88};
+        static const float b[12] = {62, 72, 82, 90, 97, 102, 106, 108, 106, 98, 86, 74};
+        const float A = a[i - 1], B = b[i - 1], cy = 132.0f - B, drop = 30.0f + 7.0f * static_cast<float>(i); // ribs slope down to the front
+        const float t0 = -1.2f, t1 = i <= 10 ? 1.25f : 0.1f;
+        std::vector<Vec3> pts{{side * 16.0f, -6, 4}};
+        std::vector<float> r{4.5f};
+        for (int k = 0; k <= 16; ++k) {
+            const float t = t0 + (t1 - t0) * static_cast<float>(k) / 16.0f;
+            pts.push_back({side * A * std::cos(t), cy + B * std::sin(t), -drop * (t - t0) / (t1 - t0)});
+            r.push_back(i <= 2 ? 5.5f : 4.5f);
+        }
+        m = tubeAlong(pts, r, 10);
+        if (i <= 10) { // costal cartilage to the sternum (ribs 1-7) or to the cartilage above (8-10)
+            const Vec3 end = pts.back();
+            const Vec3 sternum{side * 13.0f, 128, i <= 7 ? end.z + 6.0f : end.z + 30.0f + 6.0f * static_cast<float>(i - 7)};
+            m.append(tubeAlong({end, (end + sternum) * 0.5f + Vec3{0, 4, 0}, sternum}, {4.0f, 3.6f, 3.2f}, 10));
+        }
+        return m;
+    }
+    case kBoneSternum: // manubrium, body and xiphoid process down the front of the chest from its top (origin)
+        m = ellipsoid({0, 0, -22}, {26, 7, 24}, 20, 10);
+        m.append(ellipsoid({0, 4, -95}, {17, 6, 56}, 20, 10));
+        m.append(ellipsoid({0, 8, -160}, {7, 4, 14}, 12, 6));
+        return m;
+    case kBoneClavicle: { // side, end x y z: S-curved collarbone from the sternum (origin) to the acromion
+        const Vec3 e{at(2), at(3), at(4)};
+        return tubeAlong({{0, 0, 0}, {e.x * 0.3f, e.y * 0.3f + 12.0f, e.z * 0.3f}, {e.x * 0.72f, e.y * 0.72f - 8.0f, e.z * 0.72f}, e},
+                         {8, 6.5f, 6, 7.5f});
+    }
+    case kBoneScapula: { // side: shoulder blade on the back, the shoulder joint at the origin
+        const float side = at(1, 1);
+        m = plate({side * -26.0f, -24, -4}, {side * -118.0f, -64, 34}, {side * -110.0f, -74, -140}, 6.0f);         // blade
+        m.append(tubeAlong({{side * -114.0f, -66, 20}, {side * -60.0f, -48, 22}, {side * -8.0f, -22, 24}}, {5, 7, 6})); // spine
+        m.append(ellipsoid({side * -2.0f, -14, 24}, {17, 12, 6}, 16, 8));                                            // acromion
+        m.append(tubeAlong({{side * -34.0f, -14, 6}, {side * -36.0f, 6, 10}, {side * -28.0f, 22, 8}}, {5, 5, 4}));     // coracoid
+        MeshData glenoid = primitives::torus({0, 0, 0}, 15.0f, 4.0f, 24, 8);
+        glenoid.transform(translate({side * -24.0f, -6, -4}) * rotateAxis({0, 1, 0}, kPi * 0.5f));
+        m.append(glenoid);
+        return m;
+    }
+    case kBoneSkull: { // the skull on the neck pivot (origin): cranium, face, cheekbones, jaw and teeth
+        m = ellipsoid({0, -16, 124}, {70, 90, 80}, 40, 20);                     // cranium (brain case)
+        m.append(ellipsoid({0, -22, 74}, {62, 72, 40}, 32, 16));               // its base, the temporal bones at the sides
+        m.append(ellipsoid({0, 40, 82}, {58, 30, 40}, 32, 16));                 // upper face round the eye sockets
+        m.append(ellipsoid({0, 48, 50}, {44, 36, 32}, 28, 14));                 // maxilla (upper jaw)
+        m.append(ellipsoid({0, 62, 112}, {54, 12, 11}, 24, 10));                // brow ridge
+        m.append(ellipsoid({0, 76, 92}, {8, 6, 14}, 12, 8));                    // nasal bones
+        for (float side : {-1.0f, 1.0f}) {
+            m.append(ellipsoid({side * 50.0f, 50, 66}, {16, 15, 14}, 16, 8));    // cheekbone
+            m.append(tubeAlong({{side * 54.0f, 46, 66}, {side * 62.0f, 16, 68}, {side * 58.0f, -12, 66}}, {5, 4.5f, 4.5f}, 10)); // zygomatic arch
+            m.append(ellipsoid({side * 54.0f, -30, 50}, {9, 10, 14}, 12, 8));    // mastoid
+        }
+        // Jaw (mandible): the rami from below each ear down to the angles, the body round to the chin,
+        // its top under the lower teeth.
+        m.append(tubeAlong({{-58, -10, 62}, {-54, -6, 24}, {-46, 28, 6}, {-24, 62, 4}, {0, 72, 2}, {24, 62, 4}, {46, 28, 6}, {54, -6, 24},
+                            {58, -10, 62}},
+                           {7, 9, 11, 12, 13, 12, 11, 9, 7}, 14));
+        m.append(ellipsoid({0, 76, -4}, {16, 9, 9}, 16, 8)); // chin
+        for (int row = 0; row < 2; ++row) // upper and lower teeth along the dental arch
+            for (int k = 0; k < 14; ++k) {
+                const float phi = -1.3f + 2.6f * static_cast<float>(k) / 13.0f;
+                m.append(ellipsoid({34.0f * std::sin(phi), 44.0f + 38.0f * std::cos(phi), row == 0 ? 25.0f : 15.0f}, {4.2f, 3.4f, 5.0f}, 10, 6));
+            }
+        return m;
+    }
+    case kBoneSockets: // the dark eye sockets and nasal opening, flush with the face
+        for (float side : {-1.0f, 1.0f}) m.append(ellipsoid({side * 27.0f, 69.5f, 86}, {18, 1.5f, 16}, 28, 12));
+        m.append(ellipsoid({0, 83.5f, 62}, {10, 1.5f, 15}, 20, 10));
+        return m;
+    default: return m;
+    }
+}
+
 bool isLibraryKind(const std::string& k) {
     return k == "gear" || k == "ring_gear" || k == "bevel_gear" || k == "rack" || k == "worm" || k == "dc_motor" ||
            k == "stepper_motor" || k == "servo_motor" || k == "ev_motor" || k == "ev_flange_motor" || k == "motor_rotor" ||
@@ -1553,7 +1842,7 @@ bool isLibraryKind(const std::string& k) {
            k == "o_ring" || k == "phalanx" || k == "robot_palm" || k == "robot_forearm" || k == "arm_link" ||
            k == "robot_shoulder" || k == "robot_head" || k == "robot_neck" || k == "robot_chest" || k == "robot_heart" ||
            k == "robot_gut" || k == "robot_midriff" || k == "robot_pelvis" || k == "robot_thigh" || k == "robot_shin" ||
-           k == "robot_foot";
+           k == "robot_foot" || k == "robot_bone";
 }
 
 MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
@@ -1609,6 +1898,7 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "robot_thigh" && ok(3)) return robotThigh(p[0], p[1], p[2], static_cast<int>(at(3)));
     if (k == "robot_shin" && ok(3)) return robotShin(p[0], p[1], p[2], static_cast<int>(at(3)));
     if (k == "robot_foot" && ok(3)) return robotFoot(p[0], p[1], p[2], static_cast<int>(at(3)));
+    if (k == "robot_bone" && !p.empty()) return skeletonBone(p);
     MeshData m;
     if (k == "dc_motor") m = dcMotor();
     else if (k == "stepper_motor") m = stepperMotor();
@@ -1929,6 +2219,18 @@ const std::vector<LibraryItem>& libraryItems() {
              "Male, ultra-muscular build (broad V-taper, chest, arms, legs), 5.5 to 6 ft: 20 body + 14 arm joints and two hands on DC gear motors; "
              "armour or futuristic suit, gloves, shoes, helmet",
              {{"height", "Height (5.5 - 6 ft)", 1752.6f, 1676.4f, 1828.8f, "mm"}, outfit[0], outfit[1], outfit[2], outfit[3], outfit[4], size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
+              {"drive", "Hand drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"}, handRpm, gear,
+              neckYaw, neckPitch, neckRoll, waistRot, trunkFlex, trunkBend, heartRate,
+              {"shoulder_flex", "Shoulder flexion (forward)", 90.0f, 1.0f, 180.0f, "deg"},
+              {"shoulder_abd", "Shoulder abduction (sideways)", 90.0f, 1.0f, 180.0f, "deg"},
+              {"shoulder_rot", "Shoulder internal rotation", 70.0f, 1.0f, 90.0f, "deg"}, {"elbow", "Elbow flexion", 145.0f, 1.0f, 150.0f, "deg"},
+              {"forearm_rot", "Forearm supination", 160.0f, 1.0f, 180.0f, "deg"}, wristFlex, wristDev, hipFlex, hipAbd, hipRot, kneeFlex,
+              anklePitch, ankleRoll, toeExt, mcp, pip, dip, abduction, thumbCmc, thumbMcp, thumbIp}},
+            {"skeleton_robot", "SKELETON SKELETONROBOT BONES ENDOSKELETON", "Skeleton Robot", "Humanoid body",
+             "A human skeleton, bone for bone: skull, spine (7 + 12 + 5 vertebrae), 12 pairs of ribs, sternum, collarbones, shoulder "
+             "blades, arm, hand, pelvis, leg and foot bones; the humanoid's joints and hidden drive motors",
+             {{"height", "Height", 1750.0f, 1450.0f, 2000.0f, "mm"}, {"motors", "Motors", 0.0f, 0.0f, 1.0f, "", true, "Hidden|Visible"}, size,
+              {"finish", "Finish", 0.0f, 0.0f, 1.0f, "", true, "Natural bone|Titanium"}, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
               {"drive", "Hand drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"}, handRpm, gear,
               neckYaw, neckPitch, neckRoll, waistRot, trunkFlex, trunkBend, heartRate,
               {"shoulder_flex", "Shoulder flexion (forward)", 90.0f, 1.0f, 180.0f, "deg"},
@@ -2597,15 +2899,18 @@ void dressHumanoid(LibraryComponent& c, const std::function<float(const char*)>&
 // at 1 / gear, so it sweeps 0 -> limit -> 0 within its human range of motion.
 void buildHumanoid(LibraryComponent& c, const std::string& key, const std::function<float(const char*)>& v,
                    const std::function<float(const char*)>& top, const Vec3& o) {
-    const bool female = key == "humanoid_female";
-    const bool all = key == "humanoid" || female, headOnly = key == "robot_head_neck", legOnly = key == "robot_leg";
+    const bool female = key == "humanoid_female", skeleton = key == "skeleton_robot";
+    const bool all = key == "humanoid" || female || skeleton, headOnly = key == "robot_head_neck", legOnly = key == "robot_leg";
     const bool torso = all || key == "robot_torso", head = all || headOnly, legs = all || legOnly;
-    const int build = all ? (female ? 2 : 1) : 0;
+    const int build = all && !skeleton ? (female ? 2 : 1) : 0;
     const HumanoidBuild& B = kBuilds[build];
     // A whole robot is made the height asked for (sole to the top of the head).
-    const float s = v("size") * (all ? humanoidBodyScale(v("height"), B, build) : 1.0f), gear = v("gear"), rpm = v("rpm");
+    // The skeleton scales as a whole (sole to the top of the skull, 1819 mm at size 1).
+    const float s = v("size") * (skeleton ? v("height") / (kNeckZ + kNeck + 204.0f) : all ? humanoidBodyScale(v("height"), B, build) : 1.0f),
+                gear = v("gear"), rpm = v("rpm");
     // A whole robot's head is drawn at its real size (x SIZE), whatever the body scale.
-    const float headK = all ? v("size") / s : 1.0f;
+    const float headK = all && !skeleton ? v("size") / s : 1.0f;
+    const Vec3 bone = v("finish") >= 0.5f ? Vec3{0.50f, 0.52f, 0.56f} : Vec3{0.90f, 0.87f, 0.78f}; // natural bone or titanium
     const float shoulderX = 200.0f * B.chestW / 380.0f, hipX = B.hipX;
     const float shoulderK = shoulderX / 200.0f; // shoulder motors follow the shoulder width
     const bool black = v("finish") >= 0.5f;
@@ -2632,12 +2937,41 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
 
     // ---- torso: pelvis (root) -> waist -> gut -> trunk joint -> midriff -> chest + heart
     std::vector<std::string> upper, aboveTrunk, neckHead, headOnlyBodies; // bodies each joint carries
-    if (torso || legOnly) add(legOnly ? "Hip Mount" : "Pelvis", "robot_pelvis", {B.pelvisW, B.pelvisD, kWaistUp, 2 * hipX, static_cast<float>(build)},
+    if (skeleton) add("Pelvis", "robot_bone", {kBonePelvis, 2 * hipX}, {0, 0, kHipZ}, bone, nullptr);
+    else if (torso || legOnly) add(legOnly ? "Hip Mount" : "Pelvis", "robot_pelvis", {B.pelvisW, B.pelvisD, kWaistUp, 2 * hipX, static_cast<float>(build)},
                               {legOnly ? (v("side") >= 0.5f ? hipX : -hipX) : 0.0f, 0, kHipZ}, shell, nullptr);
     std::string waistDrive, flexDrive, bendDrive;
     if (torso) {
         if (!all) stand(kHipZ, -125.0f);
         waistDrive = motor(h, "Waist Rotation", "waist_rot", 1.6f, {0, -104, kHipZ + 40}, nullptr);
+        if (skeleton) {
+            // Spine: lumbar L5-L1 (the lowest two on the pelvis, the rest above the waist joint),
+            // thoracic T12-T1 with their ribs above the trunk joint, then sternum, collarbones and
+            // shoulder blades. The trunk motors work out of sight behind the spine.
+            flexDrive = motor(h, "Trunk Flex", "trunk_flex", 1.3f, {-36, -98, kWaistZ + 40}, &upper);
+            bendDrive = motor(h, "Trunk Bend", "trunk_bend", 1.3f, {36, -98, kWaistZ + 40}, &upper);
+            for (int i = 0; i < 5; ++i) {
+                const float z = kHipZ + 75.0f + 35.0f * static_cast<float>(i);
+                const float y = -38.0f + 5.0f * std::sin(kPi * static_cast<float>(i + 1) / 6.0f); // lordosis
+                add("L" + std::to_string(5 - i), "robot_bone", {kBoneVertebra, 22, 27, 0}, {0, y, z}, bone, z < kWaistZ ? nullptr : &upper);
+            }
+            for (int j = 0; j < 12; ++j) {
+                const float z = kTrunkZ + 29.0f * static_cast<float>(j);
+                const float y = -40.0f - 14.0f * std::sin(kPi * static_cast<float>(j + 1) / 13.0f); // kyphosis
+                const float rb = 17.0f - 0.35f * static_cast<float>(j);
+                add("T" + std::to_string(12 - j), "robot_bone", {kBoneVertebra, rb, 22, 1}, {0, y, z}, bone, &aboveTrunk);
+                for (float side : {1.0f, -1.0f})
+                    add(std::string(side > 0 ? "Right" : "Left") + " Rib " + std::to_string(12 - j), "robot_bone",
+                        {kBoneRib, static_cast<float>(12 - j), side}, {0, y, z + 11.0f}, bone, &aboveTrunk);
+            }
+            add("Sternum", "robot_bone", {kBoneSternum}, {0, 92, 1495}, bone, &aboveTrunk);
+            for (float side : {1.0f, -1.0f}) {
+                const std::string sd = side > 0 ? "Right " : "Left ";
+                add(sd + "Clavicle", "robot_bone", {kBoneClavicle, side, side * (shoulderX - 22.0f), -106.0f, kShoulderZ + 24.0f - 1492.0f},
+                    {side * 14.0f, 90, 1492}, bone, &aboveTrunk);
+                add(sd + "Scapula", "robot_bone", {kBoneScapula, side}, {side * shoulderX, -5, kShoulderZ}, bone, &aboveTrunk);
+            }
+        } else {
         add("Gut", "robot_gut", {B.gutW, B.gutD, kGut, 0, static_cast<float>(build)}, {0, 0, kWaistZ}, shell, &upper);
         add("Gut Core", "robot_gut", {B.gutW, B.gutD, kGut, 1}, {0, 0, kWaistZ}, accent, &upper);
         flexDrive = motor(h, "Trunk Flex", "trunk_flex", 1.3f, {-36, -98, kWaistZ + 40}, &upper);
@@ -2650,6 +2984,7 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
         add("Heart Pump", "robot_heart", {46, 2}, heart, kSteel, &aboveTrunk);
         // The coolant pump turns at the heart rate (beats per minute as rpm).
         c.motions.push_back(spin(c.name + " Heart Pump", {c.name + " Heart Pump"}, h.pos(heart), v("heart_rate"), {0, 1, 0}));
+        }
     }
     // ---- head and neck
     std::string yawDrive, pitchDrive, rollDrive;
@@ -2664,12 +2999,21 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             pitchDrive = motor(h, "Neck Pitch", "neck_pitch", 0.9f, {0, -108, kNeckZ - 70}, &aboveTrunk);
             rollDrive = motor(h, "Neck Roll", "neck_roll", 0.9f, {34, -104, kNeckZ - 70}, &aboveTrunk);
         }
+        if (skeleton) { // cervical vertebrae C7-C1 and the skull
+            for (int k = 0; k < 7; ++k)
+                add("C" + std::to_string(7 - k), "robot_bone", {kBoneVertebra, 12, 10, 2},
+                    {0, -32.0f + 4.0f * std::sin(kPi * static_cast<float>(k + 1) / 8.0f), kNeckZ - 12.0f + 13.0f * static_cast<float>(k)}, bone,
+                    &neckHead);
+            add("Skull", "robot_bone", {kBoneSkull}, {0, 0, kNeckZ + kNeck}, bone, &headOnlyBodies);
+            add("Skull Sockets", "robot_bone", {kBoneSockets}, {0, 0, kNeckZ + kNeck}, kVisor, &headOnlyBodies);
+        } else {
         add("Neck", "robot_neck", {kNeck, B.neckR}, {0, 0, kNeckZ}, accent, &neckHead);
         const float face = all ? v("face") + 1.0f : 0.0f; // whole robots: glass face, half visor or sculpted face
         add("Head", "robot_head", {B.headW * headK, B.headD * headK, B.headH * headK, 0, face, static_cast<float>(build)},
             {0, 0, kNeckZ + kNeck}, shell, &headOnlyBodies);
         add("Visor", "robot_head", {B.headW * headK, B.headD * headK, B.headH * headK, 1, face, static_cast<float>(build)},
             {0, 0, kNeckZ + kNeck}, kVisor, &headOnlyBodies);
+        }
         neckHead.insert(neckHead.end(), headOnlyBodies.begin(), headOnlyBodies.end());
         aboveTrunk.insert(aboveTrunk.end(), neckHead.begin(), neckHead.end());
     }
@@ -2696,7 +3040,25 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             sh.arm = buildHandArm(ah, v, v("drive") >= 0.5f, true, true, false);
             const Vec3 native = Vec3{0, 0, kShoulderHeight} * s;
             const Vec3 at = h.pos({left ? -shoulderX : shoulderX, -5, kShoulderZ});
-            for (Body& b : arm.bodies) { // the build's upper arm and forearm
+            for (Body& b : arm.bodies) { // the build's upper arm and forearm, or the arm and hand bones
+                if (skeleton) {
+                    const float lr = left ? -1.0f : 1.0f;
+                    if (b.kind == "arm_link") b.params = {kBoneHumerus, kUpperArm};
+                    else if (b.kind == "robot_forearm" && b.params.size() > 1) b.params = {kBoneForearm, b.params[1], lr};
+                    else if (b.kind == "robot_palm" && b.params.size() > 3)
+                        b.params = b.params.size() > 4 && b.params[4] >= 0.5f ? std::vector<float>{} : std::vector<float>{kBonePalm, b.params[0], b.params[1], b.params[3]};
+                    else if (b.kind == "phalanx" && b.params.size() > 5)
+                        b.params = b.params[5] >= 0.5f ? std::vector<float>{} : std::vector<float>{kBonePhalanx, b.params[0], b.params[1], b.params[3], b.params[4]};
+                    else continue;
+                    if (b.params.empty()) { // grip pads: none on bare bones
+                        b.visible = false;
+                        continue;
+                    }
+                    b.kind = "robot_bone";
+                    b.color = bone;
+                    b.rebuild();
+                    continue;
+                }
                 if (b.kind == "arm_link") b.params = {kUpperArm, B.armR, static_cast<float>(build)};
                 else if (b.kind == "robot_forearm" && b.params.size() >= 5) b.params = {B.forearmW, b.params[1], b.params[2], b.params[3], b.params[4], static_cast<float>(build)};
                 else continue;
@@ -2761,12 +3123,22 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
                 group.push_back(c.bodies.back().name);
             };
             const Vec3 knee{0, 0, -kThigh}, ankle{0, 0, -kThigh - kShin}, toeJoint = ankle + Vec3{0, 126, -70};
-            leg("Thigh", "robot_thigh", {kThigh, B.thighW, B.thighD, static_cast<float>(build)}, {}, shell, thigh);
-            leg("Shin", "robot_shin", {kShin, B.shinW, B.shinD, static_cast<float>(build)}, knee, shell, shin);
-            leg("Foot", "robot_foot", {250, 100, kAnkleZ, 0}, ankle, shell, foot);
+            if (skeleton) { // femur, tibia + fibula + kneecap, tarsals + metatarsals, toe bones
+                const float lr = left ? -1.0f : 1.0f;
+                leg("Thigh", "robot_bone", {kBoneFemur, kThigh, lr}, {}, bone, thigh);
+                leg("Shin", "robot_bone", {kBoneShin, kShin, lr}, knee, bone, shin);
+                leg("Foot", "robot_bone", {kBoneFoot, lr}, ankle, bone, foot);
+                leg("Toe", "robot_bone", {kBoneToes, lr}, toeJoint, bone, toe);
+            } else {
+                leg("Thigh", "robot_thigh", {kThigh, B.thighW, B.thighD, static_cast<float>(build)}, {}, shell, thigh);
+                leg("Shin", "robot_shin", {kShin, B.shinW, B.shinD, static_cast<float>(build)}, knee, shell, shin);
+                leg("Foot", "robot_foot", {250, 100, kAnkleZ, 0}, ankle, shell, foot);
+                leg("Toe", "robot_foot", {250, 100, kAnkleZ, 1}, toeJoint, shell, toe);
+            }
+            // The soles stay (the ground contact); on the skeleton they are not drawn.
             leg("Foot Sole", "robot_foot", {250, 100, kAnkleZ, 2}, ankle, kRubber, foot);
-            leg("Toe", "robot_foot", {250, 100, kAnkleZ, 1}, toeJoint, shell, toe);
             leg("Toe Sole", "robot_foot", {250, 100, kAnkleZ, 3}, toeJoint, kRubber, toe);
+            if (skeleton) c.bodies[c.bodies.size() - 2].visible = c.bodies.back().visible = false;
             // Hip motors on the side of the pelvis, knee motor behind the thigh, ankle
             // motors in the calf, toe motor on the instep.
             const std::string hipFlex = motor(lh, label + "Hip Flex", "hip_flex", 1.4f, {62, -46, 34}, nullptr);
@@ -2788,7 +3160,10 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             lh.joint(label + "Toe", toe, toeJoint, {1, 0, 0}, toeDrive, 1.0f / gear);
         }
     }
-    if (all) dressHumanoid(c, v, s, black);
+    if (all && !skeleton) dressHumanoid(c, v, s, black);
+    if (skeleton && v("motors") < 0.5f) // natural look: the drive motors work out of sight
+        for (Body& b : c.bodies)
+            if (b.kind == "dc_motor" || b.kind == "motor_rotor") b.visible = false;
     settleDrives(c);
     faceFront(c, o);
 
@@ -2902,7 +3277,8 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
         return c;
     }
     // Humanoid body: head and neck, torso (pelvis, gut, midriff, chest, heart), legs, or all of it.
-    if (key == "humanoid" || key == "humanoid_female" || key == "robot_head_neck" || key == "robot_torso" || key == "robot_leg") {
+    if (key == "humanoid" || key == "humanoid_female" || key == "skeleton_robot" || key == "robot_head_neck" || key == "robot_torso" ||
+        key == "robot_leg") {
         buildHumanoid(c, key, v, top, o);
         return c;
     }
