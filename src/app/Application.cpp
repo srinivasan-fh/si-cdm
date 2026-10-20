@@ -1015,7 +1015,8 @@ void Application::updatePrompt() {
     case ToolId::Rectangle: p = stage == 0 ? "RECT  first corner (x,y):" : "RECT  opposite corner (x,y | @w,h):"; break;
     case ToolId::Circle: p = stage == 0 ? "CIRCLE  centre (x,y):" : "CIRCLE  radius or point:"; break;
     case ToolId::Extrude:
-        p = m_extrudeCurve < 0 ? "EXTRUDE  pick a closed profile:" : "EXTRUDE  depth (mm), drag or type; click / Enter:";
+        p = m_extrudeCurve < 0 ? "EXTRUDE  pick a closed profile:"
+                               : std::string("EXTRUDE  depth (") + unitInfo(activeUnits().unit).symbol + "), drag or type; click / Enter:";
         break;
     default: break;
     }
@@ -1141,7 +1142,7 @@ void Application::applyExtrude() {
         return;
     }
     char depth[32];
-    std::snprintf(depth, sizeof(depth), "%g", static_cast<double>(m_uiState.extrudeDistance));
+    std::snprintf(depth, sizeof(depth), "%.9gmm", static_cast<double>(m_uiState.extrudeDistance)); // mm, whatever the units
     std::string line = "EXTRUDE \"" + curves[static_cast<std::size_t>(m_extrudeCurve)].name + "\" " + depth;
     if (m_uiState.extrudeSymmetric) line += " SYMMETRIC";
     if (m_uiState.extrudeKeepSketch) line += " KEEP";
@@ -1502,14 +1503,26 @@ void Application::drawSimulationOverlay() const {
         Vec3 centre;
         float radius = 0;
     };
+    // Matched once per frame (a humanoid has hundreds of bodies and motions): the bodies
+    // each motion moves, each body's motions, and the bounds of the moving bodies.
+    const auto moved = motionBodies(scene);
+    std::vector<std::vector<std::size_t>> movers(bodies.size());
+    std::vector<AABB> boxes(bodies.size());
+    for (std::size_t k = 0; k < moved.size(); ++k)
+        for (std::size_t i : moved[k]) {
+            if (movers[i].empty()) boxes[i] = bodies[i].bounds();
+            movers[i].push_back(k);
+        }
+    auto placed = [&](std::size_t body, float time, std::size_t before = static_cast<std::size_t>(-1)) {
+        return bodyMotionTransform(scene, body, time, before, movers[body]);
+    };
     std::vector<Group> groups(motions.size());
     for (std::size_t k = 0; k < motions.size(); ++k) {
         AABB box;
-        for (std::size_t i = 0; i < bodies.size(); ++i)
-            if (motions[k].moves(bodies[i].name)) {
-                if (groups[k].body < 0) groups[k].body = static_cast<int>(i);
-                box.expand(bodies[i].bounds());
-            }
+        for (std::size_t i : moved[k]) {
+            if (groups[k].body < 0) groups[k].body = static_cast<int>(i);
+            box.expand(boxes[i]);
+        }
         if (box.valid()) {
             groups[k].centre = box.center();
             groups[k].radius = box.radius();
@@ -1524,7 +1537,7 @@ void Application::drawSimulationOverlay() const {
             std::optional<ImVec2> prev;
             for (int s = 0; s <= kSamples; ++s) {
                 const float ts = t0 + (t - t0) * static_cast<float>(s) / kSamples;
-                const auto q = scr(bodyMotionTransform(scene, body, ts).transformPoint(p));
+                const auto q = scr(placed(body, ts).transformPoint(p));
                 if (q && prev) dl->AddLine(*prev, *q, c, 1.5f);
                 prev = q;
             }
@@ -1550,7 +1563,7 @@ void Application::drawSimulationOverlay() const {
                 continue;
             }
             const ImU32 c = toU32(motionColor(k));
-            const Mat4 outer = bodyMotionTransform(scene, static_cast<std::size_t>(groups[k].body), t, k);
+            const Mat4 outer = placed(static_cast<std::size_t>(groups[k].body), t, k);
             const Vec3 dir = normalize(outer.transformDir(m.axis));
             const float r = std::max(groups[k].radius * 0.6f, 24.0f * wpp);
             char text[96];
@@ -1561,7 +1574,7 @@ void Application::drawSimulationOverlay() const {
                 std::snprintf(text, sizeof(text), "%s  %s  %s/s", m.name.c_str(), lengthText(motionValue(scene, m, t)).c_str(),
                               lengthText(motionRate(scene, m, t)).c_str());
             if (m.kind == MotionKind::Circular) {
-                const Vec3 pivot = m.eachCentre ? bodies[static_cast<std::size_t>(groups[k].body)].bounds().center() : m.origin;
+                const Vec3 pivot = m.eachCentre ? boxes[static_cast<std::size_t>(groups[k].body)].center() : m.origin;
                 const Vec3 o = outer.transformPoint(pivot);
                 const float len = r * 1.6f;
                 for (int d = -6; d < 6; d += 2) // dashed axis line
@@ -1590,7 +1603,7 @@ void Application::drawSimulationOverlay() const {
                 }
                 label(o + dir * len, c, text);
             } else {
-                const Mat4 full = bodyMotionTransform(scene, static_cast<std::size_t>(groups[k].body), t);
+                const Mat4 full = placed(static_cast<std::size_t>(groups[k].body), t);
                 const Vec3 p = full.transformPoint(groups[k].centre);
                 const float rate = motionRate(scene, m, t);
                 const float sign = (rate != 0.0f ? rate : m.speed) < 0.0f ? -1.0f : 1.0f; // current direction
@@ -1613,7 +1626,7 @@ void Application::drawSimulationOverlay() const {
     // Real-time axes: the moving X / Y / Z of each motion group and of the selection.
     if (st.simAxes) {
         auto triad = [&](std::size_t body, const Vec3& p, float size, bool strong) {
-            const Mat4 tf = bodyMotionTransform(scene, body, t);
+            const Mat4 tf = placed(body, t);
             const Vec3 o = tf.transformPoint(p);
             const ImU32 cols[] = {IM_COL32(240, 80, 80, 255), IM_COL32(90, 210, 90, 255), IM_COL32(90, 140, 255, 255)};
             const char* names[] = {"X", "Y", "Z"};

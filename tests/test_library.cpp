@@ -785,3 +785,39 @@ TEST_CASE("robot arm motor rotors stay in their housings while the arm moves") {
         }
     }
 }
+
+TEST_CASE("scaling a humanoid keeps it standing on the ground") {
+    Document d;
+    REQUIRE(run(d, "PART HUMANOID").ok);
+    for (const char* line : {"SCALE \"Humanoid Robot 1 Head\" 1.5", "SCALE \"Humanoid Robot 1 Chest\" TO 0.5"}) {
+        REQUIRE(run(d, line).ok);
+        AABB all;
+        for (const Body& b : d.scene.bodies()) all.expand(b.bounds());
+        CHECK_NEAR(all.min.z, 0, 1e-2);
+    }
+    const auto tf = motionTransforms(d.scene, 1.7f);
+    const Body* shin = body(d.scene, "Humanoid Robot 1 Right Shin");
+    REQUIRE(shin);
+    CHECK_NEAR(length(track(d.scene, tf, "Humanoid Robot 1 Right Thigh", shin->offset) -
+                      track(d.scene, tf, "Humanoid Robot 1 Right Shin", shin->offset)),
+               0, 1e-2);
+}
+
+TEST_CASE("indexed motion lookup matches matching every motion against every body") {
+    Document d;
+    REQUIRE(run(d, "PART HUMANOID DRIVE 1").ok);
+    REQUIRE(run(d, "PART CHAINDRIVE @2000,0,0").ok);
+    REQUIRE(run(d, "MOTION LINEAR Drift DIR X SPEED 5 BODIES ALL").ok); // "*" moves everything
+    const Scene& s = d.scene;
+    for (float t : {0.0f, 0.8f, 2.6f}) {
+        const auto fast = motionTransforms(s, t); // bodyMotionTransform(s, i, t) still matches by name
+        const auto movers = bodyMotions(s);
+        for (std::size_t i = 0; i < s.bodies().size(); ++i) {
+            const Vec3 p = s.bodies()[i].offset + Vec3{10, 20, 30};
+            CHECK_NEAR(length(fast[i].transformPoint(p) - bodyMotionTransform(s, i, t).transformPoint(p)), 0, 1e-3);
+            CHECK_NEAR(length(bodyMotionTransform(s, i, t, static_cast<std::size_t>(-1), movers[i]).transformPoint(p) -
+                              bodyMotionTransform(s, i, t).transformPoint(p)),
+                       0, 1e-3);
+        }
+    }
+}

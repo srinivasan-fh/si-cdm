@@ -6,6 +6,8 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <string_view>
+#include <unordered_map>
 
 namespace sicdm {
 
@@ -149,15 +151,59 @@ float motionCycle(const Motion& m) noexcept {
     return m.mode == MotionMode::Oscillate ? 2.0f * one : one;
 }
 
+std::vector<std::vector<std::size_t>> motionBodies(const Scene& scene) {
+    const auto& bodies = scene.bodies();
+    std::unordered_map<std::string_view, std::vector<std::size_t>> byName;
+    for (std::size_t i = 0; i < bodies.size(); ++i) byName[bodies[i].name].push_back(i);
+    std::vector<std::vector<std::size_t>> out(scene.motions().size());
+    for (std::size_t k = 0; k < out.size(); ++k) {
+        const Motion& m = scene.motions()[k];
+        std::vector<std::size_t>& list = out[k];
+        bool all = false;
+        for (const std::string& n : m.bodies) all = all || n == "*";
+        if (all) {
+            list.resize(bodies.size());
+            for (std::size_t i = 0; i < bodies.size(); ++i) list[i] = i;
+            continue;
+        }
+        for (const std::string& n : m.bodies)
+            if (const auto it = byName.find(n); it != byName.end()) list.insert(list.end(), it->second.begin(), it->second.end());
+        std::sort(list.begin(), list.end());
+        list.erase(std::unique(list.begin(), list.end()), list.end()); // a name listed twice moves its body once
+    }
+    return out;
+}
+
+std::vector<std::vector<std::size_t>> bodyMotions(const Scene& scene) {
+    const auto perMotion = motionBodies(scene);
+    std::vector<std::vector<std::size_t>> out(scene.bodies().size());
+    for (std::size_t k = 0; k < perMotion.size(); ++k)
+        for (std::size_t i : perMotion[k]) out[i].push_back(k);
+    return out;
+}
+
 std::vector<Mat4> motionTransforms(const Scene& scene, float t) {
     const auto& bodies = scene.bodies();
     std::vector<Mat4> out(bodies.size(), Mat4::identity());
-    for (const Motion& m : scene.motions()) {
-        if (!m.enabled) continue;
+    const auto moved = motionBodies(scene);
+    for (std::size_t k = 0; k < moved.size(); ++k) {
+        const Motion& m = scene.motions()[k];
+        if (!m.enabled || moved[k].empty()) continue;
         const Mat4 mm = sceneMatrix(scene, m, t);
-        for (std::size_t i = 0; i < bodies.size(); ++i)
-            if (m.moves(bodies[i].name))
-                out[i] = out[i] * (m.eachCentre ? matrixFor(scene, m, bodies[i], t) : mm); // earlier motions stay outermost
+        for (std::size_t i : moved[k])
+            out[i] = out[i] * (m.eachCentre ? matrixFor(scene, m, bodies[i], t) : mm); // earlier motions stay outermost
+    }
+    return out;
+}
+
+Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::size_t before,
+                         const std::vector<std::size_t>& motionsOfBody) {
+    Mat4 out = Mat4::identity();
+    if (body >= scene.bodies().size()) return out;
+    for (std::size_t k : motionsOfBody) {
+        if (k >= before) break;
+        const Motion& m = scene.motions()[k];
+        if (m.enabled) out = out * matrixFor(scene, m, scene.bodies()[body], t);
     }
     return out;
 }

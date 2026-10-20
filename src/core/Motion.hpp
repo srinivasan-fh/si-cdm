@@ -76,6 +76,14 @@ float motionCycle(const Motion& m) noexcept;
 std::vector<Mat4> motionTransforms(const Scene& scene, float t);
 // The same for one body; `before` stops at that motion index (its outer motions only).
 Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::size_t before = static_cast<std::size_t>(-1));
+// Indices of the bodies each motion moves (by name, "*" = all), in scene order.
+// Matching names once is much faster than Motion::moves() for every motion and body.
+std::vector<std::vector<std::size_t>> motionBodies(const Scene& scene);
+// Indices of the motions that move each body, in list order (outermost first).
+std::vector<std::vector<std::size_t>> bodyMotions(const Scene& scene);
+// bodyMotionTransform() given the body's motions from bodyMotions().
+Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::size_t before,
+                         const std::vector<std::size_t>& motionsOfBody);
 // Distance (mm) a chain / belt body has travelled along its loop at time t:
 // the sum of the enabled along-loop motions that move it.
 float loopTravel(const Scene& scene, std::size_t body, float t);

@@ -235,6 +235,9 @@ TEST_CASE("UNITS switches the document units and commands follow them") {
     CHECK(!run(d, "UNITS PRECISION 11").ok);
     CHECK(!run(d, "UNITS FRACTION 1/3").ok);
     CHECK(!run(d, "UNITS PARSECS").ok);
+    d.dirty = false;
+    CHECK(run(d, "UNITS PT").ok); // already points: nothing to save
+    CHECK(!d.dirty);
     // The command's scope does not leak into the thread.
     CHECK(inputUnit() == LengthUnit::Millimeter);
 }

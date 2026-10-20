@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -105,29 +106,29 @@ void propertyRow(const char* label, const char* fmt, ...) {
 // when the field loses focus. `suffix` follows the unit ("/s" for speeds).
 bool lengthField(const char* id, float* mm, float minMm = -1e7f, float maxMm = 1e7f, const char* suffix = "",
                  const char* emptyText = nullptr) {
-    static ImGuiID s_active = 0;
-    static char s_buf[96];
+    // Text being typed, per field: moving straight to another field (even one drawn
+    // earlier in the frame) must not lose this one's edit before it commits.
+    using Text = std::array<char, 96>;
+    static std::map<ImGuiID, Text> s_editing;
     static ImGuiID s_errorId = 0;
     static double s_errorUntil = 0.0;
     const ImGuiID wid = ImGui::GetID(id);
-    char local[96];
-    char* buf = s_active == wid ? s_buf : local;
-    if (s_active != wid) {
+    Text local{};
+    const auto editing = s_editing.find(wid);
+    char* buf = editing != s_editing.end() ? editing->second.data() : local.data();
+    if (editing == s_editing.end()) {
         const std::string text = emptyText && *mm <= 0.0f ? std::string(emptyText) : lengthText(*mm) + suffix;
-        std::snprintf(local, sizeof(local), "%s", text.c_str());
+        std::snprintf(local.data(), local.size(), "%s", text.c_str());
     }
     const bool error = s_errorId == wid && ImGui::GetTime() < s_errorUntil;
     if (error) ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(theme::rgb(92, 38, 40)));
-    ImGui::InputText(id, buf, sizeof(s_buf), ImGuiInputTextFlags_AutoSelectAll);
+    ImGui::InputText(id, buf, local.size(), ImGuiInputTextFlags_AutoSelectAll);
     if (error) ImGui::PopStyleColor();
-    if (ImGui::IsItemActivated()) {
-        s_active = wid;
-        std::snprintf(s_buf, sizeof(s_buf), "%s", buf);
-    }
+    if (ImGui::IsItemActivated()) s_editing[wid] = editing != s_editing.end() ? editing->second : local;
     bool changed = false;
-    if (ImGui::IsItemDeactivated() && s_active == wid) {
+    if (ImGui::IsItemDeactivated() && s_editing.count(wid)) {
         if (ImGui::IsItemDeactivatedAfterEdit()) {
-            std::string text = s_buf;
+            std::string text = s_editing[wid].data();
             const std::size_t sl = std::strlen(suffix);
             if (sl && text.size() >= sl && text.compare(text.size() - sl, sl, suffix) == 0) text.resize(text.size() - sl);
             const auto v = emptyText && text == emptyText ? std::optional<double>(0.0) : parseLength(text);
@@ -139,9 +140,9 @@ bool lengthField(const char* id, float* mm, float minMm = -1e7f, float maxMm = 1
                 s_errorUntil = ImGui::GetTime() + 1.2;
             }
         }
-        s_active = 0;
+        s_editing.erase(wid);
     }
-    if (ImGui::IsItemHovered() && s_active != wid)
+    if (ImGui::IsItemHovered() && !s_editing.count(wid))
         ImGui::SetTooltip("%s\nType a length in any unit: 12.5  3in  5'6-1/2\"  1/8\"  10pt  1m+25mm",
                           error ? "Not a length" : lengthText(*mm, {true, false}).c_str());
     return changed;
@@ -1973,8 +1974,10 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
         for (const LibraryParam& p : selected->params) {
             const auto it = values.find(p.key);
             if (it == values.end() || it->second == p.value) continue;
-            char num[48];
-            std::snprintf(num, sizeof(num), " %s %g", p.key, static_cast<double>(it->second));
+            // Lengths carry their unit: the command reads bare numbers in the document's units.
+            const bool mm = p.unit && std::string_view(p.unit) == "mm" && !p.integer && !p.choices;
+            char num[64];
+            std::snprintf(num, sizeof(num), " %s %.9g%s", p.key, static_cast<double>(it->second), mm ? "mm" : "");
             line += num;
         }
         cmd.commands.push_back(line);

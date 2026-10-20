@@ -836,7 +836,14 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         for (std::size_t i = 0; i < bodies.size(); ++i)
             if (static_cast<int>(i) == bi || (!comp.empty() && bodies[i].component == comp)) targets.push_back(i);
         const float k = absolute ? *value / picked.scale : *value;
-        const Vec3 anchor = bodies[targets.front()].offset;
+        // A component scales about its first body's x, y and its lowest point, so a part
+        // standing on the ground (a humanoid on its feet) stays standing on it.
+        Vec3 anchor = bodies[targets.front()].offset;
+        if (!comp.empty()) {
+            AABB box;
+            for (std::size_t i : targets) box.expand(bodies[i].bounds());
+            if (box.valid()) anchor.z = box.min.z;
+        }
         auto inGroup = [&](const std::string& n) {
             for (std::size_t i : targets)
                 if (bodies[i].name == n) return true;
@@ -1222,7 +1229,9 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
             }
             changed = true;
         }
-        if (changed) {
+        const UnitSettings& was = doc.state.units;
+        const bool same = u.unit == was.unit && u.precision == was.precision && u.style == was.style && u.denominator == was.denominator;
+        if (changed && !same) { // re-choosing the current units leaves the file unmodified
             doc.state.units = u;
             setActiveUnits(u);
             markChanged(doc);
