@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <iterator>
 #include <cstdio>
 #include <fstream>
@@ -265,7 +266,7 @@ void Application::setStatus(std::string message) {
 void Application::setMode(ViewMode mode) {
     if (mode == m_uiState.mode) return;
     m_sketcher.cancel();
-    m_leftDrag = m_otherDrag = DragMode::None;
+    cancelInteraction(true);
     m_uiState.mode = mode;
     if (mode == ViewMode::Drawing2D && !m_2DReady) init2DCamera();
     if (mode != ViewMode::Simulation) m_uiState.simPlaying = false; // leaving the simulation pauses it
@@ -467,7 +468,7 @@ SculptBrush brushOf(ToolId t) {
 // Exact millimetres for command lines, whatever the display units.
 std::string mmText(float v) {
     char b[48];
-    std::snprintf(b, sizeof(b), "%.5gmm", static_cast<double>(v));
+    std::snprintf(b, sizeof(b), "%.9gmm", static_cast<double>(v));
     return b;
 }
 std::string mmVec(const Vec3& v) { return mmText(v.x) + "," + mmText(v.y) + "," + mmText(v.z); }
@@ -476,7 +477,15 @@ std::string dirVec(const Vec3& v) {
     std::snprintf(b, sizeof(b), "%.6g,%.6g,%.6g", static_cast<double>(v.x), static_cast<double>(v.y), static_cast<double>(v.z));
     return b;
 }
-std::string quotedName(const std::string& s) { return "\"" + s + "\""; }
+// A quoted name: always read as a name, quotes inside written \".
+std::string quotedName(const std::string& s) {
+    std::string q = "\"";
+    for (const char c : s) {
+        if (c == '"') q += '\\';
+        q += c;
+    }
+    return q + "\"";
+}
 
 } // namespace
 
@@ -484,20 +493,22 @@ bool Application::beginSculpt(float x, float y) {
     const auto hit = pick(x, y);
     if (!hit) return false;
     const auto bi = static_cast<std::size_t>(hit->body);
+    SculptMesh mesh(m_doc.scene.bodies()[bi]);
+    if (mesh.empty()) return false;
     m_doc.scene.pushUndo("SCULPT on " + m_doc.scene.bodies()[bi].name);
     Body& body = m_doc.scene.bodies()[bi];
-    m_sculptMesh = SculptMesh(body);
-    if (m_sculptMesh.empty()) return false;
+    m_sculptMesh = std::move(mesh);
     SculptSettings s;
     s.brush = ImGui::GetIO().KeyShift ? SculptBrush::Smooth : brushOf(m_ui.toolbox().active());
     s.invert = commandModifierHeld();
-    s.radius = m_uiState.sculptRadius;
-    s.strength = m_uiState.sculptStrength;
+    s.radius = std::max(m_uiState.sculptRadius, 0.01f);
+    s.strength = std::clamp(m_uiState.sculptStrength, 0.0f, 1.0f);
     s.symmetryX = m_uiState.sculptSymmetry;
     s.refine = m_uiState.sculptRefine;
-    s.detail = m_uiState.sculptDetail;
+    s.detail = std::max(m_uiState.sculptDetail, 0.0f);
     m_sculptSettings = s;
     m_sculptBody = hit->body;
+    m_sculptName = body.name;
     m_dabs = 0;
     const ImGuiIO& io = ImGui::GetIO();
     const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
@@ -513,13 +524,24 @@ bool Application::beginSculpt(float x, float y) {
     m_sculptMesh.writeTo(body, false);
     m_sculptOverrides.assign(m_doc.scene.bodies().size(), nullptr);
     m_sculptOverrides[bi] = &body.mesh;
+    m_sculptRevision = m_doc.scene.revision();
     m_uiState.selectedBody = hit->body;
     m_uiState.selectedCurve = m_uiState.selectedImage = -1;
     return true;
 }
 
+bool Application::sculptTargetValid() const {
+    const auto& bodies = m_doc.scene.bodies();
+    return m_sculptBody >= 0 && m_sculptBody < static_cast<int>(bodies.size()) &&
+           m_doc.scene.revision() == m_sculptRevision && bodies[static_cast<std::size_t>(m_sculptBody)].name == m_sculptName &&
+           m_sculptOverrides.size() == bodies.size();
+}
+
 void Application::continueSculpt(float x, float y) {
-    if (m_sculptBody < 0 || m_sculptBody >= static_cast<int>(m_doc.scene.bodies().size())) return;
+    if (!sculptTargetValid()) {
+        abortSculpt();
+        return;
+    }
     Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(m_sculptBody)];
     const ImGuiIO& io = ImGui::GetIO();
     const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
@@ -544,28 +566,55 @@ void Application::continueSculpt(float x, float y) {
         }
     }
     m_sculptMesh.writeTo(body, false);
-    m_sculptOverrides.assign(m_doc.scene.bodies().size(), nullptr);
     m_sculptOverrides[static_cast<std::size_t>(m_sculptBody)] = &body.mesh;
 }
 
 void Application::endSculpt() {
-    if (m_sculptBody >= 0 && m_sculptBody < static_cast<int>(m_doc.scene.bodies().size())) {
-        Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(m_sculptBody)];
-        m_sculptMesh.writeTo(body, true);
-        m_doc.scene.touchBodies();
-        const std::size_t open = openEdgeCount(body.mesh);
-        char info[160];
-        std::snprintf(info, sizeof(info), "%s: %zu triangles%s", body.name.c_str(), body.mesh.indices.size() / 3,
-                      open == 0 ? ", closed" : "");
-        m_uiState.sculptInfo = info;
-        setStatus(info);
-        log(std::string("Sculpted ") + body.name + " (" + sculptBrushKey(m_sculptSettings.brush) +
-                (m_sculptSettings.invert ? ", inverted" : "") + ", " + std::to_string(std::max(m_dabs, 1)) + " dabs)",
-            UiState::LogLine::Output);
+    if (!sculptTargetValid()) {
+        abortSculpt();
+        return;
+    }
+    Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(m_sculptBody)];
+    m_sculptMesh.writeTo(body, true);
+    m_doc.scene.touchBodies();
+    const std::size_t open = openEdgeCount(body.mesh);
+    char info[160];
+    std::snprintf(info, sizeof(info), "%s: %zu triangles%s", body.name.c_str(), body.mesh.indices.size() / 3,
+                  open == 0 ? ", closed" : "");
+    m_uiState.sculptInfo = info;
+    setStatus(info);
+    log(std::string("Sculpted ") + body.name + " (" + sculptBrushKey(m_sculptSettings.brush) +
+            (m_sculptSettings.invert ? ", inverted" : "") + ", " + std::to_string(std::max(m_dabs, 1)) + " dabs)",
+        UiState::LogLine::Output);
+    m_sculptBody = -1;
+    m_sculptOverrides.clear();
+    m_sculptMesh = SculptMesh();
+}
+
+void Application::abortSculpt() {
+    if (m_sculptBody < 0) return;
+    // Untouched since the stroke began: its snapshot is the newest one, restore it.
+    // Otherwise something else changed the bodies; leave them as they are now.
+    if (m_doc.scene.revision() == m_sculptRevision && m_doc.scene.undoDepth() > 0) {
+        m_doc.scene.undo();
+        setStatus("Stroke cancelled");
+    } else {
+        setStatus("Stroke dropped: the body changed while sculpting");
     }
     m_sculptBody = -1;
     m_sculptOverrides.clear();
     m_sculptMesh = SculptMesh();
+}
+
+void Application::cancelInteraction(bool commit) {
+    if (m_sculptBody >= 0) {
+        if (commit) endSculpt();
+        else abortSculpt();
+    }
+    m_cutPath.clear();
+    m_cutBody = -1;
+    m_uiState.booleanFirst.clear();
+    m_leftDrag = m_otherDrag = DragMode::None;
 }
 
 void Application::applyCutTool(ToolId tool, float x, float y) {
@@ -607,7 +656,11 @@ void Application::applyCutTool(ToolId tool, float x, float y) {
         static const char* const kShapes[] = {"BOX", "ROUND", "BALL"};
         line = "POCKET " + body + at + " " + kShapes[std::clamp(u.pocketShape, 0, 2)] + " WIDTH " + mmText(u.pocketWidth) +
                " LENGTH " + mmText(u.pocketShape == 0 ? u.pocketLength : u.pocketWidth) + " DEPTH " + mmText(u.pocketDepth);
-        if (u.pocketShape == 0 && u.pocketAngle != 0.0f) line += " ANGLE " + std::to_string(u.pocketAngle);
+        if (u.pocketShape == 0 && u.pocketAngle != 0.0f) {
+            char angle[48];
+            std::snprintf(angle, sizeof(angle), " ANGLE %.6g", static_cast<double>(u.pocketAngle));
+            line += angle;
+        }
         break;
     }
     case ToolId::AddBoss: {
@@ -638,7 +691,7 @@ void Application::applyWearableTool(ToolId tool, float x, float y) {
     switch (tool) {
     case ToolId::ShellBody: {
         std::string line = "SHELL " + name + " THICKNESS " + mmText(u.shellThickness) + (u.shellOutward ? " OUTWARD" : "");
-        if (u.shellOpen && length(n) > 0.5f)
+        if (u.shellOpen && m_brushNormalValid && length(n) > 0.5f)
             line += " OPEN " + mmVec(hit->point - n * u.shellOpenDepth) + " NORMAL " + dirVec(n);
         runCommandLine(line);
         break;
@@ -653,6 +706,13 @@ void Application::applyWearableTool(ToolId tool, float x, float y) {
         const auto& bodies = m_doc.scene.bodies();
         for (std::size_t i = 0; i < bodies.size(); ++i) {
             if (static_cast<int>(i) == hit->body || !bodies[i].visible || bodies[i].attachedTo == body.name) continue;
+            // Joint hardware (pins, balls) sits on the pivot but is never the parent.
+            const std::string& nm = bodies[i].name;
+            auto endsWith = [&](const char* tail) {
+                const std::size_t len = std::strlen(tail);
+                return nm.size() >= len && nm.compare(nm.size() - len, len, tail) == 0;
+            };
+            if (endsWith(" Hinge Pin") || endsWith(" Ball Joint")) continue;
             const AABB b = bodies[i].bounds();
             if (!b.valid()) continue;
             const Vec3 q = vmax(b.min, vmin(hit->point, b.max));
@@ -667,8 +727,9 @@ void Application::applyWearableTool(ToolId tool, float x, float y) {
         std::string line = "JOINT " + name;
         if (parent >= 0 && best < 50.0f) line += " TO " + quotedName(bodies[static_cast<std::size_t>(parent)].name);
         char range[96];
-        std::snprintf(range, sizeof(range), " RANGE %g %g PERIOD %g", static_cast<double>(u.jointLo), static_cast<double>(u.jointHi),
-                      static_cast<double>(u.jointPeriod));
+        const float lo = std::min(u.jointLo, u.jointHi), hi = std::max(std::max(u.jointLo, u.jointHi), lo + 1.0f);
+        std::snprintf(range, sizeof(range), " RANGE %g %g PERIOD %g", static_cast<double>(lo), static_cast<double>(hi),
+                      static_cast<double>(std::max(u.jointPeriod, 0.2f)));
         line += " AT " + mmVec(hit->point) + " AXIS " + axis + (u.jointBall ? " BALL" : " HINGE") + range;
         runCommandLine(line);
         break;
@@ -705,16 +766,20 @@ void Application::finishCutDrag(ToolId tool, float x, float y) {
         setStatus("Drag a line across a body to slice it");
         return;
     }
-    // The body: the selection, else the first one under the line.
-    int bi = m_uiState.selectedBody;
-    if (bi < 0 || bi >= static_cast<int>(m_doc.scene.bodies().size())) {
-        bi = -1;
-        for (int k = 0; k <= 16 && bi < 0; ++k) {
-            const float t = static_cast<float>(k) / 16.0f;
-            if (const auto hit = pick(m_knifeStart.x + (x - m_knifeStart.x) * t, m_knifeStart.y + (y - m_knifeStart.y) * t))
-                bi = hit->body;
+    // The body: the selection if the line crosses it, else the first body under the line.
+    int bi = -1;
+    const int sel = m_uiState.selectedBody;
+    for (int k = 0; k <= 32; ++k) {
+        const float t = static_cast<float>(k) / 32.0f;
+        if (const auto hit = pick(m_knifeStart.x + (x - m_knifeStart.x) * t, m_knifeStart.y + (y - m_knifeStart.y) * t)) {
+            if (bi < 0) bi = hit->body;
+            if (hit->body == sel) {
+                bi = sel;
+                break;
+            }
         }
     }
+    if (bi < 0 && sel >= 0 && sel < static_cast<int>(m_doc.scene.bodies().size())) bi = sel; // a line beside it
     if (bi < 0) {
         setStatus("Drag the knife across a body (or select one first)");
         return;
@@ -820,6 +885,8 @@ void Application::handleViewportInput() {
         }
     }
 
+    if (tool != ToolId::BooleanBodies) m_uiState.booleanFirst.clear();
+
     // Extrude: the profile must still exist and the tool still be active.
     if (m_extrudeCurve >= 0 &&
         (tool != ToolId::Extrude || m_extrudeCurve >= static_cast<int>(m_doc.scene.sketch().curves().size())))
@@ -877,7 +944,7 @@ void Application::handleViewportInput() {
         }
     }
 
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !m_escapedDrag) {
         if (m_leftDrag == DragMode::Pending && std::hypot(mx - m_pressX, my - m_pressY) > kDragThreshold)
             m_leftDrag = isSketchTool(tool) ? DragMode::None : orbitOrPan; // dragging empty space navigates
         switch (m_leftDrag) {
@@ -922,18 +989,22 @@ void Application::handleViewportInput() {
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         if (m_leftDrag == DragMode::Pending) onCanvasClick(mx, my, false);
         else if (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) endSculpt();
-        else if (m_leftDrag == DragMode::CutPath || m_leftDrag == DragMode::Knife) finishCutDrag(tool, mx, my);
+        else if (m_leftDrag == DragMode::CutPath) finishCutDrag(ToolId::CutChannel, mx, my);
+        else if (m_leftDrag == DragMode::Knife) finishCutDrag(ToolId::CutKnife, mx, my);
         m_leftDrag = DragMode::None;
+        m_escapedDrag = false;
     }
     // Brush / tool cursor on the surface under the mouse.
     m_brushHit.reset();
     if (onCanvas && !simulating() && (isSculptTool(tool) || isCutTool(tool) || isWearableTool(tool)) && m_leftDrag != DragMode::Orbit &&
         m_leftDrag != DragMode::Pan) {
+        m_brushNormalValid = false;
         if (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) {
             Vec3 n;
             if (const auto p = m_sculptMesh.raycast(cam.screenRay(mx, my, io.DisplaySize.x, wh), &n)) {
                 m_brushHit = *p;
                 m_brushNormal = n;
+                m_brushNormalValid = true;
             }
         } else if (const auto hit = pick(mx, my)) {
             m_brushHit = hit->point;
@@ -949,6 +1020,7 @@ void Application::handleViewportInput() {
                 if (intersectTriangle(local, a, c1, c2, t) && t < best) {
                     best = t;
                     m_brushNormal = normalize(cross(c1 - a, c2 - a));
+                    m_brushNormalValid = true;
                 }
             }
             if (dot(m_brushNormal, r.dir) > 0) m_brushNormal = -m_brushNormal;
@@ -965,7 +1037,7 @@ void Application::handleViewportInput() {
     if (io.WantCaptureKeyboard) return;
     if (!isSketchTool(m_ui.toolbox().active())) m_sketcher.cancel();
     const ToolId before = m_ui.toolbox().active();
-    m_ui.toolbox().handleShortcuts();
+    if (m_leftDrag == DragMode::None) m_ui.toolbox().handleShortcuts(); // not mid-stroke
     if (m_ui.toolbox().active() != before) m_sketcher.cancel();
 
     const bool ctrl = commandModifierHeld();
@@ -1013,7 +1085,13 @@ void Application::handleViewportInput() {
         else if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        if (m_extrudeCurve >= 0) {
+        if (m_leftDrag != DragMode::None && m_leftDrag != DragMode::Pending) {
+            cancelInteraction(false);
+            m_escapedDrag = true; // the button is still down: ignore it until released
+        } else if (!m_uiState.booleanFirst.empty()) {
+            m_uiState.booleanFirst.clear();
+            setStatus("Boolean cancelled");
+        } else if (m_extrudeCurve >= 0) {
             cancelExtrude();
             setStatus("Extrude cancelled");
         } else if (m_sketcher.busy()) {
@@ -1023,7 +1101,7 @@ void Application::handleViewportInput() {
             m_uiState.selectedBody = m_uiState.selectedCurve = m_uiState.selectedImage = -1;
         }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
+    if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && m_leftDrag == DragMode::None) {
         auto& curves = m_doc.scene.sketch().curves();
         if (m_uiState.selectedCurve >= 0 && m_uiState.selectedCurve < static_cast<int>(curves.size())) {
             setStatus("Deleted " + curves[static_cast<std::size_t>(m_uiState.selectedCurve)].name);
@@ -1196,7 +1274,8 @@ void Application::frame(float dt) {
         m_renderer->render(m_doc.scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve,
                            m_uiState.selectedImage, simulating() ? &m_simTransforms : nullptr,
                            simulating() && !m_loopOverrides.empty() ? &m_loopOverrides
-                           : m_sculptBody >= 0                         ? &m_sculptOverrides
+                           : (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) && sculptTargetValid()
+                               ? &m_sculptOverrides
                                                                        : nullptr);
     }
 
@@ -1259,7 +1338,11 @@ void Application::afterDocumentReplaced() {
     // New or opened document: reframe both windows and forget stale state.
     m_sketcher.cancel();
     cancelExtrude();
-    m_leftDrag = m_otherDrag = DragMode::None;
+    // The stroke belonged to the old document: forget it without touching this one.
+    m_sculptBody = -1;
+    m_sculptOverrides.clear();
+    m_sculptMesh = SculptMesh();
+    cancelInteraction(false);
     m_cam3D.resetRoll(false);
     m_cam3D.setStandardView(StandardView::Isometric, false);
     if (m_doc.scene.bounds().valid()) m_cam3D.fitToBounds(m_doc.scene.bounds(), false);
@@ -1364,6 +1447,10 @@ std::uint64_t Application::signatureOf(const Document& doc) {
     const Scene& s = doc.scene;
     const std::size_t counts[3] = {s.bodies().size(), s.sketch().curves().size(), s.images().size()};
     mix(counts, sizeof(counts));
+    // Mesh edits in place (sculpting, cuts, undo) can keep every count: the scene's
+    // revision changes with each of them.
+    const std::uint64_t revision = s.revision();
+    mix(&revision, sizeof(revision));
     const UnitSettings& u = doc.state.units;
     const int units[4] = {static_cast<int>(u.unit), u.precision, static_cast<int>(u.style), u.denominator};
     mix(units, sizeof(units));
@@ -1659,7 +1746,7 @@ void Application::activateFile(int index) {
     if (index == m_activeFile || index < 0 || index >= static_cast<int>(m_files.size())) return;
     m_sketcher.cancel();
     cancelExtrude();
-    m_leftDrag = m_otherDrag = DragMode::None;
+    cancelInteraction(true); // keep the stroke in the file it was made in
     parkActiveFile();
     loadFile(index);
     updateTitle();
@@ -1673,7 +1760,7 @@ void Application::newFileTab() {
     // A fresh untitled file: same window and display settings, framed on the origin.
     m_sketcher.cancel();
     cancelExtrude();
-    m_leftDrag = m_otherDrag = DragMode::None;
+    cancelInteraction(true); // keep the stroke in the file it was made in
     const ViewportSettings vp3D = m_vp3D, vp2D = m_vp2D;
     const ViewMode mode = m_uiState.mode;
     parkActiveFile();

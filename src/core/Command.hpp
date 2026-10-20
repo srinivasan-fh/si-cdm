@@ -29,9 +29,11 @@ std::vector<const CommandSpec*> completeCommand(std::string_view prefix);
 struct ParsedCommand {
     std::string name;              // upper-cased first word
     std::vector<std::string> args; // remaining words, as typed
+    std::vector<bool> quoted;      // per argument: it was in quotes (a name, never a keyword)
 };
 
-// Splits a command line on whitespace. Empty name for a blank line.
+// Splits a command line on whitespace. Empty name for a blank line. "Quoted words" are
+// one argument; \" inside quotes is a literal quote.
 ParsedCommand tokenizeCommand(std::string_view line);
 
 // Coordinate entry, AutoCAD style:

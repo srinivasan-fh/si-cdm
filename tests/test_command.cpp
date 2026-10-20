@@ -48,6 +48,10 @@ TEST_CASE("tokenizer upper-cases the name and keeps args") {
     CHECK(tokenizeCommand("   ").name.empty());
     const ParsedCommand q = tokenizeCommand(R"(import "my drawings/plan A.png" @10,20)");
     CHECK(q.args.size() == 2 && q.args[0] == "my drawings/plan A.png");
+    CHECK(q.quoted.size() == 2 && q.quoted[0] && !q.quoted[1]);
+    // \" inside quotes is a quote of the name.
+    const ParsedCommand e = tokenizeCommand(R"(select "the \"big\" one" x)");
+    CHECK(e.args.size() == 2 && e.args[0] == "the \"big\" one");
 }
 
 TEST_CASE("point input: absolute, relative and polar") {

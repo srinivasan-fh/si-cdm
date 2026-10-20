@@ -201,16 +201,24 @@ ParsedCommand tokenizeCommand(std::string_view line) {
     while (!line.empty()) {
         std::string word;
         std::size_t end = 0;
-        if (line.front() == '"') { // quoted argument (paths with spaces)
+        const bool isQuoted = line.front() == '"';
+        if (isQuoted) { // quoted argument (paths and names with spaces)
             end = 1;
-            while (end < line.size() && line[end] != '"') word += line[end++];
+            while (end < line.size() && line[end] != '"') {
+                if (line[end] == '\\' && end + 1 < line.size() && line[end + 1] == '"') ++end; // \" is a quote
+                word += line[end++];
+            }
             if (end < line.size()) ++end;
         } else {
             while (end < line.size() && !std::isspace(static_cast<unsigned char>(line[end]))) ++end;
             word = std::string(line.substr(0, end));
         }
-        if (first) pc.name = toUpper(word);
-        else pc.args.push_back(std::move(word));
+        if (first) {
+            pc.name = toUpper(word);
+        } else {
+            pc.args.push_back(std::move(word));
+            pc.quoted.push_back(isQuoted);
+        }
         first = false;
         line = trim(line.substr(end));
     }

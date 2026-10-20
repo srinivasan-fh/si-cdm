@@ -197,3 +197,20 @@ TEST_CASE("sculpt and boolean commands, with undo") {
     CHECK(d.scene.bodies().size() == 1);
     CHECK(openEdgeCount(d.scene.bodies().front().mesh) == 0);
 }
+
+TEST_CASE("a quoted name is a name even when it reads like a keyword") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 40 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 40 40 40 @100,0,0").ok);
+    d.scene.bodies()[0].name = "Ball";
+    d.scene.bodies()[1].name = "Arm, \"left\"";
+    REQUIRE(run(d, "SELECT \"Ball\"").ok); // the other body is not the selection
+    const std::size_t before = d.scene.bodies()[1].mesh.indices.size();
+    REQUIRE(run(d, R"(HOLE "Arm, \"left\"" AT 100,0,40 DIAMETER 8)").ok);
+    CHECK(d.scene.bodies()[1].mesh.indices.size() != before);
+    REQUIRE(run(d, "SHELL \"Ball\" THICKNESS 3").ok);
+    CHECK(openEdgeCount(d.scene.bodies()[0].mesh) == 0);
+    CHECK(meshVolume(d.scene.bodies()[0].mesh) < 40.0 * 40 * 40 * 0.5);
+    REQUIRE(run(d, R"(BOOLEAN "Ball" UNION "Arm, \"left\"" KEEP)").ok);
+    CHECK(d.scene.bodies().size() == 2);
+}

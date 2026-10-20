@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <unordered_map>
@@ -404,6 +405,13 @@ std::optional<Body> armorFor(const Body& source, float clearance, float thicknes
     const float pad = band + h * 3.0f;
     const Vec3 ext = bb.max - bb.min + Vec3{pad, pad, pad} * 2.0f;
     h = std::max(h, std::max({ext.x, ext.y, ext.z}) / 160.0f);
+    if (thickness < h * 0.5f) {
+        char b[160];
+        std::snprintf(b, sizeof(b), "A wall of %g mm is too thin for a part this size: at least %.2g mm", static_cast<double>(thickness),
+                      static_cast<double>(h * 0.5f));
+        if (error) *error = b;
+        return std::nullopt;
+    }
     const int nx = static_cast<int>(ext.x / h) + 2, ny = static_cast<int>(ext.y / h) + 2, nz = static_cast<int>(ext.z / h) + 2;
     const Vec3 origin = bb.min - Vec3{pad, pad, pad};
     TriGrid grid;
@@ -556,6 +564,7 @@ InterferenceReport checkInterference(const Scene& scene, const std::vector<std::
     report.checkedPairs = pairs.size();
     if (duration <= 0) duration = std::max(suggestedDuration(scene), 0.0f);
     if (step <= 0) step = duration > 0 ? duration / 40.0f : 1.0f;
+    step = std::max(step, duration / 2000.0f); // at most ~2000 poses
     report.duration = duration;
 
     const float reach = std::max(clearance * 2.0f, 1.0f);
@@ -690,7 +699,9 @@ InterferenceReport checkInterference(const Scene& scene, const std::vector<std::
     // which is no collision of the motion.
     std::vector<InterferencePair> rest = worst;
     measure({}, 0.0f, rest);
-    for (float t = 0.0f; t <= duration + 1e-4f; t += step) {
+    const auto poses = static_cast<long>(std::floor(duration / step + 1e-4f));
+    for (long k = 0; k <= poses; ++k) {
+        const float t = static_cast<float>(k) * step;
         ++report.samples;
         measure(simulationTransforms(scene, t), t, worst);
     }
@@ -736,6 +747,27 @@ bool lightenBody(Body& body, const LightenOptions& o, std::string* error, double
     // Voxel size: fine enough for the skin and the lattice, at most ~100 cells a side.
     float h = std::min(o.skin, o.hollow ? 1e9f : o.cell / 5.0f);
     h = std::max(h, std::max({ext.x, ext.y, ext.z}) / 100.0f);
+    // What the voxels can resolve: a lattice finer than that would only be noise
+    // (and millions of triangles).
+    auto mm = [](float v) {
+        char b[32];
+        std::snprintf(b, sizeof(b), "%.2g mm", static_cast<double>(v));
+        return std::string(b);
+    };
+    if (o.skin < h * 0.5f) {
+        if (error) *error = "SKIN must be at least " + mm(h * 0.5f) + " for a part this size";
+        return false;
+    }
+    if (!o.hollow) {
+        if (!(o.cell >= h * 4.0f)) {
+            if (error) *error = "CELL must be at least " + mm(h * 4.0f) + " for a part this size";
+            return false;
+        }
+        if (!(o.wall >= h * 0.5f) || o.wall > o.cell * 0.45f) {
+            if (error) *error = "WALL must be between " + mm(h * 0.5f) + " and " + mm(o.cell * 0.45f) + " (less than half the cell)";
+            return false;
+        }
+    }
     const int nx = static_cast<int>(ext.x / h) + 3, ny = static_cast<int>(ext.y / h) + 3, nz = static_cast<int>(ext.z / h) + 3;
     const Vec3 origin = bb.min - Vec3{h, h, h};
     auto at = [&](int x, int y, int z) {

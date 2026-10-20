@@ -279,6 +279,8 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     if (!spec) return out.fail("Unknown command: " + pc.name + "   (type HELP for the list)");
     const std::string cmd = spec->name;
     const auto& a = pc.args;
+    // A quoted argument is a name, whatever it says ("Ball", "Arm, left").
+    auto quotedArg = [&](std::size_t k) { return k < pc.quoted.size() && pc.quoted[k]; };
     // Bare numbers are read, and lengths are shown, in the document's units.
     ScopedUnits unitScope(doc.apiMillimeters ? UnitSettings{} : doc.state.units);
     auto usage = [&] { return out.fail(std::string("Usage: ") + spec->usage); };
@@ -1262,7 +1264,9 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         };
         std::size_t i = 0;
         std::vector<std::string> nameWords;
-        while (i < a.size() && !isKey(a[i])) nameWords.push_back(a[i++]);
+        if (quotedArg(0)) nameWords.push_back(a[i++]);
+        else
+            while (i < a.size() && !isKey(a[i])) nameWords.push_back(a[i++]);
         const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
         if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
             return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
@@ -1441,7 +1445,9 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         };
         std::size_t i = 0;
         std::vector<std::string> nameWords;
-        while (i < a.size() && !isKey(a[i])) nameWords.push_back(a[i++]);
+        if (quotedArg(0)) nameWords.push_back(a[i++]);
+        else
+            while (i < a.size() && !isKey(a[i])) nameWords.push_back(a[i++]);
         auto lengthAfter = [&](float& v) {
             if (i + 1 >= a.size()) return false;
             const auto l = parseLength(a[++i]);
@@ -1615,8 +1621,12 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
             for (; i < a.size(); ++i) {
                 const std::string k = lower(a[i]);
                 if (k == "to") {
-                    for (++i; i < a.size() && !isKey(a[i]); ++i) parentWords.push_back(a[i]);
-                    --i;
+                    if (quotedArg(i + 1)) {
+                        parentWords.push_back(a[++i]);
+                    } else {
+                        for (++i; i < a.size() && !isKey(a[i]); ++i) parentWords.push_back(a[i]);
+                        --i;
+                    }
                 } else if (k == "at") {
                     if (i + 1 >= a.size() || !(at = parseVec3(a[++i]))) return out.fail("AT needs x,y,z");
                 } else if (k == "axis") {
@@ -1767,14 +1777,14 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         // BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]
         std::size_t opAt = a.size();
         for (std::size_t i = 0; i < a.size(); ++i)
-            if (booleanOpFromKey(a[i])) {
+            if (!quotedArg(i) && booleanOpFromKey(a[i])) {
                 opAt = i;
                 break;
             }
         if (opAt == 0 || opAt + 1 >= a.size()) return usage();
         bool keep = false;
         std::vector<std::string> other(a.begin() + static_cast<std::ptrdiff_t>(opAt) + 1, a.end());
-        if (!other.empty() && iequal(other.back(), "keep")) {
+        if (!other.empty() && iequal(other.back(), "keep") && !quotedArg(a.size() - 1)) {
             keep = true;
             other.pop_back();
         }

@@ -84,7 +84,15 @@ Json tool(const char* name, const char* description, Json properties, std::initi
     return t;
 }
 
-std::string quote(const std::string& s) { return "\"" + s + "\""; }
+// A quoted command argument; quotes inside become \".
+std::string quote(const std::string& s) {
+    std::string q = "\"";
+    for (const char c : s) {
+        if (c == '"') q += '\\';
+        q += c;
+    }
+    return q + "\"";
+}
 
 std::string num(double v) {
     char buf[32];

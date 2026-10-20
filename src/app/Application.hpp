@@ -166,6 +166,7 @@ private:
     // Input state
     enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife };
     DragMode m_leftDrag = DragMode::None;
+    bool m_escapedDrag = false; // Esc cancelled the drag; the button is still held
     DragMode m_otherDrag = DragMode::None; // right / middle button
     float m_pressX = 0, m_pressY = 0;
     float m_pendingScroll = 0;
@@ -193,8 +194,13 @@ private:
     int m_dabs = 0;
     Vec3 m_grabPoint{};
     std::vector<const MeshData*> m_sculptOverrides; // streams the edited body while dragging
+    // The stroke's body as it was picked: a stroke whose body was renamed, removed or
+    // changed underneath it (an AI agent's command, an undo) is dropped, not misapplied.
+    std::string m_sculptName;
+    std::uint64_t m_sculptRevision = 0;
     std::optional<Vec3> m_brushHit;  // hover point of a sculpt / cut tool
     Vec3 m_brushNormal{};
+    bool m_brushNormalValid = false;
     // Channel stroke and knife line.
     int m_cutBody = -1;
     std::vector<Vec3> m_cutPath;
@@ -202,6 +208,11 @@ private:
     bool beginSculpt(float x, float y);
     void continueSculpt(float x, float y);
     void endSculpt();
+    bool sculptTargetValid() const;
+    void abortSculpt(); // drops the stroke and restores the body
+    // Ends whatever the left button is doing: a stroke is kept (`commit`) or
+    // dropped; channel paths, knife lines and a half-picked boolean are forgotten.
+    void cancelInteraction(bool commit);
     void applyCutTool(ToolId tool, float x, float y);
     void applyWearableTool(ToolId tool, float x, float y);
     void finishCutDrag(ToolId tool, float x, float y);

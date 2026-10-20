@@ -563,7 +563,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::TextDisabled("Strength");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
-        ImGui::SliderFloat("##sstrength", &st.sculptStrength, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("##sstrength", &st.sculptStrength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         ImGui::SameLine();
         ImGui::Checkbox("Symmetry X", &st.sculptSymmetry);
         ImGui::SameLine();
@@ -679,12 +679,13 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             ImGui::TextDisabled("Range");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120);
-            ImGui::DragFloatRange2("##jrange", &st.jointLo, &st.jointHi, 1.0f, -180.0f, 180.0f, "%.0f", "%.0f deg");
+            ImGui::DragFloatRange2("##jrange", &st.jointLo, &st.jointHi, 1.0f, -180.0f, 180.0f, "%.0f", "%.0f deg",
+                                   ImGuiSliderFlags_AlwaysClamp);
             ImGui::SameLine();
             ImGui::TextDisabled("Period");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(60);
-            ImGui::DragFloat("##jper", &st.jointPeriod, 0.1f, 0.2f, 60.0f, "%.1f s");
+            ImGui::DragFloat("##jper", &st.jointPeriod, 0.1f, 0.2f, 60.0f, "%.1f s", ImGuiSliderFlags_AlwaysClamp);
             ImGui::SameLine();
             ImGui::TextDisabled("Click the moving part at its pivot");
             break;
