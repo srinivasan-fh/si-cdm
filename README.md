@@ -152,6 +152,29 @@ In the app: *Motion Study → Physics environment*. The 3D view shows velocity a
 temperature halos, trails, field arrows, wavefronts and an energy-balance panel. Details:
 [docs/physics.md](docs/physics.md).
 
+## Digital sculpting and cuts
+
+Two sections at the bottom of the tool rail turn any body into digital clay and cut it like a CAD solid.
+
+- **Digital Sculpting:** Draw (push / pull), Clay (add), Carve (remove), Inflate, Grab, Pinch, Crease,
+  Smooth, Flatten and Scrape (trim). Drag over a body; Ctrl inverts, Shift smooths, `[` `]` resize.
+  The mesh refines itself under the brush (dynamic topology), with optional X symmetry.
+- **Cuts & Booleans:** Drill Hole (through, or blind with a drill point), Pocket (box, round, ball end),
+  Channel (drag a groove), Knife / Trim (drag a line: the smaller side goes, the cut is capped),
+  Add Volume (boss, pad, dome), and exact Union / Subtract / Intersect of two bodies.
+
+Booleans are exact, and the results stay closed meshes, ready for STL / OBJ export to slicers and CAM.
+
+![Sculpting: a clay hump on a plate with drilled holes, a channel, a pocket and a boss](docs/sculpting.png)
+
+```text
+SCULPT "Plate" CLAY AT -40,0,20 40,0,20 RADIUS 15 SYMMETRY      HOLE "Plate" AT 30,-40,20 DIAMETER 5
+POCKET AT 60,30,20 BOX WIDTH 18 LENGTH 28 DEPTH 5                 CHANNEL PATH -60,-30,20 60,-30,20 WIDTH 4
+TRIM PLANE 0,0,5 NORMAL 0,0,-1      BOSS AT -60,30,20 DIAMETER 14 HEIGHT 9      BOOLEAN A SUBTRACT B     UNDO
+```
+
+Details: [docs/sculpting.md](docs/sculpting.md).
+
 ## Library: motors and gears
 
 ![Library](docs/library.png)

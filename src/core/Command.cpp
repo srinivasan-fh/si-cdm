@@ -29,6 +29,25 @@ constexpr CommandSpec kCommands[] = {
     // Features
     {"EXTRUDE", "EXT", "EXTRUDE [curve] distance [SYMMETRIC] [KEEP]",
      "Extrude a closed sketch curve (selected or named) into a solid along its plane normal"},
+    // Sculpting & booleans
+    {"SCULPT", "SCULPTING BRUSH",
+     "SCULPT [body] brush [AT] x,y,z [x,y,z...] [RADIUS r] [STRENGTH 0-1] [INVERT] [SYMMETRY] [DETAIL d] [NOREFINE] "
+     "[MOVE dx,dy,dz]  |  SCULPT [body] REFINE detail  |  SCULPT LIST",
+     "Digital clay: DRAW (pull, INVERT pushes), CLAY (add), CARVE (remove), INFLATE, GRAB (MOVE), PINCH, CREASE, "
+     "SMOOTH, FLATTEN, SCRAPE (trim). Dabs along the points every radius / 4; the mesh refines itself under the brush"},
+    {"HOLE", "DRILL", "HOLE [body] [AT] x,y,z [DIR x,y,z] DIAMETER d [DEPTH h | THROUGH]",
+     "Drill a hole into the surface at a point (along the surface normal unless DIR); blind holes get a 118 deg tip"},
+    {"POCKET", "", "POCKET [body] [AT] x,y,z [DIR x,y,z] [BOX|ROUND|BALL] WIDTH w [LENGTH l] DEPTH d [ANGLE deg]",
+     "Cut a rectangular, round or ball-end pocket into the surface"},
+    {"CHANNEL", "GROOVE SLOT", "CHANNEL [body] [PATH] x,y,z x,y,z ... WIDTH w [DEPTH d]",
+     "Carve a round-bottomed channel following points on the surface (cable runs, vents)"},
+    {"TRIM", "KNIFE SLICE", "TRIM [body] [PLANE] x,y,z NORMAL x,y,z | TRIM [body] [PLANE] x,y,z NORMAL x,y,z SMALLER",
+     "Slice with a plane: removes the side the normal points to (SMALLER: whichever side is smaller); the cut is capped"},
+    {"BOSS", "ADDVOLUME", "BOSS [body] [AT] x,y,z [DIR x,y,z] [CYLINDER|BOX|BALL] DIAMETER d HEIGHT h",
+     "Add material: a boss, pad or dome fused onto the surface"},
+    {"BOOLEAN", "CSG BOOL", "BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]",
+     "Combine two bodies exactly; the other body is used up unless KEEP"},
+    {"UNDO", "U", "UNDO", "Undo the last sculpt, cut or boolean"},
     // Files
     {"NEW", "", "NEW", "Start an empty project (in the app: a new file tab)"},
     {"OPEN", "", "OPEN path.sicdm", "Open a project (in the app: in its own file tab)"},

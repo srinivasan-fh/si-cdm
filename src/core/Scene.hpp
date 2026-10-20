@@ -111,6 +111,13 @@ public:
     // Call after changing a body's mesh in place (rebuild, setScale).
     void touchBodies() noexcept { m_revision = nextRevision(); }
 
+    // Shape edits (sculpting, booleans) can be undone: a snapshot of the bodies is
+    // kept before each one (the last few, within a memory budget).
+    void pushUndo(std::string label);
+    // Restores the last snapshot; returns its label, or "" when there is none.
+    std::string undo();
+    std::size_t undoDepth() const noexcept { return m_undo.size(); }
+
     // Bumped whenever bodies are added or removed (GPU buffers must be rebuilt).
     std::uint64_t revision() const noexcept { return m_revision; }
 
@@ -134,6 +141,11 @@ private:
     std::vector<Motion> m_motions;
     PhysicsSettings m_physics;
     std::uint64_t m_imageRevision = nextRevision();
+    struct Snapshot {
+        std::string label;
+        std::vector<Body> bodies;
+    };
+    std::vector<Snapshot> m_undo;
 };
 
 } // namespace sicdm

@@ -67,8 +67,31 @@ void Scene::removeImage(std::size_t index) {
     m_imageRevision = nextRevision();
 }
 
+void Scene::pushUndo(std::string label) {
+    m_undo.push_back({std::move(label), m_bodies});
+    // At most 16 steps and about 2 million vertices of history.
+    std::size_t vertices = 0;
+    for (std::size_t i = m_undo.size(); i-- > 0;) {
+        for (const Body& b : m_undo[i].bodies) vertices += b.mesh.vertices.size();
+        if (m_undo.size() - i > 16 || (vertices > 2000000 && i + 1 < m_undo.size())) {
+            m_undo.erase(m_undo.begin(), m_undo.begin() + static_cast<std::ptrdiff_t>(i + 1));
+            break;
+        }
+    }
+}
+
+std::string Scene::undo() {
+    if (m_undo.empty()) return "";
+    Snapshot s = std::move(m_undo.back());
+    m_undo.pop_back();
+    m_bodies = std::move(s.bodies);
+    m_revision = nextRevision();
+    return s.label;
+}
+
 void Scene::clear() {
     m_bodies.clear();
+    m_undo.clear();
     m_images.clear();
     m_motions.clear();
     m_physics = PhysicsSettings{};
@@ -80,6 +103,7 @@ void Scene::clear() {
 
 void Scene::assign(Scene&& other) {
     m_bodies = std::move(other.m_bodies);
+    m_undo = std::move(other.m_undo);
     m_images = std::move(other.m_images);
     m_motions = std::move(other.m_motions);
     m_physics = other.m_physics;

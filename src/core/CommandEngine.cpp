@@ -4,6 +4,7 @@
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
+#include "core/Sculpt.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
@@ -1230,6 +1231,243 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         doc.scene.touchBodies();
         markChanged(doc);
         out.say("Updated " + b.name + ": " + changed);
+        return out;
+    }
+    if (cmd == "UNDO") {
+        const std::string what = doc.scene.undo();
+        if (what.empty()) return out.fail("Nothing to undo");
+        if (doc.selectedBody >= static_cast<int>(doc.scene.bodies().size())) doc.selectedBody = -1;
+        markChanged(doc);
+        out.say("Undid " + what);
+        return out;
+    }
+    if (cmd == "SCULPT" || cmd == "HOLE" || cmd == "POCKET" || cmd == "CHANNEL" || cmd == "TRIM" || cmd == "BOSS") {
+        if (cmd == "SCULPT" && a.size() == 1 && iequal(a[0], "list")) {
+            out.say("Brushes:");
+            for (SculptBrush br : sculptBrushes()) out.say(std::string("  ") + toUpper(sculptBrushKey(br)) + "  " + sculptBrushName(br));
+            return out;
+        }
+        // Leading words name the body (default: the selection), up to the first keyword or point.
+        static const char* const kKeys[] = {"at", "dir", "radius", "strength", "invert", "symmetry", "sym", "detail",
+                                            "norefine", "move", "refine", "diameter", "d", "depth", "through", "box",
+                                            "round", "ball", "width", "length", "angle", "path", "plane", "normal",
+                                            "smaller", "cylinder", "height"};
+        auto isKey = [&](const std::string& w) {
+            const std::string k = lower(w);
+            if (cmd == "SCULPT" && sculptBrushFromKey(k)) return true;
+            for (const char* q : kKeys)
+                if (k == q) return true;
+            return w.find(',') != std::string::npos;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        while (i < a.size() && !isKey(a[i])) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+
+        SculptSettings ss;
+        bool haveBrush = false, refineOnly = false, through = false, smaller = false;
+        float refineDetail = 0, diameter = 0, depth = 0, width = 0, length_ = 0, height = 0, angle = 0;
+        std::optional<Vec3> dir, normal, move;
+        std::vector<Vec3> points;
+        std::string shape;
+        auto lengthArg = [&](float& v, const char* what) -> bool {
+            if (i + 1 >= a.size()) return false;
+            const auto l = parseLength(a[++i]);
+            if (!l || *l < 0) return false;
+            v = static_cast<float>(*l);
+            (void)what;
+            return true;
+        };
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (a[i].find(',') != std::string::npos) {
+                const auto p = parseVec3(a[i]);
+                if (!p) return out.fail("Point " + a[i] + " needs x,y,z");
+                points.push_back(*p);
+            } else if (cmd == "SCULPT" && !haveBrush && sculptBrushFromKey(k)) {
+                ss.brush = *sculptBrushFromKey(k);
+                haveBrush = true;
+                if (k == "push") ss.invert = true;
+            } else if (k == "at" || k == "path" || k == "plane") {
+                continue;
+            } else if (k == "refine" && cmd == "SCULPT") {
+                refineOnly = true;
+                if (!lengthArg(refineDetail, "REFINE") || refineDetail <= 0) return out.fail("REFINE needs an edge length");
+            } else if (k == "radius") {
+                if (!lengthArg(ss.radius, "RADIUS") || ss.radius <= 0) return out.fail("RADIUS needs a length");
+            } else if (k == "strength") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v || *v < 0 || *v > 1) return out.fail("STRENGTH needs 0..1");
+                ss.strength = *v;
+            } else if (k == "invert") {
+                ss.invert = !ss.invert;
+            } else if (k == "symmetry" || k == "sym") {
+                ss.symmetryX = true;
+            } else if (k == "detail") {
+                if (!lengthArg(ss.detail, "DETAIL")) return out.fail("DETAIL needs a length");
+            } else if (k == "norefine") {
+                ss.refine = false;
+            } else if (k == "move" || k == "dir" || k == "normal") {
+                const auto v = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt;
+                if (!v) return out.fail(toUpper(k) + " needs x,y,z");
+                (k == "move" ? move : k == "dir" ? dir : normal) = *v;
+            } else if (k == "diameter" || k == "d") {
+                if (!lengthArg(diameter, "DIAMETER") || diameter <= 0) return out.fail("DIAMETER needs a length");
+            } else if (k == "depth") {
+                if (!lengthArg(depth, "DEPTH")) return out.fail("DEPTH needs a length");
+            } else if (k == "through") {
+                through = true;
+            } else if (k == "width") {
+                if (!lengthArg(width, "WIDTH") || width <= 0) return out.fail("WIDTH needs a length");
+            } else if (k == "length") {
+                if (!lengthArg(length_, "LENGTH")) return out.fail("LENGTH needs a length");
+            } else if (k == "height") {
+                if (!lengthArg(height, "HEIGHT")) return out.fail("HEIGHT needs a length");
+            } else if (k == "angle") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v) return out.fail("ANGLE needs degrees");
+                angle = *v;
+            } else if (k == "box" || k == "round" || k == "ball" || k == "cylinder") {
+                shape = k;
+            } else if (k == "smaller") {
+                smaller = true;
+            } else {
+                return usage();
+            }
+        }
+
+        const std::size_t trisBefore = body.mesh.indices.size() / 3;
+        std::string error;
+        bool ok = false;
+        std::string done;
+        // Snap each point to the surface; the outward normal there (or -DIR).
+        SculptMesh surface(body);
+        const float reach = std::max({diameter, width, ss.radius, 0.05f * length(body.bounds().max - body.bounds().min)});
+        std::string offBody;
+        auto onSurface = [&](const Vec3& p, Vec3* n) {
+            Vec3 fn;
+            const Vec3 q = surface.closestPoint(p, &fn);
+            if (n) *n = dir ? -normalize(*dir) : fn;
+            if (length(q - p) > reach && offBody.empty())
+                offBody = vecText(p) + fmt(" is %g mm away from ", length(q - p)) + body.name;
+            return q;
+        };
+        doc.scene.pushUndo(toUpper(cmd) + " on " + body.name);
+        if (cmd == "SCULPT") {
+            if (refineOnly) {
+                sculptRefine(body, refineDetail);
+                ok = true;
+                done = fmt("refined to %g mm edges", refineDetail);
+            } else {
+                if (!haveBrush) return doc.scene.undo(), out.fail("Name a brush (SCULPT LIST)");
+                if (points.empty()) return doc.scene.undo(), out.fail("SCULPT needs a point on the surface: AT x,y,z");
+                for (const Vec3& q : points) onSurface(q, nullptr);
+                if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
+                sculptStroke(body, points, ss, move.value_or(Vec3{}));
+                ok = true;
+                done = std::string(sculptBrushKey(ss.brush)) + (ss.invert ? " (inverted)" : "") +
+                       fmt(" stroke, radius %g", ss.radius);
+            }
+        } else if (cmd == "HOLE") {
+            if (points.size() != 1 || diameter <= 0) return doc.scene.undo(), usage();
+            Vec3 n;
+            const Vec3 p = onSurface(points[0], &n);
+            if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
+            ok = drillHole(body, p, n, diameter, through ? 0.0f : depth, &error);
+            done = fmt("hole %g mm", diameter) + (through || depth <= 0 ? " through" : fmt(", %g deep", depth));
+        } else if (cmd == "POCKET") {
+            if (points.size() != 1 || width <= 0 || (shape != "ball" && depth <= 0)) return doc.scene.undo(), usage();
+            Vec3 n;
+            const Vec3 p = onSurface(points[0], &n);
+            if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
+            const PocketShape ps = shape == "round" || shape == "cylinder" ? PocketShape::Round
+                                   : shape == "ball"                         ? PocketShape::Ball
+                                                                             : PocketShape::Box;
+            ok = cutPocket(body, p, n, ps, width, length_ > 0 ? length_ : width, depth, angle, &error);
+            done = fmt("pocket %g x %g", width, length_ > 0 ? length_ : width) + fmt(", %g deep", depth);
+        } else if (cmd == "CHANNEL") {
+            if (points.size() < 2 || width <= 0) return doc.scene.undo(), usage();
+            std::vector<Vec3> ps, ns;
+            for (const Vec3& q : points) {
+                Vec3 n;
+                ps.push_back(onSurface(q, &n));
+                ns.push_back(n);
+            }
+            if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
+            ok = cutChannel(body, ps, ns, width, depth, &error);
+            done = fmt("channel %g wide", width);
+        } else if (cmd == "TRIM") {
+            if (points.size() != 1 || !normal) return doc.scene.undo(), usage();
+            Vec3 n = normalize(*normal);
+            if (smaller) {
+                const MeshData w = worldMesh(body);
+                if (volumeBeyondPlane(w, points[0], n) > volumeBeyondPlane(w, points[0], -n)) n = -n;
+            }
+            ok = trimByPlane(body, points[0], n, &error);
+            done = "trimmed";
+        } else { // BOSS
+            if (points.size() != 1 || diameter <= 0) return doc.scene.undo(), usage();
+            Vec3 n;
+            const Vec3 p = onSurface(points[0], &n);
+            if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
+            const BossShape bs = shape == "box" ? BossShape::Box : shape == "ball" ? BossShape::Ball : BossShape::Cylinder;
+            ok = addBoss(body, p, n, bs, diameter, height > 0 ? height : diameter * 0.5f, &error);
+            done = fmt("boss %g mm", diameter);
+        }
+        if (!ok) {
+            doc.scene.undo();
+            return out.fail(error.empty() ? "Nothing changed" : error);
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        const std::size_t open = openEdgeCount(body.mesh);
+        out.say(body.name + ": " + done + fmt(", %g triangles", static_cast<double>(body.mesh.indices.size() / 3)) +
+                fmt(" (was %g)", static_cast<double>(trisBefore)) + (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))));
+        return out;
+    }
+    if (cmd == "BOOLEAN") {
+        // BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]
+        std::size_t opAt = a.size();
+        for (std::size_t i = 0; i < a.size(); ++i)
+            if (booleanOpFromKey(a[i])) {
+                opAt = i;
+                break;
+            }
+        if (opAt == 0 || opAt + 1 >= a.size()) return usage();
+        bool keep = false;
+        std::vector<std::string> other(a.begin() + static_cast<std::ptrdiff_t>(opAt) + 1, a.end());
+        if (!other.empty() && iequal(other.back(), "keep")) {
+            keep = true;
+            other.pop_back();
+        }
+        const int ai = findBody(doc, joinArgs(std::vector<std::string>(a.begin(), a.begin() + static_cast<std::ptrdiff_t>(opAt))));
+        const int bi = findBody(doc, joinArgs(other));
+        if (ai < 0) return out.fail("No body named " + joinArgs(std::vector<std::string>(a.begin(), a.begin() + static_cast<std::ptrdiff_t>(opAt))));
+        if (bi < 0) return out.fail("No body named " + joinArgs(other));
+        if (ai == bi) return out.fail("Pick two different bodies");
+        const BooleanOp op = *booleanOpFromKey(a[opAt]);
+        doc.scene.pushUndo(std::string("BOOLEAN ") + booleanOpKey(op));
+        auto& bodies = doc.scene.bodies();
+        std::string error;
+        if (!bodyBoolean(bodies[static_cast<std::size_t>(ai)], bodies[static_cast<std::size_t>(bi)], op, &error)) {
+            doc.scene.undo();
+            return out.fail(error);
+        }
+        const std::string an = bodies[static_cast<std::size_t>(ai)].name, bn = bodies[static_cast<std::size_t>(bi)].name;
+        if (!keep) {
+            doc.scene.remove(static_cast<std::size_t>(bi));
+            if (doc.selectedBody == bi) doc.selectedBody = -1;
+            else if (doc.selectedBody > bi) --doc.selectedBody;
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        const Body& r = doc.scene.bodies()[static_cast<std::size_t>(ai > bi && !keep ? ai - 1 : ai)];
+        const std::size_t open = openEdgeCount(r.mesh);
+        out.say(an + " " + booleanOpKey(op) + " " + bn + fmt(": %g triangles", static_cast<double>(r.mesh.indices.size() / 3)) +
+                (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))) + (keep ? "" : " (" + bn + " used up)"));
         return out;
     }
     if (cmd == "SCALE") {

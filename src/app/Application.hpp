@@ -2,6 +2,7 @@
 
 #include "core/Camera.hpp"
 #include "core/Document.hpp"
+#include "core/Sculpt.hpp"
 #include "core/Mcp.hpp"
 #include "core/Scene.hpp"
 #include "app/McpHttpServer.hpp"
@@ -163,7 +164,7 @@ private:
     UiState m_uiState;
 
     // Input state
-    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage };
+    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife };
     DragMode m_leftDrag = DragMode::None;
     DragMode m_otherDrag = DragMode::None; // right / middle button
     float m_pressX = 0, m_pressY = 0;
@@ -183,6 +184,27 @@ private:
     std::vector<LoopShape> m_loopShapes;
     std::vector<const MeshData*> m_loopOverrides;
     void updateLoopShapes();
+
+    // Sculpting stroke in progress (a welded copy of the body, written back each frame).
+    int m_sculptBody = -1;
+    SculptMesh m_sculptMesh;
+    SculptSettings m_sculptSettings;
+    Vec3 m_lastDab{};
+    int m_dabs = 0;
+    Vec3 m_grabPoint{};
+    std::vector<const MeshData*> m_sculptOverrides; // streams the edited body while dragging
+    std::optional<Vec3> m_brushHit;  // hover point of a sculpt / cut tool
+    Vec3 m_brushNormal{};
+    // Channel stroke and knife line.
+    int m_cutBody = -1;
+    std::vector<Vec3> m_cutPath;
+    ImVec2 m_knifeStart{};
+    bool beginSculpt(float x, float y);
+    void continueSculpt(float x, float y);
+    void endSculpt();
+    void applyCutTool(ToolId tool, float x, float y);
+    void finishCutDrag(ToolId tool, float x, float y);
+    void drawSculptOverlay();
 
     int m_extrudeCurve = -1;   // profile being extruded
     float m_extrudeAnchorDist = 0.0f;

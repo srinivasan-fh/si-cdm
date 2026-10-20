@@ -359,6 +359,15 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         return;
     }
 
+    if (isCutTool(tool)) {
+        if (tool != ToolId::CutChannel && tool != ToolId::CutKnife) applyCutTool(tool, x, y);
+        return;
+    }
+    if (isSculptTool(tool)) {
+        if (!pick(x, y)) setStatus("Drag over a body to sculpt it");
+        return;
+    }
+
     if (tool == ToolId::Extrude) {
         if (m_extrudeCurve >= 0) {
             applyExtrude(); // second click confirms the depth
@@ -431,6 +440,283 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
     else if (!info.available) setStatus(std::string(info.name) + " is planned for a later milestone");
 }
 
+// ---------------------------------------------------------------------------
+// Sculpting and cut tools
+
+namespace {
+
+SculptBrush brushOf(ToolId t) {
+    switch (t) {
+    case ToolId::SculptClay: return SculptBrush::Clay;
+    case ToolId::SculptCarve: return SculptBrush::Carve;
+    case ToolId::SculptInflate: return SculptBrush::Inflate;
+    case ToolId::SculptGrab: return SculptBrush::Grab;
+    case ToolId::SculptPinch: return SculptBrush::Pinch;
+    case ToolId::SculptCrease: return SculptBrush::Crease;
+    case ToolId::SculptSmooth: return SculptBrush::Smooth;
+    case ToolId::SculptFlatten: return SculptBrush::Flatten;
+    case ToolId::SculptScrape: return SculptBrush::Scrape;
+    default: return SculptBrush::Draw;
+    }
+}
+
+// Exact millimetres for command lines, whatever the display units.
+std::string mmText(float v) {
+    char b[48];
+    std::snprintf(b, sizeof(b), "%.5gmm", static_cast<double>(v));
+    return b;
+}
+std::string mmVec(const Vec3& v) { return mmText(v.x) + "," + mmText(v.y) + "," + mmText(v.z); }
+std::string dirVec(const Vec3& v) {
+    char b[96];
+    std::snprintf(b, sizeof(b), "%.6g,%.6g,%.6g", static_cast<double>(v.x), static_cast<double>(v.y), static_cast<double>(v.z));
+    return b;
+}
+std::string quotedName(const std::string& s) { return "\"" + s + "\""; }
+
+} // namespace
+
+bool Application::beginSculpt(float x, float y) {
+    const auto hit = pick(x, y);
+    if (!hit) return false;
+    const auto bi = static_cast<std::size_t>(hit->body);
+    m_doc.scene.pushUndo("SCULPT on " + m_doc.scene.bodies()[bi].name);
+    Body& body = m_doc.scene.bodies()[bi];
+    m_sculptMesh = SculptMesh(body);
+    if (m_sculptMesh.empty()) return false;
+    SculptSettings s;
+    s.brush = ImGui::GetIO().KeyShift ? SculptBrush::Smooth : brushOf(m_ui.toolbox().active());
+    s.invert = commandModifierHeld();
+    s.radius = m_uiState.sculptRadius;
+    s.strength = m_uiState.sculptStrength;
+    s.symmetryX = m_uiState.sculptSymmetry;
+    s.refine = m_uiState.sculptRefine;
+    s.detail = m_uiState.sculptDetail;
+    m_sculptSettings = s;
+    m_sculptBody = hit->body;
+    m_dabs = 0;
+    const ImGuiIO& io = ImGui::GetIO();
+    const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+    const Vec3 p = m_sculptMesh.raycast(ray).value_or(hit->point);
+    if (s.brush == SculptBrush::Grab) {
+        m_sculptMesh.beginGrab(p, s);
+        m_grabPoint = p;
+    } else {
+        m_sculptMesh.dab(p, s);
+        ++m_dabs;
+    }
+    m_lastDab = p;
+    m_sculptMesh.writeTo(body, false);
+    m_sculptOverrides.assign(m_doc.scene.bodies().size(), nullptr);
+    m_sculptOverrides[bi] = &body.mesh;
+    m_uiState.selectedBody = hit->body;
+    m_uiState.selectedCurve = m_uiState.selectedImage = -1;
+    return true;
+}
+
+void Application::continueSculpt(float x, float y) {
+    if (m_sculptBody < 0 || m_sculptBody >= static_cast<int>(m_doc.scene.bodies().size())) return;
+    Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(m_sculptBody)];
+    const ImGuiIO& io = ImGui::GetIO();
+    const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+    if (m_sculptSettings.brush == SculptBrush::Grab) {
+        float t = 0;
+        if (!intersectPlane(ray, m_grabPoint, camera().forward(), t)) return;
+        m_sculptMesh.grabTo(ray.at(t) - m_grabPoint);
+    } else {
+        const auto hit = m_sculptMesh.raycast(ray);
+        if (!hit) return;
+        // Dabs every quarter radius along the stroke, each on the surface.
+        const float spacing = std::max(m_sculptSettings.radius * 0.25f, 1e-3f);
+        const Vec3 from = m_lastDab;
+        const float len = length(*hit - from);
+        if (len < spacing) return;
+        const int steps = std::min(static_cast<int>(len / spacing), 64);
+        for (int i = 1; i <= steps; ++i) {
+            const Vec3 q = m_sculptMesh.closestPoint(from + (*hit - from) * (static_cast<float>(i) * spacing / len));
+            m_sculptMesh.dab(q, m_sculptSettings);
+            ++m_dabs;
+            m_lastDab = q;
+        }
+    }
+    m_sculptMesh.writeTo(body, false);
+    m_sculptOverrides.assign(m_doc.scene.bodies().size(), nullptr);
+    m_sculptOverrides[static_cast<std::size_t>(m_sculptBody)] = &body.mesh;
+}
+
+void Application::endSculpt() {
+    if (m_sculptBody >= 0 && m_sculptBody < static_cast<int>(m_doc.scene.bodies().size())) {
+        Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(m_sculptBody)];
+        m_sculptMesh.writeTo(body, true);
+        m_doc.scene.touchBodies();
+        const std::size_t open = openEdgeCount(body.mesh);
+        char info[160];
+        std::snprintf(info, sizeof(info), "%s: %zu triangles%s", body.name.c_str(), body.mesh.indices.size() / 3,
+                      open == 0 ? ", closed" : "");
+        m_uiState.sculptInfo = info;
+        setStatus(info);
+        log(std::string("Sculpted ") + body.name + " (" + sculptBrushKey(m_sculptSettings.brush) +
+                (m_sculptSettings.invert ? ", inverted" : "") + ", " + std::to_string(std::max(m_dabs, 1)) + " dabs)",
+            UiState::LogLine::Output);
+    }
+    m_sculptBody = -1;
+    m_sculptOverrides.clear();
+    m_sculptMesh = SculptMesh();
+}
+
+void Application::applyCutTool(ToolId tool, float x, float y) {
+    const auto hit = pick(x, y);
+    const UiState& u = m_uiState;
+    if (tool == ToolId::BooleanBodies) {
+        if (!hit) {
+            m_uiState.booleanFirst.clear();
+            setStatus("Click the body to keep, then the tool body");
+            return;
+        }
+        const std::string name = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name;
+        bool firstExists = false;
+        for (const Body& b : m_doc.scene.bodies()) firstExists = firstExists || b.name == u.booleanFirst;
+        if (u.booleanFirst.empty() || !firstExists || name == u.booleanFirst) {
+            m_uiState.booleanFirst = name;
+            m_uiState.selectedBody = hit->body;
+            setStatus(name + " picked: now click the body to " + (u.booleanOp == 0 ? "join to it" : u.booleanOp == 1 ? "cut from it" : "intersect it with"));
+            return;
+        }
+        static const char* const kOps[] = {"UNION", "SUBTRACT", "INTERSECT"};
+        runCommandLine("BOOLEAN " + quotedName(u.booleanFirst) + " " + kOps[std::clamp(u.booleanOp, 0, 2)] + " " + quotedName(name) +
+                       (u.booleanKeep ? " KEEP" : ""));
+        m_uiState.booleanFirst.clear();
+        return;
+    }
+    if (!hit) {
+        setStatus("Click a surface of a body");
+        return;
+    }
+    const std::string body = quotedName(m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name);
+    const std::string at = " AT " + mmVec(hit->point);
+    std::string line;
+    switch (tool) {
+    case ToolId::CutHole:
+        line = "HOLE " + body + at + " DIAMETER " + mmText(u.holeDiameter) + (u.holeThrough ? "" : " DEPTH " + mmText(u.holeDepth));
+        break;
+    case ToolId::CutPocket: {
+        static const char* const kShapes[] = {"BOX", "ROUND", "BALL"};
+        line = "POCKET " + body + at + " " + kShapes[std::clamp(u.pocketShape, 0, 2)] + " WIDTH " + mmText(u.pocketWidth) +
+               " LENGTH " + mmText(u.pocketShape == 0 ? u.pocketLength : u.pocketWidth) + " DEPTH " + mmText(u.pocketDepth);
+        if (u.pocketShape == 0 && u.pocketAngle != 0.0f) line += " ANGLE " + std::to_string(u.pocketAngle);
+        break;
+    }
+    case ToolId::AddBoss: {
+        static const char* const kShapes[] = {"CYLINDER", "BOX", "BALL"};
+        line = "BOSS " + body + at + " " + kShapes[std::clamp(u.bossShape, 0, 2)] + " DIAMETER " + mmText(u.bossDiameter) +
+               " HEIGHT " + mmText(u.bossHeight);
+        break;
+    }
+    default: return;
+    }
+    runCommandLine(line);
+}
+
+void Application::finishCutDrag(ToolId tool, float x, float y) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (tool == ToolId::CutChannel) {
+        if (m_cutPath.size() < 2 || m_cutBody < 0 || m_cutBody >= static_cast<int>(m_doc.scene.bodies().size())) {
+            setStatus("Drag along a surface to carve a channel");
+            m_cutPath.clear();
+            return;
+        }
+        // At most ~100 path points (the command resamples and smooths them anyway).
+        const std::size_t every = m_cutPath.size() / 100 + 1;
+        std::string line = "CHANNEL " + quotedName(m_doc.scene.bodies()[static_cast<std::size_t>(m_cutBody)].name) + " PATH";
+        for (std::size_t i = 0; i < m_cutPath.size(); i += every) line += " " + mmVec(m_cutPath[i]);
+        if ((m_cutPath.size() - 1) % every != 0) line += " " + mmVec(m_cutPath.back());
+        line += " WIDTH " + mmText(m_uiState.channelWidth);
+        if (m_uiState.channelDepth > 0) line += " DEPTH " + mmText(m_uiState.channelDepth);
+        m_cutPath.clear();
+        runCommandLine(line);
+        return;
+    }
+    if (tool != ToolId::CutKnife) return;
+    if (std::hypot(x - m_knifeStart.x, y - m_knifeStart.y) < 6.0f) {
+        setStatus("Drag a line across a body to slice it");
+        return;
+    }
+    // The body: the selection, else the first one under the line.
+    int bi = m_uiState.selectedBody;
+    if (bi < 0 || bi >= static_cast<int>(m_doc.scene.bodies().size())) {
+        bi = -1;
+        for (int k = 0; k <= 16 && bi < 0; ++k) {
+            const float t = static_cast<float>(k) / 16.0f;
+            if (const auto hit = pick(m_knifeStart.x + (x - m_knifeStart.x) * t, m_knifeStart.y + (y - m_knifeStart.y) * t))
+                bi = hit->body;
+        }
+    }
+    if (bi < 0) {
+        setStatus("Drag the knife across a body (or select one first)");
+        return;
+    }
+    const Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(bi)];
+    const Vec3 centre = body.bounds().center();
+    const Ray r1 = camera().screenRay(m_knifeStart.x, m_knifeStart.y, io.DisplaySize.x, io.DisplaySize.y);
+    const Ray r2 = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+    const Vec3 a = r1.at(dot(centre - r1.origin, r1.dir)), b = r2.at(dot(centre - r2.origin, r2.dir));
+    const Vec3 n = normalize(cross(b - a, normalize(r1.dir + r2.dir)));
+    if (length(n) < 0.5f) return;
+    runCommandLine("TRIM " + quotedName(body.name) + " PLANE " + mmVec(a) + " NORMAL " + dirVec(n) + " SMALLER");
+}
+
+void Application::drawSculptOverlay() {
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    const ToolId tool = m_ui.toolbox().active();
+    if (m_leftDrag == DragMode::Knife) {
+        fg->AddLine(m_knifeStart, io.MousePos, IM_COL32(255, 120, 90, 255), 2.0f);
+        fg->AddCircleFilled(m_knifeStart, 3.5f, IM_COL32(255, 120, 90, 255));
+        return;
+    }
+    if (m_leftDrag == DragMode::CutPath && m_cutPath.size() > 1) {
+        std::optional<ImVec2> prev;
+        for (const Vec3& p : m_cutPath) {
+            const auto s = projectToScreen(camera(), p, io.DisplaySize);
+            if (s && prev) fg->AddLine(*prev, *s, IM_COL32(255, 170, 60, 255), 2.5f);
+            prev = s;
+        }
+    }
+    if (!m_brushHit || tool == ToolId::CutKnife || tool == ToolId::BooleanBodies) return;
+    const UiState& u = m_uiState;
+    float r = u.sculptRadius;
+    ImU32 col = IM_COL32(235, 238, 245, 230);
+    if (isSculptTool(tool)) {
+        if (io.KeyShift) col = IM_COL32(120, 190, 255, 240);         // smoothing
+        else if (commandModifierHeld()) col = IM_COL32(255, 120, 110, 240); // inverted
+    } else {
+        col = IM_COL32(255, 170, 60, 240);
+        r = tool == ToolId::CutHole     ? u.holeDiameter * 0.5f
+            : tool == ToolId::CutPocket ? u.pocketWidth * 0.5f
+            : tool == ToolId::AddBoss   ? u.bossDiameter * 0.5f
+                                        : u.channelWidth * 0.5f;
+    }
+    // The brush footprint drawn on the surface plane, and the normal.
+    const Vec3 n = normalize(m_brushNormal);
+    const Vec3 ref = std::fabs(n.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
+    const Vec3 e1 = normalize(cross(n, ref)), e2 = cross(n, e1);
+    std::optional<ImVec2> first, prev;
+    for (int i = 0; i <= 48; ++i) {
+        const float a = 6.2831853f * static_cast<float>(i) / 48.0f;
+        const auto s = projectToScreen(camera(), *m_brushHit + (e1 * std::cos(a) + e2 * std::sin(a)) * r, io.DisplaySize);
+        if (s && prev) fg->AddLine(*prev, *s, col, 1.6f);
+        prev = s;
+    }
+    const auto c = projectToScreen(camera(), *m_brushHit, io.DisplaySize);
+    const auto tip = projectToScreen(camera(), *m_brushHit + n * (r * 0.6f), io.DisplaySize);
+    if (c && tip) fg->AddLine(*c, *tip, col, 1.4f);
+    if (c) fg->AddCircleFilled(*c, 2.0f, col);
+    if (m_uiState.sculptSymmetry && isSculptTool(tool) && m_sculptBody >= 0) {
+        const Vec3 m{2.0f * m_sculptMesh.mirrorX() - m_brushHit->x, m_brushHit->y, m_brushHit->z};
+        if (const auto ms = projectToScreen(camera(), m, io.DisplaySize)) fg->AddCircle(*ms, 4.0f, col, 12, 1.2f);
+    }
+}
+
 void Application::handleViewportInput() {
     ImGuiIO& io = ImGui::GetIO();
     const float mx = io.MousePos.x, my = io.MousePos.y;
@@ -480,7 +766,17 @@ void Application::handleViewportInput() {
         m_pressX = mx;
         m_pressY = my;
         m_leftDrag = DragMode::Pending;
-        if (io.KeyShift && !isSketchTool(tool)) {
+        if (isSculptTool(tool) && beginSculpt(mx, my)) {
+            m_leftDrag = m_sculptSettings.brush == SculptBrush::Grab ? DragMode::Grab : DragMode::Sculpt;
+        } else if (tool == ToolId::CutChannel && pick(mx, my)) {
+            const auto hit = pick(mx, my);
+            m_leftDrag = DragMode::CutPath;
+            m_cutBody = hit->body;
+            m_cutPath = {hit->point};
+        } else if (tool == ToolId::CutKnife) {
+            m_leftDrag = DragMode::Knife;
+            m_knifeStart = {mx, my};
+        } else if (io.KeyShift && !isSketchTool(tool)) {
             m_leftDrag = DragMode::Pan;
         } else if (tool == ToolId::Orbit) {
             m_leftDrag = orbitOrPan;
@@ -537,13 +833,52 @@ void Application::handleViewportInput() {
             img.center = {m_imageStart.x + q.x - m_imageGrab.x, m_imageStart.y + q.y - m_imageGrab.y};
             break;
         }
+        case DragMode::Sculpt:
+        case DragMode::Grab: continueSculpt(mx, my); break;
+        case DragMode::CutPath: {
+            const auto hit = pick(mx, my);
+            const float step = std::max(m_uiState.channelWidth * 0.5f, 0.5f);
+            if (hit && hit->body == m_cutBody && length(hit->point - m_cutPath.back()) >= step) m_cutPath.push_back(hit->point);
+            break;
+        }
         default: break;
         }
     }
 
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         if (m_leftDrag == DragMode::Pending) onCanvasClick(mx, my, false);
+        else if (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) endSculpt();
+        else if (m_leftDrag == DragMode::CutPath || m_leftDrag == DragMode::Knife) finishCutDrag(tool, mx, my);
         m_leftDrag = DragMode::None;
+    }
+    // Brush / tool cursor on the surface under the mouse.
+    m_brushHit.reset();
+    if (onCanvas && !simulating() && (isSculptTool(tool) || isCutTool(tool)) && m_leftDrag != DragMode::Orbit &&
+        m_leftDrag != DragMode::Pan) {
+        if (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) {
+            Vec3 n;
+            if (const auto p = m_sculptMesh.raycast(cam.screenRay(mx, my, io.DisplaySize.x, wh), &n)) {
+                m_brushHit = *p;
+                m_brushNormal = n;
+            }
+        } else if (const auto hit = pick(mx, my)) {
+            m_brushHit = hit->point;
+            const Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)];
+            const Ray r = cam.screenRay(mx, my, io.DisplaySize.x, wh);
+            const Ray local{r.origin - b.offset, r.dir};
+            float best = 1e30f;
+            for (std::size_t k = 0; k + 2 < b.mesh.indices.size(); k += 3) {
+                const Vec3& a = b.mesh.vertices[b.mesh.indices[k]].position;
+                const Vec3& c1 = b.mesh.vertices[b.mesh.indices[k + 1]].position;
+                const Vec3& c2 = b.mesh.vertices[b.mesh.indices[k + 2]].position;
+                float t = 0;
+                if (intersectTriangle(local, a, c1, c2, t) && t < best) {
+                    best = t;
+                    m_brushNormal = normalize(cross(c1 - a, c2 - a));
+                }
+            }
+            if (dot(m_brushNormal, r.dir) > 0) m_brushNormal = -m_brushNormal;
+        }
     }
     if (onCanvas && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && tool == ToolId::Polyline)
         if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
@@ -590,6 +925,10 @@ void Application::handleViewportInput() {
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
         handleCommands(cmd);
         return;
+    }
+    if (isSculptTool(m_ui.toolbox().active())) { // brush size, like Photoshop and ZBrush
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) m_uiState.sculptRadius = std::max(m_uiState.sculptRadius / 1.2f, 0.1f);
+        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) m_uiState.sculptRadius *= 1.2f;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_P) && !is2D) cmd.toggleProjection = true;
     if (ImGui::IsKeyPressed(ImGuiKey_G)) viewport().showGrid = !viewport().showGrid;
@@ -758,6 +1097,7 @@ void Application::frame(float dt) {
         }
     }
     if (m_extrudeCurve >= 0) drawExtrudePreview();
+    if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()))) drawSculptOverlay();
     if (simulating()) {
         m_simTransforms = simulationTransforms(m_doc.scene, m_uiState.simTime); // after scrubbing / panel edits
         updateLoopShapes();
@@ -779,7 +1119,9 @@ void Application::frame(float dt) {
         m_cam2D.setAspect(m_aspect);
         m_renderer->render(m_doc.scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve,
                            m_uiState.selectedImage, simulating() ? &m_simTransforms : nullptr,
-                           simulating() && !m_loopOverrides.empty() ? &m_loopOverrides : nullptr);
+                           simulating() && !m_loopOverrides.empty() ? &m_loopOverrides
+                           : m_sculptBody >= 0                         ? &m_sculptOverrides
+                                                                       : nullptr);
     }
 
     ImGui::Render();

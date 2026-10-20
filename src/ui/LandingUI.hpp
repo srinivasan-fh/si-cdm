@@ -49,6 +49,25 @@ struct UiState {
     std::string extrudeProfileName;   // empty until a profile is picked
     std::vector<LogLine> commandLog;
 
+    // Sculpting brushes (options bar). Ctrl inverts a brush, Shift smooths.
+    float sculptRadius = 20.0f;   // mm
+    float sculptStrength = 0.5f;  // 0..1
+    bool sculptSymmetry = false;  // mirror across the body's centre (X)
+    bool sculptRefine = true;     // dynamic topology under the brush
+    float sculptDetail = 0.0f;    // longest edge under the brush (mm); 0 = radius / 4
+    std::string sculptInfo;       // triangles / closed state of the body being edited
+    // Cut tools.
+    float holeDiameter = 6.0f, holeDepth = 10.0f;
+    bool holeThrough = true;
+    int pocketShape = 0; // 0 box, 1 round, 2 ball
+    float pocketWidth = 20.0f, pocketLength = 20.0f, pocketDepth = 5.0f, pocketAngle = 0.0f;
+    float channelWidth = 4.0f, channelDepth = 0.0f; // 0 = half the width (a round groove)
+    int bossShape = 0; // 0 cylinder, 1 box, 2 dome
+    float bossDiameter = 10.0f, bossHeight = 8.0f;
+    int booleanOp = 1; // 0 union, 1 subtract, 2 intersect
+    bool booleanKeep = false;
+    std::string booleanFirst; // the body picked first
+
     // Simulation window: playback and what to show while bodies move.
     float simTime = 0.0f;      // s
     bool simPlaying = false;

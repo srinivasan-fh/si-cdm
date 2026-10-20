@@ -554,6 +554,98 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             ImGui::SameLine();
             ImGui::TextDisabled("drag, type the depth, click or Enter");
         }
+    } else if (isSculptTool(tool.id)) {
+        ImGui::TextDisabled("Radius");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        lengthField("##sradius", &st.sculptRadius, 0.1f, 1e5f);
+        ImGui::SameLine();
+        ImGui::TextDisabled("Strength");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        ImGui::SliderFloat("##sstrength", &st.sculptStrength, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::Checkbox("Symmetry X", &st.sculptSymmetry);
+        ImGui::SameLine();
+        ImGui::Checkbox("Dyntopo", &st.sculptRefine);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dynamic topology: split long edges under the brush so detail can be added anywhere");
+        if (st.sculptRefine) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("Detail");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            lengthField("##sdetail", &st.sculptDetail, 0.0f, 1e5f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Longest edge left under the brush (0: a quarter of the radius)");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Drag over a body. Ctrl inverts the brush, Shift smooths, [ and ] change the size.%s%s",
+                              st.sculptInfo.empty() ? "" : "\n", st.sculptInfo.c_str());
+    } else if (isCutTool(tool.id)) {
+        auto shapeCombo = [](const char* id, int* v, std::initializer_list<const char*> names) {
+            ImGui::SetNextItemWidth(90);
+            const char* items[4];
+            int n = 0;
+            for (const char* nm : names) items[n++] = nm;
+            ImGui::Combo(id, v, items, n);
+        };
+        auto field = [&](const char* label, const char* id, float* v, float lo) {
+            ImGui::TextDisabled("%s", label);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            lengthField(id, v, lo, 1e5f);
+            ImGui::SameLine();
+        };
+        switch (tool.id) {
+        case ToolId::CutHole:
+            field("Diameter", "##hd", &st.holeDiameter, 0.01f);
+            ImGui::Checkbox("Through", &st.holeThrough);
+            ImGui::SameLine();
+            if (!st.holeThrough) field("Depth", "##hdepth", &st.holeDepth, 0.01f);
+            ImGui::TextDisabled("Click a surface");
+            break;
+        case ToolId::CutPocket:
+            shapeCombo("##pshape", &st.pocketShape, {"Box", "Round", "Ball end"});
+            ImGui::SameLine();
+            field("Width", "##pw", &st.pocketWidth, 0.01f);
+            if (st.pocketShape == 0) field("Length", "##pl", &st.pocketLength, 0.01f);
+            field("Depth", "##pd", &st.pocketDepth, 0.01f);
+            if (st.pocketShape == 0) {
+                ImGui::TextDisabled("Angle");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(70);
+                ImGui::DragFloat("##pa", &st.pocketAngle, 1.0f, -180.0f, 180.0f, "%.0f deg");
+                ImGui::SameLine();
+            }
+            ImGui::TextDisabled("Click a surface");
+            break;
+        case ToolId::CutChannel:
+            field("Width", "##cw", &st.channelWidth, 0.01f);
+            field("Depth", "##cd", &st.channelDepth, 0.0f);
+            ImGui::TextDisabled("Drag along a surface (depth 0: a round groove)");
+            break;
+        case ToolId::CutKnife:
+            ImGui::TextDisabled("Drag a line across a body: the smaller side is cut away and the face capped");
+            break;
+        case ToolId::AddBoss:
+            shapeCombo("##bshape", &st.bossShape, {"Cylinder", "Box", "Dome"});
+            ImGui::SameLine();
+            field("Diameter", "##bd", &st.bossDiameter, 0.01f);
+            field("Height", "##bh", &st.bossHeight, 0.01f);
+            ImGui::TextDisabled("Click a surface");
+            break;
+        default: // BooleanBodies
+            shapeCombo("##bop", &st.booleanOp, {"Union", "Subtract", "Intersect"});
+            ImGui::SameLine();
+            ImGui::Checkbox("Keep tool body", &st.booleanKeep);
+            ImGui::SameLine();
+            if (st.booleanFirst.empty()) ImGui::TextDisabled("Click the body to keep");
+            else ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "%s  -  now click the tool body", st.booleanFirst.c_str());
+            break;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
     } else if (isPrimitiveTool(tool.id)) {
         const std::string snap = lengthText(5.0);
         if (is2D) ImGui::TextDisabled("Click to place on the %s plane (%s snap)", shortPlaneName(st.plane), snap.c_str());

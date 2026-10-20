@@ -396,6 +396,132 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
         g.dot(-0.8f, 0.75f, 0.09f);
         break;
 
+    // ---- Digital sculpting ---------------------------------------------------
+    // A clay surface (the baseline) with what each brush does to it.
+    case ToolId::SculptDraw:
+        g.line(-0.9f, 0.6f, -0.45f, 0.6f);
+        g.bezier(-0.45f, 0.6f, -0.25f, 0.6f, -0.2f, -0.05f, 0.0f, -0.05f);
+        g.bezier(0.0f, -0.05f, 0.2f, -0.05f, 0.25f, 0.6f, 0.45f, 0.6f);
+        g.line(0.45f, 0.6f, 0.9f, 0.6f);
+        g.line(0, -0.25f, 0, -0.8f);
+        arrowHead(g, 0, -0.85f, 0, -1, 0.25f);
+        break;
+    case ToolId::SculptClay:
+        g.line(-0.9f, 0.65f, 0.9f, 0.65f);
+        g.poly({{-0.6f, 0.65f}, {-0.45f, 0.25f}, {0.45f, 0.25f}, {0.6f, 0.65f}}, false, true);
+        g.poly({{-0.4f, 0.25f}, {-0.28f, -0.12f}, {0.28f, -0.12f}, {0.4f, 0.25f}}, false, true);
+        g.line(0.55f, -0.75f, 0.55f, -0.35f);
+        g.line(0.35f, -0.55f, 0.75f, -0.55f);
+        break;
+    case ToolId::SculptCarve:
+        g.line(-0.9f, -0.05f, -0.4f, -0.05f);
+        g.bezier(-0.4f, -0.05f, -0.25f, -0.05f, -0.15f, 0.6f, 0.0f, 0.6f);
+        g.bezier(0.0f, 0.6f, 0.15f, 0.6f, 0.25f, -0.05f, 0.4f, -0.05f);
+        g.line(0.4f, -0.05f, 0.9f, -0.05f);
+        g.poly({{0.15f, -0.85f}, {0.45f, -0.85f}, {0.08f, -0.2f}}, true, true); // gouge
+        break;
+    case ToolId::SculptInflate:
+        g.circle(0, 0, 0.38f, true);
+        for (int i = 0; i < 4; ++i) {
+            const float a = kTau * (0.125f + 0.25f * static_cast<float>(i));
+            const float cx = std::cos(a), cy = std::sin(a);
+            g.line(cx * 0.5f, cy * 0.5f, cx * 0.82f, cy * 0.82f);
+            arrowHead(g, cx * 0.9f, cy * 0.9f, cx, cy, 0.2f);
+        }
+        break;
+    case ToolId::SculptGrab:
+        g.line(-0.9f, 0.65f, -0.5f, 0.65f);
+        g.bezier(-0.5f, 0.65f, -0.2f, 0.65f, 0.0f, -0.35f, 0.3f, -0.35f);
+        g.bezier(0.3f, -0.35f, 0.5f, -0.35f, 0.5f, 0.65f, 0.9f, 0.65f);
+        g.circle(0.3f, -0.35f, 0.14f, true);
+        g.dashed(-0.1f, 0.35f, 0.25f, -0.2f, 3);
+        break;
+    case ToolId::SculptPinch:
+        g.line(-0.9f, 0.55f, -0.2f, 0.55f);
+        g.line(-0.2f, 0.55f, 0, -0.1f);
+        g.line(0, -0.1f, 0.2f, 0.55f);
+        g.line(0.2f, 0.55f, 0.9f, 0.55f);
+        g.line(-0.85f, -0.45f, -0.3f, -0.45f);
+        arrowHead(g, -0.22f, -0.45f, 1, 0, 0.22f);
+        g.line(0.85f, -0.45f, 0.3f, -0.45f);
+        arrowHead(g, 0.22f, -0.45f, -1, 0, 0.22f);
+        break;
+    case ToolId::SculptCrease:
+        g.line(-0.9f, -0.2f, -0.25f, -0.2f);
+        g.line(-0.25f, -0.2f, 0, 0.75f);
+        g.line(0, 0.75f, 0.25f, -0.2f);
+        g.line(0.25f, -0.2f, 0.9f, -0.2f);
+        g.dashed(0, -0.85f, 0, 0.45f, 4);
+        break;
+    case ToolId::SculptSmooth:
+        g.bezier(-0.9f, -0.35f, -0.65f, -0.75f, -0.45f, 0.05f, -0.2f, -0.35f);
+        g.bezier(-0.2f, -0.35f, 0.0f, -0.6f, 0.1f, -0.2f, 0.3f, -0.3f);
+        g.line(0.3f, -0.3f, 0.9f, -0.3f);
+        g.line(-0.9f, 0.45f, 0.9f, 0.45f);
+        arrowHead(g, 0, 0.3f, 0, 1, 0.22f);
+        g.line(0, -0.05f, 0, 0.1f);
+        break;
+    case ToolId::SculptFlatten:
+        g.line(-0.9f, 0.65f, -0.5f, 0.65f);
+        g.bezier(-0.5f, 0.65f, -0.35f, 0.65f, -0.35f, 0.05f, -0.15f, 0.05f);
+        g.line(-0.15f, 0.05f, 0.15f, 0.05f);
+        g.bezier(0.15f, 0.05f, 0.35f, 0.05f, 0.35f, 0.65f, 0.5f, 0.65f);
+        g.line(0.5f, 0.65f, 0.9f, 0.65f);
+        g.poly({{-0.55f, -0.15f}, {0.55f, -0.15f}, {0.55f, -0.4f}, {-0.55f, -0.4f}}, true, true);
+        g.line(0, -0.4f, 0, -0.85f);
+        break;
+    case ToolId::SculptScrape:
+        g.line(-0.9f, 0.65f, -0.55f, 0.65f);
+        g.bezier(-0.55f, 0.65f, -0.4f, 0.65f, -0.4f, 0.05f, -0.25f, 0.05f);
+        g.line(-0.25f, 0.05f, 0.25f, 0.05f);
+        g.bezier(0.25f, 0.05f, 0.4f, 0.05f, 0.4f, 0.65f, 0.55f, 0.65f);
+        g.line(0.55f, 0.65f, 0.9f, 0.65f);
+        g.dashed(-0.25f, 0.05f, -0.1f, -0.35f, 2);
+        g.dashed(0.1f, -0.35f, 0.25f, 0.05f, 2);
+        g.poly({{-0.75f, -0.05f}, {0.85f, -0.05f}, {0.65f, -0.3f}}, true, true); // blade
+        break;
+
+    // ---- Cuts & booleans ----------------------------------------------------
+    case ToolId::CutHole:
+        g.poly({{-0.85f, -0.2f}, {0.85f, -0.2f}, {0.85f, 0.75f}, {-0.85f, 0.75f}}, true, true);
+        g.ellipse(0, -0.2f, 0.32f, 0.12f);
+        g.dashed(-0.32f, -0.2f, -0.32f, 0.75f, 3);
+        g.dashed(0.32f, -0.2f, 0.32f, 0.75f, 3);
+        g.line(0, -0.95f, 0, -0.42f);
+        arrowHead(g, 0, -0.35f, 0, 1, 0.2f);
+        break;
+    case ToolId::CutPocket:
+        g.poly({{-0.85f, -0.6f}, {0.85f, -0.6f}, {0.85f, 0.7f}, {-0.85f, 0.7f}}, true, true);
+        g.poly({{-0.45f, -0.25f}, {0.45f, -0.25f}, {0.45f, 0.35f}, {-0.45f, 0.35f}}, true);
+        g.dashed(-0.45f, -0.25f, -0.3f, -0.1f, 1);
+        g.dashed(0.45f, -0.25f, 0.3f, -0.1f, 1);
+        g.dashed(-0.3f, -0.1f, 0.3f, -0.1f, 3);
+        break;
+    case ToolId::CutChannel:
+        g.poly({{-0.85f, -0.6f}, {0.85f, -0.6f}, {0.85f, 0.7f}, {-0.85f, 0.7f}}, true, true);
+        g.bezier(-0.85f, 0.3f, -0.3f, -0.4f, 0.3f, 0.55f, 0.85f, -0.2f);
+        g.bezier(-0.85f, 0.05f, -0.3f, -0.65f, 0.3f, 0.3f, 0.85f, -0.45f);
+        break;
+    case ToolId::CutKnife:
+        g.poly({{-0.85f, 0.65f}, {0.35f, -0.55f}, {0.55f, -0.35f}, {-0.6f, 0.75f}}, true, true); // blade
+        g.line(0.35f, -0.55f, 0.75f, -0.9f);
+        g.line(0.55f, -0.35f, 0.9f, -0.75f);
+        g.line(0.75f, -0.9f, 0.9f, -0.75f);
+        g.dashed(-0.9f, -0.1f, 0.9f, -0.1f, 5);
+        break;
+    case ToolId::AddBoss:
+        g.poly({{-0.9f, 0.35f}, {0.9f, 0.35f}, {0.9f, 0.8f}, {-0.9f, 0.8f}}, true, true);
+        g.ellipse(0, -0.55f, 0.35f, 0.13f, true);
+        g.line(-0.35f, -0.55f, -0.35f, 0.35f);
+        g.line(0.35f, -0.55f, 0.35f, 0.35f);
+        g.line(0.75f, -0.85f, 0.75f, -0.45f);
+        g.line(0.55f, -0.65f, 0.95f, -0.65f);
+        break;
+    case ToolId::BooleanBodies:
+        g.circle(-0.28f, 0, 0.5f);
+        g.circle(0.28f, 0, 0.5f, true);
+        break;
+
     case ToolId::Count: break;
     }
 }

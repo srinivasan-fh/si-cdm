@@ -23,10 +23,15 @@ enum class ToolId {
     TopologyOptimized, TpmsLattice,
     // VII. Mesh data
     MeshImport, PointCloud, SubD,
+    // VIII. Digital sculpting (clay brushes on any body)
+    SculptDraw, SculptClay, SculptCarve, SculptInflate, SculptGrab, SculptPinch, SculptCrease, SculptSmooth,
+    SculptFlatten, SculptScrape,
+    // IX. Cuts & booleans (exact, closed results)
+    CutHole, CutPocket, CutChannel, CutKnife, AddBoss, BooleanBodies,
     Count
 };
 
-enum class ToolCategory { Navigate, Sketch, Solid, Feature, Surface, ClassA, Generative, Mesh };
+enum class ToolCategory { Navigate, Sketch, Solid, Feature, Surface, ClassA, Generative, Mesh, Sculpt, Cut };
 
 struct ToolInfo {
     ToolId id;
@@ -59,5 +64,9 @@ bool commandModifierHeld();
 
 // True for the 2D sketch tools that are implemented (draw on the active sketch plane).
 bool isSketchTool(ToolId id);
+
+// Sculpting brushes (drag over a body) and the cut / boolean tools.
+bool isSculptTool(ToolId id);
+bool isCutTool(ToolId id);
 
 } // namespace sicdm

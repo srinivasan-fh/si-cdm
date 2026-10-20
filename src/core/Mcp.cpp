@@ -334,6 +334,40 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("operation", prop("string",
+                                "A brush: draw (pull; invert pushes), clay (add), carve (remove), inflate, grab, pinch, "
+                                "crease, smooth, flatten, scrape (trim) -- or hole, pocket, channel, trim (knife), boss "
+                                "(add volume), boolean, refine, undo"));
+        p.set("body", prop("string", "Body to work on (default: the selection)"));
+        p.set("points", prop("array", "Points [[x,y,z], ...] in mm on the surface: the stroke, the hole / pocket / boss "
+                                      "position, the channel path or a point of the knife plane"));
+        p.set("direction", prop("array", "[x,y,z] tool direction into the body (default: against the surface normal)"));
+        p.set("normal", prop("array", "trim: [x,y,z] normal of the knife plane; the side it points to is removed"));
+        p.set("smaller", prop("boolean", "trim: remove whichever side is smaller"));
+        p.set("radius", prop("number", "Brush radius, mm (default 20)"));
+        p.set("strength", prop("number", "Brush strength 0-1 (default 0.5)"));
+        p.set("invert", prop("boolean", "Invert the brush (push instead of pull, remove instead of add)"));
+        p.set("symmetry", prop("boolean", "Mirror the stroke across the body's centre (X)"));
+        p.set("detail", prop("number", "Longest edge left under the brush, mm (refine: the target edge length)"));
+        p.set("move", prop("array", "grab: [dx,dy,dz] mm"));
+        p.set("diameter", prop("number", "hole / boss diameter, mm"));
+        p.set("depth", prop("number", "hole / pocket / channel depth, mm (hole: omit for through)"));
+        p.set("width", prop("number", "pocket / channel width, mm"));
+        p.set("length", prop("number", "pocket length, mm"));
+        p.set("height", prop("number", "boss height, mm"));
+        p.set("angle", prop("number", "pocket rotation about the surface normal, degrees"));
+        p.set("shape", prop("string", "pocket: box|round|ball; boss: cylinder|box|ball"));
+        p.set("other", prop("string", "boolean: the second body"));
+        p.set("boolean_op", prop("string", "boolean: union|subtract|intersect"));
+        p.set("keep", prop("boolean", "boolean: keep the second body (default: it is used up)"));
+        tools.push(tool("sculpt",
+                        "Digital sculpting and CAD cuts on a body's mesh: clay brushes with dynamic topology, exact "
+                        "boolean holes, pockets, channels, knife trims, bosses and body unions / subtractions / "
+                        "intersections. Results stay closed meshes, ready for STL / OBJ export (3D printing, CAM).",
+                        p, {"operation"}));
+    }
+    {
+        Json p = Json::object();
         p.set("path", prop("string", "File path (.sicdm). Optional for save when the project already has a path"));
         tools.push(tool("save_project", "Save the project.", p, {}));
         Json o = Json::object();
@@ -646,6 +680,46 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["speed"].isNumber()) line += " SPEED " + num(a["speed"].asNumber());
             if (a["mirror"].asBool()) line += " MIRROR";
         }
+        return runLine(line);
+    }
+    if (name == "sculpt") {
+        const std::string op = a["operation"].asString();
+        auto vec = [&](const Json& v) { return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber()); };
+        if (op == "undo") return runLine("UNDO");
+        std::string body = a["body"].isString() ? quote(a["body"].asString()) : "";
+        std::string pts;
+        if (a["points"].isArray())
+            for (std::size_t i = 0; i < a["points"].size(); ++i) pts += " " + vec(a["points"][i]);
+        auto opt = [&](const char* key, const char* word) {
+            return a[key].isNumber() ? std::string(" ") + word + " " + num(a[key].asNumber()) : std::string();
+        };
+        std::string line;
+        if (op == "boolean") {
+            if (!a["body"].isString() || !a["other"].isString()) return textResult("boolean needs 'body' and 'other'", true);
+            line = "BOOLEAN " + body + " " + a["boolean_op"].asString("subtract") + " " + quote(a["other"].asString()) +
+                   (a["keep"].asBool() ? " KEEP" : "");
+        } else if (op == "refine") {
+            line = "SCULPT " + body + " REFINE " + num(a["detail"].asNumber(2));
+        } else if (op == "hole") {
+            line = "HOLE " + body + " AT" + pts + opt("diameter", "DIAMETER") + opt("depth", "DEPTH");
+        } else if (op == "pocket") {
+            line = "POCKET " + body + " AT" + pts + " " + a["shape"].asString("box") + opt("width", "WIDTH") +
+                   opt("length", "LENGTH") + opt("depth", "DEPTH") + opt("angle", "ANGLE");
+        } else if (op == "channel") {
+            line = "CHANNEL " + body + " PATH" + pts + opt("width", "WIDTH") + opt("depth", "DEPTH");
+        } else if (op == "trim") {
+            line = "TRIM " + body + " PLANE" + pts + (a["normal"].isArray() ? " NORMAL " + vec(a["normal"]) : "") +
+                   (a["smaller"].asBool() ? " SMALLER" : "");
+        } else if (op == "boss") {
+            line = "BOSS " + body + " AT" + pts + " " + a["shape"].asString("cylinder") + opt("diameter", "DIAMETER") +
+                   opt("height", "HEIGHT");
+        } else {
+            line = "SCULPT " + body + " " + op + " AT" + pts + opt("radius", "RADIUS") + opt("strength", "STRENGTH") +
+                   opt("detail", "DETAIL") + (a["invert"].asBool() ? " INVERT" : "") + (a["symmetry"].asBool() ? " SYMMETRY" : "") +
+                   (a["move"].isArray() ? " MOVE " + vec(a["move"]) : "");
+        }
+        if (a["direction"].isArray() && (op == "hole" || op == "pocket" || op == "boss" || op == "channel"))
+            line += " DIR " + vec(a["direction"]);
         return runLine(line);
     }
     if (name == "physics_report") {

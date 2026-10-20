@@ -67,6 +67,25 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::MeshImport, C::Mesh, "STL / OBJ Mesh", "", "Triangulated surfaces for 3D printers and slicers.", false},
     {T::PointCloud, C::Mesh, "Point Cloud", "", "Millions of points captured by 3D laser scanners.", false},
     {T::SubD, C::Mesh, "SubD Surface", "", "Smooth organic shapes sculpted from a low-resolution cage.", false},
+
+    {T::SculptDraw, C::Sculpt, "Draw (Push / Pull)", "D",
+     "Pull the surface out like pressing clay from behind; Ctrl pushes it in. Drag over a body. Shift smooths.", true},
+    {T::SculptClay, C::Sculpt, "Clay (Add)", "", "Build up material in flat layers, like laying on strips of clay. Ctrl removes.", true},
+    {T::SculptCarve, C::Sculpt, "Carve (Remove)", "", "Dig material away with a sharp-edged tool. Ctrl raises a ridge instead.", true},
+    {T::SculptInflate, C::Sculpt, "Inflate", "", "Swell the surface along its own normals (Ctrl deflates).", true},
+    {T::SculptGrab, C::Sculpt, "Grab", "", "Pick up the surface under the brush and drag it, like pulling clay.", true},
+    {T::SculptPinch, C::Sculpt, "Pinch", "", "Draw the surface towards the stroke for sharp creases and hard edges (Ctrl spreads).", true},
+    {T::SculptCrease, C::Sculpt, "Crease", "", "Cut a sharp valley along the stroke (Ctrl: a sharp ridge).", true},
+    {T::SculptSmooth, C::Sculpt, "Smooth", "", "Relax bumps and noise (Laplacian smoothing). Shift smooths with any brush.", true},
+    {T::SculptFlatten, C::Sculpt, "Flatten", "", "Press the surface flat to the average plane under the brush.", true},
+    {T::SculptScrape, C::Sculpt, "Scrape (Trim)", "", "Shave off the high spots down to a plane, like a trimming knife (Ctrl fills).", true},
+
+    {T::CutHole, C::Cut, "Drill Hole", "", "Click a surface to drill a hole along its normal: through, or blind with a 118 deg tip.", true},
+    {T::CutPocket, C::Cut, "Pocket", "", "Click a surface to hollow a rectangular, round or ball-end pocket.", true},
+    {T::CutChannel, C::Cut, "Channel", "", "Drag over a surface to carve a round-bottomed channel along the stroke.", true},
+    {T::CutKnife, C::Cut, "Knife / Trim", "", "Drag a line across a body: the plane through it slices the body and the smaller side is removed. The cut is capped.", true},
+    {T::AddBoss, C::Cut, "Add Volume (Boss)", "", "Click a surface to fuse on a boss, pad or dome.", true},
+    {T::BooleanBodies, C::Cut, "Boolean Bodies", "", "Click a body, then a second one: union, subtract or intersect them exactly.", true},
 }};
 
 constexpr ToolId gMove[] = {T::Move};
@@ -93,6 +112,14 @@ constexpr ToolId gAirfoil[] = {T::TwistedAirfoil, T::TubercleWing};
 constexpr ToolId gTopo[] = {T::TopologyOptimized};
 constexpr ToolId gLattice[] = {T::TpmsLattice};
 constexpr ToolId gMesh[] = {T::MeshImport, T::PointCloud, T::SubD};
+constexpr ToolId gSculptAdd[] = {T::SculptDraw, T::SculptClay, T::SculptCarve, T::SculptInflate};
+constexpr ToolId gSculptGrab[] = {T::SculptGrab};
+constexpr ToolId gSculptPinch[] = {T::SculptPinch, T::SculptCrease};
+constexpr ToolId gSculptSmooth[] = {T::SculptSmooth, T::SculptFlatten, T::SculptScrape};
+constexpr ToolId gCutHole[] = {T::CutHole, T::CutPocket, T::CutChannel};
+constexpr ToolId gCutKnife[] = {T::CutKnife};
+constexpr ToolId gBoss[] = {T::AddBoss};
+constexpr ToolId gBoolean[] = {T::BooleanBodies};
 
 constexpr ToolGroup kGroups[] = {
     {C::Navigate, gMove},   {C::Navigate, gSelect}, {C::Navigate, gOrbit},   {C::Navigate, gPan},
@@ -101,6 +128,8 @@ constexpr ToolGroup kGroups[] = {
     {C::Solid, gCylinder},  {C::Solid, gSphere},    {C::Feature, gExtrude},  {C::Feature, gSweep},
     {C::Feature, gRib},     {C::Surface, gPlane},   {C::Surface, gPatch},    {C::ClassA, gNurbs},
     {C::ClassA, gAirfoil},  {C::Generative, gTopo}, {C::Generative, gLattice}, {C::Mesh, gMesh},
+    {C::Sculpt, gSculptAdd}, {C::Sculpt, gSculptGrab}, {C::Sculpt, gSculptPinch}, {C::Sculpt, gSculptSmooth},
+    {C::Cut, gCutHole},     {C::Cut, gCutKnife},    {C::Cut, gBoss},        {C::Cut, gBoolean},
 };
 
 } // namespace
@@ -119,11 +148,17 @@ const char* categoryName(ToolCategory c) {
     case C::ClassA: return "Class-A & Aerodynamic";
     case C::Generative: return "Generative";
     case C::Mesh: return "Mesh Data";
+    case C::Sculpt: return "Digital Sculpting";
+    case C::Cut: return "Cuts & Booleans";
     }
     return "";
 }
 
 bool isPrimitiveTool(ToolId id) { return toolInfo(id).category == ToolCategory::Solid; }
+
+bool isSculptTool(ToolId id) { return toolInfo(id).category == ToolCategory::Sculpt; }
+
+bool isCutTool(ToolId id) { return toolInfo(id).category == ToolCategory::Cut; }
 
 bool isSketchTool(ToolId id) {
     return id == ToolId::Point || id == ToolId::Line || id == ToolId::Polyline || id == ToolId::Rectangle ||
