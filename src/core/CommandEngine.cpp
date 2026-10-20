@@ -2,6 +2,7 @@
 #include "core/Document.hpp"
 #include "core/Extrude.hpp"
 #include "core/Library.hpp"
+#include "core/Physics.hpp"
 #include "core/Pose.hpp"
 #include "core/Units.hpp"
 
@@ -156,9 +157,11 @@ std::vector<std::string> describePoses(const Document& doc, float t) {
         lines.push_back("  " + m.name + "  " + fmt("%.2f ", motionValue(doc.scene, m, t)) + m.unit() + "  " +
                         fmt("%.2f ", motionRate(doc.scene, m, t)) + m.rateUnit());
     }
-    const std::vector<Mat4> tf = motionTransforms(doc.scene, t);
+    const std::vector<Mat4> tf = simulationTransforms(doc.scene, t);
+    const auto physics = physicsRun(doc.scene);
     for (std::size_t i = 0; i < doc.scene.bodies().size(); ++i) {
-        if (!isMoving(doc.scene, i)) continue;
+        const bool falling = physics && physics->indexOf(i) >= 0 && !doc.scene.bodies()[i].physics.fixed;
+        if (!isMoving(doc.scene, i) && !falling) continue;
         const Body& b = doc.scene.bodies()[i];
         const Vec3 c = tf[i].transformPoint(b.bounds().center());
         const Vec3 x = tf[i].transformDir({1, 0, 0});
@@ -788,6 +791,258 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
                 (pose ? fmt(", in place after %.2f s", r.duration) : fmt(", gesture of %.2f s", r.duration)));
         for (const std::string& n : r.notes) out.say("  note: " + n);
         return out;
+    }
+    if (cmd == "PHYSICS") {
+        PhysicsSettings& ps = doc.scene.physics();
+        const std::string sub = a.empty() ? "" : lower(a[0]);
+        // Plain numbers (forces in N, fields in V/m or T, accelerations in m/s^2).
+        auto numbers = [](const std::string& text) -> std::optional<Vec3> {
+            float v[3] = {0, 0, 0};
+            std::size_t at = 0;
+            for (int k = 0; k < 3; ++k) {
+                const std::size_t comma = text.find(',', at);
+                const auto x = parseNumber(text.substr(at, comma == std::string::npos ? std::string::npos : comma - at));
+                if (!x) return std::nullopt;
+                v[k] = *x;
+                if (comma == std::string::npos) return k == 2 ? std::optional<Vec3>(Vec3{v[0], v[1], v[2]}) : std::nullopt;
+                at = comma + 1;
+            }
+            return std::nullopt;
+        };
+        auto settingsLine = [&] {
+            std::string l = std::string("Physics ") + (ps.enabled ? "on" : "off") + ": gravity " + gravityModeKey(ps.gravity);
+            if (ps.gravity == GravityMode::Uniform || ps.gravity == GravityMode::Both)
+                l += fmt(" (%g, %g, %g) m/s^2", ps.g.x, ps.g.y, ps.g.z);
+            l += ps.floor ? fmt(", floor (friction %g)", ps.friction) : std::string(", no floor");
+            l += ps.air ? ", air drag" : "";
+            if (length(ps.electricField) > 0) l += fmt(", E (%g, %g, %g) V/m", ps.electricField.x, ps.electricField.y, ps.electricField.z);
+            if (length(ps.magneticField) > 0) l += fmt(", B (%g, %g, %g) T", ps.magneticField.x, ps.magneticField.y, ps.magneticField.z);
+            l += fmt(", ambient %g C", ps.ambient - 273.15f);
+            if (ps.relativity) l += fmt(", relativity c = %g m/s", ps.lightSpeed);
+            l += fmt(", %g s", ps.duration);
+            return l;
+        };
+        auto changed = [&](const std::string& what) {
+            markChanged(doc);
+            out.say(what.empty() ? settingsLine() : what);
+            return out;
+        };
+        if (sub.empty() || sub == "status") {
+            out.say(settingsLine());
+            int n = 0;
+            for (const Body& b : doc.scene.bodies())
+                if (b.physics.enabled) {
+                    ++n;
+                    out.say("  " + b.name + (b.physics.fixed ? "  fixed" : "  dynamic") +
+                            fmt("  mass %g kg", massProperties(b).mass) +
+                            (length(b.physics.velocity) > 0 ? "  velocity " + lengthsText({b.physics.velocity.x, b.physics.velocity.y, b.physics.velocity.z}, ", ", "(", ")") + "/s" : std::string()) +
+                            (b.physics.charge != 0 ? fmt("  charge %g C", b.physics.charge) : std::string()) +
+                            fmt("  %g C", b.physics.temperature - 273.15f));
+                }
+            if (n == 0) out.say("  No physics bodies: PHYSICS BODY name DYNAMIC (or PHYSICS DEMO)");
+            return out;
+        }
+        if (const auto on = onOff({a[0]}); on && a.size() == 1) {
+            ps.enabled = *on;
+            if (*on) // bodies that take part: all visible ones, when none was chosen yet
+                if (std::none_of(doc.scene.bodies().begin(), doc.scene.bodies().end(), [](const Body& b) { return b.physics.enabled; }))
+                    for (Body& b : doc.scene.bodies()) b.physics.enabled = b.visible;
+            return changed("");
+        }
+        if (sub == "demo" || sub == "demos") {
+            if (a.size() < 2) {
+                out.say("Physics experiments (PHYSICS DEMO name):");
+                for (const PhysicsDemo& d : physicsDemos()) out.say(std::string("  ") + toUpper(d.key) + "  " + d.title + ": " + d.summary);
+                return out;
+            }
+            if (!loadPhysicsDemo(doc.scene, lower(a[1]))) return out.fail("No physics demo " + a[1] + " (PHYSICS DEMO lists them)");
+            doc.clearSelection();
+            doc.state.simDuration = 0.0f;
+            markChanged(doc);
+            if (view) view->fit();
+            for (const PhysicsDemo& d : physicsDemos())
+                if (lower(a[1]) == d.key) out.say(std::string("Loaded ") + d.title + ": " + d.summary + "  (SIM PLAY to run it)");
+            return out;
+        }
+        if (sub == "at" || sub == "report") {
+            float t = 0.0f;
+            std::size_t i = 1;
+            if (i < a.size())
+                if (const auto v = parseNumber(a[i])) t = *v, ++i;
+            std::optional<std::size_t> only;
+            if (i < a.size()) {
+                std::string name;
+                for (; i < a.size(); ++i) name += (name.empty() ? "" : " ") + a[i];
+                const int b = findBody(doc, name);
+                if (b < 0) return out.fail("No body " + name);
+                only = static_cast<std::size_t>(b);
+            }
+            for (std::string& l : physicsReport(doc.scene, t, only)) out.say(std::move(l));
+            return out;
+        }
+        if (sub == "gravity") {
+            if (a.size() < 2) return usage();
+            const auto mode = gravityModeFromKey(lower(a[1]));
+            if (!mode) return out.fail("GRAVITY OFF, UNIFORM, NEWTON or BOTH");
+            ps.gravity = *mode;
+            for (std::size_t i = 2; i < a.size(); ++i) {
+                if (iequal(a[i], "g") && i + 1 < a.size()) { // Newton's constant
+                    const auto v = parseNumber(a[++i]);
+                    if (!v || *v < 0) return out.fail("G needs a value in m^3/(kg s^2)");
+                    ps.bigG = *v;
+                } else if (const auto vec = numbers(a[i])) {
+                    ps.g = *vec;
+                } else if (const auto v = parseNumber(a[i])) {
+                    ps.g = {0, 0, -std::fabs(*v)}; // a magnitude: straight down
+                } else {
+                    return usage();
+                }
+            }
+            return changed("");
+        }
+        if (sub == "floor") {
+            if (a.size() < 2) return usage();
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                if (const auto on = onOff({a[i]})) ps.floor = *on;
+                else if (iequal(a[i], "friction") && i + 1 < a.size()) {
+                    const auto v = parseNumber(a[++i]);
+                    if (!v || *v < 0) return out.fail("FRICTION needs a coefficient >= 0");
+                    ps.friction = *v;
+                } else return usage();
+            }
+            return changed("");
+        }
+        if (sub == "air") {
+            const auto on = a.size() > 1 ? onOff({a[1]}) : std::nullopt;
+            if (!on) return usage();
+            ps.air = *on;
+            return changed("");
+        }
+        if (sub == "field") {
+            if (a.size() < 3 && !(a.size() == 2 && iequal(a[1], "off"))) return usage();
+            if (iequal(a[1], "off")) {
+                ps.electricField = ps.magneticField = {};
+                return changed("");
+            }
+            const std::string which = lower(a[1]);
+            const auto v = iequal(a[2], "off") ? std::optional<Vec3>(Vec3{}) : numbers(a[2]);
+            if (!v || (which != "e" && which != "b")) return out.fail("FIELD E x,y,z (V/m) or FIELD B x,y,z (T)");
+            (which == "e" ? ps.electricField : ps.magneticField) = *v;
+            return changed("");
+        }
+        if (sub == "ambient") {
+            const auto v = a.size() > 1 ? parseNumber(a[1]) : std::nullopt;
+            if (!v || *v < -273.15f) return out.fail("AMBIENT needs a temperature in C");
+            ps.ambient = *v + 273.15f;
+            return changed("");
+        }
+        if (sub == "relativity") {
+            if (a.size() < 2) return usage();
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                if (const auto on = onOff({a[i]})) ps.relativity = *on;
+                else if (iequal(a[i], "c") && i + 1 < a.size()) {
+                    const auto v = parseNumber(a[++i]);
+                    if (!v || *v <= 0) return out.fail("C needs a speed of light in m/s");
+                    ps.lightSpeed = *v;
+                } else return usage();
+            }
+            return changed("");
+        }
+        if (sub == "duration" || sub == "length") {
+            const auto v = a.size() > 1 ? parseNumber(a[1]) : std::nullopt;
+            if (!v || *v <= 0 || *v > 600) return out.fail("DURATION needs 0 to 600 s");
+            ps.duration = *v;
+            return changed("");
+        }
+        if (sub == "body") {
+            static const char* kKeys[] = {"dynamic", "fixed", "off", "mass", "density", "velocity", "spin", "charge", "temp",
+                                          "temperature", "heat", "bounce", "restitution", "force", "wave", "freq",
+                                          "frequency", "wavespeed", "on"};
+            auto isKey = [&](const std::string& w) {
+                return std::find_if(std::begin(kKeys), std::end(kKeys), [&](const char* k) { return lower(w) == k; }) != std::end(kKeys);
+            };
+            std::size_t i = 1;
+            std::string name;
+            for (; i < a.size() && !isKey(a[i]); ++i) name += (name.empty() ? "" : " ") + a[i];
+            const int bi = name.empty() ? doc.selectedBody : findBody(doc, name);
+            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+                return out.fail(name.empty() ? "Select a body or name it: PHYSICS BODY name DYNAMIC" : "No body " + name);
+            Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            PhysicsProps& p = b.physics;
+            p.enabled = true; // a body named here takes part (unless OFF follows)
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                const bool hasNext = i + 1 < a.size();
+                auto number = [&](const char* what, double lo) -> std::optional<double> {
+                    const auto v = hasNext ? parseNumber(a[i + 1]) : std::nullopt;
+                    if (!v || *v < lo) return std::nullopt;
+                    ++i;
+                    (void)what;
+                    return *v;
+                };
+                if (k == "dynamic" || k == "on") p.enabled = true, p.fixed = false;
+                else if (k == "fixed") p.enabled = true, p.fixed = true;
+                else if (k == "off") p.enabled = false;
+                else if (k == "mass") {
+                    const auto v = number("MASS", 0);
+                    if (!v) return out.fail("MASS needs kg (0 = from the volume and density)");
+                    p.mass = static_cast<float>(*v);
+                } else if (k == "density") {
+                    const auto v = number("DENSITY", 1e-6);
+                    if (!v) return out.fail("DENSITY needs kg/m^3 (steel 7850, aluminium 2700, water 1000)");
+                    p.density = static_cast<float>(*v);
+                } else if (k == "velocity" || k == "spin" || k == "force") {
+                    const auto v = !hasNext ? std::nullopt : (k == "velocity" ? parseVec3(a[i + 1]) : numbers(a[i + 1]));
+                    if (!v) return out.fail(toUpper(k) + (k == "velocity" ? " needs x,y,z per second (lengths)" : k == "spin" ? " needs x,y,z deg/s" : " needs x,y,z N"));
+                    ++i;
+                    (k == "velocity" ? p.velocity : k == "spin" ? p.spin : p.force) = *v;
+                } else if (k == "charge") {
+                    const auto v = hasNext ? parseNumber(a[i + 1]) : std::nullopt;
+                    if (!v) return out.fail("CHARGE needs coulombs (e.g. 5e-6)");
+                    ++i;
+                    p.charge = *v;
+                } else if (k == "temp" || k == "temperature") {
+                    const auto v = number("TEMP", -273.15);
+                    if (!v) return out.fail("TEMP needs C");
+                    p.temperature = static_cast<float>(*v + 273.15);
+                } else if (k == "heat") {
+                    const auto v = number("HEAT", 1e-3);
+                    if (!v) return out.fail("HEAT needs a specific heat in J/(kg K) (steel 490, aluminium 900, water 4186)");
+                    p.specificHeat = static_cast<float>(*v);
+                } else if (k == "bounce" || k == "restitution") {
+                    const auto v = number("BOUNCE", 0);
+                    if (!v || *v > 1) return out.fail("BOUNCE needs 0 (sticks) to 1 (elastic)");
+                    p.restitution = static_cast<float>(*v);
+                } else if (k == "wave") {
+                    const auto w = hasNext ? waveKindFromKey(lower(a[i + 1])) : std::nullopt;
+                    if (!w) return out.fail("WAVE SOUND, LIGHT, CUSTOM or OFF");
+                    ++i;
+                    p.wave = *w;
+                } else if (k == "freq" || k == "frequency") {
+                    const auto v = number("FREQ", 1e-6);
+                    if (!v) return out.fail("FREQ needs Hz");
+                    p.waveFrequency = static_cast<float>(*v);
+                } else if (k == "wavespeed") {
+                    const auto v = hasNext ? parseLength(a[i + 1]) : std::nullopt;
+                    if (!v || *v <= 0) return out.fail("WAVESPEED needs a length per second");
+                    ++i;
+                    p.waveSpeed = static_cast<float>(*v);
+                } else {
+                    return usage();
+                }
+            }
+            if (p.enabled && !ps.enabled) ps.enabled = true;
+            markChanged(doc);
+            const MassProperties mp = massProperties(b);
+            out.say(b.name + ": " + (!p.enabled ? std::string("not in the physics") : p.fixed ? "fixed" : "dynamic") +
+                    fmt(", mass %g kg", mp.mass) + fmt(" (%g kg/m^3)", p.density) +
+                    (length(p.velocity) > 0 ? ", velocity " + lengthsText({p.velocity.x, p.velocity.y, p.velocity.z}, ", ", "(", ")") + "/s" : std::string()) +
+                    (p.charge != 0 ? fmt(", charge %g C", p.charge) : std::string()) + fmt(", %g C", p.temperature - 273.15f) +
+                    fmt(", bounce %g", p.restitution) +
+                    (p.wave != WaveKind::Off ? std::string(", ") + waveKindKey(p.wave) + fmt(" waves %g Hz", p.waveFrequency) : std::string()));
+            return out;
+        }
+        return usage();
     }
     if (cmd == "SIM") {
         const std::string sub = a.empty() ? "open" : lower(a[0]);

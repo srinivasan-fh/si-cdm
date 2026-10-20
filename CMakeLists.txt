@@ -41,6 +41,7 @@ add_library(sicdm_core STATIC
     src/core/Extrude.cpp
     src/core/Motion.cpp
     src/core/Pose.cpp
+    src/core/Physics.cpp
     src/core/Library.cpp
     src/core/CommandEngine.cpp
     src/core/FileIO.cpp

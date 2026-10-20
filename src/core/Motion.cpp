@@ -321,6 +321,12 @@ float suggestedDuration(const Scene& scene) noexcept {
     for (const Motion& m : scene.motions())
         if (m.enabled && m.follow.empty() && (m.mode == MotionMode::Once || m.mode == MotionMode::Oscillate))
             d = std::max(d, m.start + motionCycle(m));
+    if (scene.physics().enabled) // a physics run sets the length too
+        for (const Body& b : scene.bodies())
+            if (b.physics.enabled) {
+                d = std::max(d, scene.physics().duration);
+                break;
+            }
     return d > 0.05f ? d : 10.0f;
 }
 

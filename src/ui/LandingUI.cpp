@@ -2,6 +2,7 @@
 
 #include "core/Command.hpp"
 #include "core/Library.hpp"
+#include "core/Physics.hpp"
 #include "core/Pose.hpp"
 #include "core/Units.hpp"
 #include "ui/Theme.hpp"
@@ -12,6 +13,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <map>
 #include <cmath>
@@ -2136,6 +2138,154 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             cmd.commands.push_back(line);
         }
         if (automatic) ImGui::EndDisabled();
+    }
+
+    // Physical environment: gravity, fields, air, heat, relativity; the selected body's
+    // mass, velocity, charge, temperature... Edits run PHYSICS commands when finished.
+    {
+        PhysicsSettings& ps = scene.physics();
+        const ImGuiTreeNodeFlags open = ps.enabled ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+        if (ImGui::CollapsingHeader("Physics environment", open)) {
+            ImGui::PushID("physics");
+            auto run = [&](const std::string& line) { cmd.commands.push_back(line); };
+            const float labelW = 92.0f;
+            const float fieldW = ImGui::GetContentRegionAvail().x - labelW;
+            auto label = [&](const char* text) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("%s", text);
+                ImGui::SameLine(labelW);
+                ImGui::SetNextItemWidth(fieldW);
+            };
+            auto number = [&](const char* text, const char* id, float value, const char* format,
+                              const std::function<std::string(float)>& line, const char* tip = nullptr) {
+                label(text);
+                float v = value;
+                ImGui::InputFloat(id, &v, 0, 0, format);
+                if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+                if (ImGui::IsItemDeactivatedAfterEdit()) run(line(v));
+            };
+            auto vector = [&](const char* text, const char* id, Vec3 value, const char* format,
+                              const std::function<std::string(const Vec3&)>& line, const char* tip = nullptr) {
+                label(text);
+                float v[3] = {value.x, value.y, value.z};
+                ImGui::InputFloat3(id, v, format);
+                if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+                if (ImGui::IsItemDeactivatedAfterEdit()) run(line({v[0], v[1], v[2]}));
+            };
+            auto num = [](double v) {
+                char b[32];
+                std::snprintf(b, sizeof(b), "%.6g", v);
+                return std::string(b);
+            };
+            auto triple = [&](const Vec3& v, const char* unit) {
+                return num(v.x) + unit + "," + num(v.y) + unit + "," + num(v.z) + unit;
+            };
+            bool on = ps.enabled;
+            if (ImGui::Checkbox("Physics on", &on)) run(on ? "PHYSICS ON" : "PHYSICS OFF");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Bodies in the physics move by forces: gravity, collisions, charges, fields.\n"
+                                  "Turning it on adds every visible body when none was chosen.");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            if (ImGui::BeginCombo("##demo", "Experiment...")) {
+                for (const PhysicsDemo& d : physicsDemos()) {
+                    if (ImGui::Selectable(d.title)) {
+                        run(std::string("PHYSICS DEMO ") + d.key);
+                        run("SIM STOP");
+                        run("SIM PLAY");
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n(replaces the scene)", d.summary);
+                }
+                ImGui::EndCombo();
+            }
+            // World.
+            label("Gravity");
+            static const char* kModes[] = {"Off", "Uniform (g)", "Newton (G m1 m2 / r^2)", "Both"};
+            int mode = static_cast<int>(ps.gravity);
+            if (ImGui::Combo("##gravity", &mode, kModes, 4))
+                run(std::string("PHYSICS GRAVITY ") + gravityModeKey(static_cast<GravityMode>(mode)));
+            if (ps.gravity == GravityMode::Uniform || ps.gravity == GravityMode::Both)
+                vector("g  m/s^2", "##g", ps.g, "%.4g", [&](const Vec3& v) {
+                    return std::string("PHYSICS GRAVITY ") + gravityModeKey(ps.gravity) + " " + num(v.x) + "," + num(v.y) + "," + num(v.z);
+                }, "Earth 9.80665, Moon 1.62, Mars 3.71 (downwards: 0,0,-g)");
+            if (ps.gravity == GravityMode::Newton || ps.gravity == GravityMode::Both)
+                number("G", "##bigG", static_cast<float>(ps.bigG), "%.4e", [&](float v) {
+                    return std::string("PHYSICS GRAVITY ") + gravityModeKey(ps.gravity) + " G " + num(v);
+                }, "Newton's gravitational constant, 6.6743e-11 m^3/(kg s^2)");
+            bool floor = ps.floor, air = ps.air, rel = ps.relativity;
+            if (ImGui::Checkbox("Floor", &floor)) run(floor ? "PHYSICS FLOOR ON" : "PHYSICS FLOOR OFF");
+            ImGui::SameLine(110);
+            if (ImGui::Checkbox("Air drag", &air)) run(air ? "PHYSICS AIR ON" : "PHYSICS AIR OFF");
+            ImGui::SameLine(220);
+            if (ImGui::Checkbox("Relativity", &rel)) run(rel ? "PHYSICS RELATIVITY ON" : "PHYSICS RELATIVITY OFF");
+            if (ps.floor)
+                number("Friction", "##mu", ps.friction, "%.3g", [&](float v) { return "PHYSICS FLOOR ON FRICTION " + num(v); });
+            if (ps.relativity)
+                number("c  m/s", "##c", static_cast<float>(ps.lightSpeed), "%.6g",
+                       [&](float v) { return "PHYSICS RELATIVITY ON C " + num(v); }, "Lower it (e.g. 2 m/s) to see relativity");
+            vector("E  V/m", "##E", ps.electricField, "%.4g", [&](const Vec3& v) { return "PHYSICS FIELD E " + triple(v, ""); });
+            vector("B  T", "##B", ps.magneticField, "%.4g", [&](const Vec3& v) { return "PHYSICS FIELD B " + triple(v, ""); });
+            number("Ambient C", "##amb", ps.ambient - 273.15f, "%.1f", [&](float v) { return "PHYSICS AMBIENT " + num(v); });
+            number("Length s", "##dur", ps.duration, "%.1f", [&](float v) { return "PHYSICS DURATION " + num(v); },
+                   "Seconds simulated (the run is computed once, then plays and scrubs)");
+
+            // The selected body.
+            if (hasSel) {
+                const Body& b = bodies[static_cast<std::size_t>(st.selectedBody)];
+                const PhysicsProps& p = b.physics;
+                const std::string q = "PHYSICS BODY \"" + b.name + "\"";
+                theme::caption(b.name.c_str());
+                bool in = p.enabled, fixed = p.fixed;
+                if (ImGui::Checkbox("In the physics", &in)) run(q + (in ? (p.fixed ? " FIXED" : " DYNAMIC") : " OFF"));
+                if (p.enabled) {
+                    ImGui::SameLine(160);
+                    if (ImGui::Checkbox("Fixed", &fixed)) run(q + (fixed ? " FIXED" : " DYNAMIC"));
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Does not move (an anchor, a planet, a charged plate): still attracts and collides");
+                    const MassProperties mp = massProperties(b);
+                    char massFmt[48];
+                    std::snprintf(massFmt, sizeof(massFmt), p.mass > 0 ? "%%.4g kg" : "auto %.4g kg", mp.mass);
+                    number("Mass", "##mass", p.mass, massFmt, [&](float v) { return q + " MASS " + num(v); },
+                           "0 = volume x density");
+                    number("Density", "##rho", p.density, "%.4g kg/m^3", [&](float v) { return q + " DENSITY " + num(v); },
+                           "Steel 7850, aluminium 2700, water 1000, wood 600");
+                    vector("Velocity m/s", "##vel", p.velocity * 0.001f, "%.4g",
+                           [&](const Vec3& v) { return q + " VELOCITY " + triple(v, "m"); }, "At t = 0");
+                    vector("Spin deg/s", "##spin", p.spin, "%.4g", [&](const Vec3& v) { return q + " SPIN " + triple(v, ""); });
+                    vector("Force N", "##force", p.force, "%.4g", [&](const Vec3& v) { return q + " FORCE " + triple(v, ""); },
+                           "Applied all the time (a thruster, a push)");
+                    number("Charge uC", "##q", static_cast<float>(p.charge * 1e6), "%.4g",
+                           [&](float v) { return q + " CHARGE " + num(v * 1e-6); }, "Coulomb's law between charges, q(E + v x B) in fields");
+                    number("Temp C", "##temp", p.temperature - 273.15f, "%.1f", [&](float v) { return q + " TEMP " + num(v); });
+                    number("Specific heat", "##cp", p.specificHeat, "%.4g J/kgK", [&](float v) { return q + " HEAT " + num(v); });
+                    number("Bounce", "##e", p.restitution, "%.2f", [&](float v) { return q + " BOUNCE " + num(v); },
+                           "Coefficient of restitution: 1 elastic, 0 sticks");
+                    label("Waves");
+                    static const char* kWaves[] = {"Off", "Sound (343 m/s)", "Light (c)", "Custom speed"};
+                    int wave = static_cast<int>(p.wave);
+                    if (ImGui::Combo("##wave", &wave, kWaves, 4))
+                        run(q + " WAVE " + waveKindKey(static_cast<WaveKind>(wave)));
+                    if (p.wave != WaveKind::Off) {
+                        number("Frequency", "##f", p.waveFrequency, "%.4g Hz", [&](float v) { return q + " FREQ " + num(v); });
+                        if (p.wave == WaveKind::Custom)
+                            number("Wave m/s", "##ws", p.waveSpeed * 0.001f, "%.4g",
+                                   [&](float v) { return q + " WAVESPEED " + num(v) + "m"; }, "Ripples, slow sound...");
+                    }
+                }
+            } else {
+                theme::caption("Body");
+                ImGui::TextDisabled("Select a body to give it mass, velocity, charge...");
+            }
+            // Live readout at the playhead.
+            if (ps.enabled && physicsRun(scene)) {
+                theme::caption("Readout");
+                theme::ScopedFont small(theme::Font::Small);
+                const auto lines = physicsReport(scene, st.simTime,
+                                                 hasSel ? std::optional<std::size_t>(static_cast<std::size_t>(st.selectedBody)) : std::nullopt);
+                for (std::size_t i = 2; i < lines.size() && i < (hasSel ? lines.size() : 5); ++i)
+                    ImGui::TextWrapped("%s", lines[i].c_str() + std::min<std::size_t>(lines[i].find_first_not_of(' '), lines[i].size()));
+            }
+            ImGui::PopID();
+        }
     }
 
     // Postures and gestures of the library robots (humanoid, arm, hand, leg, neck...).

@@ -3,6 +3,7 @@
 
 #include "core/Command.hpp"
 #include "core/Library.hpp"
+#include "core/Physics.hpp"
 #include "core/Pose.hpp"
 
 #include <algorithm>
@@ -288,6 +289,48 @@ Json McpServer::toolDefinitions() {
         g.set("mirror", prop("boolean", "Play it with the other side (left arm / hand)"));
         tools.push(tool("play_gesture", "Play a timed gesture (wave, nod, point, march...) on a library robot from the posture it holds.",
                         g, {"gesture"}));
+    }
+    {
+        Json demos = Json::array();
+        for (const PhysicsDemo& d : physicsDemos()) demos.push(d.key);
+        Json p = Json::object();
+        p.set("enabled", prop("boolean", "Physics on / off for the Simulation"));
+        Json demo = prop("string", "Load a ready-made experiment (replaces the scene)");
+        demo.set("enum", demos);
+        p.set("demo", demo);
+        p.set("gravity", enumProp({"off", "uniform", "newton", "both"},
+                                  "uniform: g everywhere; newton: every pair of masses attracts (G m1 m2 / r^2)"));
+        p.set("g", numberArray(3, "Uniform gravity [x,y,z] m/s^2 (default [0,0,-9.80665])"));
+        p.set("big_g", prop("number", "Newton's gravitational constant (default 6.6743e-11)"));
+        p.set("floor", prop("boolean", "Solid ground at z = 0"));
+        p.set("friction", prop("number", "Floor friction coefficient"));
+        p.set("air", prop("boolean", "Air drag"));
+        p.set("electric_field", numberArray(3, "Uniform E field [x,y,z] V/m"));
+        p.set("magnetic_field", numberArray(3, "Uniform B field [x,y,z] T"));
+        p.set("ambient_c", prop("number", "Air temperature, C"));
+        p.set("relativity", prop("boolean", "Special relativity"));
+        p.set("light_speed", prop("number", "Speed of light, m/s (lower it to see relativistic effects)"));
+        p.set("duration", prop("number", "Seconds simulated"));
+        Json body = Json::object();
+        body.set("type", "object").set("description",
+            "One body's physics: {\"name\": \"Ball 1\", \"mode\": \"dynamic\"|\"fixed\"|\"off\", \"mass\": kg, "
+            "\"density\": kg/m^3, \"velocity\": [x,y,z] mm/s, \"spin\": [x,y,z] deg/s, \"charge\": C, "
+            "\"temperature_c\": C, \"specific_heat\": J/(kg K), \"restitution\": 0-1, \"force\": [x,y,z] N, "
+            "\"wave\": \"sound\"|\"light\"|\"custom\"|\"off\", \"wave_frequency\": Hz, \"wave_speed\": mm/s}");
+        p.set("body", body);
+        tools.push(tool("set_physics",
+                        "Set up the physical environment of the Simulation (gravity, floor, air, E / B fields, "
+                        "ambient temperature, relativity) and bodies' mass, velocity, charge, temperature, "
+                        "applied force and wave sources; or load a demo experiment.",
+                        p, {}));
+        Json r = Json::object();
+        r.set("time", prop("number", "Seconds into the run (default 0)"));
+        r.set("body", prop("string", "Only this body (default: all)"));
+        tools.push(tool("physics_report",
+                        "Physics state at a time: kinematics (position, velocity, acceleration), forces, momentum, "
+                        "energy with the conservation check, temperature, relativity (gamma, proper time), quantum "
+                        "(de Broglie wavelength) and wave / Doppler readouts. Works headless.",
+                        r, {}, true));
     }
     {
         Json p = Json::object();
@@ -604,6 +647,68 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["mirror"].asBool()) line += " MIRROR";
         }
         return runLine(line);
+    }
+    if (name == "physics_report") {
+        std::string line = "PHYSICS AT " + num(a["time"].asNumber(0));
+        if (a["body"].isString() && !a["body"].asString().empty()) line += " " + a["body"].asString();
+        return runLine(line);
+    }
+    if (name == "set_physics") {
+        std::string log;
+        bool ok = true;
+        auto step = [&](const std::string& line) {
+            const Json r = runLine(line);
+            log += (log.empty() ? "" : "\n") + r["content"][0]["text"].asString();
+            return !r["isError"].asBool();
+        };
+        auto vec = [&](const Json& v) { return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber()); };
+        if (a["demo"].isString()) ok = step("PHYSICS DEMO " + a["demo"].asString()) && ok;
+        if (a["enabled"].isBool()) ok = step(a["enabled"].asBool() ? "PHYSICS ON" : "PHYSICS OFF") && ok;
+        if (a["gravity"].isString() || a["g"].isArray() || a["big_g"].isNumber()) {
+            std::string line = "PHYSICS GRAVITY " +
+                               (a["gravity"].isString() ? a["gravity"].asString() : std::string(gravityModeKey(m_doc.scene.physics().gravity)));
+            if (a["g"].isArray()) line += " " + vec(a["g"]);
+            if (a["big_g"].isNumber()) line += " G " + num(a["big_g"].asNumber());
+            ok = step(line) && ok;
+        }
+        if (a["floor"].isBool() || a["friction"].isNumber()) {
+            std::string line = "PHYSICS FLOOR";
+            line += a["floor"].isBool() ? (a["floor"].asBool() ? " ON" : " OFF") : (m_doc.scene.physics().floor ? " ON" : " OFF");
+            if (a["friction"].isNumber()) line += " FRICTION " + num(a["friction"].asNumber());
+            ok = step(line) && ok;
+        }
+        if (a["air"].isBool()) ok = step(a["air"].asBool() ? "PHYSICS AIR ON" : "PHYSICS AIR OFF") && ok;
+        if (a["electric_field"].isArray()) ok = step("PHYSICS FIELD E " + vec(a["electric_field"])) && ok;
+        if (a["magnetic_field"].isArray()) ok = step("PHYSICS FIELD B " + vec(a["magnetic_field"])) && ok;
+        if (a["ambient_c"].isNumber()) ok = step("PHYSICS AMBIENT " + num(a["ambient_c"].asNumber())) && ok;
+        if (a["relativity"].isBool() || a["light_speed"].isNumber()) {
+            std::string line = "PHYSICS RELATIVITY";
+            line += a["relativity"].isBool() ? (a["relativity"].asBool() ? " ON" : " OFF") : (m_doc.scene.physics().relativity ? " ON" : " OFF");
+            if (a["light_speed"].isNumber()) line += " C " + num(a["light_speed"].asNumber());
+            ok = step(line) && ok;
+        }
+        if (a["duration"].isNumber()) ok = step("PHYSICS DURATION " + num(a["duration"].asNumber())) && ok;
+        if (const Json& b = a["body"]; b.isObject()) {
+            if (!b["name"].isString()) return textResult("body needs a 'name'", true);
+            std::string line = "PHYSICS BODY " + quote(b["name"].asString());
+            const std::string mode = b["mode"].asString("dynamic");
+            line += mode == "fixed" ? " FIXED" : mode == "off" ? " OFF" : " DYNAMIC";
+            if (b["mass"].isNumber()) line += " MASS " + num(b["mass"].asNumber());
+            if (b["density"].isNumber()) line += " DENSITY " + num(b["density"].asNumber());
+            if (b["velocity"].isArray()) line += " VELOCITY " + vec(b["velocity"]);
+            if (b["spin"].isArray()) line += " SPIN " + vec(b["spin"]);
+            if (b["charge"].isNumber()) line += " CHARGE " + num(b["charge"].asNumber());
+            if (b["temperature_c"].isNumber()) line += " TEMP " + num(b["temperature_c"].asNumber());
+            if (b["specific_heat"].isNumber()) line += " HEAT " + num(b["specific_heat"].asNumber());
+            if (b["restitution"].isNumber()) line += " BOUNCE " + num(b["restitution"].asNumber());
+            if (b["force"].isArray()) line += " FORCE " + vec(b["force"]);
+            if (b["wave"].isString()) line += " WAVE " + b["wave"].asString();
+            if (b["wave_frequency"].isNumber()) line += " FREQ " + num(b["wave_frequency"].asNumber());
+            if (b["wave_speed"].isNumber()) line += " WAVESPEED " + num(b["wave_speed"].asNumber());
+            ok = step(line) && ok;
+        }
+        if (log.empty()) return textResult("Nothing to change", true);
+        return textResult(log, !ok);
     }
     if (name == "list_parts") return runLine("PART");
     if (name == "insert_part") {

@@ -2,6 +2,7 @@
 
 #include "core/Mcp.hpp"
 #include "core/Motion.hpp"
+#include "core/Physics.hpp"
 
 #include <filesystem>
 
@@ -210,4 +211,23 @@ TEST_CASE("MCP set_pose and play_gesture move a library robot") {
     CHECK(tool(s, "set_pose", R"({"robot":"Atlas"})")["isError"].asBool());
     CHECK(!tool(s, "play_gesture", R"({"gesture":"wave","mirror":true,"speed":0.5})")["isError"].asBool());
     CHECK(tool(s, "play_gesture", R"({"gesture":"moonwalk"})")["isError"].asBool());
+}
+
+TEST_CASE("MCP set_physics and physics_report run an experiment") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "create_solid", R"({"kind":"sphere","radius":25,"position":[0,0,500],"name":"Ball"})")["isError"].asBool());
+    Json r = tool(s, "set_physics", R"({"gravity":"uniform","air":false,"body":{"name":"Ball","velocity":[1000,0,0],"temperature_c":40,"restitution":0.7}})");
+    CHECK(!r["isError"].asBool());
+    CHECK(d.scene.physics().enabled);
+    CHECK(d.scene.bodies()[0].physics.enabled);
+    CHECK_NEAR(d.scene.bodies()[0].physics.velocity.x, 1000, 1e-3);
+    r = tool(s, "physics_report", R"({"time":0.2,"body":"Ball"})");
+    CHECK(!r["isError"].asBool());
+    const std::string text = r["content"][0]["text"].asString();
+    CHECK(text.find("velocity (1, 0, -1.961) m/s") != std::string::npos); // v = (1, 0, -g t)
+    CHECK(text.find("Conservation of energy") != std::string::npos);
+    CHECK(!tool(s, "set_physics", R"({"demo":"orbit"})")["isError"].asBool());
+    CHECK(d.scene.physics().gravity == GravityMode::Newton);
+    CHECK(tool(s, "set_physics", R"({"body":{"mode":"fixed"}})")["isError"].asBool());
 }

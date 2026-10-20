@@ -71,6 +71,7 @@ void Scene::clear() {
     m_bodies.clear();
     m_images.clear();
     m_motions.clear();
+    m_physics = PhysicsSettings{};
     m_sketch = Sketch{};
     m_revision = nextRevision();
     m_imageRevision = nextRevision();
@@ -81,6 +82,7 @@ void Scene::assign(Scene&& other) {
     m_bodies = std::move(other.m_bodies);
     m_images = std::move(other.m_images);
     m_motions = std::move(other.m_motions);
+    m_physics = other.m_physics;
     m_sketch = std::move(other.m_sketch);
     m_revision = nextRevision();
     m_imageRevision = nextRevision();

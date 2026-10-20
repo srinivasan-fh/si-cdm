@@ -9,6 +9,7 @@
 
 #include "core/Command.hpp"
 #include "core/Library.hpp"
+#include "core/Physics.hpp"
 #include "core/Units.hpp"
 #include "ui/Theme.hpp"
 #include "core/Extrude.hpp"
@@ -659,9 +660,9 @@ void Application::handleCommands(const UiCommands& cmd) {
     if ((cmd.orbitDelta.x != 0.0f || cmd.orbitDelta.y != 0.0f) && !is2D) m_cam3D.orbit(cmd.orbitDelta.x, cmd.orbitDelta.y);
     if (cmd.home) {
         m_cam3D.setStandardView(StandardView::Isometric, false);
-        m_cam3D.fitToBounds(m_doc.scene.bounds());
+        m_cam3D.fitToBounds(viewBounds());
     }
-    if (cmd.fit) camera().fitToBounds(m_doc.scene.bounds());
+    if (cmd.fit) camera().fitToBounds(viewBounds());
     if (cmd.toggleProjection && !is2D)
         m_cam3D.setProjection(m_cam3D.projection() == Projection::Perspective ? Projection::Orthographic
                                                                                : Projection::Perspective);
@@ -758,7 +759,7 @@ void Application::frame(float dt) {
     }
     if (m_extrudeCurve >= 0) drawExtrudePreview();
     if (simulating()) {
-        m_simTransforms = motionTransforms(m_doc.scene, m_uiState.simTime); // after scrubbing / panel edits
+        m_simTransforms = simulationTransforms(m_doc.scene, m_uiState.simTime); // after scrubbing / panel edits
         updateLoopShapes();
         drawSimulationOverlay();
     }
@@ -1430,7 +1431,7 @@ void Application::advanceSimulation(float dt) {
         }
         m_framesToRender = std::max(m_framesToRender, 2); // keep animating
     }
-    m_simTransforms = motionTransforms(m_doc.scene, st.simTime);
+    m_simTransforms = simulationTransforms(m_doc.scene, st.simTime);
 }
 
 namespace {
@@ -1649,6 +1650,156 @@ void Application::drawSimulationOverlay() const {
         }
     }
 
+    // Physics: wavefronts, field arrows, velocity and force vectors, temperature halos,
+    // trails, and the energy balance.
+    if (const auto run = physicsRun(scene); run && !run->frames.empty()) {
+        const PhysicsSettings& ps = run->settings;
+        const PhysicsFrame f = run->at(t);
+        auto arrow = [&](const Vec3& from, const Vec3& to, ImU32 c, float w) {
+            const auto a = scr(from), b = scr(to);
+            if (!a || !b) return;
+            dl->AddLine(*a, *b, c, w);
+            const ImVec2 d{b->x - a->x, b->y - a->y};
+            const float l = std::hypot(d.x, d.y);
+            if (l < 4.0f) return;
+            const ImVec2 u{d.x / l, d.y / l}, n{-u.y, u.x};
+            dl->AddTriangleFilled({b->x + u.x * 5, b->y + u.y * 5}, {b->x - u.x * 7 + n.x * 5, b->y - u.y * 7 + n.y * 5},
+                                  {b->x - u.x * 7 - n.x * 5, b->y - u.y * 7 - n.y * 5}, c);
+        };
+        // Temperature colour: blue (0 C) - white (20 C) - red (100 C and hotter).
+        auto heat = [](float kelvin, float alpha) {
+            const float c = kelvin - 273.15f;
+            float r = 1, g = 1, b = 1;
+            if (c < 20.0f) {
+                const float k = std::clamp((20.0f - c) / 20.0f, 0.0f, 1.0f);
+                r = 1 - 0.7f * k, g = 1 - 0.4f * k;
+            } else {
+                const float k = std::clamp((c - 20.0f) / 80.0f, 0.0f, 1.0f);
+                g = 1 - 0.75f * k, b = 1 - 0.85f * k;
+            }
+            return IM_COL32(static_cast<int>(r * 255), static_cast<int>(g * 255), static_cast<int>(b * 255), static_cast<int>(alpha * 255));
+        };
+        // Waves: crests emitted every period from where the source was then (Doppler).
+        for (std::size_t i = 0; i < run->bodies.size(); ++i) {
+            const PhysicsBodyInfo& b = run->bodies[i];
+            if (b.props.wave == WaveKind::Off) continue;
+            const double speed = b.props.wave == WaveKind::Sound ? kSoundSpeed * 1000.0
+                                 : b.props.wave == WaveKind::Light ? (ps.relativity ? ps.lightSpeed : kLightSpeed) * 1000.0
+                                                                   : static_cast<double>(b.props.waveSpeed);
+            const double period = 1.0 / std::max(b.props.waveFrequency, 1e-6f);
+            const double reach = std::max(4000.0, static_cast<double>(scene.bounds().radius()) * 3.0); // mm
+            const ImU32 c = IM_COL32(120, 200, 255, 255);
+            int drawn = 0;
+            for (double te = std::floor(t / period) * period; te >= 0 && drawn < 40; te -= period, ++drawn) {
+                const double r = speed * (t - te);
+                if (r > reach) break;
+                const Vec3 centre = run->at(static_cast<float>(te)).bodies[i].position;
+                const float fade = 1.0f - static_cast<float>(r / reach);
+                std::optional<ImVec2> prev;
+                for (int k = 0; k <= 72; ++k) {
+                    const auto q = scr(ringPoint(centre, {0, 0, 1}, static_cast<float>(r), 2.0f * kPi * static_cast<float>(k) / 72.0f));
+                    if (q && prev) dl->AddLine(*prev, *q, (c & 0x00FFFFFF) | (static_cast<ImU32>(40 + 180 * fade) << 24), 1.5f);
+                    prev = q;
+                }
+            }
+        }
+        // Uniform fields: a few arrows around the scene.
+        const AABB sb = scene.bounds();
+        const Vec3 mid = sb.valid() ? sb.center() : Vec3{};
+        const float span = sb.valid() ? std::max(sb.radius(), 200.0f) : 500.0f;
+        auto field = [&](const Vec3& v, ImU32 c, const char* name, const char* unit) {
+            if (length(v) <= 0.0f) return;
+            const Vec3 u = normalize(v);
+            const float len = 80.0f * wpp;
+            for (int x = -1; x <= 1; ++x)
+                for (int y = -1; y <= 1; ++y) {
+                    const Vec3 o = mid + Vec3{static_cast<float>(x) * span * 0.7f, static_cast<float>(y) * span * 0.7f, 0};
+                    arrow(o - u * (len * 0.5f), o + u * (len * 0.5f), c, 1.5f);
+                }
+            char text[64];
+            std::snprintf(text, sizeof(text), "%s %.3g %s", name, static_cast<double>(length(v)), unit);
+            label(mid + Vec3{span * 0.7f, span * 0.7f, 0} + u * (len * 0.5f), c, text);
+        };
+        field(ps.electricField, IM_COL32(250, 210, 80, 200), "E", "V/m");
+        field(ps.magneticField, IM_COL32(90, 220, 230, 200), "B", "T");
+        // Per body: trail, temperature halo, velocity (green) and net force (orange).
+        float maxForce = 1e-9f;
+        for (const PhysicsBodyState& b : f.bodies) maxForce = std::max(maxForce, length(b.force));
+        for (std::size_t i = 0; i < run->bodies.size(); ++i) {
+            const PhysicsBodyInfo& info = run->bodies[i];
+            const PhysicsBodyState& b = f.bodies[i];
+            if (st.simPaths && !info.props.fixed) {
+                std::optional<ImVec2> prev;
+                const int samples = 120;
+                for (int k = 0; k <= samples; ++k) {
+                    const auto q = scr(run->at(t * static_cast<float>(k) / samples).bodies[i].position);
+                    if (q && prev) dl->AddLine(*prev, *q, IM_COL32(255, 255, 255, 110), 1.5f);
+                    prev = q;
+                }
+            }
+            const float radius = static_cast<float>(info.radius * 1000.0);
+            if (const auto c = scr(b.position)) {
+                const float px = std::max(radius / wpp, 6.0f);
+                dl->AddCircle(*c, px + 3.0f, heat(b.temperature, 0.85f), 48, 2.0f);
+            }
+            if (!info.props.fixed && length(b.velocity) > 1e-3f) {
+                // 0.25 s of travel, at least 30 px.
+                Vec3 d = b.velocity * 0.25f;
+                if (length(d) < 30.0f * wpp) d = normalize(d) * (30.0f * wpp);
+                arrow(b.position, b.position + d, IM_COL32(110, 230, 120, 255), 2.5f);
+            }
+            if (length(b.force) > 1e-9f)
+                arrow(b.position, b.position + normalize(b.force) * (wpp * (20.0f + 70.0f * length(b.force) / maxForce)),
+                      IM_COL32(255, 160, 60, 255), 2.0f);
+            if (st.simReadout) {
+                char text[160];
+                const double v = length(b.velocity) / 1000.0;
+                int at = std::snprintf(text, sizeof(text), "%s  %.3g m/s  %.1f C", info.name.c_str(), v,
+                                       static_cast<double>(b.temperature - 273.15f));
+                if (ps.relativity && at > 0 && at < static_cast<int>(sizeof(text)))
+                    std::snprintf(text + at, sizeof(text) - static_cast<std::size_t>(at), "  gamma %.3f",
+                                  1.0 / std::sqrt(std::max(1.0 - v * v / (ps.lightSpeed * ps.lightSpeed), 1e-12)));
+                label(b.position + Vec3{radius, 0, radius}, heat(b.temperature, 1.0f), text);
+            }
+        }
+        // Energy balance, bottom left: where the energy is, and that its total holds.
+        if (st.simReadout) {
+            const PhysicsEnergy& e = f.energy;
+            const double start = run->frames.front().energy.balance();
+            struct Bar {
+                const char* name;
+                double value;
+                ImU32 colour;
+            } bars[] = {{"Kinetic", e.kinetic, IM_COL32(110, 230, 120, 255)},
+                        {"Potential", e.gravity + e.electric, IM_COL32(110, 160, 255, 255)},
+                        {"Heat", e.thermal, IM_COL32(255, 120, 90, 255)},
+                        {"To air", e.toAir, IM_COL32(200, 200, 210, 255)},
+                        {"Work in", -e.externalWork, IM_COL32(250, 210, 80, 255)}};
+            double top = 1e-12;
+            for (const Bar& b : bars) top = std::max(top, std::fabs(b.value));
+            top = std::max(top, std::fabs(start));
+            const ImVec2 o{m_ui.canvasMin().x + 14, m_ui.canvasMin().y + 78}; // under the clock
+            dl->AddRectFilled({o.x - 8, o.y - 26}, {o.x + 290, o.y + 128}, IM_COL32(16, 18, 24, 200), 6.0f);
+            char head[96];
+            std::snprintf(head, sizeof(head), "Energy  total %.4g J  drift %.3f %%", e.balance(),
+                          100.0 * (e.balance() - start) / std::max(std::fabs(start), top * 1e-3));
+            dl->AddText({o.x, o.y - 20}, IM_COL32(230, 232, 238, 255), head);
+            for (int k = 0; k < 5; ++k) {
+                const float y = o.y + static_cast<float>(k) * 24.0f;
+                dl->AddText({o.x, y}, IM_COL32(190, 195, 205, 255), bars[k].name);
+                const float w = static_cast<float>(150.0 * std::fabs(bars[k].value) / top);
+                dl->AddRectFilled({o.x + 72, y + 2}, {o.x + 72 + w, y + 14}, bars[k].colour, 2.0f);
+                char v[32];
+                std::snprintf(v, sizeof(v), "%.3g J", bars[k].value);
+                dl->AddText({o.x + 228, y}, IM_COL32(190, 195, 205, 255), v);
+            }
+            char mom[96];
+            std::snprintf(mom, sizeof(mom), "Momentum %.4g kg m/s   %d collisions in the run", static_cast<double>(length(f.momentum)),
+                          run->collisions);
+            dl->AddText({o.x, o.y + 120 - 2}, IM_COL32(160, 165, 175, 255), mom);
+        }
+    }
+
     // Clock in the corner of the canvas.
     if (st.simReadout) {
         char clock[96];
@@ -1662,7 +1813,7 @@ void Application::drawSimulationOverlay() const {
         const float frac = st.simDuration > 0 ? std::clamp(t / st.simDuration, 0.0f, 1.0f) : 0.0f;
         dl->AddRectFilled({at.x - 8, at.y + ts.y + 6}, {at.x - 8 + (ts.x + 16) * frac, at.y + ts.y + 8},
                           IM_COL32(90, 160, 255, 255));
-        if (motions.empty())
+        if (motions.empty() && !physicsRun(scene))
             dl->AddText({at.x, at.y + ts.y + 16}, IM_COL32(200, 205, 215, 220),
                         "No motions: add a Circular or Linear motion in the Motion Study panel");
     }
@@ -1721,7 +1872,22 @@ void Application::standardView(StandardView v) {
 
 void Application::planeChanged(SketchPlane p) { setPlane(p); }
 
-void Application::fit() { camera().fitToBounds(m_doc.scene.bounds()); }
+void Application::fit() { camera().fitToBounds(viewBounds()); }
+
+AABB Application::viewBounds() const {
+    AABB box = m_doc.scene.bounds();
+    // Simulating physics: everywhere the bodies go during the run.
+    if (simulating())
+        if (const auto run = physicsRun(m_doc.scene))
+            for (std::size_t i = 0; i < run->bodies.size(); ++i) {
+                const float r = static_cast<float>(run->bodies[i].radius * 1000.0);
+                for (const PhysicsFrame& f : run->frames) {
+                    const Vec3 p = f.bodies[i].position;
+                    box.expand(AABB{p - Vec3{r, r, r}, p + Vec3{r, r, r}});
+                }
+            }
+    return box;
+}
 
 void Application::zoomStep(float steps) { camera().zoom(steps); }
 

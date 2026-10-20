@@ -2,6 +2,7 @@
 
 #include "core/Geometry.hpp"
 #include "core/Motion.hpp"
+#include "core/Physics.hpp"
 #include "core/Sketch.hpp"
 
 #include <array>
@@ -23,6 +24,7 @@ struct Body {
     float scale = 1.0f;     // uniform size factor about the body origin (library parts, SCALE)
     Vec3 rotation{};        // degrees about X, then Y, then Z, about the body origin (mesh bodies keep it baked in)
     std::string component;  // library component this body belongs to ("" = none)
+    PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
 
     AABB bounds() const noexcept;
     // Rebuilds a parametric body's mesh from kind, params and scale.
@@ -94,6 +96,10 @@ public:
     std::vector<Motion>& motions() noexcept { return m_motions; }
     const std::vector<Motion>& motions() const noexcept { return m_motions; }
 
+    // The physical environment (gravity, fields, air...) of the Simulation.
+    PhysicsSettings& physics() noexcept { return m_physics; }
+    const PhysicsSettings& physics() const noexcept { return m_physics; }
+
     Sketch& sketch() noexcept { return m_sketch; }
     const Sketch& sketch() const noexcept { return m_sketch; }
 
@@ -126,6 +132,7 @@ private:
     Sketch m_sketch;
     std::vector<ImageRef> m_images;
     std::vector<Motion> m_motions;
+    PhysicsSettings m_physics;
     std::uint64_t m_imageRevision = nextRevision();
 };
 

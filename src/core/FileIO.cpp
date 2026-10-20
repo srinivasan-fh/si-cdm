@@ -256,6 +256,26 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (b.scale != 1.0f) jb.set("scale", b.scale);
         if (b.rotation.x != 0.0f || b.rotation.y != 0.0f || b.rotation.z != 0.0f) jb.set("rotation", vec3Json(b.rotation));
         if (!b.component.empty()) jb.set("component", b.component);
+        if (b.physics.enabled) {
+            const PhysicsProps& p = b.physics;
+            Json ph = Json::object();
+            ph.set("fixed", p.fixed);
+            if (p.mass > 0) ph.set("mass", p.mass);
+            ph.set("density", p.density);
+            ph.set("velocity", vec3Json(p.velocity));
+            ph.set("spin", vec3Json(p.spin));
+            ph.set("charge", p.charge);
+            ph.set("temperature", p.temperature);
+            ph.set("specific_heat", p.specificHeat);
+            ph.set("restitution", p.restitution);
+            ph.set("force", vec3Json(p.force));
+            if (p.wave != WaveKind::Off) {
+                ph.set("wave", waveKindKey(p.wave));
+                ph.set("wave_frequency", p.waveFrequency);
+                ph.set("wave_speed", p.waveSpeed);
+            }
+            jb.set("physics", ph);
+        }
         if (!isPrimitiveKind(b.kind)) {
             Json pos = Json::array(), nrm = Json::array(), idx = Json::array(), edges = Json::array();
             for (const Vertex& v : b.mesh.vertices) {
@@ -320,6 +340,26 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         motions.push(jm);
     }
     doc.set("motions", motions);
+    {
+        const PhysicsSettings& p = scene.physics();
+        Json ph = Json::object();
+        ph.set("enabled", p.enabled);
+        ph.set("gravity", gravityModeKey(p.gravity));
+        ph.set("g", vec3Json(p.g));
+        ph.set("big_g", p.bigG);
+        ph.set("floor", p.floor);
+        ph.set("friction", p.friction);
+        ph.set("air", p.air);
+        ph.set("electric_field", vec3Json(p.electricField));
+        ph.set("magnetic_field", vec3Json(p.magneticField));
+        ph.set("ambient", p.ambient);
+        ph.set("convection", p.convection);
+        ph.set("conductance", p.conductance);
+        ph.set("relativity", p.relativity);
+        ph.set("light_speed", p.lightSpeed);
+        ph.set("duration", p.duration);
+        doc.set("physics", ph);
+    }
     if (state.simDuration > 0.0f) doc.set("simulation_duration", state.simDuration);
 
     return writeFile(path, doc.dump() + "\n", error);
@@ -394,6 +434,23 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         b.offset = jsonVec3(jb["offset"]);
         b.color = jsonVec3(jb["color"], b.color);
         b.visible = jb["visible"].asBool(true);
+        if (const Json& ph = jb["physics"]; ph.isObject()) {
+            PhysicsProps& p = b.physics;
+            p.enabled = true;
+            p.fixed = ph["fixed"].asBool();
+            p.mass = std::max(ph["mass"].asFloat(), 0.0f);
+            p.density = std::max(ph["density"].asFloat(p.density), 1e-6f);
+            p.velocity = jsonVec3(ph["velocity"]);
+            p.spin = jsonVec3(ph["spin"]);
+            p.charge = ph["charge"].asNumber();
+            p.temperature = std::max(ph["temperature"].asFloat(p.temperature), 0.0f);
+            p.specificHeat = std::max(ph["specific_heat"].asFloat(p.specificHeat), 1e-3f);
+            p.restitution = std::clamp(ph["restitution"].asFloat(p.restitution), 0.0f, 1.0f);
+            p.force = jsonVec3(ph["force"]);
+            p.wave = waveKindFromKey(ph["wave"].asString("off")).value_or(WaveKind::Off);
+            p.waveFrequency = std::max(ph["wave_frequency"].asFloat(p.waveFrequency), 1e-6f);
+            p.waveSpeed = std::max(ph["wave_speed"].asFloat(p.waveSpeed), 1e-6f);
+        }
         loaded.add(std::move(b));
     }
 
@@ -458,6 +515,24 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             m.hi = std::max(jm["limits"][0].asFloat(), jm["limits"][1].asFloat());
         }
         loaded.motions().push_back(std::move(m));
+    }
+    if (const Json& ph = (*doc)["physics"]; ph.isObject()) {
+        PhysicsSettings& p = loaded.physics();
+        p.enabled = ph["enabled"].asBool();
+        p.gravity = gravityModeFromKey(ph["gravity"].asString("uniform")).value_or(GravityMode::Uniform);
+        p.g = jsonVec3(ph["g"], p.g);
+        p.bigG = std::max(ph["big_g"].asNumber(p.bigG), 0.0);
+        p.floor = ph["floor"].asBool(true);
+        p.friction = std::max(ph["friction"].asFloat(p.friction), 0.0f);
+        p.air = ph["air"].asBool();
+        p.electricField = jsonVec3(ph["electric_field"]);
+        p.magneticField = jsonVec3(ph["magnetic_field"]);
+        p.ambient = std::max(ph["ambient"].asFloat(p.ambient), 0.0f);
+        p.convection = std::max(ph["convection"].asFloat(p.convection), 0.0f);
+        p.conductance = std::max(ph["conductance"].asFloat(p.conductance), 0.0f);
+        p.relativity = ph["relativity"].asBool();
+        p.lightSpeed = std::max(ph["light_speed"].asNumber(p.lightSpeed), 1e-6);
+        p.duration = std::clamp(ph["duration"].asFloat(p.duration), 0.01f, 600.0f);
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);
     const Json& du = (*doc)["display_units"];

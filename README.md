@@ -131,6 +131,27 @@ SIM PLAY   SIM PAUSE   SIM STOP   SIM TIME 2.5   SIM SPEED 2   SIM DURATION 12  
 
 `SIM AT t` (also headless) reports every motion value and moving body position at time t.
 
+## Physics environment
+
+The Simulation can also move bodies by **forces**. Give bodies mass, velocity, charge and temperature,
+and give the world gravity (uniform, or Newton's between all masses), a floor, air, E and B fields, and
+optionally special relativity. The engine then covers kinematics, Newton's laws, momentum-conserving
+collisions, work and energy with a live conservation check, Coulomb and Lorentz forces, wave sources
+with Doppler-shifted wavefronts, heat (impacts, friction, conduction, cooling), relativistic motion
+(γ, proper time, length contraction) and quantum readouts (de Broglie wavelength).
+
+![Physics: three balls bounce with different restitution, energy turning into heat](docs/physics.png)
+
+```text
+PHYSICS DEMO drop | projectile | collision | orbit | charges | cyclotron | heat | doppler | relativity
+PHYSICS BODY "Ball 1" VELOCITY 2m,0,1m BOUNCE 0.8 CHARGE 1e-6 TEMP 60     PHYSICS GRAVITY NEWTON
+PHYSICS FIELD B 0,0,1    PHYSICS AIR ON    PHYSICS RELATIVITY ON C 2    PHYSICS AT 1.5
+```
+
+In the app: *Motion Study → Physics environment*. The 3D view shows velocity and force arrows,
+temperature halos, trails, field arrows, wavefronts and an energy-balance panel. Details:
+[docs/physics.md](docs/physics.md).
+
 ## Library: motors and gears
 
 ![Library](docs/library.png)
@@ -308,7 +329,7 @@ SI CDM includes a [Model Context Protocol](https://modelcontextprotocol.io) serv
 and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`, `create_solid`, `extrude`, `modify`, `delete`,
 `create_motion`, `delete_motion`, `simulate` (play / pause / seek, or body poses at a time — headless too),
 `insert_part`, `list_parts` (library motors, gears and gear trains; `modify` takes a `scale`),
-`set_pose`, `play_gesture` (robot postures and gestures),
+`set_pose`, `play_gesture` (robot postures and gestures), `set_physics`, `physics_report` (physics environment),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

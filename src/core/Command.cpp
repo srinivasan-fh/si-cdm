@@ -54,6 +54,14 @@ constexpr CommandSpec kCommands[] = {
     {"GESTURE", "GEST", "GESTURE [robot] name [LOOP|ONCE] [SPEED x|DURATION s] [LEFT|RIGHT|MIRROR]  |  GESTURE LIST",
      "Play a gesture (WAVE, NOD, SHAKE, BOW, POINT, THUMBS_UP, SALUTE, GRASP, COUNT, SQUAT, LOOK_AROUND, "
      "STRETCH, MARCH, WALK) on a library robot from the posture it holds"},
+    {"PHYSICS", "PHYS PHYSIC",
+     "PHYSICS ON|OFF | DEMO [name] | AT t [body] | GRAVITY OFF|UNIFORM|NEWTON|BOTH [g|x,y,z] [G value] | FLOOR ON|OFF "
+     "[FRICTION mu] | AIR ON|OFF | FIELD E|B x,y,z|OFF | AMBIENT degC | RELATIVITY ON|OFF [C m/s] | DURATION s  |  "
+     "PHYSICS BODY [name] DYNAMIC|FIXED|OFF [MASS kg] [DENSITY kg/m3] [VELOCITY x,y,z] [SPIN x,y,z] [CHARGE C] "
+     "[TEMP degC] [HEAT J/kgK] [BOUNCE e] [FORCE x,y,z] [WAVE SOUND|LIGHT|CUSTOM|OFF] [FREQ Hz] [WAVESPEED v]",
+     "Physical environment of the Simulation: gravity (uniform or Newton's between all masses), forces and "
+     "collisions, momentum, energy and heat, charges and E / B fields, waves and Doppler, special relativity; "
+     "PHYSICS AT t reports kinematics, forces, momentum, energy conservation, temperature, relativity and quantum values"},
     {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t]",
      "Open the Simulation window and control playback; SIM AT t reports body poses at time t"},
     // Library
