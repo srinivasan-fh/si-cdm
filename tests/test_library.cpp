@@ -643,14 +643,14 @@ TEST_CASE("humanoid robot: head to toe, standing, facing the front view") {
     Document d;
     REQUIRE(run(d, "PART HUMANOID").ok);
     const Scene& s = d.scene;
-    const std::string n = "Humanoid Robot 1 ";
+    const std::string n = "Male Humanoid Robot 1 ";
     for (const char* part : {"Head", "Visor", "Neck", "Chest", "Heart Core", "Gut", "Midriff", "Pelvis", "Right Thigh", "Left Shin",
                              "Right Foot", "Left Toe", "Right Arm Upper Arm", "Left Arm Palm", "Right Arm Index Distal"})
         CHECK(body(s, n + part));
     AABB all;
     for (const Body& b : s.bodies()) all.expand(b.bounds());
     CHECK_NEAR(all.min.z, 0, 1e-3);           // soles on the ground
-    CHECK(all.max.z > 1780 && all.max.z < 1880); // about 1.83 m
+    CHECK_NEAR(all.max.z, 1752.6, 2.0);      // the male default: 5 ft 9 in
     CHECK(body(s, n + "Visor")->bounds().center().y < -80);       // the face looks toward -Y (Front view)
     CHECK(body(s, n + "Right Foot")->bounds().center().x < 0);    // its right side is on the viewer's left
     CHECK(body(s, n + "Right Arm Palm")->bounds().center().x < -150);
@@ -662,7 +662,7 @@ TEST_CASE("humanoid joints follow DC gear motors and stay within human range of 
     Document d;
     REQUIRE(run(d, "PART HUMANOID KNEE 120 NECK_YAW 60").ok);
     const Scene& s = d.scene;
-    const std::string n = "Humanoid Robot 1 ";
+    const std::string n = "Male Humanoid Robot 1 ";
     const std::pair<const char*, float> limits[] = {
         {"Neck Yaw", 60},          {"Neck Pitch", 45},         {"Neck Roll", 40},           {"Waist Rotation", 40},
         {"Trunk Flex", 60},        {"Trunk Bend", 25},         {"Right Shoulder Flex", 90}, {"Left Shoulder Abduction", 90},
@@ -729,7 +729,7 @@ TEST_CASE("humanoid demos: march in place alternates the legs, still holds the p
     Document d;
     REQUIRE(run(d, "PART HUMANOID DEMO 1").ok);
     const Scene& s = d.scene;
-    const std::string n = "Humanoid Robot 1 ";
+    const std::string n = "Male Humanoid Robot 1 ";
     CHECK(!motion(s, n + "Neck Yaw")->enabled);
     CHECK(motion(s, n + "Heart Pump")->enabled);
     const float stride = 0.7f;
@@ -740,7 +740,7 @@ TEST_CASE("humanoid demos: march in place alternates the legs, still holds the p
     CHECK_NEAR(motionValue(s, *motion(s, n + "Left Shoulder Flex"), stride), 30, 1e-2); // opposite arm swings forward
     REQUIRE(run(d, "PART HUMANOID DEMO STILL @2000,0,0").ok);
     for (const Motion& m : d.scene.motions())
-        if (m.name.rfind("Humanoid Robot 2", 0) == 0) CHECK(m.enabled == (m.name == "Humanoid Robot 2 Heart Pump"));
+        if (m.name.rfind("Male Humanoid Robot 2", 0) == 0) CHECK(m.enabled == (m.name == "Male Humanoid Robot 2 Heart Pump"));
 }
 
 TEST_CASE("head and neck, upper body and leg on their own") {
@@ -799,17 +799,17 @@ TEST_CASE("robot arm motor rotors stay in their housings while the arm moves") {
 TEST_CASE("scaling a humanoid keeps it standing on the ground") {
     Document d;
     REQUIRE(run(d, "PART HUMANOID").ok);
-    for (const char* line : {"SCALE \"Humanoid Robot 1 Head\" 1.5", "SCALE \"Humanoid Robot 1 Chest\" TO 0.5"}) {
+    for (const char* line : {"SCALE \"Male Humanoid Robot 1 Head\" 1.5", "SCALE \"Male Humanoid Robot 1 Chest\" TO 0.5"}) {
         REQUIRE(run(d, line).ok);
         AABB all;
         for (const Body& b : d.scene.bodies()) all.expand(b.bounds());
         CHECK_NEAR(all.min.z, 0, 1e-2);
     }
     const auto tf = motionTransforms(d.scene, 1.7f);
-    const Body* shin = body(d.scene, "Humanoid Robot 1 Right Shin");
+    const Body* shin = body(d.scene, "Male Humanoid Robot 1 Right Shin");
     REQUIRE(shin);
-    CHECK_NEAR(length(track(d.scene, tf, "Humanoid Robot 1 Right Thigh", shin->offset) -
-                      track(d.scene, tf, "Humanoid Robot 1 Right Shin", shin->offset)),
+    CHECK_NEAR(length(track(d.scene, tf, "Male Humanoid Robot 1 Right Thigh", shin->offset) -
+                      track(d.scene, tf, "Male Humanoid Robot 1 Right Shin", shin->offset)),
                0, 1e-2);
 }
 
@@ -853,17 +853,17 @@ TEST_CASE("standard range of motion: joints move both ways and stop at their har
         float stopLo, stopHi; // hard stops
     };
     const Expect expect[] = {
-        {"Humanoid Robot 1 Neck Yaw", -60, 60, -80, 80},             // symmetric: turns both ways
-        {"Humanoid Robot 1 Neck Pitch", -50, 45, -60, 60},          // extension / flexion
-        {"Humanoid Robot 1 Trunk Flex", -25, 60, -30, 80},
-        {"Humanoid Robot 1 Right Hip Flex", -20, 90, -30, 120},      // hip extension 30
-        {"Humanoid Robot 1 Left Hip Rotation", -40, 35, -45, 45},    // external / internal
-        {"Humanoid Robot 1 Right Knee", 0, 130, 0, 140},             // no hyperextension
-        {"Humanoid Robot 1 Left Ankle Pitch", -20, 45, -20, 50},     // dorsiflexion / plantarflexion
-        {"Humanoid Robot 1 Right Ankle Roll", -15, 30, -15, 35},     // eversion / inversion
-        {"Humanoid Robot 1 Right Shoulder Flex", -50, 90, -60, 180},
-        {"Humanoid Robot 1 Right Arm Wrist Flex", -60, 80, -70, 90}, // extension / flexion
-        {"Humanoid Robot 1 Right Arm Index MCP", 0, 90, -30, 110},   // underactuated: the coupled PIP keeps it from hyperextending
+        {"Male Humanoid Robot 1 Neck Yaw", -60, 60, -80, 80},             // symmetric: turns both ways
+        {"Male Humanoid Robot 1 Neck Pitch", -50, 45, -60, 60},          // extension / flexion
+        {"Male Humanoid Robot 1 Trunk Flex", -25, 60, -30, 80},
+        {"Male Humanoid Robot 1 Right Hip Flex", -20, 90, -30, 120},      // hip extension 30
+        {"Male Humanoid Robot 1 Left Hip Rotation", -40, 35, -45, 45},    // external / internal
+        {"Male Humanoid Robot 1 Right Knee", 0, 130, 0, 140},             // no hyperextension
+        {"Male Humanoid Robot 1 Left Ankle Pitch", -20, 45, -20, 50},     // dorsiflexion / plantarflexion
+        {"Male Humanoid Robot 1 Right Ankle Roll", -15, 30, -15, 35},     // eversion / inversion
+        {"Male Humanoid Robot 1 Right Shoulder Flex", -50, 90, -60, 180},
+        {"Male Humanoid Robot 1 Right Arm Wrist Flex", -60, 80, -70, 90}, // extension / flexion
+        {"Male Humanoid Robot 1 Right Arm Index MCP", 0, 90, -30, 110},   // underactuated: the coupled PIP keeps it from hyperextending
         {"Robot Hand 1 Index MCP", -20, 90, -30, 110},               // fully actuated: hyperextends
         {"Robot Hand 1 Index Abduction", -20, 20, -30, 30},
         {"Robot Hand 1 Thumb IP", -15, 80, -20, 90},
@@ -884,4 +884,108 @@ TEST_CASE("standard range of motion: joints move both ways and stop at their har
     REQUIRE(run(e, "PART ROBOTHAND").ok);
     REQUIRE(run(e, "MOTION CIRCLE \"Robot Hand 1 Motor Wrist Flex Drive\" KEYS 0:0,1:1000 MODE ONCE").ok);
     CHECK_NEAR(motionValue(e.scene, *motion(e.scene, "Robot Hand 1 Wrist Flex"), 2), 90, 1e-3);
+}
+
+namespace {
+AABB componentBounds(const Scene& s, const std::string& component, const std::string& onlyWith = "") {
+    AABB box;
+    for (const Body& b : s.bodies())
+        if (b.component == component && (onlyWith.empty() || b.name.find(onlyWith) != std::string::npos)) box.expand(b.bounds());
+    return box;
+}
+} // namespace
+
+TEST_CASE("male and female humanoids: standard heights and builds") {
+    struct Case {
+        const char* line;
+        const char* name;
+        double height;
+    } cases[] = {{"PART humanoid", "Male Humanoid Robot 1", 1752.6},           {"PART humanoid HEIGHT 1676.4", "Male Humanoid Robot 1", 1676.4},
+                 {"PART humanoid HEIGHT 1828.8", "Male Humanoid Robot 1", 1828.8}, {"PART humanoid_female", "Female Humanoid Robot 1", 1524.0},
+                 {"PART female HEIGHT 1371.6", "Female Humanoid Robot 1", 1371.6}, {"PART female HEIGHT 1676.4", "Female Humanoid Robot 1", 1676.4}};
+    for (const Case& c : cases) {
+        Document d;
+        REQUIRE(run(d, c.line).ok);
+        const AABB box = componentBounds(d.scene, c.name);
+        CHECK_NEAR(box.min.z, 0, 1e-3);
+        CHECK_NEAR(box.max.z - box.min.z, c.height, 2.0);
+    }
+    // Outside the standard ranges: male 5.5 - 6 ft, female 4.5 - 5.5 ft.
+    Document x;
+    CHECK(!run(x, "PART humanoid HEIGHT 1600").ok);
+    CHECK(!run(x, "PART humanoid_female HEIGHT 1700").ok);
+
+    // Builds: at the same height the male is far broader (shoulders, chest, thighs, arms),
+    // the female narrow-waisted with hips wider than her waist.
+    Document d;
+    REQUIRE(run(d, "PART humanoid HEIGHT 1676.4").ok);
+    REQUIRE(run(d, "PART humanoid_female HEIGHT 1676.4 @1000,0,0").ok);
+    auto width = [&](const std::string& body) {
+        for (const Body& b : d.scene.bodies())
+            if (b.name == body) return b.bounds().max.x - b.bounds().min.x;
+        return 0.0f;
+    };
+    const std::string m = "Male Humanoid Robot 1 ", f = "Female Humanoid Robot 1 ";
+    CHECK(width(m + "Chest") > 1.35f * width(f + "Chest"));
+    CHECK(width(m + "Right Thigh") > 1.3f * width(f + "Right Thigh"));
+    CHECK(width(m + "Right Arm Upper Arm") > 1.6f * width(f + "Right Arm Upper Arm"));
+    CHECK(width(m + "Right Arm Forearm") > 1.3f * width(f + "Right Arm Forearm"));
+    CHECK(width(m + "Chest") > 1.5f * width(m + "Gut"));        // V-taper
+    CHECK(width(f + "Pelvis") > 1.25f * width(f + "Midriff"));  // waist narrower than the hips
+    CHECK(componentBounds(d.scene, "Male Humanoid Robot 1").max.x - componentBounds(d.scene, "Male Humanoid Robot 1").min.x >
+          1.4f * (componentBounds(d.scene, "Female Humanoid Robot 1").max.x - componentBounds(d.scene, "Female Humanoid Robot 1").min.x));
+}
+
+TEST_CASE("humanoid outfits: armour or futuristic suit, gloves, shoes and helmet move with the joints") {
+    for (const char* robot : {"humanoid", "humanoid_female"}) {
+        Document d;
+        REQUIRE(run(d, std::string("PART ") + robot + " SUIT ARMOUR GLOVES YES SHOES YES HELMET YES").ok);
+        const std::string comp = d.scene.bodies().front().component, n = comp + " ";
+        for (const char* part : {"Armour Chest", "Armour Right Pauldron", "Armour Left Knee Cop", "Armour Right Vambrace", "Helmet",
+                                 "Helmet Crest", "Gauntlet Right Arm Palm", "Gauntlet Left Arm Index Distal", "Sabaton Right Foot",
+                                 "Sabaton Left Toe"})
+            CHECK(body(d.scene, n + part));
+        // A cover rides on the same joints as what it covers.
+        for (const Motion& m : d.scene.motions()) {
+            const bool host = std::find(m.bodies.begin(), m.bodies.end(), n + "Right Arm Index Distal") != m.bodies.end();
+            const bool glove = std::find(m.bodies.begin(), m.bodies.end(), n + "Gauntlet Right Arm Index Distal") != m.bodies.end();
+            CHECK(host == glove);
+        }
+        // Covers sit just outside the part (a few mm, at this size), and the face stays open.
+        const Body* head = body(d.scene, n + "Head");
+        const Body* helmet = body(d.scene, n + "Helmet");
+        REQUIRE(head && helmet);
+        CHECK(helmet->bounds().max.z > head->bounds().max.z);
+        CHECK(helmet->bounds().max.z - head->bounds().max.z < 12.0f);
+        // The soles are still the lowest: shoes do not lift the robot off the floor.
+        AABB soles, shoes;
+        for (const Body& b : d.scene.bodies()) {
+            if (b.name.size() > 5 && b.name.compare(b.name.size() - 5, 5, " Sole") == 0) soles.expand(b.bounds());
+            if (b.name.find("Sabaton") != std::string::npos) shoes.expand(b.bounds());
+        }
+        CHECK(shoes.min.z > soles.min.z);
+    }
+    Document d;
+    REQUIRE(run(d, "PART humanoid_female SUIT FUTURISTIC GLOVES YES SHOES YES HELMET YES").ok);
+    const std::string n = "Female Humanoid Robot 1 ";
+    for (const char* part : {"Suit Chest", "Suit Seam", "Suit Collar Glow", "Suit Belt", "Suit Right Cuff Glow", "Suit Left Thigh", "Glove Right Arm Palm",
+                             "Shoe Right Foot", "Shoe Glow Left Foot", "Helmet", "Helmet Glow"})
+        CHECK(body(d.scene, n + part));
+    CHECK(!body(d.scene, n + "Helmet Crest"));
+    // Postures and gestures carry the outfit: the glove follows the closing finger.
+    REQUIRE(run(d, "POSE hand_fist").ok);
+    const auto tf = motionTransforms(d.scene, 5.0f);
+    std::size_t finger = 0, glove = 0;
+    for (std::size_t i = 0; i < d.scene.bodies().size(); ++i) {
+        if (d.scene.bodies()[i].name == n + "Right Arm Index Distal") finger = i;
+        if (d.scene.bodies()[i].name == n + "Glove Right Arm Index Distal") glove = i;
+    }
+    REQUIRE(finger && glove);
+    const Vec3 a = tf[finger].transformPoint(d.scene.bodies()[finger].bounds().center());
+    const Vec3 b = tf[glove].transformPoint(d.scene.bodies()[glove].bounds().center());
+    CHECK(length(a - b) < 3.0f);
+    // No outfit by default.
+    Document plain;
+    REQUIRE(run(plain, "PART humanoid").ok);
+    CHECK(!body(plain.scene, "Male Humanoid Robot 1 Helmet"));
 }

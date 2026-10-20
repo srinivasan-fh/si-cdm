@@ -75,7 +75,7 @@ bool withinRatedSpeed(const Scene& s, const Robot& r, float end) {
 TEST_CASE("robot joints get standard ids and their hard stops") {
     Document d;
     REQUIRE(run(d, "PART humanoid").ok);
-    const auto r = findRobot(d.scene, "Humanoid Robot 1");
+    const auto r = findRobot(d.scene, "Male Humanoid Robot 1");
     REQUIRE(r.has_value());
     auto joint = [&](const std::string& id) -> const RobotJoint* {
         for (const RobotJoint& j : r->joints)
@@ -89,9 +89,9 @@ TEST_CASE("robot joints get standard ids and their hard stops") {
     REQUIRE(joint("right elbow") && joint("right knee") && joint("neck yaw"));
     CHECK(joint("right elbow")->lo == 0.0f && joint("right elbow")->hi == 150.0f);
     CHECK(joint("neck yaw")->lo == -80.0f && joint("neck yaw")->hi == 80.0f);
-    CHECK(robotNames(d.scene) == std::vector<std::string>{"Humanoid Robot 1"});
+    CHECK(robotNames(d.scene) == std::vector<std::string>{"Male Humanoid Robot 1"});
     // A body of the robot finds it too.
-    CHECK(findRobot(d.scene, "Humanoid Robot 1 Head").has_value());
+    CHECK(findRobot(d.scene, "Male Humanoid Robot 1 Head").has_value());
 }
 
 TEST_CASE("POSE reaches the exact joint angles on a minimum-jerk path within the motors' speed") {
@@ -99,17 +99,17 @@ TEST_CASE("POSE reaches the exact joint angles on a minimum-jerk path within the
     REQUIRE(run(d, "PART humanoid").ok);
     const CommandOutput o = run(d, "POSE squat");
     REQUIRE(o.ok);
-    const auto r = findRobot(d.scene, "Humanoid Robot 1");
+    const auto r = findRobot(d.scene, "Male Humanoid Robot 1");
     REQUIRE(r.has_value());
-    const Motion* drive = motion(d.scene, "Humanoid Robot 1 Motor Right Knee Drive");
+    const Motion* drive = motion(d.scene, "Male Humanoid Robot 1 Motor Right Knee Drive");
     REQUIRE(drive != nullptr && drive->keys.size() == 2);
     const float end = drive->keys.back().t;
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Knee", end) - 110.0f) < 1e-3f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Hip Flex", end) - 90.0f) < 1e-3f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Left Ankle Pitch", end + 1.0f) + 20.0f) < 1e-3f); // holds
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Knee", 0.0f)) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Knee", end) - 110.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Hip Flex", end) - 90.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Left Ankle Pitch", end + 1.0f) + 20.0f) < 1e-3f); // holds
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Knee", 0.0f)) < 1e-3f);
     // Minimum jerk: halfway at half time, starts and ends at rest.
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Knee", end / 2) - 55.0f) < 0.01f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Knee", end / 2) - 55.0f) < 0.01f);
     CHECK(std::fabs(motionRate(d.scene, *drive, 0.0f)) < 1e-3f);
     CHECK(std::fabs(motionRate(d.scene, *drive, end)) < 1e-3f);
     CHECK(withinRatedSpeed(d.scene, *r, end));
@@ -117,12 +117,12 @@ TEST_CASE("POSE reaches the exact joint angles on a minimum-jerk path within the
     const float ground = soleBottom(d.scene, 0.0f);
     for (float t = 0.0f; t <= end + 0.5f; t += end / 10)
         CHECK(std::fabs(soleBottom(d.scene, t) - ground) < 1.0f);
-    CHECK(bodyZ(d.scene, "Humanoid Robot 1 Head", end) < bodyZ(d.scene, "Humanoid Robot 1 Head", 0.0f) - 150.0f);
+    CHECK(bodyZ(d.scene, "Male Humanoid Robot 1 Head", end) < bodyZ(d.scene, "Male Humanoid Robot 1 Head", 0.0f) - 150.0f);
     // Back to standing from the squat it holds.
     REQUIRE(run(d, "POSE stand").ok);
-    const float back = motion(d.scene, "Humanoid Robot 1 Motor Right Knee Drive")->keys.back().t;
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Knee", 0.0f) - 110.0f) < 1e-3f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Knee", back)) < 1e-3f);
+    const float back = motion(d.scene, "Male Humanoid Robot 1 Motor Right Knee Drive")->keys.back().t;
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Knee", 0.0f) - 110.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Knee", back)) < 1e-3f);
     CHECK(std::fabs(soleBottom(d.scene, back / 3) - ground) < 1.0f);
 }
 
@@ -133,23 +133,23 @@ TEST_CASE("POSE clamps to hard stops, respects motor speed and parses presets wi
     REQUIRE(o.ok);
     CHECK(said(o, "past its hard stop: 150"));
     CHECK(said(o, "the motors cannot go faster"));
-    const Motion* drive = motion(d.scene, "Humanoid Robot 1 Right Arm Motor Elbow Drive");
+    const Motion* drive = motion(d.scene, "Male Humanoid Robot 1 Right Arm Motor Elbow Drive");
     REQUIRE(drive != nullptr && !drive->keys.empty());
     const float end = drive->keys.back().t;
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Arm Elbow", end) - 150.0f) < 1e-3f);
-    CHECK(withinRatedSpeed(d.scene, *findRobot(d.scene, "Humanoid Robot 1"), end));
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Arm Elbow", end) - 150.0f) < 1e-3f);
+    CHECK(withinRatedSpeed(d.scene, *findRobot(d.scene, "Male Humanoid Robot 1"), end));
     // Other joints hold still.
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Left Arm Elbow", end)) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Left Arm Elbow", end)) < 1e-3f);
     // A slower time than the motors need is kept exactly.
     REQUIRE(run(d, "POSE right elbow 30 IN 3").ok);
-    CHECK(std::fabs(motion(d.scene, "Humanoid Robot 1 Right Arm Motor Elbow Drive")->keys.back().t - 3.0f) < 1e-4f);
+    CHECK(std::fabs(motion(d.scene, "Male Humanoid Robot 1 Right Arm Motor Elbow Drive")->keys.back().t - 3.0f) < 1e-4f);
     // Presets and joints together; later entries win.
     o = run(d, "POSE t_pose hand_fist neck yaw 30");
     REQUIRE(o.ok);
     const float t = 10.0f;
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Shoulder Abduction", t) - 90.0f) < 1e-3f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Neck Yaw", t) - 30.0f) < 1e-3f);
-    CHECK(angle(d.scene, "Humanoid Robot 1 Right Arm Index MCP", t) > 60.0f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Shoulder Abduction", t) - 90.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Neck Yaw", t) - 30.0f) < 1e-3f);
+    CHECK(angle(d.scene, "Male Humanoid Robot 1 Right Arm Index MCP", t) > 60.0f);
     CHECK(!run(d, "POSE nonsense").ok);
     CHECK(!run(d, "POSE 30").ok);
     CHECK(run(d, "POSE LIST").ok);
@@ -174,7 +174,7 @@ TEST_CASE("the ankles keep the feet level unless a posture names them") {
         Document d;
         REQUIRE(run(d, "PART humanoid").ok);
         REQUIRE(run(d, pose).ok);
-        for (const char* sole : {"Humanoid Robot 1 Right Foot Sole", "Humanoid Robot 1 Left Foot Sole"})
+        for (const char* sole : {"Male Humanoid Robot 1 Right Foot Sole", "Male Humanoid Robot 1 Left Foot Sole"})
             for (float t = 0.0f; t <= 2.0f; t += 0.05f) { // all along the move, not only at its end
                 const auto [pitch, roll] = soleTilt(d.scene, sole, t);
                 CHECK(std::fabs(pitch) < 0.05f);
@@ -186,7 +186,7 @@ TEST_CASE("the ankles keep the feet level unless a posture names them") {
         REQUIRE(run(d, "PART humanoid").ok);
         REQUIRE(run(d, "GESTURE squat").ok);
         for (float t = 0.0f; t <= 4.0f; t += 0.05f) {
-            const auto [pitch, roll] = soleTilt(d.scene, "Humanoid Robot 1 Left Foot Sole", t);
+            const auto [pitch, roll] = soleTilt(d.scene, "Male Humanoid Robot 1 Left Foot Sole", t);
             CHECK(std::fabs(pitch) < 0.05f && std::fabs(roll) < 0.05f);
         }
     }
@@ -194,7 +194,7 @@ TEST_CASE("the ankles keep the feet level unless a posture names them") {
     Document d;
     REQUIRE(run(d, "PART humanoid").ok);
     REQUIRE(run(d, "POSE right knee 30 right ankle pitch 10").ok);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Ankle Pitch", 2.0f) - 10.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Ankle Pitch", 2.0f) - 10.0f) < 1e-3f);
     CHECK(said(run(d, "POSE right knee 90"), "right foot tilts"));
 }
 
@@ -217,33 +217,33 @@ TEST_CASE("GESTURE keys every frame exactly, holds untouched joints and mirrors 
     Document d;
     REQUIRE(run(d, "PART humanoid").ok);
     REQUIRE(run(d, "GESTURE nod").ok);
-    const Motion* neck = motion(d.scene, "Humanoid Robot 1 Motor Neck Pitch Drive");
+    const Motion* neck = motion(d.scene, "Male Humanoid Robot 1 Motor Neck Pitch Drive");
     REQUIRE(neck != nullptr);
     REQUIRE(neck->keys.size() == 5);
     const Gesture* nod = findGesture("nod");
     REQUIRE(nod != nullptr);
     for (std::size_t i = 0; i < nod->frames.size(); ++i) {
         CHECK(std::fabs(neck->keys[i + 1].t - nod->frames[i].first) < 1e-4f);
-        CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Neck Pitch", neck->keys[i + 1].t) - nod->frames[i].second[0].second) <
+        CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Neck Pitch", neck->keys[i + 1].t) - nod->frames[i].second[0].second) <
               1e-3f);
     }
     // Joints the gesture does not move hold still.
-    const Motion* knee = motion(d.scene, "Humanoid Robot 1 Motor Right Knee Drive");
+    const Motion* knee = motion(d.scene, "Male Humanoid Robot 1 Motor Right Knee Drive");
     REQUIRE(knee != nullptr);
     CHECK(knee->keys.size() == 1);
     // Wave with the right arm; mirrored, with the left.
     REQUIRE(run(d, "GESTURE wave").ok);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Shoulder Abduction", 1.0f)) > 40.0f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Left Shoulder Abduction", 1.0f)) < 1e-3f);
-    const auto r = findRobot(d.scene, "Humanoid Robot 1");
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Shoulder Abduction", 1.0f)) > 40.0f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Left Shoulder Abduction", 1.0f)) < 1e-3f);
+    const auto r = findRobot(d.scene, "Male Humanoid Robot 1");
     REQUIRE(r.has_value());
     CHECK(withinRatedSpeed(d.scene, *r, 8.0f));
     REQUIRE(run(d, "GESTURE wave MIRROR").ok);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Left Shoulder Abduction", 1.0f)) > 40.0f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Shoulder Abduction", 1.0f)) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Left Shoulder Abduction", 1.0f)) > 40.0f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Shoulder Abduction", 1.0f)) < 1e-3f);
     // SPEED 2 plays twice as fast.
     REQUIRE(run(d, "GESTURE nod SPEED 0.5").ok);
-    CHECK(std::fabs(motion(d.scene, "Humanoid Robot 1 Motor Neck Pitch Drive")->keys.back().t - 3.2f) < 1e-3f);
+    CHECK(std::fabs(motion(d.scene, "Male Humanoid Robot 1 Motor Neck Pitch Drive")->keys.back().t - 3.2f) < 1e-3f);
     CHECK(!run(d, "GESTURE moonwalk").ok);
 }
 
@@ -251,17 +251,17 @@ TEST_CASE("a looping march keeps one foot on the ground and a left hand plays ri
     Document d;
     REQUIRE(run(d, "PART humanoid").ok);
     REQUIRE(run(d, "GESTURE march").ok);
-    const Motion* hip = motion(d.scene, "Humanoid Robot 1 Motor Right Hip Flex Drive");
+    const Motion* hip = motion(d.scene, "Male Humanoid Robot 1 Motor Right Hip Flex Drive");
     REQUIRE(hip != nullptr);
     CHECK(hip->mode == MotionMode::Loop);
     const float cycle = hip->keys.back().t;
     const float ground = soleBottom(d.scene, 0.0f);
     for (float t = 0.0f; t < 2 * cycle; t += cycle / 16) CHECK(std::fabs(soleBottom(d.scene, t) - ground) < 1.0f);
     // The loop repeats.
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Hip Flex", 0.3f) -
-                    angle(d.scene, "Humanoid Robot 1 Right Hip Flex", 0.3f + cycle)) < 1e-3f);
-    CHECK(angle(d.scene, "Humanoid Robot 1 Right Hip Flex", cycle / 4) > 20.0f ||
-          angle(d.scene, "Humanoid Robot 1 Left Hip Flex", cycle / 4) > 20.0f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Hip Flex", 0.3f) -
+                    angle(d.scene, "Male Humanoid Robot 1 Right Hip Flex", 0.3f + cycle)) < 1e-3f);
+    CHECK(angle(d.scene, "Male Humanoid Robot 1 Right Hip Flex", cycle / 4) > 20.0f ||
+          angle(d.scene, "Male Humanoid Robot 1 Left Hip Flex", cycle / 4) > 20.0f);
 
     Document h;
     REQUIRE(run(h, "PART robot_hand HAND 1").ok);
@@ -282,7 +282,7 @@ TEST_CASE("a posture survives save and load") {
     REQUIRE(run(e, "OPEN " + path.string()).ok);
     std::filesystem::remove(path);
     for (float t : {0.0f, 0.4f, 0.9f, 5.0f}) {
-        CHECK(std::fabs(angle(e.scene, "Humanoid Robot 1 Right Knee", t) - angle(d.scene, "Humanoid Robot 1 Right Knee", t)) < 1e-3f);
+        CHECK(std::fabs(angle(e.scene, "Male Humanoid Robot 1 Right Knee", t) - angle(d.scene, "Male Humanoid Robot 1 Right Knee", t)) < 1e-3f);
         CHECK(std::fabs(soleBottom(e.scene, t) - soleBottom(d.scene, t)) < 1e-2f);
     }
 }
@@ -296,17 +296,17 @@ TEST_CASE("walk plays a real gait cycle and travels without the stance foot slip
     const CommandOutput o = run(d, "GESTURE walk");
     REQUIRE(o.ok);
     CHECK(said(o, "travels"));
-    const Motion* hip = motion(d.scene, "Humanoid Robot 1 Motor Right Hip Flex Drive");
-    const Motion* travel = motion(d.scene, "Humanoid Robot 1 Walk");
+    const Motion* hip = motion(d.scene, "Male Humanoid Robot 1 Motor Right Hip Flex Drive");
+    const Motion* travel = motion(d.scene, "Male Humanoid Robot 1 Walk");
     REQUIRE(hip != nullptr && travel != nullptr);
     const float T = hip->keys.back().t;
     CHECK(std::fabs(T - 1.1f) < 1e-3f);
     // Normative sagittal angles: hip 30 deg at heel strike, 10 deg extension at heel off;
     // the left leg half a cycle behind; knee about 58 deg in swing.
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Hip Flex", 0.0f) - 30.0f) < 1e-3f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Hip Flex", T * 0.5f) + 10.0f) < 1e-3f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Left Hip Flex", 0.0f) + 10.0f) < 1e-3f);
-    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Knee", T * 0.7f) - 58.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Hip Flex", 0.0f) - 30.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Hip Flex", T * 0.5f) + 10.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Left Hip Flex", 0.0f) + 10.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Male Humanoid Robot 1 Right Knee", T * 0.7f) - 58.0f) < 1e-3f);
     // Smooth through the loop: no stop at the wrap.
     CHECK(std::fabs(motionRate(d.scene, *hip, T - 1e-3f) - motionRate(d.scene, *hip, T + 1e-3f)) < 2.0f);
     CHECK(std::fabs(motionRate(d.scene, *hip, 0.3f * T)) > 20.0f);

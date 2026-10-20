@@ -6,7 +6,7 @@
 
 Parametric humanoid robot parts for the **Library** panel (category *Humanoid body*) and the `PART`
 command: head, neck, upper body (chest, heart, gut, midriff), low hip (pelvis), thighs, legs and feet.
-Together with the [robot arm and hand](robot-arm.md) they make a complete **Humanoid Robot**, head to
+Together with the [robot arm and hand](robot-arm.md) they make complete **Male and Female Humanoid Robots**, head to
 toe. As with the arm and hand, every joint is a limited circular motion driven by the library **DC
 motor** (used as a gear motor), so the robot moves in the Simulation window straight after it is
 inserted.
@@ -66,7 +66,8 @@ the return side is fixed by the standard.
 
 | Part (`PART` key) | Bodies | Main parameters |
 | --- | --- | --- |
-| **Humanoid Robot** (`HUMANOID`) | Head, neck, chest, heart, midriff, gut, pelvis, 2 legs, 2 arms with hands, 20 + 14 + hand motors | `SIZE`, `FINISH` White / Black shells, `DEMO` Range of motion / March in place / Still, `DRIVE` (hands), `RPM`, `GEAR`, every limit above, `HEART_RATE` |
+| **Male Humanoid Robot** (`HUMANOID`, `MALE`) | Head, neck, chest, heart, midriff, gut, pelvis, 2 legs, 2 arms with hands, 20 + 14 + hand motors; ultra-muscular build | `HEIGHT` 1676.4 to 1828.8 mm (5.5 to 6 ft, default 1752.6 = 5 ft 9 in), `SUIT` None / Armour / Futuristic, `GLOVES`, `SHOES`, `HELMET`, `SIZE`, `FINISH` White / Black shells, `DEMO` Range of motion / March in place / Still, `DRIVE` (hands), `RPM`, `GEAR`, every limit above, `HEART_RATE` |
+| **Female Humanoid Robot** (`HUMANOID_FEMALE`, `FEMALE`) | The same parts, joints and motors; ultra-slim build | `HEIGHT` 1371.6 to 1676.4 mm (4.5 to 5.5 ft, default 1524 = 5 ft), and the same options as the male |
 | **Robot Head & Neck** (`HEADNECK`) | Head, visor, neck on a pedestal, 3 motors | `SIZE`, `FINISH`, `RPM`, `GEAR`, `NECK_YAW` `NECK_PITCH` `NECK_ROLL` |
 | **Robot Upper Body** (`TORSO`) | Pelvis on a stand, gut, midriff, chest, heart, 3 motors | `SIZE`, `FINISH`, `RPM`, `GEAR`, `WAIST_ROT` `TRUNK_FLEX` `TRUNK_BEND`, `HEART_RATE` |
 | **Robot Leg** (`LEG`) | Hip mount on a stand, thigh, shin, foot, toe, 7 motors | `SIZE`, `FINISH`, `SIDE` Right / Left, `RPM`, `GEAR`, hip, knee, ankle and toe limits |
@@ -85,9 +86,51 @@ Single parts are set down on the ground at the insertion point; their kinds take
 joint they turn about (head pivot, neck base, waist, trunk joint, hip, knee, ankle), so they line up
 when you build your own robot from them.
 
-**Proportions (size 1, mm):** ankle 85 above the sole, shin 420, thigh 430 (hips 935 up, 190 apart),
-waist 120 above the hips, gut 130, midriff 60, chest 290 (shoulder joints 400 apart, 1470 up), neck 80,
-head 230: **1.83 m** overall. Arms: upper arm 300, forearm 250, so the fingertips hang at mid-thigh.
+**Proportions (reference, mm):** ankle 85 above the sole, shin 420, thigh 430, waist 120 above the hips,
+gut 130, midriff 60, chest 290, neck 80, head about 230; upper arm 300, forearm 250, so the fingertips
+hang at mid-thigh. A whole robot is scaled to its `HEIGHT`, measured from the sole to the top of the
+head, and `SIZE` multiplies that.
+
+## Male and female builds
+
+| | Male Humanoid Robot | Female Humanoid Robot |
+| --- | --- | --- |
+| Height | 5.5 to 6 ft (1676 to 1829 mm), default **5 ft 9 in** (1753 mm), the average | 4.5 to 5.5 ft (1372 to 1676 mm), default **5 ft** (1524 mm), the average |
+| Build | **Ultra-muscular**, well shaped | **Ultra-slim**, well shaped |
+| Shoulders and chest | Broad (chest 470 wide): deltoid caps, pectorals, trapezius, latissimus | Narrow (330), a smooth tapered rib cage, small shoulder caps |
+| Waist | V-taper to a narrow waist, with six abdominal plates | Very narrow waist (172), with hips wider than the waist |
+| Arms | Biceps, triceps, forearm muscle mass (upper arm 86 thick) | Slender (upper arm 48), smooth |
+| Legs | Quadriceps, vastus "teardrops", hamstrings, a big calf | Slim, smooth taper to slim knees and ankles |
+
+Both keep every joint, motor, range of motion, posture and gesture. At the same height the male is about
+1.4 times as wide.
+
+## Outfits: suits, gloves, shoes and a helmet
+
+Both robots can be dressed. Each piece is a **skin-tight cover**: the surface of the body part it covers,
+moved out a few mm and cut cleanly at its edges. It rides on the same joints as that part, so it fits
+the build exactly (the male's muscles show through) and follows every pose and gesture, down to each
+finger link.
+
+| Option | Choices | What it adds |
+| --- | --- | --- |
+| `SUIT` | None (default) | Bare robot shells. |
+| | **Armour suit** | Steel plate over the chest, abdomen, hips, arms and legs, with the trunk joint left free. Pauldrons over the shoulders, vambraces on the forearms and knee cops. Gold trim: chest ridge, gorget, belt, pauldron and thigh edges. |
+| | **Futuristic suit** | A fitted professional uniform in deep navy (graphite on black robots): jacket, high collar, belt, sleeves with cuffs, trousers. Glowing cyan seams down the front, a chevron across the chest, round the collar, belt and cuffs, and down the sleeves and legs. |
+| `GLOVES` | No / Yes | Black gloves (armour: steel gauntlets) over the palm and every finger link. |
+| `SHOES` | No / Yes | Shoes with boot tops round the ankles. Futuristic: black (white on black robots) with a light line. Armour: steel sabatons. The rubber soles stay the ground contact. |
+| `HELMET` | No / Yes | A helmet over the head with the face (visor) open. Armour: steel with a gold crest. Futuristic: with a glowing band. |
+
+Gloves, shoes and the helmet take the suit's style, or the futuristic style without a suit.
+
+```text
+PART HUMANOID                                            male, 5 ft 9 in
+PART FEMALE HEIGHT 1600 @800,0,0                         female, 5 ft 3 in
+PART HUMANOID SUIT ARMOUR GLOVES YES SHOES YES HELMET YES
+PART FEMALE SUIT FUTURISTIC GLOVES YES SHOES YES HELMET YES FINISH BLACK
+```
+
+![Male and female humanoids: bare, armour suit, futuristic suit](humanoid-builds.png)
 
 ### Frame and design
 
@@ -133,7 +176,7 @@ the three index joints, and `*` sets every joint.
 
 ```text
 POSE squat                                 preset posture, on the selected (or first) robot
-POSE "Humanoid Robot 1" t_pose hand_fist   presets combine; later entries win
+POSE "Male Humanoid Robot 1" t_pose hand_fist   presets combine; later entries win
 POSE right elbow 90 neck yaw -30 IN 1.5    joint angles in degrees, in 1.5 s
 POSE JOINTS                                every joint: id, angle, hard stops
 POSE LIST          GESTURE LIST            presets, and the robots in the project
@@ -202,7 +245,7 @@ rotation + supinates from the pronated zero.
 
 ## Demos
 
-`DEMO` on the Humanoid Robot:
+`DEMO` on the Male or Female Humanoid Robot:
 
 - **Range of motion** (default): every joint moves through its full standard range,
   0 → + direction → − direction → 0, holding 0.25 s at each end, at its motor's rated speed.
@@ -224,5 +267,5 @@ POSE squat    POSE stand IN 2                 squat, then stand up in 2 s
 GESTURE wave  GESTURE march LOOP              wave, then march in place
 PART HUMANOID RPM 300    GESTURE walk          walk forward at the natural pace
 SIM PLAY      SIM AT 0.7                       joint angles at 0.7 s
-MOTION CIRCLE "Humanoid Robot 1 Motor Right Knee Drive" KEYS 0:0,1:240,2:0   knee 0-60-0 deg at gear 4
+MOTION CIRCLE "Male Humanoid Robot 1 Motor Right Knee Drive" KEYS 0:0,1:240,2:0   knee 0-60-0 deg at gear 4
 ```

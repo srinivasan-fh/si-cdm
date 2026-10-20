@@ -1620,14 +1620,26 @@ void drawLibraryIcon(ImDrawList* dl, const std::string& key, ImVec2 c, float r, 
         bar(x, y + 0.56f * h, x, y + 0.92f * h, 0.13f * h);
         bar(x - 0.06f * h, y + 0.98f * h, x + 0.16f * h, y + 0.98f * h, 0.07f * h);
     };
-    if (key == "humanoid") {
-        head(0, -0.82f, 0.32f);
-        bar(0, -0.64f, 0, -0.56f, 0.06f);
-        rrect(-0.3f, -0.56f, 0.3f, -0.08f, 0.1f);
-        heart(0, -0.34f, 0.08f);
+    if (key == "humanoid") { // broad, muscular V-taper
+        head(0, -0.82f, 0.3f);
+        bar(0, -0.66f, 0, -0.56f, 0.09f);
+        rrect(-0.38f, -0.58f, 0.38f, -0.32f, 0.12f);
+        rrect(-0.26f, -0.34f, 0.26f, -0.08f, 0.08f);
+        heart(0, -0.44f, 0.08f);
         rrect(-0.24f, -0.02f, 0.24f, 0.14f, 0.06f);
-        for (float x : {-0.42f, 0.42f}) bar(x, -0.48f, x * 1.08f, 0.22f, 0.1f);
-        for (float x : {-0.13f, 0.13f}) leg(x, 0.16f, 0.8f);
+        for (float x : {-0.5f, 0.5f}) bar(x, -0.5f, x * 1.06f, 0.2f, 0.14f);
+        for (float x : {-0.14f, 0.14f}) leg(x, 0.16f, 0.8f);
+        return;
+    }
+    if (key == "humanoid_female") { // slim: narrow shoulders and waist, curved hips
+        head(0, -0.8f, 0.27f);
+        bar(0, -0.66f, 0, -0.56f, 0.05f);
+        rrect(-0.22f, -0.58f, 0.22f, -0.3f, 0.1f);
+        rrect(-0.14f, -0.32f, 0.14f, -0.1f, 0.06f);
+        heart(0, -0.45f, 0.06f);
+        rrect(-0.22f, -0.1f, 0.22f, 0.14f, 0.1f);
+        for (float x : {-0.3f, 0.3f}) bar(x, -0.52f, x * 1.08f, 0.16f, 0.07f);
+        for (float x : {-0.1f, 0.1f}) leg(x, 0.16f, 0.8f);
         return;
     }
     if (key == "robot_head_neck") {

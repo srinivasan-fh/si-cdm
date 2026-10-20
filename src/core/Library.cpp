@@ -10,6 +10,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <tuple>
 
 namespace sicdm {
 
@@ -718,8 +719,15 @@ MeshData phalanx(float len, float w, float t, float yaw, bool tip, bool pad) {
 // Rounded motor deck (top at z = t / 2) reaching back along -Y, with a yoke holding
 // the palm or a digit on the hinge axis (X through the origin) and, optionally, the
 // round wrist actuator puck behind the yoke.
-MeshData robotForearm(float w, float len, float t, float clevis, bool puck) {
+MeshData ellipsoid(const Vec3& c, const Vec3& r, int seg = 40, int rings = 20);
+
+// build 1 (muscular): forearm muscle mass swelling toward the elbow.
+MeshData robotForearm(float w, float len, float t, float clevis, bool puck, int build = 0) {
     MeshData m = sweepY(roundedSpan(-len, -t * 0.6f, w * 0.5f, w * 0.5f, t * 0.5f, t * 0.5f, t * 0.4f, t * 0.4f));
+    if (build == 1) {
+        m.append(ellipsoid({0, -0.70f * len, 0}, {0.58f * w, 0.32f * len, 0.5f * w}));  // flexors / brachioradialis
+        m.append(ellipsoid({0, -0.42f * len, 0}, {0.48f * w, 0.26f * len, 0.36f * w})); // tapering to the wrist
+    }
     for (float s : {-1.0f, 1.0f}) {
         const float x0 = s > 0 ? clevis : -clevis - 4.0f;
         m.append(boxOf({x0, -t * 0.6f - 1.0f, -t * 0.4f}, {x0 + 4.0f, 0.0f, t * 0.4f}));
@@ -735,12 +743,18 @@ MeshData robotForearm(float w, float len, float t, float clevis, bool puck) {
 }
 
 // Upper arm along +Y: shoulder ball at the origin, round bar, elbow hub (axis X) at `len`.
-MeshData armLink(float len, float r) {
-    MeshData m = primitives::sphere({0, 0, 0}, r * 1.3f, 48, 24);
+// build 1 (muscular): a big deltoid, biceps on the side the elbow bends to (+Z) and
+// triceps behind; build 2 (slim): a smaller shoulder ball.
+MeshData armLink(float len, float r, int build = 0) {
+    MeshData m = primitives::sphere({0, 0, 0}, r * (build == 1 ? 1.55f : build == 2 ? 1.2f : 1.3f), 48, 24);
     MeshData bar = primitives::cylinder({0, 0, 0}, r, len, 48);
     bar.transform(rotateAxis({1, 0, 0}, -kPi * 0.5f));
     m.append(bar);
     m.append(cylX(-r * 1.1f, r * 1.1f, r * 1.1f, len, 0, 48));
+    if (build == 1) {
+        m.append(ellipsoid({0, len * 0.55f, r * 0.55f}, {r * 0.95f, len * 0.3f, r * 0.85f}));  // biceps
+        m.append(ellipsoid({0, len * 0.42f, -r * 0.5f}, {r * 1.0f, len * 0.36f, r * 0.85f})); // triceps
+    }
     return m;
 }
 
@@ -786,7 +800,7 @@ MeshData bodyShell(std::vector<BodySection> secs, float r0, float r1, bool down 
     return m;
 }
 
-MeshData ellipsoid(const Vec3& c, const Vec3& r, int seg = 40, int rings = 20) {
+MeshData ellipsoid(const Vec3& c, const Vec3& r, int seg, int rings) {
     MeshData m = primitives::sphere({0, 0, 0}, 1.0f, seg, rings);
     m.transform(translate(c) * scale(r));
     return m;
@@ -825,12 +839,34 @@ MeshData robotNeck(float len, float r) {
 
 // Thorax from its bottom (origin, on the trunk joint) to the neck base at `h`:
 // rib cage, shoulder caps over the shoulder joints.
-MeshData robotChest(float w, float d, float h) {
+// build 1 (muscular): a V-taper from broad lats to the waist, pectorals, trapezius and big
+// deltoid caps; build 2 (slim): a narrow, smooth, tapered rib cage and small shoulder caps.
+MeshData robotChest(float w, float d, float h, int build = 0) {
     const float sx = w / 380.0f, sy = d / 230.0f, sz = h / 300.0f;
     auto sec = [&](float z, float hw, float hd, float f) { return BodySection{z * sz, hw * sx, hd * sy, f * sy}; };
-    MeshData m = bodyShell({sec(0, 125, 85, 0), sec(50, 150, 100, 8), sec(130, 172, 112, 12), sec(200, 182, 110, 8),
-                            sec(240, 180, 100, 0), sec(262, 165, 88, -5)},
-                           8.0f * sz, 38.0f * sz);
+    MeshData m;
+    if (build == 1) {
+        m = bodyShell({sec(0, 112, 84, 0), sec(50, 148, 102, 10), sec(120, 182, 118, 16), sec(190, 188, 116, 10),
+                       sec(240, 182, 102, 0), sec(262, 160, 88, -5)},
+                      8.0f * sz, 38.0f * sz);
+        for (float side : {-1.0f, 1.0f}) {
+            m.append(ellipsoid({side * 66.0f * sx, 104.0f * sy, 178.0f * sz}, Vec3{74 * sx, 36 * sy, 56 * sz}));   // pectoral
+            m.append(ellipsoid({side * 150.0f * sx, -30.0f * sy, 150.0f * sz}, Vec3{40 * sx, 70 * sy, 90 * sz}));  // latissimus
+            m.append(ellipsoid({side * 186.0f * sx, -5.0f * sy, 235.0f * sz}, Vec3{80, 80, 76} * sx));             // deltoid cap
+        }
+        m.append(ellipsoid({0, -22.0f * sy, 258.0f * sz}, Vec3{118 * sx, 58 * sy, 46 * sz})); // trapezius
+        return m;
+    }
+    if (build == 2) {
+        m = bodyShell({sec(0, 120, 84, 0), sec(50, 146, 96, 6), sec(130, 168, 106, 10), sec(200, 176, 104, 8),
+                       sec(240, 174, 96, 0), sec(262, 160, 84, -4)},
+                      8.0f * sz, 38.0f * sz);
+        for (float side : {-1.0f, 1.0f}) m.append(ellipsoid({side * 178.0f * sx, -5.0f * sy, 236.0f * sz}, Vec3{52, 54, 52} * sx));
+        return m;
+    }
+    m = bodyShell({sec(0, 125, 85, 0), sec(50, 150, 100, 8), sec(130, 172, 112, 12), sec(200, 182, 110, 8),
+                   sec(240, 180, 100, 0), sec(262, 165, 88, -5)},
+                  8.0f * sz, 38.0f * sz);
     for (float side : {-1.0f, 1.0f}) m.append(ellipsoid({side * 182.0f * sx, -5.0f * sy, 235.0f * sz}, Vec3{62, 64, 62} * sx));
     return m;
 }
@@ -857,13 +893,21 @@ MeshData robotHeart(float r, int part) {
 
 // Abdomen ("gut") above the waist joint (origin): stacked armour plates, or the
 // dark battery core showing between them.
-MeshData robotGut(float w, float d, float h, bool core) {
+// build 1 (muscular): six abdominal plates over the front; build 2 (slim): plates
+// narrowing toward the waist.
+MeshData robotGut(float w, float d, float h, bool core, int build = 0) {
     if (core) return bodyShell({{0, 0.42f * w, 0.40f * d, 0}, {h, 0.42f * w, 0.40f * d, 0}}, 0, 0);
     MeshData m;
     constexpr int kPlates = 3;
     const float gap = 0.04f * h, ph = (h - gap * (kPlates - 1)) / kPlates;
+    if (build == 1)
+        for (int row = 0; row < kPlates; ++row)
+            for (float side : {-1.0f, 1.0f}) // the "six-pack"
+                m.append(ellipsoid({side * 0.12f * w, 0.43f * d, (static_cast<float>(row) + 0.5f) * (ph + gap)},
+                                   {0.105f * w, 0.09f * d, 0.5f * ph}));
     for (int i = 0; i < kPlates; ++i) {
-        const float z0 = static_cast<float>(i) * (ph + gap), k = 0.96f + 0.02f * static_cast<float>(i);
+        const float z0 = static_cast<float>(i) * (ph + gap);
+        const float k = build == 2 ? 0.99f - 0.03f * static_cast<float>(i) : 0.96f + 0.02f * static_cast<float>(i);
         m.append(bodyShell({{z0 + 4.0f, 0.48f * w * k, 0.48f * d * k, 0.03f * d}, {z0 + ph - 4.0f, 0.49f * w * k, 0.49f * d * k, 0.03f * d}},
                            4.0f, 4.0f));
     }
@@ -883,32 +927,58 @@ MeshData robotMidriff(float w, float d, float h) {
 
 // Pelvis ("low hip") centred between the hip joints (origin, hips at x = +-spacing / 2),
 // up to the waist at `h`: hip joint housings and the waist bearing on top.
-MeshData robotPelvis(float w, float d, float h, float spacing) {
+// build 2 (slim): curved hips narrowing to the waist (an hourglass with the slim waist above).
+MeshData robotPelvis(float w, float d, float h, float spacing, int build = 0) {
     const float sx = w / 280.0f, sy = d / 180.0f, sz = h / 120.0f;
     auto sec = [&](float z, float hw, float hd, float f) { return BodySection{z * sz, hw * sx, hd * sy, f * sy}; };
-    MeshData m = bodyShell({sec(-70, 70, 62, 0), sec(-30, 118, 82, 0), sec(30, 138, 90, -6), sec(90, 132, 86, -4), sec(112, 124, 82, 0)},
-                           20.0f * sz, 6.0f * sz);
+    MeshData m = build == 2 ? bodyShell({sec(-70, 74, 62, 0), sec(-30, 128, 86, -2), sec(25, 140, 90, -8), sec(85, 118, 82, -4),
+                                         sec(112, 100, 76, 0)},
+                                        20.0f * sz, 6.0f * sz)
+                            : bodyShell({sec(-70, 70, 62, 0), sec(-30, 118, 82, 0), sec(30, 138, 90, -6), sec(90, 132, 86, -4),
+                                         sec(112, 124, 82, 0)},
+                                        20.0f * sz, 6.0f * sz);
     m.append(cylX(-spacing * 0.5f - 52.0f * sx, spacing * 0.5f + 52.0f * sx, 48.0f * sz, 0, 0)); // hip axle housings
     m.append(cylinderAt(0, 0, 100.0f * std::min(sx, sy), h - 4.0f, h + 6.0f, 64));             // waist bearing
     return m;
 }
 
 // Thigh (femur) hanging from the hip joint (origin) to the knee at -len.
-MeshData robotThigh(float len, float w, float d) {
+// build 1 (muscular): quadriceps (rectus femoris, the vastus "teardrops" above the knee)
+// and hamstrings; build 2 (slim): a smooth taper to a slim knee.
+MeshData robotThigh(float len, float w, float d, int build = 0) {
     const float sx = w / 130.0f, sy = d / 140.0f, sz = len / 430.0f;
     auto sec = [&](float z, float hw, float hd, float f) { return BodySection{z * sz, hw * sx, hd * sy, f * sy}; };
-    MeshData m = bodyShell({sec(30, 60, 64, 4), sec(80, 66, 72, 8), sec(200, 63, 70, 10), sec(320, 54, 60, 6), sec(380, 49, 53, 2)},
-                           28.0f * sz, 30.0f * sz, true);
+    MeshData m = build == 2 ? bodyShell({sec(30, 60, 64, 4), sec(80, 64, 70, 6), sec(200, 57, 63, 7), sec(320, 45, 50, 4),
+                                         sec(380, 40, 44, 2)},
+                                        28.0f * sz, 30.0f * sz, true)
+                            : bodyShell({sec(30, 60, 64, 4), sec(80, 66, 72, 8), sec(200, 63, 70, 10), sec(320, 54, 60, 6),
+                                         sec(380, 49, 53, 2)},
+                                        28.0f * sz, 30.0f * sz, true);
+    if (build == 1) {
+        m.append(ellipsoid({0, 30.0f * sy, -170.0f * sz}, {44 * sx, 42 * sy, 120 * sz}));            // rectus femoris
+        for (float side : {-1.0f, 1.0f})
+            m.append(ellipsoid({side * 34.0f * sx, 26.0f * sy, -300.0f * sz}, {34 * sx, 36 * sy, 70 * sz})); // vastus
+        m.append(ellipsoid({0, -32.0f * sy, -190.0f * sz}, {50 * sx, 40 * sy, 130 * sz}));           // hamstrings
+    }
     m.append(primitives::sphere({0, 0, 0}, 50.0f * sx, 40, 20)); // hip ball
     return m;
 }
 
 // Lower leg (shin and calf) from the knee joint (origin) to the ankle at -len.
-MeshData robotShin(float len, float w, float d) {
+// build 1 (muscular): the two heads of the calf muscle; build 2 (slim): a slender leg
+// with a gentle calf.
+MeshData robotShin(float len, float w, float d, int build = 0) {
     const float sx = w / 100.0f, sy = d / 110.0f, sz = len / 420.0f;
     auto sec = [&](float z, float hw, float hd, float f) { return BodySection{z * sz, hw * sx, hd * sy, f * sy}; };
-    MeshData m = bodyShell({sec(30, 49, 52, -2), sec(110, 52, 60, -10), sec(220, 46, 52, -6), sec(330, 38, 40, -2), sec(380, 34, 36, 0)},
-                           24.0f * sz, 18.0f * sz, true);
+    MeshData m = build == 2 ? bodyShell({sec(30, 47, 50, -2), sec(110, 49, 57, -9), sec(220, 41, 47, -5), sec(330, 31, 33, -2),
+                                         sec(380, 28, 30, 0)},
+                                        24.0f * sz, 18.0f * sz, true)
+                            : bodyShell({sec(30, 49, 52, -2), sec(110, 52, 60, -10), sec(220, 46, 52, -6), sec(330, 38, 40, -2),
+                                         sec(380, 34, 36, 0)},
+                                        24.0f * sz, 18.0f * sz, true);
+    if (build == 1)
+        for (float side : {-1.0f, 1.0f})
+            m.append(ellipsoid({side * 20.0f * sx, -36.0f * sy, -130.0f * sz}, {30 * sx, 34 * sy, 85 * sz})); // gastrocnemius
     m.append(cylX(-56.0f * sx, 56.0f * sx, 40.0f * sx, 0, 0));                  // knee hub
     m.append(ellipsoid({0, 42.0f * sy, -16.0f * sz}, Vec3{34, 18, 40} * sx)); // knee cap
     m.append(cylX(-44.0f * sx, 44.0f * sx, 22.0f * sx, 0, -len));            // ankle pin
@@ -1492,18 +1562,18 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "o_ring" && ok(2)) return primitives::torus({0, 0, p[1] * 0.5f}, p[0] * 0.5f + p[1] * 0.5f, p[1] * 0.5f, 96, 24);
     if (k == "phalanx" && ok(3)) return phalanx(p[0], p[1], p[2], at(3), at(4) >= 0.5f, at(5) >= 0.5f);
     if (k == "robot_palm" && ok(3)) return robotPalm(p[0], p[1], p[2], at(3) >= 0.5f, at(4) >= 0.5f);
-    if (k == "robot_forearm" && ok(4)) return robotForearm(p[0], p[1], p[2], p[3], at(4) >= 0.5f);
-    if (k == "arm_link" && ok(2)) return armLink(p[0], p[1]);
+    if (k == "robot_forearm" && ok(4)) return robotForearm(p[0], p[1], p[2], p[3], at(4) >= 0.5f, static_cast<int>(at(5)));
+    if (k == "arm_link" && ok(2)) return armLink(p[0], p[1], static_cast<int>(at(2)));
     if (k == "robot_shoulder" && ok(2)) return robotShoulder(p[0], p[1]);
     if (k == "robot_head" && ok(3)) return robotHead(p[0], p[1], p[2], at(3) >= 0.5f);
     if (k == "robot_neck" && ok(2)) return robotNeck(p[0], p[1]);
-    if (k == "robot_chest" && ok(3)) return robotChest(p[0], p[1], p[2]);
+    if (k == "robot_chest" && ok(3)) return robotChest(p[0], p[1], p[2], static_cast<int>(at(3)));
     if (k == "robot_heart" && ok(1)) return robotHeart(p[0], static_cast<int>(at(1)));
-    if (k == "robot_gut" && ok(3)) return robotGut(p[0], p[1], p[2], at(3) >= 0.5f);
+    if (k == "robot_gut" && ok(3)) return robotGut(p[0], p[1], p[2], at(3) >= 0.5f, static_cast<int>(at(4)));
     if (k == "robot_midriff" && ok(3)) return robotMidriff(p[0], p[1], p[2]);
-    if (k == "robot_pelvis" && ok(4)) return robotPelvis(p[0], p[1], p[2], p[3]);
-    if (k == "robot_thigh" && ok(3)) return robotThigh(p[0], p[1], p[2]);
-    if (k == "robot_shin" && ok(3)) return robotShin(p[0], p[1], p[2]);
+    if (k == "robot_pelvis" && ok(4)) return robotPelvis(p[0], p[1], p[2], p[3], static_cast<int>(at(4)));
+    if (k == "robot_thigh" && ok(3)) return robotThigh(p[0], p[1], p[2], static_cast<int>(at(3)));
+    if (k == "robot_shin" && ok(3)) return robotShin(p[0], p[1], p[2], static_cast<int>(at(3)));
     if (k == "robot_foot" && ok(3)) return robotFoot(p[0], p[1], p[2], static_cast<int>(at(3)));
     MeshData m;
     if (k == "dc_motor") m = dcMotor();
@@ -1644,6 +1714,10 @@ const std::vector<LibraryItem>& libraryItems() {
         // the max is the mechanical hard stop. 0 deg = straight (no hyperextension).
         const LibraryParam side{"hand", "Hand", 0.0f, 0.0f, 1.0f, "", true, "Right|Left"};
         const LibraryParam handRpm{"rpm", "Motor speed", 120.0f, 1.0f, 600.0f, "rpm"};
+        const LibraryParam outfit[] = {{"suit", "Suit", 0.0f, 0.0f, 2.0f, "", true, "None|Armour suit|Futuristic suit"},
+                                       {"gloves", "Gloves", 0.0f, 0.0f, 1.0f, "", true, "No|Yes"},
+                                       {"shoes", "Shoes", 0.0f, 0.0f, 1.0f, "", true, "No|Yes"},
+                                       {"helmet", "Helmet", 0.0f, 0.0f, 1.0f, "", true, "No|Yes"}};
         const LibraryParam gear{"gear", "Motor turns per joint turn", 4.0f, 1.0f, 100.0f, "x"};
         const LibraryParam mcp{"mcp", "MCP flexion", 90.0f, 1.0f, 110.0f, "deg"};
         const LibraryParam pip{"pip", "PIP flexion", 100.0f, 1.0f, 120.0f, "deg"};
@@ -1816,9 +1890,21 @@ const std::vector<LibraryItem>& libraryItems() {
              {{"length", "Length", 300.0f, 20.0f, 2000.0f, "mm"}, {"radius", "Radius", 32.0f, 3.0f, 300.0f, "mm"}}},
             {"robot_shoulder", "SHOULDER PEDESTAL", "Shoulder Pedestal", "Robot arm & hand", "Base plate and column under the shoulder joint",
              {{"height", "Joint height", 220.0f, 60.0f, 3000.0f, "mm"}, {"width", "Base width", 140.0f, 60.0f, 2000.0f, "mm"}}},
-            {"humanoid", "HUMANOID HUMANOIDROBOT ANDROID ROBOTBODY", "Humanoid Robot", "Humanoid body",
-             "Head to toe, 1.83 m: 20 body + 14 arm joints and two hands, every joint on a DC gear motor",
-             {size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
+            {"humanoid", "HUMANOID HUMANOIDROBOT ANDROID ROBOTBODY MALEHUMANOID MALE MALEROBOT", "Male Humanoid Robot", "Humanoid body",
+             "Male, ultra-muscular build (broad V-taper, chest, arms, legs), 5.5 to 6 ft: 20 body + 14 arm joints and two hands on DC gear motors; "
+             "armour or futuristic suit, gloves, shoes, helmet",
+             {{"height", "Height (5.5 - 6 ft)", 1752.6f, 1676.4f, 1828.8f, "mm"}, outfit[0], outfit[1], outfit[2], outfit[3], size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
+              {"drive", "Hand drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"}, handRpm, gear,
+              neckYaw, neckPitch, neckRoll, waistRot, trunkFlex, trunkBend, heartRate,
+              {"shoulder_flex", "Shoulder flexion (forward)", 90.0f, 1.0f, 180.0f, "deg"},
+              {"shoulder_abd", "Shoulder abduction (sideways)", 90.0f, 1.0f, 180.0f, "deg"},
+              {"shoulder_rot", "Shoulder internal rotation", 70.0f, 1.0f, 90.0f, "deg"}, {"elbow", "Elbow flexion", 145.0f, 1.0f, 150.0f, "deg"},
+              {"forearm_rot", "Forearm supination", 160.0f, 1.0f, 180.0f, "deg"}, wristFlex, wristDev, hipFlex, hipAbd, hipRot, kneeFlex,
+              anklePitch, ankleRoll, toeExt, mcp, pip, dip, abduction, thumbCmc, thumbMcp, thumbIp}},
+            {"humanoid_female", "FEMALEHUMANOID FEMALE FEMALEROBOT GYNOID", "Female Humanoid Robot", "Humanoid body",
+             "Female, ultra-slim build (narrow waist, curved hips, slender limbs), 4.5 to 5.5 ft: the same joints, motors and hands; "
+             "armour or futuristic suit, gloves, shoes, helmet",
+             {{"height", "Height (4.5 - 5.5 ft)", 1524.0f, 1371.6f, 1676.4f, "mm"}, outfit[0], outfit[1], outfit[2], outfit[3], size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
               {"drive", "Hand drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"}, handRpm, gear,
               neckYaw, neckPitch, neckRoll, waistRot, trunkFlex, trunkBend, heartRate,
               {"shoulder_flex", "Shoulder flexion (forward)", 90.0f, 1.0f, 180.0f, "deg"},
@@ -2231,13 +2317,236 @@ void faceFront(LibraryComponent& c, const Vec3& pivot) {
         m.axis = turn.transformDir(m.axis);
     }
 }
-constexpr float kAnkleZ = 85.0f, kShin = 420.0f, kThigh = 430.0f, kHipZ = kAnkleZ + kShin + kThigh, kHipX = 95.0f;
+constexpr float kAnkleZ = 85.0f, kShin = 420.0f, kThigh = 430.0f, kHipZ = kAnkleZ + kShin + kThigh;
 constexpr float kWaistUp = 120.0f, kGut = 130.0f, kMidriff = 60.0f, kChest = 290.0f, kNeck = 80.0f;
 constexpr float kWaistZ = kHipZ + kWaistUp, kTrunkZ = kWaistZ + kGut, kChestZ = kTrunkZ + kMidriff, kNeckZ = kChestZ + kChest;
-constexpr float kShoulderX = 200.0f, kShoulderZ = kChestZ + 225.0f;
+constexpr float kShoulderZ = kChestZ + 225.0f;
 const Vec3 kBodyWhite{0.84f, 0.85f, 0.87f};
 const Vec3 kVisor{0.04f, 0.05f, 0.07f};
 const Vec3 kCoreGlow{0.30f, 0.86f, 1.0f};
+
+// Body proportions of the humanoid builds (mm at the reference height).
+struct HumanoidBuild {
+    float pelvisW, pelvisD, gutW, gutD, midW, midD, chestW, chestD;
+    float thighW, thighD, shinW, shinD, neckR, headW, headD, headH, armR, forearmW, hipX;
+};
+// 0: the neutral robot body parts; 1: male, ultra-muscular (broad V-taper, big chest,
+// arms and legs); 2: female, ultra-slim (narrow shoulders and waist, curved hips,
+// slender limbs).
+constexpr HumanoidBuild kBuilds[] = {
+    {280, 180, 260, 180, 230, 160, 380, 230, 130, 140, 100, 110, 34, 160, 200, 230, 32, 70, 95},
+    {290, 190, 280, 190, 250, 172, 470, 268, 168, 180, 126, 142, 46, 166, 206, 232, 43, 84, 100},
+    {300, 176, 196, 146, 172, 130, 330, 202, 116, 124, 84, 94, 26, 148, 188, 220, 24, 58, 90},
+};
+// Height of the humanoid at size 1 (sole to the top of the head), mm.
+float humanoidModelHeight(float headH) { return kNeckZ + kNeck - 15.0f + 0.96f * headH; }
+
+// The surface of `m` moved out `t` mm along its (averaged) normals: a skin-tight cover.
+// With `fields`, only where every field(p) >= 0, cut cleanly along field = 0 (triangles
+// are clipped, so bands, stripes and the helmet's face opening have smooth edges; use
+// straight fields such as z - z0 for exact cuts).
+using CoverField = std::function<float(const Vec3&)>;
+MeshData inflated(const MeshData& m, float t, const std::vector<CoverField>& fields = {}) {
+    std::map<std::tuple<long, long, long>, Vec3> normals;
+    auto key = [](const Vec3& p) {
+        return std::make_tuple(std::lround(p.x * 20.0f), std::lround(p.y * 20.0f), std::lround(p.z * 20.0f));
+    };
+    for (const Vertex& v : m.vertices) normals[key(v.position)] += v.normal;
+    std::vector<Vertex> moved;
+    moved.reserve(m.vertices.size());
+    for (const Vertex& v : m.vertices) {
+        const Vec3 n = normals[key(v.position)];
+        const Vec3 dir = length(n) > 1e-9f ? normalize(n) : v.normal;
+        moved.push_back({v.position + dir * t, v.normal});
+    }
+    MeshData out;
+    if (fields.empty()) {
+        out.vertices = std::move(moved);
+        out.indices = m.indices;
+        out.computeFeatureEdges(40.0f);
+        return out;
+    }
+    for (std::size_t i = 0; i + 2 < m.indices.size(); i += 3) {
+        // Clip the triangle to every field >= 0 in turn (Sutherland-Hodgman).
+        std::vector<Vertex> poly = {moved[m.indices[i]], moved[m.indices[i + 1]], moved[m.indices[i + 2]]};
+        for (const auto& field : fields) {
+            std::vector<Vertex> next;
+            for (std::size_t k = 0; k < poly.size(); ++k) {
+                const Vertex &a = poly[k], &b = poly[(k + 1) % poly.size()];
+                const float fa = field(a.position), fb = field(b.position);
+                if (fa >= 0) next.push_back(a);
+                if ((fa >= 0) != (fb >= 0)) {
+                    const float u = fa / (fa - fb);
+                    next.push_back({a.position + (b.position - a.position) * u, normalize(a.normal + (b.normal - a.normal) * u)});
+                }
+            }
+            poly = std::move(next);
+            if (poly.size() < 3) break;
+        }
+        if (poly.size() < 3) continue;
+        const auto base = static_cast<std::uint32_t>(out.vertices.size());
+        out.vertices.insert(out.vertices.end(), poly.begin(), poly.end());
+        for (std::uint32_t k = 1; k + 1 < poly.size(); ++k) out.indices.insert(out.indices.end(), {base, base + k, base + k + 1});
+    }
+    out.computeFeatureEdges(40.0f);
+    return out;
+}
+
+// Suits, gloves, shoes and a helmet for a whole humanoid: skin-tight covers (each a body
+// part's surface moved out a few mm) that ride on the same joints as the part, so they
+// fit the build and follow every posture. Suit 1: armour (plates, shoulder pauldrons,
+// knee cops, a chest ridge and gorget with gold trim); 2: a futuristic suit (a fitted
+// uniform with a high collar, belt, cuffs and glowing seams). Gloves, shoes and the
+// helmet take the suit's style (futuristic without a suit). Lengths at size 1, x s.
+void dressHumanoid(LibraryComponent& c, const std::function<float(const char*)>& v, float s, bool black) {
+    const int suit = static_cast<int>(v("suit"));
+    const bool shoes = v("shoes") >= 0.5f, gloves = v("gloves") >= 0.5f, helmet = v("helmet") >= 0.5f;
+    if (suit == 0 && !shoes && !gloves && !helmet) return;
+    const bool armour = suit == 1;
+    const Vec3 plate = black ? Vec3{0.24f, 0.25f, 0.29f} : Vec3{0.46f, 0.49f, 0.55f}; // armour steel
+    const Vec3 gold{0.84f, 0.66f, 0.30f};
+    const Vec3 fabric = black ? Vec3{0.20f, 0.22f, 0.27f} : Vec3{0.10f, 0.14f, 0.25f}; // uniform
+    const Vec3 glove{0.07f, 0.08f, 0.10f}, shoe = black ? Vec3{0.90f, 0.91f, 0.93f} : Vec3{0.06f, 0.06f, 0.07f};
+    const std::string prefix = c.name + " ";
+    // Bodies to cover, looked up before any are added.
+    auto named = [&](const std::string& suffix) -> const Body* {
+        for (const Body& b : c.bodies)
+            if (b.name == prefix + suffix) return &b;
+        return nullptr;
+    };
+    std::vector<Body> added;
+    // A cover of `host`: `t` mm out (x s), only where `keep` (mesh coordinates about the
+    // host's origin) holds; it moves with every motion that moves the host.
+    auto cover = [&](const Body* host, const std::string& label, float t, const Vec3& colour,
+                     const std::vector<CoverField>& keep = {}) {
+        if (!host) return;
+        Body b = meshBody(prefix + label, inflated(host->mesh, t * s, keep), colour);
+        if (b.mesh.indices.empty()) return;
+        b.offset = host->offset;
+        b.rotation = host->rotation;
+        b.scale = host->scale;
+        b.component = c.name;
+        for (Motion& m : c.motions)
+            if (std::find(m.bodies.begin(), m.bodies.end(), host->name) != m.bodies.end()) m.bodies.push_back(b.name);
+        added.push_back(std::move(b));
+    };
+    auto bounds = [](const Body* b) { return b ? b->mesh.bounds() : AABB{}; };
+    // Band of a host between fractions lo..hi of its height (mesh z), or a strip of it.
+    auto band = [&](const Body* host, float lo, float hi) {
+        const AABB bb = bounds(host);
+        const float z0 = bb.min.z + (bb.max.z - bb.min.z) * lo, z1 = bb.min.z + (bb.max.z - bb.min.z) * hi;
+        return std::vector<CoverField>{[z0](const Vec3& p) { return p.z - z0; }, [z1](const Vec3& p) { return z1 - p.z; }};
+    };
+    // A stripe down the front (|x| < w, y > 0), or down the outer side of a limb (side x).
+    auto stripeX = [](float w) {
+        return std::vector<CoverField>{[w](const Vec3& p) { return w - p.x; }, [w](const Vec3& p) { return w + p.x; },
+                                       [](const Vec3& p) { return p.y; }};
+    };
+    auto sideStripe = [s](float side) {
+        const float w = 2.5f * s;
+        return std::vector<CoverField>{[side](const Vec3& p) { return side * p.x; }, [w](const Vec3& p) { return w - p.y; },
+                                       [w](const Vec3& p) { return w + p.y; }};
+    };
+    const char* sides[] = {"Right ", "Left "};
+
+    if (suit > 0) {
+        const float t = armour ? 7.0f : 3.0f;
+        const Vec3 main = armour ? plate : fabric;
+        const char* label = armour ? "Armour " : "Suit ";
+        const Body *chest = named("Chest"), *gut = named("Gut"), *pelvis = named("Pelvis"), *mid = named("Midriff");
+        cover(chest, std::string(label) + "Chest", t, main);
+        cover(gut, std::string(label) + "Abdomen", t, main);
+        cover(pelvis, std::string(label) + "Hips", t, main);
+        if (!armour) cover(mid, "Suit Waist", t, main); // armour leaves the trunk joint free
+        for (const char* side : sides) {
+            const std::string sd = side;
+            cover(named(sd + "Arm Upper Arm"), label + sd + "Upper Arm", t, main);
+            cover(named(sd + "Arm Forearm"), label + sd + "Forearm", t, main);
+            cover(named(sd + "Thigh"), label + sd + "Thigh", t, main);
+            cover(named(sd + "Shin"), label + sd + "Shin", t, main, armour ? band(named(sd + "Shin"), 0.1f, 1.0f) : band(named(sd + "Shin"), 0.18f, 1.0f));
+        }
+        const AABB cb = bounds(chest);
+        if (armour) {
+            // Chest ridge and gorget in gold; pauldrons over the shoulders, knee cops.
+            cover(chest, "Armour Chest Ridge", 13.0f, gold, stripeX(9.0f * s));
+            cover(chest, "Armour Gorget", 12.0f, gold, band(chest, 0.86f, 0.96f));
+            cover(pelvis, "Armour Belt", 11.0f, gold, band(pelvis, 0.80f, 0.92f));
+            for (const char* side : sides) {
+                const std::string sd = side;
+                cover(named(sd + "Arm Upper Arm"), "Armour " + sd + "Pauldron", 20.0f, plate, band(named(sd + "Arm Upper Arm"), 0.62f, 1.0f));
+                cover(named(sd + "Arm Upper Arm"), "Armour " + sd + "Pauldron Trim", 23.0f, gold, band(named(sd + "Arm Upper Arm"), 0.62f, 0.66f));
+                cover(named(sd + "Arm Forearm"), "Armour " + sd + "Vambrace", 12.0f, plate, band(named(sd + "Arm Forearm"), 0.3f, 0.8f));
+                cover(named(sd + "Shin"), "Armour " + sd + "Knee Cop", 16.0f, plate, band(named(sd + "Shin"), 0.84f, 1.0f));
+                cover(named(sd + "Thigh"), "Armour " + sd + "Cuisse Trim", 10.0f, gold, band(named(sd + "Thigh"), 0.10f, 0.14f));
+            }
+        } else {
+            // Glowing seams: down the front, around the collar, the belt, the cuffs and the knees.
+            cover(chest, "Suit Seam", 4.5f, kCoreGlow, stripeX(2.5f * s));
+            cover(chest, "Suit Collar", 9.0f, main, band(chest, 0.86f, 0.98f));
+            cover(chest, "Suit Collar Glow", 10.5f, kCoreGlow, band(chest, 0.86f, 0.875f));
+            // A chevron across the chest: two straight bands meeting at the seam.
+            const float ch = std::max(cb.max.z - cb.min.z, 1e-3f), cz = cb.min.z + 0.62f * ch, rise = 0.0012f * ch / s;
+            for (float side : {-1.0f, 1.0f})
+                cover(chest, side < 0 ? "Suit Chest Line" : "Suit Chest Line 2", 4.5f, kCoreGlow,
+                      {[=](const Vec3& p) { return side * p.x; }, [](const Vec3& p) { return p.y; },
+                       [=](const Vec3& p) { return p.z - (cz + side * rise * p.x) + 0.009f * ch; },
+                       [=](const Vec3& p) { return (cz + side * rise * p.x) + 0.009f * ch - p.z; }});
+            cover(pelvis, "Suit Belt", 6.0f, glove, band(pelvis, 0.78f, 0.92f));
+            cover(pelvis, "Suit Belt Glow", 7.0f, kCoreGlow, band(pelvis, 0.84f, 0.86f));
+            for (const char* side : sides) {
+                const std::string sd = side;
+                cover(named(sd + "Arm Forearm"), "Suit " + sd + "Cuff", 6.0f, main, band(named(sd + "Arm Forearm"), 0.0f, 0.2f));
+                cover(named(sd + "Arm Forearm"), "Suit " + sd + "Cuff Glow", 7.0f, kCoreGlow, band(named(sd + "Arm Forearm"), 0.18f, 0.2f));
+                cover(named(sd + "Arm Upper Arm"), "Suit " + sd + "Sleeve Line", 4.5f, kCoreGlow,
+                      sideStripe(sd == "Right " ? 1.0f : -1.0f));
+                cover(named(sd + "Thigh"), "Suit " + sd + "Leg Line", 4.5f, kCoreGlow, sideStripe(sd == "Right " ? 1.0f : -1.0f));
+            }
+        }
+    }
+    // Gloves: palm and every finger link (each follows its own joint).
+    if (gloves) {
+        std::vector<const Body*> hand;
+        for (const Body& b : c.bodies)
+            if ((b.kind == "robot_palm" || b.kind == "phalanx") && b.name.find(" Arm ") != std::string::npos) hand.push_back(&b);
+        for (const Body* b : hand)
+            cover(b, (armour ? "Gauntlet " : "Glove ") + b->name.substr(prefix.size()), armour ? 2.5f : 1.8f, armour ? plate : glove);
+    }
+    // Shoes over the foot and the toe, above the rubber soles (still the ground contact).
+    if (shoes) {
+        std::vector<const Body*> feet;
+        for (const Body& b : c.bodies)
+            if (b.kind == "robot_foot" && !b.params.empty() && b.params.size() > 3 && b.params[3] < 1.5f) feet.push_back(&b);
+        for (const Body* b : feet) {
+            const std::string what = b->name.substr(prefix.size());
+            cover(b, (armour ? "Sabaton " : "Shoe ") + what, armour ? 4.0f : 3.5f, armour ? plate : shoe);
+            if (!armour && what.find("Toe") == std::string::npos)
+                cover(b, "Shoe Glow " + what, 4.2f, kCoreGlow, band(b, 0.18f, 0.24f)); // a light line around the shoe
+        }
+        for (const char* side : sides) // boot tops round the ankle
+            cover(named(std::string(side) + "Shin"), std::string(armour ? "Sabaton " : "Shoe ") + side + "Ankle", armour ? 9.0f : 6.0f,
+                  armour ? plate : shoe, band(named(std::string(side) + "Shin"), 0.0f, 0.1f));
+    }
+    // Helmet: the head shell covered, the face (visor) left open; a crest or a light band.
+    if (helmet) {
+        const Body* headBody = named("Head");
+        const AABB hb = bounds(headBody);
+        const float hh = hb.max.z - hb.min.z, hd = hb.max.y - hb.min.y, hw = hb.max.x - hb.min.x;
+        auto openFace = [=](const Vec3& p) { // outside the face window (mm)
+            const float z = (p.z - hb.min.z) / std::max(hh, 1e-3f);
+            return -std::min({p.y - (hb.min.y + 0.62f * hd), (z - 0.30f) * hh, (0.78f - z) * hh, 0.46f * hw - std::fabs(p.x)});
+        };
+        cover(headBody, "Helmet", armour ? 8.0f : 6.0f, armour ? plate : fabric, {openFace});
+        if (armour)
+            cover(headBody, "Helmet Crest", 22.0f, gold,
+                  {[=](const Vec3& p) { return 7.0f * s - p.x; }, [=](const Vec3& p) { return 7.0f * s + p.x; },
+                   [=](const Vec3& p) { return p.z - (hb.min.z + 0.70f * hh); }, [=](const Vec3& p) { return hb.max.y - 0.1f * hd - p.y; }});
+        else
+            cover(headBody, "Helmet Glow", 8.5f, kCoreGlow,
+                  {[=](const Vec3& p) { return p.z - (hb.min.z + 0.79f * hh); }, [=](const Vec3& p) { return hb.min.z + 0.81f * hh - p.z; },
+                   openFace});
+    }
+    for (Body& b : added) c.bodies.push_back(std::move(b));
+}
 
 // Builds the humanoid parts of `key` into `c`: "humanoid" (all), "robot_head_neck",
 // "robot_torso" (pelvis to chest) or "robot_leg". Every joint is driven by a DC gear
@@ -2245,9 +2554,15 @@ const Vec3 kCoreGlow{0.30f, 0.86f, 1.0f};
 // at 1 / gear, so it sweeps 0 -> limit -> 0 within its human range of motion.
 void buildHumanoid(LibraryComponent& c, const std::string& key, const std::function<float(const char*)>& v,
                    const std::function<float(const char*)>& top, const Vec3& o) {
-    const bool all = key == "humanoid", headOnly = key == "robot_head_neck", legOnly = key == "robot_leg";
+    const bool female = key == "humanoid_female";
+    const bool all = key == "humanoid" || female, headOnly = key == "robot_head_neck", legOnly = key == "robot_leg";
     const bool torso = all || key == "robot_torso", head = all || headOnly, legs = all || legOnly;
-    const float s = v("size"), gear = v("gear"), rpm = v("rpm");
+    const int build = all ? (female ? 2 : 1) : 0;
+    const HumanoidBuild& B = kBuilds[build];
+    // A whole robot is made the height asked for (sole to the top of the head).
+    const float s = v("size") * (all ? v("height") / humanoidModelHeight(B.headH) : 1.0f), gear = v("gear"), rpm = v("rpm");
+    const float shoulderX = 200.0f * B.chestW / 380.0f, hipX = B.hipX;
+    const float shoulderK = shoulderX / 200.0f; // shoulder motors follow the shoulder width
     const bool black = v("finish") >= 0.5f;
     const Vec3 shell = black ? kHandShell : kBodyWhite, accent = black ? kDarkSteel : kHandShell;
     // A head on its own stands its neck base on a 220 mm pedestal.
@@ -2272,19 +2587,19 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
 
     // ---- torso: pelvis (root) -> waist -> gut -> trunk joint -> midriff -> chest + heart
     std::vector<std::string> upper, aboveTrunk, neckHead, headOnlyBodies; // bodies each joint carries
-    if (torso || legOnly) add(legOnly ? "Hip Mount" : "Pelvis", "robot_pelvis", {280, 180, kWaistUp, 2 * kHipX},
-                              {legOnly ? (v("side") >= 0.5f ? kHipX : -kHipX) : 0.0f, 0, kHipZ}, shell, nullptr);
+    if (torso || legOnly) add(legOnly ? "Hip Mount" : "Pelvis", "robot_pelvis", {B.pelvisW, B.pelvisD, kWaistUp, 2 * hipX, static_cast<float>(build)},
+                              {legOnly ? (v("side") >= 0.5f ? hipX : -hipX) : 0.0f, 0, kHipZ}, shell, nullptr);
     std::string waistDrive, flexDrive, bendDrive;
     if (torso) {
         if (!all) stand(kHipZ, -125.0f);
         waistDrive = motor(h, "Waist Rotation", "waist_rot", 1.6f, {0, -104, kHipZ + 40}, nullptr);
-        add("Gut", "robot_gut", {260, 180, kGut, 0}, {0, 0, kWaistZ}, shell, &upper);
-        add("Gut Core", "robot_gut", {260, 180, kGut, 1}, {0, 0, kWaistZ}, accent, &upper);
+        add("Gut", "robot_gut", {B.gutW, B.gutD, kGut, 0, static_cast<float>(build)}, {0, 0, kWaistZ}, shell, &upper);
+        add("Gut Core", "robot_gut", {B.gutW, B.gutD, kGut, 1}, {0, 0, kWaistZ}, accent, &upper);
         flexDrive = motor(h, "Trunk Flex", "trunk_flex", 1.3f, {-36, -98, kWaistZ + 40}, &upper);
         bendDrive = motor(h, "Trunk Bend", "trunk_bend", 1.3f, {36, -98, kWaistZ + 40}, &upper);
-        add("Midriff", "robot_midriff", {230, 160, kMidriff}, {0, 0, kTrunkZ}, accent, &aboveTrunk);
-        add("Chest", "robot_chest", {380, 230, kChest}, {0, 0, kChestZ}, shell, &aboveTrunk);
-        const Vec3 heart{0, 114, kChestZ + 135};
+        add("Midriff", "robot_midriff", {B.midW, B.midD, kMidriff}, {0, 0, kTrunkZ}, accent, &aboveTrunk);
+        add("Chest", "robot_chest", {B.chestW, B.chestD, kChest, static_cast<float>(build)}, {0, 0, kChestZ}, shell, &aboveTrunk);
+        const Vec3 heart{0, 114 * B.chestD / 230.0f + (build == 1 ? 26.0f : 0.0f), kChestZ + 135};
         add("Heart Housing", "robot_heart", {46, 0}, heart, accent, &aboveTrunk);
         add("Heart Core", "robot_heart", {46, 1}, heart, kCoreGlow, &aboveTrunk);
         add("Heart Pump", "robot_heart", {46, 2}, heart, kSteel, &aboveTrunk);
@@ -2304,9 +2619,9 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             pitchDrive = motor(h, "Neck Pitch", "neck_pitch", 0.9f, {0, -108, kNeckZ - 70}, &aboveTrunk);
             rollDrive = motor(h, "Neck Roll", "neck_roll", 0.9f, {34, -104, kNeckZ - 70}, &aboveTrunk);
         }
-        add("Neck", "robot_neck", {kNeck, 34}, {0, 0, kNeckZ}, accent, &neckHead);
-        add("Head", "robot_head", {160, 200, 230, 0}, {0, 0, kNeckZ + kNeck}, shell, &headOnlyBodies);
-        add("Visor", "robot_head", {160, 200, 230, 1}, {0, 0, kNeckZ + kNeck}, kVisor, &headOnlyBodies);
+        add("Neck", "robot_neck", {kNeck, B.neckR}, {0, 0, kNeckZ}, accent, &neckHead);
+        add("Head", "robot_head", {B.headW, B.headD, B.headH, 0}, {0, 0, kNeckZ + kNeck}, shell, &headOnlyBodies);
+        add("Visor", "robot_head", {B.headW, B.headD, B.headH, 1}, {0, 0, kNeckZ + kNeck}, kVisor, &headOnlyBodies);
         neckHead.insert(neckHead.end(), headOnlyBodies.begin(), headOnlyBodies.end());
         aboveTrunk.insert(aboveTrunk.end(), neckHead.begin(), neckHead.end());
     }
@@ -2332,7 +2647,13 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             Shoulder sh;
             sh.arm = buildHandArm(ah, v, v("drive") >= 0.5f, true, true, false);
             const Vec3 native = Vec3{0, 0, kShoulderHeight} * s;
-            const Vec3 at = h.pos({left ? -kShoulderX : kShoulderX, -5, kShoulderZ});
+            const Vec3 at = h.pos({left ? -shoulderX : shoulderX, -5, kShoulderZ});
+            for (Body& b : arm.bodies) { // the build's upper arm and forearm
+                if (b.kind == "arm_link") b.params = {kUpperArm, B.armR, static_cast<float>(build)};
+                else if (b.kind == "robot_forearm" && b.params.size() >= 5) b.params = {B.forearmW, b.params[1], b.params[2], b.params[3], b.params[4], static_cast<float>(build)};
+                else continue;
+                b.rebuild();
+            }
             for (Body& b : arm.bodies) {
                 b.offset = at + turn.transformDir(b.offset - native);
                 b.setRotation(euler);
@@ -2345,7 +2666,7 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             }
             sh.joints = std::move(arm.motions);
             HandBuilder sideH{c, origin, s, gear, rpm, left, {}};
-            const float x = 150.0f;
+            const float x = 150.0f * shoulderK;
             sh.flex = motor(sideH, label + "Shoulder Flex", "shoulder_flex", 1.2f, {x - 40, -98, kShoulderZ - 60}, &aboveTrunk);
             sh.abd = motor(sideH, label + "Shoulder Abduction", "shoulder_abd", 1.2f, {x, -90, kShoulderZ - 60}, &aboveTrunk);
             sh.rot = motor(sideH, label + "Shoulder Rotation", "shoulder_rot", 1.2f, {x + 36, -76, kShoulderZ - 60}, &aboveTrunk);
@@ -2370,7 +2691,7 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
         Shoulder& sh = shoulders[i];
         HandBuilder sideH{c, origin, s, gear, rpm, i == 1, {}};
         const std::string label = i == 1 ? "Left " : "Right ";
-        const Vec3 at{kShoulderX, -5, kShoulderZ};
+        const Vec3 at{shoulderX, -5, kShoulderZ};
         sideH.joint(label + "Shoulder Flex", sh.arm, at, {1, 0, 0}, sh.flex, 1.0f / gear);
         sideH.joint(label + "Shoulder Abduction", sh.arm, at, {0, -1, 0}, sh.abd, 1.0f / gear);
         sideH.joint(label + "Shoulder Rotation", sh.arm, at, {0, 0, 1}, sh.rot, 1.0f / gear);
@@ -2384,7 +2705,7 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             const bool left = legOnly ? v("side") >= 0.5f : side == 1;
             if (legOnly && side == 1) break;
             const std::string label = legOnly ? "" : (left ? "Left " : "Right ");
-            HandBuilder lh{c, origin + Vec3{legOnly ? 0.0f : (left ? -kHipX : kHipX), 0, kHipZ} * s, s, gear, rpm, left, {}};
+            HandBuilder lh{c, origin + Vec3{legOnly ? 0.0f : (left ? -hipX : hipX), 0, kHipZ} * s, s, gear, rpm, left, {}};
             std::vector<std::string> thigh, shin, foot, toe;
             auto leg = [&](const std::string& part_, const char* kind, std::vector<float> p, const Vec3& at, const Vec3& col,
                            std::vector<std::string>& group) {
@@ -2392,8 +2713,8 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
                 group.push_back(c.bodies.back().name);
             };
             const Vec3 knee{0, 0, -kThigh}, ankle{0, 0, -kThigh - kShin}, toeJoint = ankle + Vec3{0, 126, -70};
-            leg("Thigh", "robot_thigh", {kThigh, 130, 140}, {}, shell, thigh);
-            leg("Shin", "robot_shin", {kShin, 100, 110}, knee, shell, shin);
+            leg("Thigh", "robot_thigh", {kThigh, B.thighW, B.thighD, static_cast<float>(build)}, {}, shell, thigh);
+            leg("Shin", "robot_shin", {kShin, B.shinW, B.shinD, static_cast<float>(build)}, knee, shell, shin);
             leg("Foot", "robot_foot", {250, 100, kAnkleZ, 0}, ankle, shell, foot);
             leg("Foot Sole", "robot_foot", {250, 100, kAnkleZ, 2}, ankle, kRubber, foot);
             leg("Toe", "robot_foot", {250, 100, kAnkleZ, 1}, toeJoint, shell, toe);
@@ -2419,6 +2740,7 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             lh.joint(label + "Toe", toe, toeJoint, {1, 0, 0}, toeDrive, 1.0f / gear);
         }
     }
+    if (all) dressHumanoid(c, v, s, black);
     settleDrives(c);
     faceFront(c, o);
 
@@ -2532,7 +2854,7 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
         return c;
     }
     // Humanoid body: head and neck, torso (pelvis, gut, midriff, chest, heart), legs, or all of it.
-    if (key == "humanoid" || key == "robot_head_neck" || key == "robot_torso" || key == "robot_leg") {
+    if (key == "humanoid" || key == "humanoid_female" || key == "robot_head_neck" || key == "robot_torso" || key == "robot_leg") {
         buildHumanoid(c, key, v, top, o);
         return c;
     }
