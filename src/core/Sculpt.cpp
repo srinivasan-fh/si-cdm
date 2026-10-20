@@ -412,6 +412,142 @@ void SculptMesh::refineAll(float detail, std::size_t maxTriangles) {
     updateNormals();
 }
 
+std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float radius) {
+    const float min2 = minEdge * minEdge, r2 = radius * radius;
+    std::size_t total = 0;
+    for (int pass = 0; pass < 12; ++pass) {
+        // Vertex -> triangles, and open-border vertices (left alone).
+        std::vector<std::vector<std::uint32_t>> around(m_p.size());
+        for (std::size_t i = 0; i < m_t.size(); ++i)
+            for (std::uint32_t v : m_t[i]) around[v].push_back(static_cast<std::uint32_t>(i));
+        // Edge use counts by sorting the edge keys.
+        std::vector<std::uint64_t> keys;
+        keys.reserve(m_t.size() * 3);
+        for (const auto& t : m_t)
+            for (int e = 0; e < 3; ++e) keys.push_back(edgeKey(t[static_cast<std::size_t>(e)], t[static_cast<std::size_t>((e + 1) % 3)]));
+        std::sort(keys.begin(), keys.end());
+        std::vector<std::pair<std::uint64_t, int>> count;
+        for (std::size_t i = 0; i < keys.size();) {
+            std::size_t j = i;
+            while (j < keys.size() && keys[j] == keys[i]) ++j;
+            count.emplace_back(keys[i], static_cast<int>(j - i));
+            i = j;
+        }
+        std::vector<char> border(m_p.size(), 0);
+        for (const auto& [k, c] : count)
+            if (c != 2) border[k >> 32] = border[k & 0xFFFFFFFFu] = 1;
+        std::vector<std::pair<float, std::uint64_t>> edges;
+        for (const auto& [k, c] : count) {
+            if (c != 2) continue;
+            const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+            const Vec3 d = m_p[a] - m_p[b];
+            const float l2 = dot(d, d);
+            if (l2 >= min2) continue;
+            if (radius > 0) {
+                const Vec3 q = (m_p[a] + m_p[b]) * 0.5f - centre;
+                if (dot(q, q) > r2) continue;
+            }
+            edges.emplace_back(l2, k);
+        }
+        if (edges.empty()) break;
+        std::sort(edges.begin(), edges.end());
+        std::vector<char> locked(m_p.size(), 0), dead(m_t.size(), 0);
+        std::size_t collapsed = 0;
+        std::vector<std::uint32_t> ringA, ringB;
+        auto ring = [&](std::uint32_t v, std::vector<std::uint32_t>& out) {
+            out.clear();
+            for (std::uint32_t ti : around[v])
+                if (!dead[ti])
+                    for (std::uint32_t w : m_t[ti])
+                        if (w != v) out.push_back(w);
+            std::sort(out.begin(), out.end());
+            out.erase(std::unique(out.begin(), out.end()), out.end());
+        };
+        for (const auto& [l2, k] : edges) {
+            const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+            if (locked[a] || locked[b] || border[a] || border[b]) continue;
+            // Link condition: the edge's two opposite vertices are the only shared neighbours.
+            ring(a, ringA);
+            ring(b, ringB);
+            int shared = 0;
+            for (std::uint32_t w : ringA)
+                if (w != b && std::binary_search(ringB.begin(), ringB.end(), w)) ++shared;
+            if (shared != 2) continue;
+            const Vec3 m = (m_p[a] + m_p[b]) * 0.5f;
+            // No triangle may flip or collapse, or turn away from the surface around
+            // the edge (its area-weighted normal; slivers' own normals mean little).
+            Vec3 regionN{};
+            for (std::uint32_t v : {a, b})
+                for (std::uint32_t ti : around[v])
+                    if (!dead[ti]) regionN += cross(m_p[m_t[ti][1]] - m_p[m_t[ti][0]], m_p[m_t[ti][2]] - m_p[m_t[ti][0]]);
+            regionN = normalize(regionN);
+            bool ok = length(regionN) > 0.5f;
+            for (std::uint32_t v : {a, b}) {
+                if (!ok) break;
+                for (std::uint32_t ti : around[v]) {
+                    if (dead[ti]) continue;
+                    const auto& t = m_t[ti];
+                    const bool hasA = t[0] == a || t[1] == a || t[2] == a, hasB = t[0] == b || t[1] == b || t[2] == b;
+                    if (hasA && hasB) continue;
+                    Vec3 q[3];
+                    for (int c = 0; c < 3; ++c) {
+                        const std::uint32_t w = t[static_cast<std::size_t>(c)];
+                        q[c] = (w == a || w == b) ? m : m_p[w];
+                    }
+                    const Vec3 before = cross(m_p[t[1]] - m_p[t[0]], m_p[t[2]] - m_p[t[0]]);
+                    const Vec3 after = cross(q[1] - q[0], q[2] - q[0]);
+                    const float la = length(after);
+                    if (la <= 1e-12f || dot(before, after) <= 0.0f || dot(after, regionN) <= 0.85f * la) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (!ok) break;
+            }
+            if (!ok) continue;
+            for (std::uint32_t ti : around[b]) {
+                if (dead[ti]) continue;
+                auto& t = m_t[ti];
+                if (t[0] == a || t[1] == a || t[2] == a) {
+                    dead[ti] = 1; // the two triangles on the edge
+                    continue;
+                }
+                for (auto& v : t)
+                    if (v == b) v = a;
+                around[a].push_back(ti);
+            }
+            m_p[a] = m;
+            locked[a] = locked[b] = 1;
+            for (std::uint32_t w : ringA) locked[w] = 1;
+            for (std::uint32_t w : ringB) locked[w] = 1;
+            ++collapsed;
+        }
+        if (collapsed == 0) break;
+        std::vector<std::array<std::uint32_t, 3>> kept;
+        kept.reserve(m_t.size());
+        for (std::size_t i = 0; i < m_t.size(); ++i)
+            if (!dead[i]) kept.push_back(m_t[i]);
+        m_t = std::move(kept);
+        total += collapsed;
+    }
+    if (total > 0) {
+        // Drop vertices no triangle uses any more.
+        std::vector<std::uint32_t> remap(m_p.size(), 0xFFFFFFFFu);
+        std::vector<Vec3> p;
+        for (auto& t : m_t)
+            for (auto& v : t) {
+                if (remap[v] == 0xFFFFFFFFu) {
+                    remap[v] = static_cast<std::uint32_t>(p.size());
+                    p.push_back(m_p[v]);
+                }
+                v = remap[v];
+            }
+        m_p = std::move(p);
+        updateNormals();
+    }
+    return total;
+}
+
 void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
     const float R = std::max(s.radius, 1e-3f), R2 = R * R;
     std::vector<std::pair<std::uint32_t, float>> region;
@@ -507,6 +643,10 @@ void SculptMesh::dab(const Vec3& centre, const SculptSettings& s) {
         updateNormals();
     }
     applyDab(centre, s);
+    if (s.refine) { // and coarsen where the clay was squashed (edges far below the detail size)
+        collapseShort(detail * 0.3f, centre, R);
+        if (mirror) collapseShort(detail * 0.3f, mc, R);
+    }
     if (mirror) applyDab(mc, s);
     updateNormals();
 }
@@ -544,7 +684,7 @@ void SculptMesh::grabTo(const Vec3& delta) {
     updateNormals();
 }
 
-void SculptMesh::writeTo(Body& body, bool featureEdges) const {
+void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const {
     // Auto-smooth: a corner averages the faces around its vertex that turn less than
     // 40 degrees from its own face, so sculpted surfaces shade smoothly while the
     // hard edges of machined faces stay crisp.
@@ -564,7 +704,7 @@ void SculptMesh::writeTo(Body& body, bool featureEdges) const {
         for (std::size_t i = 0; i < T; ++i)
             for (std::uint32_t v : m_t[i]) inc[fill[v]++] = static_cast<std::uint32_t>(i);
     }
-    const float cosLimit = std::cos(radians(40.0f));
+    const float cosLimit = std::cos(radians(smoothAngle));
     MeshData out;
     out.vertices.reserve(V + V / 4);
     out.indices.assign(T * 3, 0);
@@ -625,6 +765,15 @@ void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSetti
         }
     }
     sm.writeTo(body, true);
+}
+
+void simplifyMesh(MeshData& mesh, float edge) {
+    Body b;
+    b.mesh = std::move(mesh);
+    SculptMesh sm(b);
+    sm.collapseShort(edge);
+    sm.writeTo(b, false);
+    mesh = std::move(b.mesh);
 }
 
 void sculptRefine(Body& body, float detail) {
@@ -946,6 +1095,24 @@ std::size_t openEdgeCount(const MeshData& m) {
     for (const auto& [k, c] : count) open += c != 2;
     return open;
 }
+
+struct WindingNumber::Impl {
+    explicit Impl(std::vector<DTri> t) : field(std::move(t)) {}
+    WindingField field;
+};
+
+WindingNumber::WindingNumber(const MeshData& m) {
+    std::vector<DTri> tris;
+    tris.reserve(m.indices.size() / 3);
+    for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3)
+        tris.push_back({D3(m.vertices[m.indices[k]].position), D3(m.vertices[m.indices[k + 1]].position),
+                        D3(m.vertices[m.indices[k + 2]].position)});
+    m_impl = new Impl(std::move(tris));
+}
+
+WindingNumber::~WindingNumber() { delete m_impl; }
+
+double WindingNumber::operator()(const Vec3& p) const { return m_impl->field(D3(p)); }
 
 double meshVolume(const MeshData& m) {
     double v = 0;

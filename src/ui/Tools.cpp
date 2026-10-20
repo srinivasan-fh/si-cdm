@@ -62,7 +62,7 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::TubercleWing, C::ClassA, "Tubercle Wing", "", "Whale-fin-inspired leading edges that delay stall on UAVs.", false},
 
     {T::TopologyOptimized, C::Generative, "Topology Optimisation", "", "Skeletal shapes stripped of dead weight, ideal for robot limbs.", false},
-    {T::TpmsLattice, C::Generative, "TPMS Lattice", "", "Periodic gyroid-type infill for light, crash-absorbent parts.", false},
+    {T::TpmsLattice, C::Generative, "TPMS Lattice", "", "Periodic gyroid-type infill for light, crash-absorbent parts. Click a solid body to fill it.", true},
 
     {T::MeshImport, C::Mesh, "STL / OBJ Mesh", "", "Triangulated surfaces for 3D printers and slicers.", false},
     {T::PointCloud, C::Mesh, "Point Cloud", "", "Millions of points captured by 3D laser scanners.", false},
@@ -86,6 +86,12 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::CutKnife, C::Cut, "Knife / Trim", "", "Drag a line across a body: the plane through it slices the body and the smaller side is removed. The cut is capped.", true},
     {T::AddBoss, C::Cut, "Add Volume (Boss)", "", "Click a surface to fuse on a boss, pad or dome.", true},
     {T::BooleanBodies, C::Cut, "Boolean Bodies", "", "Click a body, then a second one: union, subtract or intersect them exactly.", true},
+
+    {T::ShellBody, C::Wearable, "Shell / Hollow", "", "Click a body to hollow it to a wall thickness (armour plating), or solidify a surface. With Open, the side you click is cut open: a helmet, a gauntlet, a chest plate.", true},
+    {T::ArmorBody, C::Wearable, "Armour Offset", "", "Click a body part (a humanoid's forearm, chest...) for an armour shell around it: a clearance gap for padding, wiring and movement, then the wall. It moves with the part.", true},
+    {T::JointBody, C::Wearable, "Joint / Hinge", "", "Click a part at its pivot: a hinge pin or ball joint there, and a motion swinging the part through its range against the part it touches.", true},
+    {T::LightenBody, C::Wearable, "Lighten (Lattice)", "", "Click a thick part: keep a skin and fill the inside with a gyroid lattice (or hollow it) to save weight.", true},
+    {T::InterferenceCheck, C::Wearable, "Interference Check", "", "Click to sweep the motions (gestures, walk, joints) and list every part that collides or comes closer than the clearance.", true},
 }};
 
 constexpr ToolId gMove[] = {T::Move};
@@ -120,6 +126,10 @@ constexpr ToolId gCutHole[] = {T::CutHole, T::CutPocket, T::CutChannel};
 constexpr ToolId gCutKnife[] = {T::CutKnife};
 constexpr ToolId gBoss[] = {T::AddBoss};
 constexpr ToolId gBoolean[] = {T::BooleanBodies};
+constexpr ToolId gShell[] = {T::ShellBody, T::LightenBody};
+constexpr ToolId gArmor[] = {T::ArmorBody};
+constexpr ToolId gJoint[] = {T::JointBody};
+constexpr ToolId gInterference[] = {T::InterferenceCheck};
 
 constexpr ToolGroup kGroups[] = {
     {C::Navigate, gMove},   {C::Navigate, gSelect}, {C::Navigate, gOrbit},   {C::Navigate, gPan},
@@ -130,6 +140,7 @@ constexpr ToolGroup kGroups[] = {
     {C::ClassA, gAirfoil},  {C::Generative, gTopo}, {C::Generative, gLattice}, {C::Mesh, gMesh},
     {C::Sculpt, gSculptAdd}, {C::Sculpt, gSculptGrab}, {C::Sculpt, gSculptPinch}, {C::Sculpt, gSculptSmooth},
     {C::Cut, gCutHole},     {C::Cut, gCutKnife},    {C::Cut, gBoss},        {C::Cut, gBoolean},
+    {C::Wearable, gShell},  {C::Wearable, gArmor},  {C::Wearable, gJoint},  {C::Wearable, gInterference},
 };
 
 } // namespace
@@ -150,6 +161,7 @@ const char* categoryName(ToolCategory c) {
     case C::Mesh: return "Mesh Data";
     case C::Sculpt: return "Digital Sculpting";
     case C::Cut: return "Cuts & Booleans";
+    case C::Wearable: return "Armour & Exoskeleton";
     }
     return "";
 }
@@ -159,6 +171,8 @@ bool isPrimitiveTool(ToolId id) { return toolInfo(id).category == ToolCategory::
 bool isSculptTool(ToolId id) { return toolInfo(id).category == ToolCategory::Sculpt; }
 
 bool isCutTool(ToolId id) { return toolInfo(id).category == ToolCategory::Cut; }
+
+bool isWearableTool(ToolId id) { return toolInfo(id).category == ToolCategory::Wearable || id == ToolId::TpmsLattice; }
 
 bool isSketchTool(ToolId id) {
     return id == ToolId::Point || id == ToolId::Line || id == ToolId::Polyline || id == ToolId::Rectangle ||

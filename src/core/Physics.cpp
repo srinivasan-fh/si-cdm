@@ -698,6 +698,7 @@ std::vector<Mat4> simulationTransforms(const Scene& scene, float t) {
         }
         tf[b.body] = m;
     }
+    applyAttachments(scene, tf);
     return tf;
 }
 

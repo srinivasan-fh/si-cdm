@@ -203,6 +203,7 @@ private:
     void continueSculpt(float x, float y);
     void endSculpt();
     void applyCutTool(ToolId tool, float x, float y);
+    void applyWearableTool(ToolId tool, float x, float y);
     void finishCutDrag(ToolId tool, float x, float y);
     void drawSculptOverlay();
 

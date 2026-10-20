@@ -363,6 +363,10 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         if (tool != ToolId::CutChannel && tool != ToolId::CutKnife) applyCutTool(tool, x, y);
         return;
     }
+    if (isWearableTool(tool)) {
+        applyWearableTool(tool, x, y);
+        return;
+    }
     if (isSculptTool(tool)) {
         if (!pick(x, y)) setStatus("Drag over a body to sculpt it");
         return;
@@ -617,6 +621,66 @@ void Application::applyCutTool(ToolId tool, float x, float y) {
     runCommandLine(line);
 }
 
+void Application::applyWearableTool(ToolId tool, float x, float y) {
+    const UiState& u = m_uiState;
+    if (tool == ToolId::InterferenceCheck) {
+        runCommandLine("INTERFERENCE CLEARANCE " + mmText(u.interferenceClearance));
+        return;
+    }
+    const auto hit = pick(x, y);
+    if (!hit) {
+        setStatus("Click a body");
+        return;
+    }
+    const Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)];
+    const std::string name = quotedName(body.name);
+    const Vec3 n = normalize(m_brushNormal);
+    switch (tool) {
+    case ToolId::ShellBody: {
+        std::string line = "SHELL " + name + " THICKNESS " + mmText(u.shellThickness) + (u.shellOutward ? " OUTWARD" : "");
+        if (u.shellOpen && length(n) > 0.5f)
+            line += " OPEN " + mmVec(hit->point - n * u.shellOpenDepth) + " NORMAL " + dirVec(n);
+        runCommandLine(line);
+        break;
+    }
+    case ToolId::ArmorBody:
+        runCommandLine("ARMOR " + name + " CLEARANCE " + mmText(u.armorClearance) + " THICKNESS " + mmText(u.armorThickness));
+        break;
+    case ToolId::JointBody: {
+        // The parent: the nearest other part (by box) that is not this part's own armour or hardware.
+        int parent = -1;
+        float best = 1e30f;
+        const auto& bodies = m_doc.scene.bodies();
+        for (std::size_t i = 0; i < bodies.size(); ++i) {
+            if (static_cast<int>(i) == hit->body || !bodies[i].visible || bodies[i].attachedTo == body.name) continue;
+            const AABB b = bodies[i].bounds();
+            if (!b.valid()) continue;
+            const Vec3 q = vmax(b.min, vmin(hit->point, b.max));
+            const float d = length(q - hit->point);
+            if (d < best) {
+                best = d;
+                parent = static_cast<int>(i);
+            }
+        }
+        const Vec3 f = camera().forward();
+        const std::string axis = u.jointAxis == 0 ? "X" : u.jointAxis == 1 ? "Y" : u.jointAxis == 2 ? "Z" : dirVec(f);
+        std::string line = "JOINT " + name;
+        if (parent >= 0 && best < 50.0f) line += " TO " + quotedName(bodies[static_cast<std::size_t>(parent)].name);
+        char range[96];
+        std::snprintf(range, sizeof(range), " RANGE %g %g PERIOD %g", static_cast<double>(u.jointLo), static_cast<double>(u.jointHi),
+                      static_cast<double>(u.jointPeriod));
+        line += " AT " + mmVec(hit->point) + " AXIS " + axis + (u.jointBall ? " BALL" : " HINGE") + range;
+        runCommandLine(line);
+        break;
+    }
+    default: // Lighten / TPMS lattice
+        runCommandLine("LIGHTEN " + name + " SKIN " + mmText(u.latticeSkin) +
+                       (u.latticeHollow ? std::string(" HOLLOW")
+                                        : " CELL " + mmText(u.latticeCell) + " WALL " + mmText(u.latticeWall)));
+        break;
+    }
+}
+
 void Application::finishCutDrag(ToolId tool, float x, float y) {
     const ImGuiIO& io = ImGui::GetIO();
     if (tool == ToolId::CutChannel) {
@@ -683,6 +747,16 @@ void Application::drawSculptOverlay() {
         }
     }
     if (!m_brushHit || tool == ToolId::CutKnife || tool == ToolId::BooleanBodies) return;
+    if (isWearableTool(tool)) { // the clicked point and its normal
+        const auto c = projectToScreen(camera(), *m_brushHit, io.DisplaySize);
+        const AABB vb = m_doc.scene.bounds();
+        const float len = vb.valid() ? length(vb.max - vb.min) * 0.04f : 10.0f;
+        const auto tip = projectToScreen(camera(), *m_brushHit + normalize(m_brushNormal) * len, io.DisplaySize);
+        const ImU32 col = IM_COL32(120, 220, 160, 240);
+        if (c) fg->AddCircle(*c, 6.0f, col, 16, 1.6f);
+        if (c && tip) fg->AddLine(*c, *tip, col, 1.4f);
+        return;
+    }
     const UiState& u = m_uiState;
     float r = u.sculptRadius;
     ImU32 col = IM_COL32(235, 238, 245, 230);
@@ -853,7 +927,7 @@ void Application::handleViewportInput() {
     }
     // Brush / tool cursor on the surface under the mouse.
     m_brushHit.reset();
-    if (onCanvas && !simulating() && (isSculptTool(tool) || isCutTool(tool)) && m_leftDrag != DragMode::Orbit &&
+    if (onCanvas && !simulating() && (isSculptTool(tool) || isCutTool(tool) || isWearableTool(tool)) && m_leftDrag != DragMode::Orbit &&
         m_leftDrag != DragMode::Pan) {
         if (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) {
             Vec3 n;
@@ -1097,7 +1171,9 @@ void Application::frame(float dt) {
         }
     }
     if (m_extrudeCurve >= 0) drawExtrudePreview();
-    if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()))) drawSculptOverlay();
+    if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
+                          isWearableTool(m_ui.toolbox().active())))
+        drawSculptOverlay();
     if (simulating()) {
         m_simTransforms = simulationTransforms(m_doc.scene, m_uiState.simTime); // after scrubbing / panel edits
         updateLoopShapes();

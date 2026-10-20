@@ -105,6 +105,8 @@ float motionCycle(const Motion& m) noexcept;
 // outermost, so "Drive" (all bodies) listed before "Wheel spin" carries the
 // spinning wheels along.
 std::vector<Mat4> motionTransforms(const Scene& scene, float t);
+// Gives every body attached to another (Body::attachedTo) that body's transform.
+void applyAttachments(const Scene& scene, std::vector<Mat4>& transforms);
 // The same for one body; `before` stops at that motion index (its outer motions only).
 Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::size_t before = static_cast<std::size_t>(-1));
 // Indices of the bodies each motion moves (by name, "*" = all), in scene order.

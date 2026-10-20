@@ -5,6 +5,7 @@
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
 #include "core/Sculpt.hpp"
+#include "core/Wearable.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
@@ -1426,6 +1427,340 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         const std::size_t open = openEdgeCount(body.mesh);
         out.say(body.name + ": " + done + fmt(", %g triangles", static_cast<double>(body.mesh.indices.size() / 3)) +
                 fmt(" (was %g)", static_cast<double>(trisBefore)) + (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))));
+        return out;
+    }
+    if (cmd == "SHELL" || cmd == "ARMOR" || cmd == "INTERFERENCE" || cmd == "JOINT" || cmd == "LIGHTEN") {
+        static const char* const kKeys[] = {"thickness", "outward", "open", "normal", "clearance", "part", "step",
+                                            "duration", "bodies", "to", "at", "axis", "hinge", "ball", "range", "merge",
+                                            "period", "size", "skin", "cell", "wall", "hollow"};
+        auto isKey = [&](const std::string& w) {
+            const std::string k = lower(w);
+            for (const char* q : kKeys)
+                if (k == q) return true;
+            return false;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        while (i < a.size() && !isKey(a[i])) nameWords.push_back(a[i++]);
+        auto lengthAfter = [&](float& v) {
+            if (i + 1 >= a.size()) return false;
+            const auto l = parseLength(a[++i]);
+            if (!l) return false;
+            v = static_cast<float>(*l);
+            return true;
+        };
+        auto numberAfter = [&](float& v) {
+            if (i + 1 >= a.size()) return false;
+            const auto n = parseNumber(a[++i]);
+            if (!n) return false;
+            v = *n;
+            return true;
+        };
+        auto bodyNamed = [&](const std::vector<std::string>& words) {
+            return words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
+        };
+
+        if (cmd == "INTERFERENCE") {
+            float clearance = 2.0f, step = 0.0f, duration = 0.0f;
+            std::vector<std::size_t> set;
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if (k == "clearance") {
+                    if (!lengthAfter(clearance)) return out.fail("CLEARANCE needs a length");
+                } else if (k == "step") {
+                    if (!numberAfter(step) || step <= 0) return out.fail("STEP needs seconds");
+                } else if (k == "duration") {
+                    if (!numberAfter(duration) || duration < 0) return out.fail("DURATION needs seconds");
+                } else if (k == "bodies") {
+                    for (++i; i < a.size(); ++i) {
+                        const int b = findBody(doc, a[i]);
+                        if (b < 0) return out.fail("No body named " + a[i]);
+                        set.push_back(static_cast<std::size_t>(b));
+                    }
+                } else {
+                    return usage();
+                }
+            }
+            const InterferenceReport r = checkInterference(doc.scene, set, clearance, step, duration);
+            out.say(fmt("Interference over %.2f s (%g samples, ", r.duration, r.samples) +
+                    std::to_string(r.checkedPairs) + " pairs), clearance " + lengthText(clearance) + ":");
+            if (r.pairs.empty()) out.say("  all clear");
+            if (r.restOverlaps > 0)
+                out.say("  (" + std::to_string(r.restOverlaps) + " pairs already overlap in the rest pose, at joints, and get no deeper)");
+            std::size_t shown = 0;
+            for (const InterferencePair& p : r.pairs) {
+                if (++shown > 40) {
+                    out.say("  ... " + std::to_string(r.pairs.size() - 40) + " more");
+                    break;
+                }
+                out.say(std::string("  ") + (p.distance < 0 ? "COLLIDES " : "too close ") + p.a + " / " + p.b +
+                        (p.distance < 0 ? ": " + lengthText(-p.distance) + " deep" : ": " + lengthText(p.distance) + " gap") +
+                        fmt(" at %.2f s", p.time) + " near " + vecText(p.at) +
+                        (p.restDistance < 0 ? " (" + lengthText(-p.restDistance) + " at rest)" : ""));
+            }
+            return out;
+        }
+
+        if (cmd == "ARMOR") {
+            float clearance = 3.0f, thickness = 3.0f;
+            std::string partWord;
+            bool merge = false;
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if (k == "clearance") {
+                    if (!lengthAfter(clearance) || clearance < 0) return out.fail("CLEARANCE needs a length");
+                } else if (k == "thickness") {
+                    if (!lengthAfter(thickness) || thickness <= 0) return out.fail("THICKNESS needs a length");
+                } else if (k == "merge") {
+                    merge = true;
+                } else if (k == "part") {
+                    std::vector<std::string> w;
+                    for (++i; i < a.size() && !isKey(a[i]) && !iequal(a[i], "merge"); ++i) w.push_back(a[i]);
+                    --i;
+                    partWord = lower(joinArgs(w));
+                    if (partWord.empty()) return out.fail("PART needs a word, e.g. PART Forearm");
+                } else {
+                    return usage();
+                }
+            }
+            std::vector<std::size_t> sources;
+            auto& bodies = doc.scene.bodies();
+            if (!partWord.empty()) {
+                const std::string robot = joinArgs(nameWords);
+                // Several words, comma separated: "chest, heart, shoulder".
+                std::vector<std::string> words;
+                for (std::size_t q = 0; q <= partWord.size();) {
+                    const std::size_t c = std::min(partWord.find(',', q), partWord.size());
+                    std::string w = partWord.substr(q, c - q);
+                    while (!w.empty() && w.front() == ' ') w.erase(w.begin());
+                    while (!w.empty() && w.back() == ' ') w.pop_back();
+                    if (!w.empty()) words.push_back(w);
+                    q = c + 1;
+                }
+                for (std::size_t b = 0; b < bodies.size(); ++b) {
+                    const std::string n = lower(bodies[b].name);
+                    bool match = false;
+                    for (const std::string& w : words) match = match || n.find(w) != std::string::npos;
+                    // Motors are skipped unless asked for by name.
+                    bool askedMotor = false;
+                    for (const std::string& w : words) askedMotor = askedMotor || w.find("motor") != std::string::npos;
+                    if (!bodies[b].visible || !match || (!askedMotor && n.find("motor") != std::string::npos) || n.rfind("armor ", 0) == 0)
+                        continue;
+                    if (!robot.empty() && !iequal(bodies[b].component, robot) && lower(bodies[b].name).rfind(lower(robot), 0) != 0)
+                        continue;
+                    sources.push_back(b);
+                }
+                if (sources.empty()) return out.fail("No visible part with '" + partWord + "' in its name");
+            } else {
+                const int b = bodyNamed(nameWords);
+                if (b < 0 || b >= static_cast<int>(bodies.size()))
+                    return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+                sources.push_back(static_cast<std::size_t>(b));
+            }
+            doc.scene.pushUndo("ARMOR");
+            std::vector<Body> made;
+            if (merge && sources.size() > 1) { // one shell around all of them, carried by the first
+                Body all = bodies[sources.front()];
+                all.mesh = worldMesh(all);
+                all.offset = {};
+                for (std::size_t q = 1; q < sources.size(); ++q) all.mesh.append(worldMesh(bodies[sources[q]]));
+                all.mesh.transform(translate(-bodies[sources.front()].offset));
+                all.offset = bodies[sources.front()].offset;
+                all.name = bodies[sources.front()].name;
+                sources = {sources.front()};
+                std::string error;
+                auto armour = armorFor(all, clearance, thickness, &error);
+                if (!armour) {
+                    doc.scene.undo();
+                    return out.fail(error);
+                }
+                std::string name = armour->name;
+                for (int n = 2; findBody(doc, name) >= 0; ++n) name = armour->name + " " + std::to_string(n);
+                armour->name = name;
+                armour->attachedTo = all.name;
+                made.push_back(std::move(*armour));
+                sources.clear();
+            }
+            for (std::size_t b : sources) {
+                std::string error;
+                auto armour = armorFor(bodies[b], clearance, thickness, &error);
+                if (!armour) {
+                    doc.scene.undo();
+                    return out.fail(error);
+                }
+                // Unique name; moves with its part.
+                std::string name = armour->name;
+                for (int n = 2; findBody(doc, name) >= 0; ++n) name = armour->name + " " + std::to_string(n);
+                armour->name = name;
+                armour->attachedTo = bodies[b].name; // moves with its part, whatever drives it
+                made.push_back(std::move(*armour));
+            }
+            for (Body& m : made) {
+                out.say("Created " + m.name + fmt(": %g triangles, ", static_cast<double>(m.mesh.indices.size() / 3)) +
+                        lengthText(clearance) + " clearance, " + lengthText(thickness) + " thick");
+                doc.scene.add(std::move(m));
+            }
+            doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+            markChanged(doc);
+            return out;
+        }
+
+        if (cmd == "JOINT") {
+            // JOINT child [TO parent] AT x,y,z [AXIS ...] [HINGE|BALL] [RANGE lo hi] [PERIOD s] [SIZE d]
+            std::vector<std::string> parentWords;
+            std::optional<Vec3> at;
+            Vec3 axis{0, 0, 1};
+            bool ball = false;
+            float lo = -45.0f, hi = 45.0f, period = 4.0f, size = 0.0f;
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if (k == "to") {
+                    for (++i; i < a.size() && !isKey(a[i]); ++i) parentWords.push_back(a[i]);
+                    --i;
+                } else if (k == "at") {
+                    if (i + 1 >= a.size() || !(at = parseVec3(a[++i]))) return out.fail("AT needs x,y,z");
+                } else if (k == "axis") {
+                    if (i + 1 >= a.size()) return out.fail("AXIS needs X, Y, Z or x,y,z");
+                    const std::string v = lower(a[++i]);
+                    if (v == "x") axis = {1, 0, 0};
+                    else if (v == "y") axis = {0, 1, 0};
+                    else if (v == "z") axis = {0, 0, 1};
+                    else if (const auto d = parseVec3(a[i]); d && length(*d) > 0) axis = normalize(*d);
+                    else return out.fail("AXIS needs X, Y, Z or x,y,z");
+                } else if (k == "hinge") {
+                    ball = false;
+                } else if (k == "ball") {
+                    ball = true;
+                } else if (k == "range") {
+                    if (!numberAfter(lo) || !numberAfter(hi) || hi <= lo) return out.fail("RANGE needs lo hi degrees");
+                } else if (k == "period") {
+                    if (!numberAfter(period) || period <= 0) return out.fail("PERIOD needs seconds");
+                } else if (k == "size") {
+                    if (!lengthAfter(size) || size <= 0) return out.fail("SIZE needs a length");
+                } else {
+                    return usage();
+                }
+            }
+            const int ci = bodyNamed(nameWords);
+            if (ci < 0) return out.fail(nameWords.empty() ? "Name the part to articulate" : "No body named " + joinArgs(nameWords));
+            if (!at) return out.fail("JOINT needs AT x,y,z (the pivot)");
+            const int pi = parentWords.empty() ? -1 : findBody(doc, joinArgs(parentWords));
+            if (!parentWords.empty() && pi < 0) return out.fail("No body named " + joinArgs(parentWords));
+            doc.scene.pushUndo("JOINT");
+            auto& bodies = doc.scene.bodies();
+            const std::string child = bodies[static_cast<std::size_t>(ci)].name;
+            const AABB cb = bodies[static_cast<std::size_t>(ci)].bounds();
+            if (size <= 0) size = std::clamp(length(cb.max - cb.min) * 0.12f, 2.0f, 40.0f);
+            // Hardware: a pin through the pivot along the axis, or a ball.
+            Body pin = ball ? makeBody(child + " Ball Joint", "sphere", {size * 0.5f})
+                            : meshBody(child + " Hinge Pin", cutterCylinder(*at - axis * size, *at + axis * size, size * 0.22f, 32));
+            if (ball) pin.offset = *at - Vec3{0, 0, size * 0.5f};
+            pin.color = {0.78f, 0.80f, 0.84f};
+            // The motion: the child (and its armour) swings between the limits and back.
+            Motion m;
+            int n = 1;
+            std::string name = (ball ? "Ball joint " : "Hinge ") + std::to_string(n);
+            auto taken = [&](const std::string& q) {
+                for (const Motion& x : doc.scene.motions())
+                    if (iequal(x.name, q)) return true;
+                return false;
+            };
+            while (taken(name)) name = (ball ? "Ball joint " : "Hinge ") + std::to_string(++n);
+            m.name = name;
+            m.kind = MotionKind::Circular;
+            m.axis = axis;
+            m.origin = *at;
+            m.mode = MotionMode::Loop;
+            m.keys = {{0.0f, 0.0f}, {period * 0.25f, hi}, {period * 0.75f, lo}, {period, 0.0f}};
+            m.hasLimits = true;
+            m.lo = lo;
+            m.hi = hi;
+            m.bodies.push_back(child);
+            // The ball turns with the child; a hinge pin stays with the parent.
+            if (ball) pin.attachedTo = child;
+            else if (pi >= 0) pin.attachedTo = bodies[static_cast<std::size_t>(pi)].name;
+            if (pi >= 0) {
+                // A moving parent carries the child along.
+                for (Motion& pm : doc.scene.motions())
+                    if (std::find(pm.bodies.begin(), pm.bodies.end(), bodies[static_cast<std::size_t>(pi)].name) != pm.bodies.end() &&
+                        std::find(pm.bodies.begin(), pm.bodies.end(), child) == pm.bodies.end())
+                        pm.bodies.push_back(child);
+            }
+            const std::string pinName = pin.name;
+            doc.scene.add(std::move(pin));
+            doc.scene.motions().push_back(std::move(m));
+            markChanged(doc);
+            out.say(std::string(ball ? "Ball joint" : "Hinge") + " '" + name + "': " + child +
+                    (pi >= 0 ? " on " + bodies[static_cast<std::size_t>(pi)].name : std::string()) + fmt(", %g", lo) +
+                    fmt("..%g deg every %g s", hi, period) + " (" + pinName + ")");
+            return out;
+        }
+
+        const int bi = bodyNamed(nameWords);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        std::string error;
+        if (cmd == "SHELL") {
+            ShellOptions o;
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if (k == "thickness") {
+                    if (!lengthAfter(o.thickness) || o.thickness <= 0) return out.fail("THICKNESS needs a length");
+                } else if (k == "outward") {
+                    o.outward = true;
+                } else if (k == "open") {
+                    const auto p = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt;
+                    if (!p) return out.fail("OPEN needs x,y,z");
+                    o.open = true;
+                    o.openPoint = *p;
+                } else if (k == "normal") {
+                    const auto n = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt;
+                    if (!n || length(*n) == 0) return out.fail("NORMAL needs x,y,z");
+                    o.openNormal = normalize(*n);
+                } else {
+                    return usage();
+                }
+            }
+            doc.scene.pushUndo("SHELL on " + body.name);
+            if (!shellBody(body, o, &error)) {
+                doc.scene.undo();
+                return out.fail(error);
+            }
+            doc.scene.touchBodies();
+            markChanged(doc);
+            const Body& r = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            out.say(r.name + ": shell " + lengthText(o.thickness) + (o.outward ? " outward" : "") + (o.open ? ", open" : "") +
+                    fmt(", %g mm^3", meshVolume(worldMesh(r))) + (openEdgeCount(r.mesh) == 0 ? ", closed" : ""));
+            return out;
+        }
+        // LIGHTEN
+        LightenOptions o;
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (k == "skin") {
+                if (!lengthAfter(o.skin) || o.skin <= 0) return out.fail("SKIN needs a length");
+            } else if (k == "cell") {
+                if (!lengthAfter(o.cell) || o.cell <= 0) return out.fail("CELL needs a length");
+            } else if (k == "wall") {
+                if (!lengthAfter(o.wall) || o.wall <= 0) return out.fail("WALL needs a length");
+            } else if (k == "hollow") {
+                o.hollow = true;
+            } else {
+                return usage();
+            }
+        }
+        doc.scene.pushUndo("LIGHTEN on " + body.name);
+        double v0 = 0, v1 = 0;
+        if (!lightenBody(body, o, &error, &v0, &v1)) {
+            doc.scene.undo();
+            return out.fail(error);
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        out.say(body.name + (o.hollow ? ": hollowed" : ": gyroid lattice inside") + ", skin " + lengthText(o.skin) +
+                fmt(", %g%% lighter", v0 > 0 ? std::round((1.0 - v1 / v0) * 1000.0) / 10.0 : 0.0) +
+                fmt(" (%g triangles)", static_cast<double>(body.mesh.indices.size() / 3)));
         return out;
     }
     if (cmd == "BOOLEAN") {

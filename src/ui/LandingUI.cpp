@@ -646,6 +646,66 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         }
         ImGui::SameLine();
         if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
+    } else if (isWearableTool(tool.id)) {
+        auto field = [&](const char* label, const char* id, float* v, float lo) {
+            ImGui::TextDisabled("%s", label);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(70);
+            lengthField(id, v, lo, 1e5f);
+            ImGui::SameLine();
+        };
+        switch (tool.id) {
+        case ToolId::ShellBody:
+            field("Wall", "##sw", &st.shellThickness, 0.05f);
+            ImGui::Checkbox("Outward", &st.shellOutward);
+            ImGui::SameLine();
+            ImGui::Checkbox("Open the clicked side", &st.shellOpen);
+            ImGui::SameLine();
+            if (st.shellOpen) field("Cut depth", "##sod", &st.shellOpenDepth, 0.0f);
+            ImGui::TextDisabled("Click a body");
+            break;
+        case ToolId::ArmorBody:
+            field("Clearance", "##ac", &st.armorClearance, 0.0f);
+            field("Wall", "##at", &st.armorThickness, 0.05f);
+            ImGui::TextDisabled("Click a body part");
+            break;
+        case ToolId::JointBody: {
+            ImGui::SetNextItemWidth(80);
+            const char* axes[] = {"Axis X", "Axis Y", "Axis Z", "View axis"};
+            ImGui::Combo("##jaxis", &st.jointAxis, axes, 4);
+            ImGui::SameLine();
+            ImGui::Checkbox("Ball", &st.jointBall);
+            ImGui::SameLine();
+            ImGui::TextDisabled("Range");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120);
+            ImGui::DragFloatRange2("##jrange", &st.jointLo, &st.jointHi, 1.0f, -180.0f, 180.0f, "%.0f", "%.0f deg");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Period");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            ImGui::DragFloat("##jper", &st.jointPeriod, 0.1f, 0.2f, 60.0f, "%.1f s");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Click the moving part at its pivot");
+            break;
+        }
+        case ToolId::InterferenceCheck:
+            field("Clearance", "##ic", &st.interferenceClearance, 0.0f);
+            ImGui::TextDisabled("Click to sweep the motions");
+            break;
+        default: // Lighten / TPMS lattice
+            field("Skin", "##ls", &st.latticeSkin, 0.1f);
+            ImGui::Checkbox("Hollow only", &st.latticeHollow);
+            ImGui::SameLine();
+            if (!st.latticeHollow) {
+                field("Cell", "##lc", &st.latticeCell, 1.0f);
+                field("Wall", "##lw", &st.latticeWall, 0.1f);
+            }
+            ImGui::TextDisabled("Click a solid body");
+            break;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
     } else if (isPrimitiveTool(tool.id)) {
         const std::string snap = lengthText(5.0);
         if (is2D) ImGui::TextDisabled("Click to place on the %s plane (%s snap)", shortPlaneName(st.plane), snap.c_str());

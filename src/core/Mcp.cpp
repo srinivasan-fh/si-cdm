@@ -368,6 +368,37 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("operation", prop("string", "shell | armor | joint | lighten | interference"));
+        p.set("body", prop("string", "Body (shell, lighten, joint: the moving part; armor: a body or, with part, the robot)"));
+        p.set("part", prop("string", "armor: armour every part of the robot whose name contains this (e.g. forearm); "
+                                     "several words separated by commas"));
+        p.set("merge", prop("boolean", "armor: one shell around all the matched parts (a chest plate over chest and shoulders)"));
+        p.set("thickness", prop("number", "shell / armour wall, mm"));
+        p.set("clearance", prop("number", "armour gap to the body, or the interference clearance, mm"));
+        p.set("outward", prop("boolean", "shell: grow outwards"));
+        p.set("open_point", prop("array", "shell: [x,y,z] on the opening plane"));
+        p.set("open_normal", prop("array", "shell: [x,y,z]; the side it points to is cut open"));
+        p.set("parent", prop("string", "joint: the part it hinges on"));
+        p.set("at", prop("array", "joint: [x,y,z] pivot, mm"));
+        p.set("axis", prop("array", "joint: [x,y,z] hinge axis"));
+        p.set("ball", prop("boolean", "joint: a ball joint instead of a hinge"));
+        p.set("range", prop("array", "joint: [lo, hi] degrees"));
+        p.set("period", prop("number", "joint: seconds per swing"));
+        p.set("skin", prop("number", "lighten: solid skin, mm"));
+        p.set("cell", prop("number", "lighten: gyroid cell, mm"));
+        p.set("wall", prop("number", "lighten: lattice wall, mm"));
+        p.set("hollow", prop("boolean", "lighten: hollow only, no lattice"));
+        p.set("step", prop("number", "interference: seconds between samples"));
+        p.set("duration", prop("number", "interference: seconds of the timeline to sweep"));
+        p.set("bodies", prop("array", "interference: names of the bodies to check against each other"));
+        tools.push(tool("armor",
+                        "Wearable armour and exoskeletons over a human base: hollow / solidify shells (with an opening), "
+                        "armour offset around body parts with a clearance gap (moves with the part), hinge and ball "
+                        "joints, gyroid-lattice lightweighting, and an interference check over the motions.",
+                        p, {"operation"}));
+    }
+    {
+        Json p = Json::object();
         p.set("path", prop("string", "File path (.sicdm). Optional for save when the project already has a path"));
         tools.push(tool("save_project", "Save the project.", p, {}));
         Json o = Json::object();
@@ -679,6 +710,41 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["loop"].isBool()) line += a["loop"].asBool() ? " LOOP" : " ONCE";
             if (a["speed"].isNumber()) line += " SPEED " + num(a["speed"].asNumber());
             if (a["mirror"].asBool()) line += " MIRROR";
+        }
+        return runLine(line);
+    }
+    if (name == "armor") {
+        const std::string op = a["operation"].asString();
+        auto vec = [&](const Json& v) { return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber()); };
+        const std::string body = a["body"].isString() ? quote(a["body"].asString()) : "";
+        auto opt = [&](const char* key, const char* word) {
+            return a[key].isNumber() ? std::string(" ") + word + " " + num(a[key].asNumber()) : std::string();
+        };
+        std::string line;
+        if (op == "shell") {
+            line = "SHELL " + body + opt("thickness", "THICKNESS") + (a["outward"].asBool() ? " OUTWARD" : "");
+            if (a["open_point"].isArray())
+                line += " OPEN " + vec(a["open_point"]) + (a["open_normal"].isArray() ? " NORMAL " + vec(a["open_normal"]) : "");
+        } else if (op == "armor") {
+            line = "ARMOR " + body + (a["part"].isString() ? " PART " + a["part"].asString() : "") +
+                   (a["part"].isString() && a["merge"].asBool() ? " MERGE" : "") + opt("clearance", "CLEARANCE") +
+                   opt("thickness", "THICKNESS");
+        } else if (op == "joint") {
+            if (!a["at"].isArray()) return textResult("joint needs 'at'", true);
+            line = "JOINT " + body + (a["parent"].isString() ? " TO " + quote(a["parent"].asString()) : "") + " AT " + vec(a["at"]) +
+                   (a["axis"].isArray() ? " AXIS " + vec(a["axis"]) : "") + (a["ball"].asBool() ? " BALL" : "");
+            if (a["range"].isArray()) line += " RANGE " + num(a["range"][0].asNumber()) + " " + num(a["range"][1].asNumber());
+            line += opt("period", "PERIOD");
+        } else if (op == "lighten") {
+            line = "LIGHTEN " + body + opt("skin", "SKIN") + opt("cell", "CELL") + opt("wall", "WALL") + (a["hollow"].asBool() ? " HOLLOW" : "");
+        } else if (op == "interference") {
+            line = "INTERFERENCE" + opt("clearance", "CLEARANCE") + opt("step", "STEP") + opt("duration", "DURATION");
+            if (a["bodies"].isArray() && a["bodies"].size() > 0) {
+                line += " BODIES";
+                for (std::size_t i = 0; i < a["bodies"].size(); ++i) line += " " + quote(a["bodies"][i].asString());
+            }
+        } else {
+            return textResult("operation must be shell, armor, joint, lighten or interference", true);
         }
         return runLine(line);
     }

@@ -175,6 +175,30 @@ TRIM PLANE 0,0,5 NORMAL 0,0,-1      BOSS AT -60,30,20 DIAMETER 14 HEIGHT 9      
 
 Details: [docs/sculpting.md](docs/sculpting.md).
 
+## Armour and exoskeletons
+
+The **Armour & Exoskeleton** section of the tool rail turns sculpted or CAD shapes into wearable parts
+over a human or robot base.
+
+- **Shell / Hollow:** hollows a solid to a wall, or solidifies a surface. It can open one side, for a
+  helmet or gauntlet.
+- **Armour Offset:** a closed shell around a body part, with a clearance gap and a wall. It moves with
+  the part.
+- **Joint / Hinge:** a pin or ball joint with a limited swing.
+- **Lighten (Lattice):** keeps a skin and fills the inside with a gyroid lattice.
+- **Interference Check:** sweeps the motions and lists every pair of parts that collide or come too
+  close.
+
+![Armour over the humanoid robot](docs/armour.png)
+
+```text
+ARMOR "Male Humanoid Robot 1" PART chest, motor right shoulder, motor left shoulder MERGE CLEARANCE 4 THICKNESS 4
+ARMOR "Male Humanoid Robot 1" PART forearm      SHELL "Helmet" THICKNESS 3 OPEN 0,0,1600 NORMAL 0,0,-1
+JOINT "Visor" TO "Helmet" AT 0,-120,1700 AXIS X RANGE 0 80      LIGHTEN "Back Plate" CELL 12      INTERFERENCE CLEARANCE 2
+```
+
+Details: [docs/armour.md](docs/armour.md).
+
 ## Library: motors and gears
 
 ![Library](docs/library.png)
@@ -353,6 +377,7 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 `create_motion`, `delete_motion`, `simulate` (play / pause / seek, or body poses at a time — headless too),
 `insert_part`, `list_parts` (library motors, gears and gear trains; `modify` takes a `scale`),
 `set_pose`, `play_gesture` (robot postures and gestures), `set_physics`, `physics_report` (physics environment),
+`sculpt` (brushes, cuts, booleans), `armor` (shell, armour, joints, lattice, interference),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

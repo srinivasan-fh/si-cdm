@@ -47,7 +47,20 @@ constexpr CommandSpec kCommands[] = {
      "Add material: a boss, pad or dome fused onto the surface"},
     {"BOOLEAN", "CSG BOOL", "BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]",
      "Combine two bodies exactly; the other body is used up unless KEEP"},
-    {"UNDO", "U", "UNDO", "Undo the last sculpt, cut or boolean"},
+    {"UNDO", "U", "UNDO", "Undo the last sculpt, cut, boolean or armour edit"},
+    // Wearable armour & exoskeletons
+    {"SHELL", "SOLIDIFY HOLLOW", "SHELL [body] THICKNESS t [OUTWARD] [OPEN x,y,z NORMAL x,y,z]",
+     "Hollow a solid to a wall thickness, or solidify a surface; OPEN cuts an opening first (the side the normal points to)"},
+    {"ARMOR", "ARMOUR", "ARMOR [body | robot PART word[, word...] [MERGE]] [CLEARANCE d] [THICKNESS t]",
+     "Armour shells around a body (or a robot's parts whose names contain the words; MERGE: one shell around them "
+     "all): inner face d off the surface, t thick; they move with their parts"},
+    {"INTERFERENCE", "CLEARANCE COLLISIONS", "INTERFERENCE [CLEARANCE d] [STEP s] [DURATION s] [BODIES name...]",
+     "Sweep the motion timeline and report parts that collide or come closer than the clearance (armour against "
+     "the body by default)"},
+    {"JOINT", "HINGE PIVOT", "JOINT child [TO parent] AT x,y,z [AXIS X|Y|Z|x,y,z] [HINGE|BALL] [RANGE lo hi] [PERIOD s] "
+     "[SIZE d]", "Articulate a part: a hinge pin or ball joint at a point, with a motion swinging it through its range"},
+    {"LIGHTEN", "LATTICE LIGHTWEIGHT", "LIGHTEN [body] [SKIN t] [CELL c] [WALL w] [HOLLOW]",
+     "Generative lightweighting: keep a skin and fill the inside with a gyroid lattice (or leave it hollow)"},
     // Files
     {"NEW", "", "NEW", "Start an empty project (in the app: a new file tab)"},
     {"OPEN", "", "OPEN path.sicdm", "Open a project (in the app: in its own file tab)"},

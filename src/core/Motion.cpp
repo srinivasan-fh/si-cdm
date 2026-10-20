@@ -274,7 +274,24 @@ std::vector<Mat4> motionTransforms(const Scene& scene, float t) {
         for (std::size_t i : moved[k])
             out[i] = out[i] * (m.eachCentre ? matrixFor(scene, m, bodies[i], t) : mm); // earlier motions stay outermost
     }
+    applyAttachments(scene, out);
     return out;
+}
+
+void applyAttachments(const Scene& scene, std::vector<Mat4>& tf) {
+    const auto& bodies = scene.bodies();
+    bool any = false;
+    for (const Body& b : bodies) any = any || !b.attachedTo.empty();
+    if (!any) return;
+    std::unordered_map<std::string, std::size_t> byName;
+    for (std::size_t i = 0; i < bodies.size(); ++i) byName.emplace(bodies[i].name, i);
+    // Chains (a pin on armour on a part) settle within a few rounds.
+    for (int round = 0; round < 4; ++round)
+        for (std::size_t i = 0; i < bodies.size() && i < tf.size(); ++i) {
+            if (bodies[i].attachedTo.empty()) continue;
+            const auto it = byName.find(bodies[i].attachedTo);
+            if (it != byName.end() && it->second != i && it->second < tf.size()) tf[i] = tf[it->second];
+        }
 }
 
 Mat4 bodyMotionTransform(const Scene& scene, std::size_t body, float t, std::size_t before,

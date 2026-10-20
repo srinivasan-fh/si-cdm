@@ -28,10 +28,12 @@ enum class ToolId {
     SculptFlatten, SculptScrape,
     // IX. Cuts & booleans (exact, closed results)
     CutHole, CutPocket, CutChannel, CutKnife, AddBoss, BooleanBodies,
+    // X. Armour & exoskeletons (wearable parts over a human base)
+    ShellBody, ArmorBody, JointBody, LightenBody, InterferenceCheck,
     Count
 };
 
-enum class ToolCategory { Navigate, Sketch, Solid, Feature, Surface, ClassA, Generative, Mesh, Sculpt, Cut };
+enum class ToolCategory { Navigate, Sketch, Solid, Feature, Surface, ClassA, Generative, Mesh, Sculpt, Cut, Wearable };
 
 struct ToolInfo {
     ToolId id;
@@ -68,5 +70,7 @@ bool isSketchTool(ToolId id);
 // Sculpting brushes (drag over a body) and the cut / boolean tools.
 bool isSculptTool(ToolId id);
 bool isCutTool(ToolId id);
+// Armour tools (click a body); the TPMS lattice tool works like Lighten.
+bool isWearableTool(ToolId id);
 
 } // namespace sicdm

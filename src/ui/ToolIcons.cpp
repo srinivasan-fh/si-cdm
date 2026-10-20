@@ -522,6 +522,37 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
         g.circle(0.28f, 0, 0.5f, true);
         break;
 
+    // ---- Armour & exoskeleton --------------------------------------------------
+    case ToolId::ShellBody: // a hollow dome seen in section
+        g.arc(0, 0.45f, 0.8f, kTau * 0.5f, kTau);
+        g.arc(0, 0.45f, 0.55f, kTau * 0.5f, kTau);
+        g.line(-0.8f, 0.45f, -0.55f, 0.45f);
+        g.line(0.55f, 0.45f, 0.8f, 0.45f);
+        break;
+    case ToolId::ArmorBody: // a limb inside a plate with a gap
+        g.ellipse(0, 0, 0.32f, 0.5f, true);
+        g.arc(0, 0, 0.62f, kTau * 0.62f, kTau * 1.38f);
+        g.arc(0, 0, 0.82f, kTau * 0.62f, kTau * 1.38f);
+        break;
+    case ToolId::JointBody: // two links on a pin with a swing arrow
+        g.poly({{-0.85f, 0.15f}, {-0.05f, 0.15f}, {-0.05f, 0.45f}, {-0.85f, 0.45f}}, true, true);
+        g.poly({{0.05f, 0.25f}, {0.7f, -0.4f}, {0.88f, -0.22f}, {0.23f, 0.43f}}, true, true);
+        g.circle(0, 0.3f, 0.14f);
+        g.arc(0, 0.3f, 0.62f, -kTau * 0.25f, -kTau * 0.08f);
+        break;
+    case ToolId::LightenBody: // a block with lattice holes
+        g.poly({{-0.85f, -0.65f}, {0.85f, -0.65f}, {0.85f, 0.65f}, {-0.85f, 0.65f}}, true, true);
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 2; ++j) g.circle(-0.52f + 0.52f * static_cast<float>(i), -0.28f + 0.56f * static_cast<float>(j), 0.17f);
+        break;
+    case ToolId::InterferenceCheck: // two bodies touching with a warning star
+        g.circle(-0.35f, 0.2f, 0.42f);
+        g.circle(0.4f, 0.2f, 0.42f, true);
+        g.line(0.02f, -0.75f, 0.02f, -0.35f);
+        g.line(-0.18f, -0.62f, 0.22f, -0.48f);
+        g.line(0.22f, -0.62f, -0.18f, -0.48f);
+        break;
+
     case ToolId::Count: break;
     }
 }

@@ -67,6 +67,18 @@ struct UiState {
     int booleanOp = 1; // 0 union, 1 subtract, 2 intersect
     bool booleanKeep = false;
     std::string booleanFirst; // the body picked first
+    // Armour & exoskeleton tools.
+    float shellThickness = 3.0f;
+    bool shellOpen = false;    // cut the clicked side open (helmets, gauntlets)
+    float shellOpenDepth = 2.0f;
+    bool shellOutward = false;
+    float armorClearance = 4.0f, armorThickness = 3.0f;
+    int jointAxis = 0; // 0 X, 1 Y, 2 Z, 3 the view direction
+    bool jointBall = false;
+    float jointLo = -45.0f, jointHi = 45.0f, jointPeriod = 4.0f;
+    float latticeSkin = 2.0f, latticeCell = 12.0f, latticeWall = 1.5f;
+    bool latticeHollow = false;
+    float interferenceClearance = 2.0f;
 
     // Simulation window: playback and what to show while bodies move.
     float simTime = 0.0f;      // s

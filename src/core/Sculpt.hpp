@@ -74,9 +74,13 @@ public:
 
     // Splits every edge longer than `detail` (whole mesh), up to `maxTriangles`.
     void refineAll(float detail, std::size_t maxTriangles = 600000);
+    // Collapses edges shorter than `minEdge` (within `radius` of `centre`, or
+    // everywhere when radius <= 0), keeping the surface closed and unfolded.
+    std::size_t collapseShort(float minEdge, const Vec3& centre = {}, float radius = 0.0f);
 
-    // Writes back: kind "mesh", auto-smoothed normals, feature edges if asked.
-    void writeTo(Body& body, bool featureEdges = true) const;
+    // Writes back: kind "mesh", normals smoothed across edges turning less than
+    // `smoothAngle` degrees, feature edges if asked.
+    void writeTo(Body& body, bool featureEdges = true, float smoothAngle = 40.0f) const;
 
 private:
     void refineRegion(const Vec3& centre, float radius, float detail);
@@ -105,6 +109,8 @@ void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSetti
 
 // Refines the whole body until no edge is longer than `detail` (for sculpting a coarse CAD mesh).
 void sculptRefine(Body& body, float detail);
+// Coarsens a dense mesh by collapsing edges shorter than `edge` (closed stays closed).
+void simplifyMesh(MeshData& mesh, float edge);
 
 // ---------------------------------------------------------------------------
 // Booleans
@@ -155,5 +161,20 @@ MeshData worldMesh(const Body& body);
 double meshVolume(const MeshData& m);
 // Edges not shared by exactly two triangles (0: closed, ready for 3D printing).
 std::size_t openEdgeCount(const MeshData& m);
+
+// Generalised winding number of a mesh (about 1 inside, 0 outside, robust for open
+// and overlapping shells): exact near the query point, clustered far from it.
+class WindingNumber {
+public:
+    explicit WindingNumber(const MeshData& mesh);
+    ~WindingNumber();
+    WindingNumber(const WindingNumber&) = delete;
+    WindingNumber& operator=(const WindingNumber&) = delete;
+    double operator()(const Vec3& p) const;
+
+private:
+    struct Impl;
+    Impl* m_impl;
+};
 
 } // namespace sicdm

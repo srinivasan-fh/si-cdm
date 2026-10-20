@@ -24,6 +24,7 @@ struct Body {
     float scale = 1.0f;     // uniform size factor about the body origin (library parts, SCALE)
     Vec3 rotation{};        // degrees about X, then Y, then Z, about the body origin (mesh bodies keep it baked in)
     std::string component;  // library component this body belongs to ("" = none)
+    std::string attachedTo; // moves rigidly with this body (armour on its part, a hinge pin on its parent)
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
 
     AABB bounds() const noexcept;

@@ -256,6 +256,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (b.scale != 1.0f) jb.set("scale", b.scale);
         if (b.rotation.x != 0.0f || b.rotation.y != 0.0f || b.rotation.z != 0.0f) jb.set("rotation", vec3Json(b.rotation));
         if (!b.component.empty()) jb.set("component", b.component);
+        if (!b.attachedTo.empty()) jb.set("attached_to", b.attachedTo);
         if (b.physics.enabled) {
             const PhysicsProps& p = b.physics;
             Json ph = Json::object();
@@ -431,6 +432,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             b.rotation = rotation;
         }
         b.component = jb["component"].asString();
+        b.attachedTo = jb["attached_to"].asString();
         b.offset = jsonVec3(jb["offset"]);
         b.color = jsonVec3(jb["color"], b.color);
         b.visible = jb["visible"].asBool(true);
