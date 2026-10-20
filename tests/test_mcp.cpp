@@ -1,6 +1,7 @@
 #include "TestFramework.hpp"
 
 #include "core/Mcp.hpp"
+#include "core/Motion.hpp"
 
 #include <filesystem>
 
@@ -190,4 +191,23 @@ TEST_CASE("MCP tools stay in mm while run_command follows the document units") {
     CHECK(scene["project"]["units"].asString() == "mm");
     CHECK(scene["project"]["display_units"]["unit"].asString() == "in");
     CHECK(!d.apiMillimeters);
+}
+
+TEST_CASE("MCP set_pose and play_gesture move a library robot") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "insert_part", R"({"part":"humanoid","name":"Atlas"})")["isError"].asBool());
+    Json r = tool(s, "set_pose", R"({"robot":"Atlas","posture":"t_pose","joints":{"right elbow":200,"neck yaw":-30},"seconds":2})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("hard stop: 150") != std::string::npos);
+    float elbow = 0, yaw = 0;
+    for (const Motion& m : d.scene.motions()) {
+        if (m.name == "Atlas Right Arm Elbow") elbow = motionValue(d.scene, m, 5.0f);
+        if (m.name == "Atlas Neck Yaw") yaw = motionValue(d.scene, m, 5.0f);
+    }
+    CHECK_NEAR(elbow, 150, 1e-3);
+    CHECK_NEAR(yaw, -30, 1e-3);
+    CHECK(tool(s, "set_pose", R"({"robot":"Atlas"})")["isError"].asBool());
+    CHECK(!tool(s, "play_gesture", R"({"gesture":"wave","mirror":true,"speed":0.5})")["isError"].asBool());
+    CHECK(tool(s, "play_gesture", R"({"gesture":"moonwalk"})")["isError"].asBool());
 }

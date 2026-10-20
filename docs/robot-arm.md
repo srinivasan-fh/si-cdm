@@ -26,15 +26,20 @@ hand.
 
 The arm's zero pose is **straight out in front, horizontal, palm down** (the usual robot "zero"
 configuration; for a human this is 90° shoulder flexion with the forearm pronated). The shoulder joint is
-220 mm above the pedestal base, the wrist 550 mm ahead of it. Each joint sweeps **0° → limit → 0°**:
+220 mm above the pedestal base, the wrist 550 mm ahead of it. Each joint moves **both ways**
+between two hard stops, the main direction set by the parameter and the return direction by the human
+standard:
 
-| Joint (`PART` key) | Motion from the zero pose | Default | Hard stop | Human ROM (from anatomical position) |
+| Joint (`PART` key) | + direction from the zero pose | Default | Hard stops | Human ROM (from anatomical position) |
 | --- | --- | --- | --- | --- |
-| Shoulder flexion (`shoulder_flex`) | raises the arm overhead | 90° | 100° | 0–180° flexion (90° of it above horizontal), 60° extension |
-| Shoulder horizontal abduction (`shoulder_abd`) | swings the arm out to the side | 90° | 120° | 0–180° abduction |
-| Shoulder internal rotation (`shoulder_rot`) | turns the upper arm about its own axis | 70° | 90° | 70° internal / 90° external |
-| Elbow flexion (`elbow`) | bends the forearm up | 145° | 150° | 0–150° |
-| Forearm supination (`forearm_rot`) | turns the palm from down to up | 160° | 180° | 80° pronation + 80° supination |
+| Shoulder flexion (`shoulder_flex`) | raises the arm overhead; − swings it down | 90° | −90° … 100° | 0–180° flexion (90° of it above horizontal), 60° extension |
+| Shoulder horizontal abduction (`shoulder_abd`) | swings the arm out to the side; − across the body | 90° | −45° … 120° | 0–180° abduction, 45° horizontal adduction |
+| Shoulder rotation (`shoulder_rot`) | turns the upper arm inward; − outward | 70° | −90° … 90° | 70° internal, 90° external |
+| Elbow flexion (`elbow`) | bends the forearm up | 145° | 0° … 150° | 0–150°, no hyperextension |
+| Forearm supination (`forearm_rot`) | turns the palm from down to up | 160° | 0° … 180° | 80° pronation + 80° supination |
+
+On the humanoid the arm hangs (zero = anatomical position), so its shoulder stops are the human
+values instead: flexion −60° … 180°, abduction −30° … 180° ([table](humanoid-body.md#joints-and-standard-range-of-motion)).
 
 Motors: shoulder and elbow motors are 1.2 × the library DC motor, the forearm-rotation motor sits on the
 forearm deck with the hand motors. Joints are chained shoulder flexion → abduction → rotation → elbow →
@@ -63,26 +68,28 @@ thumb 5). Robot hands simplify:
 In both, the **DIP joint is coupled to the PIP joint**, as in the human finger (the DIP cannot be
 bent on its own).
 
-## Joints and default mechanical limits
+## Joints and standard range of motion
 
-All angles are measured from the straight, flat hand (0°). Each joint sweeps **0° → limit → 0°**; the
-parameter's maximum is the mechanical hard stop. Defaults follow normal human active range of motion
-(AAOS / clinical tables), rounded to robot-friendly values.
+All angles are measured from the straight, flat hand (0°). Every joint moves **both ways** between two
+hard stops: the main direction up to the parameter's maximum, and the return direction (hyperextension,
+radial deviation, retroposition…) to the normal human value (AAOS / clinical tables). Values outside the
+stops are clamped.
 
-| Joint | Motion | Default | Hard stop | Human ROM |
-| --- | --- | --- | --- | --- |
-| Finger **MCP** (`mcp`) | flexion | 90° | 110° | 80–90° flex, 0–45° hyperextension |
-| Finger **MCP abduction** (`abduction`) | spread | 20° | 30° | ~20° each side |
-| Finger **PIP** (`pip`) | flexion | 100° | 120° | 90–115° |
-| Finger **DIP** (`dip`) | flexion, coupled to PIP | 80° | 90° | 65–90° |
-| Thumb **CMC** (`thumb_cmc`) | opposition (swings under the palm) | 60° | 90° | 60–70° palmar abduction |
-| Thumb **MCP** (`thumb_mcp`) | flexion | 50° | 70° | 50–55° |
-| Thumb **IP** (`thumb_ip`) | flexion | 80° | 90° | 80–90° |
-| **Wrist flexion** (`wrist_flex`) | toward the palm | 80° | 90° | 80° flex / 70° extension |
-| **Wrist deviation** (`wrist_dev`) | ulnar | 30° | 45° | 30° ulnar / 20° radial |
+| Joint | + direction | Default | − direction | Hard stops | Human ROM |
+| --- | --- | --- | --- | --- | --- |
+| Finger **MCP** (`mcp`) | flexion | 90° | hyperextension | −30° … 110° | 80–90° flexion, 0–45° hyperextension |
+| Finger **MCP abduction** (`abduction`) | spread | 20° | the other way | −30° … 30° | ~20° each side |
+| Finger **PIP** (`pip`) | flexion | 100° | — | 0° … 120° | 90–115° |
+| Finger **DIP** (`dip`) | flexion, coupled to PIP | 80° | — | 0° … 90° | 65–90° |
+| Thumb **CMC** (`thumb_cmc`) | opposition (swings under the palm) | 60° | retroposition | −20° … 90° | 60–70° palmar abduction |
+| Thumb **MCP** (`thumb_mcp`) | flexion | 50° | hyperextension | −10° … 70° | 50–55° flexion |
+| Thumb **IP** (`thumb_ip`) | flexion | 80° | hyperextension | −20° … 90° | 80–90° flexion, 20° hyperextension |
+| **Wrist flexion** (`wrist_flex`) | toward the palm | 80° | extension | −70° … 90° | 80° flexion, 70° extension |
+| **Wrist deviation** (`wrist_dev`) | ulnar | 30° | radial | −20° … 45° | 30° ulnar, 20° radial |
 
-Hyperextension and the second direction of the wrist and abduction are not modelled: the robot
-joints stop at 0°.
+On an **underactuated** finger the one motor drives MCP, PIP and DIP together. Its range stops where the
+first coupled joint reaches a stop, so the finger never hyperextends its PIP or DIP. A fully actuated
+finger reaches the whole MCP range.
 
 Abduction direction: index and middle toward the thumb, ring and little away from it.
 
@@ -136,9 +143,12 @@ runs across the link (along X before its rest splay).
 Each actuated joint has its own DC motor, named `<hand> Motor <joint>`, with the usual housing and
 rotor bodies and a `… Drive` motion on the rotor.
 
-- The drive **oscillates** over `GEAR × limit` degrees at `RPM` (default 30 rpm, gear 4: a 90° MCP takes
-  the motor through 360°, closing in 2 s).
-- The joint motion **follows** the drive with ratio `1 / GEAR`, so it stops exactly at its limit.
+- The joint motion **follows** the drive with ratio `1 / GEAR`; its hard stops clamp it.
+- The drive is **keyframed**: from key to key it moves on a minimum-jerk path (smooth start and stop,
+  peak speed 1.875 × the average), never faster than its rated speed (`RPM`, default 120 rpm; at gear 4
+  a joint moves at up to 180°/s). Inserted parts run the range-of-motion cycle
+  0 → + direction → − direction → 0. `POSE` and `GESTURE` re-key the drives for postures and gestures
+  ([details](humanoid-body.md#postures-and-gestures)).
 - **Underactuated:** one motor per finger (`Index Flex`…) drives MCP, PIP and DIP with ratios
   `1/G`, `PIP/(G·MCP)`, `DIP/(G·MCP)`: all three reach their limits together (fist). The thumb has a
   `Thumb CMC` and a `Thumb Flex` motor (MCP + IP).
@@ -160,8 +170,11 @@ MOTION CIRCLE "DC Motor 1 Drive" RANGE 360 OSC                          # motor 
 MOTION CIRCLE "Robot Hand 1 Index MCP" FOLLOW "DC Motor 1 Drive" RATIO 0.25   # 360 / 4 = 90 deg
 ```
 
-Keep `RANGE × RATIO` at or below the joint's limit. To change a limit after inserting, change the
-motor's sweep: `MOTION CIRCLE "Robot Hand 1 Motor Index Flex Drive" RANGE 240` (= 60° MCP at gear 4; on an underactuated finger the coupled PIP and DIP scale down with it).
+The joint's hard stops still apply whatever the motor does. To give a joint your own move, key its
+motor: `MOTION CIRCLE "Robot Hand 1 Motor Index Flex Drive" KEYS 0:0,0.8:240,1.6:0 MODE ONCE` (the
+underactuated index finger curls to MCP 60° and back, at gear 4). `KEYS t:v,...` sets the keyframes
+(seconds : degrees, or mm on a linear motion), `KEYS NONE` removes them, and `LIMITS lo hi` / `LIMITS OFF`
+set or clear a motion's hard stops.
 
 ## Examples
 
@@ -174,5 +187,7 @@ PART ROBOTHAND SIZE 1.2 MCP 80 PIP 90 GEAR 6 RPM 45
 PART ROBOTFINGER FINGER INDEX DRIVE 1            single finger test rig
 PART ROBOTTHUMB THUMB_CMC 75
 PART PHALANX LENGTH 30 TIP YES
+POSE "Robot Hand 1" hand_ok    GESTURE "Robot Hand 1" count      hand shapes and finger counting
+POSE "Robot Arm 1" right elbow 90 right wrist flex -40 IN 1.2   joint angles in degrees
 SIM PLAY      SIM AT 1.5                          joint angles at 1.5 s
 ```

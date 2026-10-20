@@ -193,3 +193,69 @@ TEST_CASE("EACH turns every body about its own centre") {
     CHECK(run(d, "MOTION CIRCLE Wheels AT 0,0,0").ok); // an explicit axis point shares it again
     CHECK(!d.scene.motions()[0].eachCentre);
 }
+
+TEST_CASE("keyframed motions settle exactly on every key with minimum-jerk curves") {
+    Motion m;
+    m.keys = {{0, 0}, {1, 90}, {1.5f, 90}, {2.5f, -30}};
+    CHECK(motionValue(m, 0) == 0.0f);
+    CHECK_NEAR(motionValue(m, 1), 90, 1e-4);
+    CHECK_NEAR(motionValue(m, 1.25f), 90, 1e-4); // held
+    CHECK_NEAR(motionValue(m, 2.5f), -30, 1e-4);
+    CHECK_NEAR(motionValue(m, 9), -30, 1e-4);    // holds the last key
+    CHECK_NEAR(motionValue(m, 0.5f), 45, 1e-3);  // halfway at mid-time
+    for (float t : {0.0f, 1.0f, 1.5f, 2.5f}) CHECK_NEAR(motionRate(m, t), 0, 1e-3); // stops on each key
+    CHECK_NEAR(motionRate(m, 0.5f), 1.875f * 90, 1e-2);                              // peak at mid-segment
+    CHECK_NEAR(keyedPeakRate(m), 1.875f * 120, 1e-3);
+    CHECK_NEAR(motionCycle(m), 2.5f, 1e-6);
+    // Numeric derivative matches the analytic rate.
+    for (float t = 0.05f; t < 2.5f; t += 0.13f)
+        CHECK_NEAR((motionValue(m, t + 1e-3f) - motionValue(m, t - 1e-3f)) / 2e-3f, motionRate(m, t), 0.5);
+    m.mode = MotionMode::Loop;
+    m.start = 1.0f;
+    CHECK_NEAR(motionValue(m, 1.0f + 2.5f + 1.0f), 90, 1e-3); // second cycle
+    CHECK(motionValue(m, 0.5f) == 0.0f);                       // before its start
+}
+
+TEST_CASE("joint limits are hard stops for followers and keys") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10").ok);
+    REQUIRE(run(d, "MOTION CIRCLE Motor SPEED 90 BODIES ALL").ok);
+    REQUIRE(run(d, "MOTION CIRCLE Joint FOLLOW Motor RATIO 0.5 LIMITS -10 30 BODIES ALL").ok);
+    const Motion* j = nullptr;
+    for (const Motion& m : d.scene.motions())
+        if (m.name == "Joint") j = &m;
+    REQUIRE(j);
+    CHECK(j->hasLimits);
+    CHECK_NEAR(motionValue(d.scene, *j, 0.5f), 22.5, 1e-3);
+    CHECK_NEAR(motionValue(d.scene, *j, 2.0f), 30, 1e-4); // stopped at the hard stop
+    CHECK_NEAR(motionRate(d.scene, *j, 2.0f), 0, 1e-6);
+    REQUIRE(run(d, "MOTION CIRCLE Joint KEYS 0:0,1:50,2:-40 MODE ONCE").ok);
+    CHECK(j->keys.size() == 3);
+    CHECK_NEAR(motionValue(d.scene, *j, 1.0f), 30, 1e-4);  // a key past the limit is clamped
+    CHECK_NEAR(motionValue(d.scene, *j, 2.0f), -10, 1e-4);
+    CHECK(!run(d, "MOTION CIRCLE Joint KEYS 0:0,x:5").ok);
+    CHECK(!run(d, "MOTION CIRCLE Joint LIMITS 5 1").ok);
+    REQUIRE(run(d, "MOTION CIRCLE Joint SPEED 20").ok); // a new speed replaces the keys
+    CHECK(j->keys.empty());
+    REQUIRE(run(d, "MOTION CIRCLE Joint LIMITS OFF").ok);
+    CHECK(!j->hasLimits);
+}
+
+TEST_CASE("keys and limits are saved with the project") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10").ok);
+    REQUIRE(run(d, "MOTION CIRCLE Wave KEYS 0:0,0.5:40,1:0 LOOP LIMITS -20 45 BODIES ALL").ok);
+    const auto path = (std::filesystem::temp_directory_path() / "sicdm_keys_test.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene s;
+    ProjectState st;
+    REQUIRE(loadProject(s, st, path, &err));
+    REQUIRE(s.motions().size() == 1);
+    const Motion& m = s.motions()[0];
+    CHECK(m.keys.size() == 3);
+    CHECK(m.mode == MotionMode::Loop);
+    CHECK(m.hasLimits && m.lo == -20.0f && m.hi == 45.0f);
+    CHECK_NEAR(motionValue(m, 1.5f), 40, 1e-3);
+    std::filesystem::remove(path);
+}

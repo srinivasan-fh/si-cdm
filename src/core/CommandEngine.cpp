@@ -2,6 +2,7 @@
 #include "core/Document.hpp"
 #include "core/Extrude.hpp"
 #include "core/Library.hpp"
+#include "core/Pose.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
@@ -500,6 +501,8 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         std::optional<std::vector<std::string>> targets;
         std::optional<bool> each; // EACH: every body turns about its own centre
         std::optional<bool> path; // PATH: a linear motion moves a chain / belt along its loop
+        std::optional<std::vector<MotionKey>> keys;           // KEYS t:v,t:v,...
+        std::optional<std::optional<std::pair<float, float>>> limits; // LIMITS lo hi | OFF
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
             const bool hasNext = i + 1 < a.size();
@@ -536,6 +539,42 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
                 if (!num(ratio)) return out.fail("RATIO needs a number (e.g. -0.5 for a 1:2 external mesh)");
             } else if (k == "step" || k == "steps") {
                 if (!num(step) || *step < 0.0f) return out.fail("STEP needs a size >= 0 (0 = smooth)");
+            } else if (k == "keys" || k == "keyframes") {
+                // KEYS t:v,t:v,...  (seconds : deg or length);  KEYS NONE removes them
+                if (!hasNext) return out.fail("KEYS needs t:value,t:value,... (or NONE)");
+                keys = std::vector<MotionKey>{};
+                if (!iequal(a[i + 1], "none")) {
+                    std::string list = a[i + 1];
+                    for (std::size_t at = 0; at <= list.size();) {
+                        const std::size_t comma = std::min(list.find(',', at), list.size());
+                        const std::string item = list.substr(at, comma - at);
+                        const std::size_t colon = item.find(':');
+                        const auto t = colon == std::string::npos ? std::nullopt : parseNumber(item.substr(0, colon));
+                        std::optional<float> value;
+                        if (colon != std::string::npos) {
+                            if (*kind == MotionKind::Linear) {
+                                if (const auto mm = parseLength(item.substr(colon + 1))) value = static_cast<float>(*mm);
+                            } else {
+                                value = parseNumber(item.substr(colon + 1));
+                            }
+                        }
+                        if (!t || *t < 0.0f || !value) return out.fail("Not a key: " + item + "   (seconds:value, e.g. 0:0,1.5:90)");
+                        keys->push_back({*t, *value});
+                        at = comma + 1;
+                    }
+                }
+                ++i;
+            } else if (k == "limits" || k == "limit") {
+                if (hasNext && iequal(a[i + 1], "off")) {
+                    limits = std::optional<std::pair<float, float>>{};
+                    ++i;
+                    continue;
+                }
+                const auto lo = i + 2 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
+                const auto hi = i + 2 < a.size() ? parseNumber(a[i + 2]) : std::nullopt;
+                if (!lo || !hi || *lo > *hi) return out.fail("LIMITS needs lo hi (lo <= hi) or OFF");
+                limits = std::optional<std::pair<float, float>>{{*lo, *hi}};
+                i += 2;
             } else if (k == "path" || k == "alongloop" || k == "travel_loop") {
                 path = true; // chain / belt: travel along its loop
             } else if (k == "each" || k == "own") {
@@ -587,6 +626,16 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
             m.bodies = {doc.scene.bodies()[static_cast<std::size_t>(sel)].name};
         }
         if (axis) m.axis = normalize(*axis);
+        // A new speed, sweep or leader takes over from keyframes (unless new keys come too).
+        if ((speed || range || (follow && !follow->empty())) && !keys) m.keys.clear();
+        if (keys) {
+            m.keys = *keys;
+            m.sortKeys();
+        }
+        if (limits) {
+            m.hasLimits = limits->has_value();
+            if (m.hasLimits) m.lo = (*limits)->first, m.hi = (*limits)->second;
+        }
         if (speed) m.speed = *speed;
         if (range) m.range = *range;
         if (mode) m.mode = *mode;
@@ -624,6 +673,120 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         else motions.push_back(m);
         markChanged(doc);
         out.say((existing >= 0 ? "Updated " : "Added ") + describeMotion(m));
+        return out;
+    }
+    if (cmd == "POSE" || cmd == "GESTURE") {
+        const bool pose = cmd == "POSE";
+        if (!a.empty() && iequal(a[0], "list")) {
+            if (pose) {
+                out.say("Postures (POSE [robot] name [IN s]):");
+                for (const NamedPosture& p : namedPostures()) out.say(std::string("  ") + toUpper(p.name) + "  " + p.summary);
+            } else {
+                out.say("Gestures (GESTURE [robot] name [LOOP|ONCE] [SPEED x|DURATION s] [MIRROR]):");
+                for (const Gesture& g : namedGestures())
+                    out.say(std::string("  ") + toUpper(g.name) + "  " + g.summary + (g.loop ? "  (loops)" : ""));
+            }
+            const auto robots = robotNames(doc.scene);
+            std::string rl;
+            for (const std::string& r : robots) rl += (rl.empty() ? "" : ", ") + r;
+            out.say("Robots: " + (rl.empty() ? std::string("none (insert one with PART humanoid, robot_arm, robot_hand...)") : rl));
+            return out;
+        }
+        // The robot: the longest leading run of words naming a component or body, else the
+        // selected body's component, else the only (or first) robot in the scene.
+        std::optional<Robot> robot;
+        std::size_t i = 0;
+        for (std::size_t n = a.size(); n > 0 && !robot; --n) {
+            std::string name;
+            for (std::size_t k = 0; k < n; ++k) name += (k ? " " : "") + a[k];
+            if ((robot = findRobot(doc.scene, name))) i = n;
+        }
+        if (!robot && doc.selectedBody >= 0 && doc.selectedBody < static_cast<int>(doc.scene.bodies().size()))
+            robot = findRobot(doc.scene, doc.scene.bodies()[static_cast<std::size_t>(doc.selectedBody)].name);
+        if (!robot) {
+            const auto robots = robotNames(doc.scene);
+            if (robots.empty()) return out.fail("No robot to move: insert one with PART humanoid (or robot_arm, robot_hand...)");
+            robot = findRobot(doc.scene, robots.front());
+        }
+        if (i < a.size() && iequal(a[i], "joints")) {
+            // Angles at AT t, else where the motions settle (the end of the latest key).
+            float t = 0.0f;
+            if (i + 2 < a.size() && iequal(a[i + 1], "at")) {
+                const auto v = parseNumber(a[i + 2]);
+                if (!v || *v < 0.0f) return out.fail("AT needs seconds");
+                t = *v;
+            } else {
+                for (const RobotJoint& j : robot->joints)
+                    for (const Motion& d : doc.scene.motions())
+                        if (d.name == j.drive && !d.keys.empty()) t = std::max(t, d.start + d.keys.back().t);
+            }
+            out.say(robot->component + fmt(" joints at %.2f s (id  angle  range):", t));
+            for (const auto& [j, v] : robotAngles(doc.scene, *robot, t))
+                out.say("  " + j.id + fmt("  %.1f  %g..%g deg", v, j.lo, j.hi) + "  (" + j.motion + ")");
+            return out;
+        }
+        if (i >= a.size()) return usage();
+        MoveResult r;
+        if (pose) {
+            Posture target;
+            float seconds = 0.0f;
+            std::string words;
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if ((k == "in" || k == "duration" || k == "time") && i + 1 < a.size()) {
+                    const auto s = parseNumber(a[++i]);
+                    if (!s || *s < 0.0f) return out.fail("IN needs seconds");
+                    seconds = *s;
+                    continue;
+                }
+                if (const auto v = parseNumber(a[i])) {
+                    if (words.empty()) return out.fail("Angle " + a[i] + " has no joint before it");
+                    target.push_back({words, *v});
+                    words.clear();
+                    continue;
+                }
+                words += (words.empty() ? "" : " ") + k;
+                if (const NamedPosture* p = findPosture(words)) {
+                    // A preset name, unless an angle follows (then it is a joint id).
+                    if (i + 1 >= a.size() || !parseNumber(a[i + 1])) {
+                        target.insert(target.end(), p->joints.begin(), p->joints.end());
+                        words.clear();
+                    }
+                }
+            }
+            if (!words.empty()) return out.fail("No posture or angle for '" + words + "' (POSE LIST shows the presets)");
+            if (target.empty()) return usage();
+            r = poseRobot(doc.scene, *robot, target, seconds);
+        } else {
+            const Gesture* g = findGesture(a[i]);
+            if (!g) return out.fail("No gesture " + a[i] + " (GESTURE LIST shows them)");
+            std::optional<bool> loop;
+            float scale = 1.0f;
+            bool mirror = false;
+            for (++i; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if (k == "loop") loop = true;
+                else if (k == "once") loop = false;
+                else if (k == "mirror" || k == "left") mirror = true;
+                else if (k == "right") mirror = false;
+                else if ((k == "speed" || k == "duration") && i + 1 < a.size()) {
+                    const auto v = parseNumber(a[++i]);
+                    if (!v || *v <= 0.0f) return out.fail(toUpper(k) + " needs a positive number");
+                    if (k == "speed") scale = 1.0f / *v;
+                    else {
+                        float len = 0.0f;
+                        for (const auto& f : g->frames) len = std::max(len, f.first);
+                        scale = len > 0.0f ? *v / len : 1.0f;
+                    }
+                } else return usage();
+            }
+            r = playGesture(doc.scene, *robot, *g, scale, loop, mirror);
+        }
+        if (!r.ok) return out.fail(r.error);
+        markChanged(doc);
+        out.say(robot->component + ": " + std::to_string(r.joints) + (r.joints == 1 ? " joint" : " joints") +
+                (pose ? fmt(", in place after %.2f s", r.duration) : fmt(", gesture of %.2f s", r.duration)));
+        for (const std::string& n : r.notes) out.say("  note: " + n);
         return out;
     }
     if (cmd == "SIM") {

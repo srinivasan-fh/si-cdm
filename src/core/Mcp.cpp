@@ -3,6 +3,7 @@
 
 #include "core/Command.hpp"
 #include "core/Library.hpp"
+#include "core/Pose.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -254,6 +255,39 @@ Json McpServer::toolDefinitions() {
                         "Run the motion simulation. 'poses' works headless too and reports every motion value and "
                         "moving body position at 'time'.",
                         s, {"action"}));
+    }
+    {
+        Json postures = Json::array(), gestures = Json::array();
+        for (const NamedPosture& n : namedPostures()) postures.push(n.name);
+        for (const Gesture& g : namedGestures()) gestures.push(g.name);
+        Json p = Json::object();
+        p.set("robot", prop("string", "Robot component or one of its bodies (default: the selected or first robot)"));
+        Json preset = prop("string", "Preset posture");
+        preset.set("enum", postures);
+        p.set("posture", preset);
+        Json joints = Json::object();
+        joints.set("type", "object").set("description",
+            "Joint angles in degrees by standard id, applied after the preset: {\"right elbow\": 90, \"neck yaw\": -30}. "
+            "A group name sets several ({\"elbow\": 45}, {\"right index\": 60}, {\"*\": 0}). Signs: + flexion, "
+            "abduction, internal rotation, plantarflexion; neck yaw + turns left");
+        p.set("joints", joints);
+        p.set("seconds", prop("number", "Move time (0 / omitted: as fast as the motors allow); never faster than their rated speed"));
+        tools.push(tool("set_pose",
+                        "Move a library robot (humanoid, arm, hand, finger, thumb, leg, head & neck) into a posture. "
+                        "Angles are clamped to each joint's standard hard stops, reached on minimum-jerk paths by the "
+                        "joints' DC gear motors, and a humanoid keeps its feet on the floor. Returns notes on clamped "
+                        "or coupled joints. Use run_command 'POSE robot JOINTS' to read the joint ids and ranges.",
+                        p, {}));
+        Json g = Json::object();
+        g.set("robot", prop("string", "Robot component or one of its bodies (default: the selected or first robot)"));
+        Json gesture = prop("string", "Gesture");
+        gesture.set("enum", gestures);
+        g.set("gesture", gesture);
+        g.set("loop", prop("boolean", "Repeat it (default: the gesture's own setting; march loops)"));
+        g.set("speed", prop("number", "Playback speed factor (2 = twice as fast, never beyond the motors' rated speed)"));
+        g.set("mirror", prop("boolean", "Play it with the other side (left arm / hand)"));
+        tools.push(tool("play_gesture", "Play a timed gesture (wave, nod, point, march...) on a library robot from the posture it holds.",
+                        g, {"gesture"}));
     }
     {
         Json p = Json::object();
@@ -546,6 +580,30 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["fit"].asBool()) ok = step("FIT") && ok;
         if (log.empty()) return textResult("Nothing to change", true);
         return textResult(log, !ok);
+    }
+    if (name == "set_pose" || name == "play_gesture") {
+        const bool pose = name == "set_pose";
+        std::string line = pose ? "POSE" : "GESTURE";
+        if (a["robot"].isString() && !a["robot"].asString().empty()) line += " " + quote(a["robot"].asString());
+        if (pose) {
+            bool any = false;
+            if (a["posture"].isString()) line += " " + a["posture"].asString(), any = true;
+            if (a["joints"].isObject())
+                for (const auto& [k, v] : a["joints"].members()) {
+                    if (!v.isNumber()) return textResult("joint '" + k + "' needs an angle in degrees", true);
+                    line += " " + quote(k) + " " + num(v.asNumber());
+                    any = true;
+                }
+            if (!any) return textResult("Give a 'posture' and/or 'joints'", true);
+            if (a["seconds"].isNumber() && a["seconds"].asNumber() > 0) line += " IN " + num(a["seconds"].asNumber());
+        } else {
+            if (!a["gesture"].isString()) return textResult("'gesture' is required", true);
+            line += " " + a["gesture"].asString();
+            if (a["loop"].isBool()) line += a["loop"].asBool() ? " LOOP" : " ONCE";
+            if (a["speed"].isNumber()) line += " SPEED " + num(a["speed"].asNumber());
+            if (a["mirror"].asBool()) line += " MIRROR";
+        }
+        return runLine(line);
     }
     if (name == "list_parts") return runLine("PART");
     if (name == "insert_part") {

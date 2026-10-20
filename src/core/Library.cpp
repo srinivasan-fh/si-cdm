@@ -9,6 +9,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <map>
 
 namespace sicdm {
 
@@ -1642,7 +1643,7 @@ const std::vector<LibraryItem>& libraryItems() {
         // Robot hand: default flexion limits (deg) from human active range of motion;
         // the max is the mechanical hard stop. 0 deg = straight (no hyperextension).
         const LibraryParam side{"hand", "Hand", 0.0f, 0.0f, 1.0f, "", true, "Right|Left"};
-        const LibraryParam handRpm{"rpm", "Motor speed", 30.0f, 1.0f, 600.0f, "rpm"};
+        const LibraryParam handRpm{"rpm", "Motor speed", 120.0f, 1.0f, 600.0f, "rpm"};
         const LibraryParam gear{"gear", "Motor turns per joint turn", 4.0f, 1.0f, 100.0f, "x"};
         const LibraryParam mcp{"mcp", "MCP flexion", 90.0f, 1.0f, 110.0f, "deg"};
         const LibraryParam pip{"pip", "PIP flexion", 100.0f, 1.0f, 120.0f, "deg"};
@@ -2104,6 +2105,110 @@ std::vector<std::string> buildHandArm(HandBuilder& h, const std::function<float(
     return upper;
 }
 
+// Normal range of motion on the other side of each joint (AAOS / clinical normal
+// values, from the zero pose). The part's parameters set the main direction
+// (flexion, abduction, internal rotation...) and its hard stop; this table adds the
+// return direction: extension, adduction, external rotation, dorsiflexion...
+struct JointStandard {
+    const char* suffix;  // joint motion name ends with this
+    const char* param;   // limit parameter of the main direction
+    float sweep, hard;   // other direction: demo sweep and hard stop (deg, <= 0)
+    bool symmetric;      // the other direction mirrors the parameter (turns, tilts, spread)
+};
+constexpr JointStandard kJointStandards[] = {
+    {"Neck Yaw", "neck_yaw", 0, 0, true},                   // rotation 80 each way
+    {"Neck Pitch", "neck_pitch", -50, -60, false},          // extension 60
+    {"Neck Roll", "neck_roll", 0, 0, true},                 // lateral flexion 45 each way
+    {"Waist Rotation", "waist_rot", 0, 0, true},            // trunk rotation 45 each way
+    {"Trunk Flex", "trunk_flex", -25, -30, false},          // extension 25-30
+    {"Trunk Bend", "trunk_bend", 0, 0, true},               // lateral flexion 35 each way
+    {"Shoulder Flex", "shoulder_flex", -50, -60, false},    // extension 60 (humanoid; see forward arms below)
+    {"Shoulder Abduction", "shoulder_abd", -20, -30, false},// adduction 30
+    {"Shoulder Rotation", "shoulder_rot", -80, -90, false}, // external rotation 90
+    {"Forearm Rotation", "forearm_rot", 0, 0, false},       // zero = full pronation
+    {"Elbow", "elbow", 0, 0, false},                        // no hyperextension
+    {"Wrist Flex", "wrist_flex", -60, -70, false},          // extension 70
+    {"Wrist Deviation", "wrist_dev", -20, -20, false},      // radial deviation 20
+    {"Thumb CMC", "thumb_cmc", -15, -20, false},            // retroposition
+    {"Thumb MCP", "thumb_mcp", -10, -10, false},            // hyperextension 10
+    {"Thumb IP", "thumb_ip", -15, -20, false},              // hyperextension 20
+    {"Hip Flex", "hip_flex", -20, -30, false},              // extension 30
+    {"Hip Abduction", "hip_abd", -20, -30, false},          // adduction 30
+    {"Hip Rotation", "hip_rot", -40, -45, false},           // external rotation 45
+    {"Knee", "knee", 0, 0, false},                          // no hyperextension
+    {"Ankle Pitch", "ankle_pitch", -20, -20, false},        // dorsiflexion 20
+    {"Ankle Roll", "ankle_roll", -15, -15, false},          // eversion 15
+    {"Toe", "toe", -30, -40, false},                        // MTP flexion 40
+    {" MCP", "mcp", -20, -30, false},                       // finger hyperextension 30
+    {" PIP", "pip", 0, 0, false},
+    {" DIP", "dip", 0, 0, false},
+    {" Abduction", "abduction", 0, 0, true},                // finger spread both ways
+};
+
+bool endsWith(const std::string& s, std::string_view suffix) {
+    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// Sets every joint's hard stops [other-direction stop, parameter maximum] and turns
+// each motor drive's sweep into a keyframed range-of-motion cycle: 0 -> main
+// direction -> other direction -> 0, at the motor's rated speed (the minimum-jerk
+// peak, 1.875 x the average, equals the rated speed). An underactuated finger's
+// motor stops where the first of its coupled joints reaches its limit, so it does
+// not hyperextend. `forwardArm`: an arm whose zero pose points forward (on a pedestal),
+// which can swing down 90 deg and across the body 45 deg.
+void applyJointStandards(LibraryComponent& c, const std::function<float(const char*)>& value,
+                         const std::function<float(const char*)>& hardMax, bool forwardArm) {
+    struct Driven {
+        float up = 1e30f, down = -1e30f; // drive angles where the first coupled joint reaches its limits
+        bool any = false;
+    };
+    std::map<std::string, Driven> drives;
+    for (Motion& m : c.motions) {
+        if (m.follow.empty() || m.kind != MotionKind::Circular) continue;
+        const JointStandard* st = nullptr;
+        for (const JointStandard& s : kJointStandards)
+            if (endsWith(m.name, s.suffix)) {
+                st = &s;
+                break;
+            }
+        if (!st || m.ratio == 0.0f) continue;
+        float sweep = st->sweep, hard = st->hard;
+        const float main = value(st->param), top = hardMax(st->param);
+        if (st->symmetric) sweep = -main, hard = -top;
+        if (forwardArm && std::string_view(st->param) == "shoulder_flex") sweep = -60, hard = -90;
+        if (forwardArm && std::string_view(st->param) == "shoulder_abd") sweep = -40, hard = -45;
+        m.hasLimits = true;
+        m.lo = hard;
+        m.hi = top;
+        Driven& d = drives[m.follow];
+        d.any = true;
+        const float up = main / m.ratio, down = sweep / m.ratio; // drive angles for this joint
+        d.up = std::min(d.up, std::max(up, down));
+        d.down = std::max(d.down, std::min(up, down));
+    }
+    for (Motion& m : c.motions) {
+        const auto it = drives.find(m.name);
+        if (it == drives.end() || !it->second.any || !m.follow.empty()) continue;
+        const float speed = std::max(std::fabs(m.speed), 1.0f), hold = 0.25f;
+        const float up = it->second.up, down = std::min(it->second.down, 0.0f);
+        auto travel = [&](float from, float to) { return 1.875f * std::fabs(to - from) / speed; };
+        float t = 0.0f;
+        m.keys = {{0.0f, 0.0f}};
+        m.keys.push_back({t += travel(0, up), up});
+        m.keys.push_back({t += hold, up});
+        if (down < 0.0f) {
+            m.keys.push_back({t += travel(up, down), down});
+            m.keys.push_back({t += hold, down});
+            m.keys.push_back({t += travel(down, 0), 0.0f});
+        } else {
+            m.keys.push_back({t += travel(up, 0), 0.0f});
+        }
+        m.keys.push_back({t += hold, 0.0f});
+        m.mode = MotionMode::Loop;
+        m.range = 0.0f;
+    }
+}
+
 // Joints first, motor drives last: a drive spins its rotor about the rotor's own axis
 // only after every joint that carries the motor has moved it (the first motion in the
 // list is the outermost).
@@ -2138,7 +2243,8 @@ const Vec3 kCoreGlow{0.30f, 0.86f, 1.0f};
 // "robot_torso" (pelvis to chest) or "robot_leg". Every joint is driven by a DC gear
 // motor (see HandBuilder): the drive oscillates over gear x limit, the joint follows
 // at 1 / gear, so it sweeps 0 -> limit -> 0 within its human range of motion.
-void buildHumanoid(LibraryComponent& c, const std::string& key, const std::function<float(const char*)>& v, const Vec3& o) {
+void buildHumanoid(LibraryComponent& c, const std::string& key, const std::function<float(const char*)>& v,
+                   const std::function<float(const char*)>& top, const Vec3& o) {
     const bool all = key == "humanoid", headOnly = key == "robot_head_neck", legOnly = key == "robot_leg";
     const bool torso = all || key == "robot_torso", head = all || headOnly, legs = all || legOnly;
     const float s = v("size"), gear = v("gear"), rpm = v("rpm");
@@ -2316,6 +2422,8 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
     settleDrives(c);
     faceFront(c, o);
 
+    applyJointStandards(c, v, top, false);
+
     // ---- demo: range of motion (every joint), march in place, or still
     const int demo = all ? static_cast<int>(v("demo")) : 0;
     if (demo == 0) return;
@@ -2340,9 +2448,10 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
         m.enabled = step != nullptr;
         if (!step) continue;
         for (Motion& d : c.motions)
-            if (d.name == m.follow) {
-                d.range = gear * step->sweep;
-                d.speed = d.range / kStride;
+            if (d.name == m.follow) { // up in one stride, down in the next, repeated
+                const float angle = step->sweep / m.ratio;
+                d.keys = {{0, 0}, {kStride, angle}, {2 * kStride, 0}};
+                d.mode = MotionMode::Loop;
                 d.start = step->late ? kStride : 0.0f;
             }
         keep.push_back(m.follow);
@@ -2365,6 +2474,11 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
             }
         const auto it = values.find(key);
         return it != values.end() ? it->second : 0.0f;
+    };
+    auto top = [&](const char* key) { // a parameter's maximum: the joint's hard stop
+        for (const LibraryParam& p : item.params)
+            if (std::string(p.key) == key) return p.max;
+        return 0.0f;
     };
     LibraryComponent c;
     c.name = name;
@@ -2408,15 +2522,18 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
             c.bodies.push_back(part(name + " Base", "robot_forearm", {d.width[0] + 12.0f, 72, 16, d.width[0] * 0.5f + 0.5f, 0},
                                     h.o, kDarkSteel, name, h.s));
             h.digit(d, {}, thumb ? kThumbYaw : 0.0f, thumb, full, v);
+            settleDrives(c);
+            applyJointStandards(c, v, top, false);
             return c;
         }
         buildHandArm(h, v, full, arm, arm || v("wrist") >= 0.5f, arm);
         settleDrives(c);
+        applyJointStandards(c, v, top, arm);
         return c;
     }
     // Humanoid body: head and neck, torso (pelvis, gut, midriff, chest, heart), legs, or all of it.
     if (key == "humanoid" || key == "robot_head_neck" || key == "robot_torso" || key == "robot_leg") {
-        buildHumanoid(c, key, v, o);
+        buildHumanoid(c, key, v, top, o);
         return c;
     }
     // Single humanoid parts (white shells, dark joint parts), set down on the ground at `o`.

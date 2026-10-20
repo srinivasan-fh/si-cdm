@@ -30,34 +30,37 @@ inserted.
 The robot body has **20 joints** (neck 3, waist 1, trunk 2, each leg 7) plus **7 per arm** and the
 hands (15 joints each), every one on its own DC gear motor.
 
-## Joints and default range of motion
+## Joints and standard range of motion
 
-All angles are measured from the standing pose (0°), arms hanging. Each joint sweeps **0° → limit →
-0°**; the parameter's maximum is the mechanical hard stop. Defaults follow normal human active range
-of motion, rounded to robot-friendly values.
+All angles are measured from the standing pose (0°), arms hanging. Every joint moves **both ways**,
+like a human joint, between two **hard stops** it can never pass: the main direction (flexion,
+abduction, internal rotation, plantarflexion…) up to the part parameter's maximum, and the return
+direction (extension, adduction, external rotation, dorsiflexion…) to the normal human value (AAOS /
+clinical tables). Any value outside the stops, from a motor, a keyframe or a posture, is clamped to
+them and the joint's speed there is zero.
 
-| Joint (`PART` key) | Motion from the standing pose | Default | Hard stop | Human ROM |
-| --- | --- | --- | --- | --- |
-| Neck rotation (`neck_yaw`) | turns the head to the left | 70° | 80° | 70–80° each way |
-| Neck flexion (`neck_pitch`) | nods the chin down | 45° | 60° | 45–50° flexion, 60° extension |
-| Neck lateral flexion (`neck_roll`) | tilts the head toward the right shoulder | 40° | 45° | 45° each way |
-| Trunk rotation (`waist_rot`) | turns the upper body at the waist | 40° | 45° | 30–45° each way |
-| Trunk flexion (`trunk_flex`) | bends forward at the midriff | 60° | 80° | 60° lumbar, 80° thoracolumbar |
-| Trunk lateral flexion (`trunk_bend`) | bends sideways | 25° | 35° | 25–35° each way |
-| Shoulder flexion (`shoulder_flex`) | swings the arm forward and up | 90° | 180° | 0–180° |
-| Shoulder abduction (`shoulder_abd`) | raises the arm sideways | 90° | 180° | 0–180° |
-| Shoulder internal rotation (`shoulder_rot`) | turns the upper arm inward | 70° | 90° | 70° internal / 90° external |
-| Elbow, forearm, wrist, hand | as on the [robot arm](robot-arm.md) | | | |
-| Hip flexion (`hip_flex`) | swings the thigh forward | 90° | 120° | 120° (knee bent), 90° straight leg |
-| Hip abduction (`hip_abd`) | swings the leg out to the side | 40° | 45° | 45° |
-| Hip internal rotation (`hip_rot`) | turns the toes inward | 35° | 45° | 40–45° |
-| Knee flexion (`knee`) | brings the heel up behind | 130° | 140° | 135–140° |
-| Ankle plantarflexion (`ankle_pitch`) | points the toes down | 45° | 50° | 50° plantar / 20° dorsiflexion |
-| Ankle inversion (`ankle_roll`) | turns the sole inward | 30° | 35° | 35° inversion / 15° eversion |
-| Toe extension (`toe`) | lifts the toes at the ball of the foot | 60° | 70° | 70° |
+| Joint (`PART` key) | + direction | Default | − direction | Hard stops | Human ROM |
+| --- | --- | --- | --- | --- | --- |
+| Neck rotation (`neck_yaw`) | turns the head left | 70° | turns right | −80° … 80° | 70–80° each way |
+| Neck flexion (`neck_pitch`) | chin down | 45° | head back (extension) | −60° … 60° | 45–50° flexion, 60° extension |
+| Neck lateral flexion (`neck_roll`) | tilts toward the right shoulder | 40° | toward the left | −45° … 45° | 45° each way |
+| Trunk rotation (`waist_rot`) | turns the upper body | 40° | the other way | −45° … 45° | 30–45° each way |
+| Trunk flexion (`trunk_flex`) | bends forward | 60° | leans back | −30° … 80° | 60–80° flexion, 25–30° extension |
+| Trunk lateral flexion (`trunk_bend`) | bends sideways | 25° | the other side | −35° … 35° | 25–35° each way |
+| Shoulder flexion (`shoulder_flex`) | arm forward and up | 90° | arm back (extension) | −60° … 180° | 180° flexion, 60° extension |
+| Shoulder abduction (`shoulder_abd`) | arm out to the side | 90° | across the body (adduction) | −30° … 180° | 180° abduction, 30° adduction |
+| Shoulder rotation (`shoulder_rot`) | upper arm inward | 70° | outward (external) | −90° … 90° | 70° internal, 90° external |
+| Elbow, forearm, wrist, hand | as on the [robot arm](robot-arm.md#joints-and-standard-range-of-motion) | | | | |
+| Hip flexion (`hip_flex`) | thigh forward | 90° | thigh back (extension) | −30° … 120° | 120° flexion, 30° extension |
+| Hip abduction (`hip_abd`) | leg out to the side | 40° | across (adduction) | −30° … 45° | 45° abduction, 30° adduction |
+| Hip rotation (`hip_rot`) | toes inward | 35° | toes outward | −45° … 45° | 45° each way |
+| Knee flexion (`knee`) | heel up behind | 130° | — (no hyperextension) | 0° … 140° | 135–140° |
+| Ankle (`ankle_pitch`) | toes down (plantarflexion) | 45° | toes up (dorsiflexion) | −20° … 50° | 50° plantar, 20° dorsiflexion |
+| Ankle (`ankle_roll`) | sole inward (inversion) | 30° | sole outward (eversion) | −15° … 35° | 35° inversion, 15° eversion |
+| Toe (`toe`) | toes up (MTP extension) | 60° | toes curl down | −40° … 70° | 70° extension, 40° flexion |
 
-Extension past the standing pose (hyperextension, the other direction of the trunk and ankle) is not
-modelled: the joints stop at 0°.
+The parameter sets the main sweep of the range-of-motion demo and, with its maximum, the hard stop;
+the return side is fixed by the standard.
 
 ## Parts
 
@@ -102,8 +105,14 @@ head 230: **1.83 m** overall. Arms: upper arm 300, forearm 250, so the fingertip
 ## How the DC motors drive the joints
 
 As on the arm and hand ([details](robot-arm.md#how-the-dc-motors-drive-the-joints)): each joint has
-its own DC motor named `<part> Motor <joint>` with a `… Drive` motion on its rotor. The drive oscillates
-over `GEAR × limit` at `RPM`, and the joint follows at `1 / GEAR`, so it stops exactly at its limit.
+its own DC gear motor named `<part> Motor <joint>` with a `… Drive` motion on its rotor, and the joint
+follows the drive at `1 / GEAR`. The default motor runs at 120 rpm, so at gear 4 a joint moves at up
+to 180°/s, a typical humanoid servo speed (`RPM` and `GEAR` change it).
+
+Drives are **keyframed**: every move goes from key to key on a **minimum-jerk** path (position
+10s³ − 15s⁴ + 6s⁵), which starts and ends at rest with no jump in acceleration, the way people and
+well-tuned servos move. Its peak speed is 1.875 × the average, and moves are always timed so this peak
+stays within the motor's rated speed.
 
 Where the motors sit: waist and hip motors on the pelvis (hips on its sides), trunk motors on the back
 of the gut, neck and shoulder motors on the upper back, the knee motor behind the thigh, the ankle motors
@@ -112,18 +121,69 @@ hand motors on the forearm, as on the arm.
 
 Joints chain from the pelvis out: waist → trunk → neck → head and waist → trunk → shoulders → arm → hand;
 hip → knee → ankle → toe. Every joint comes before every motor drive in the motion list, so a motor's
-rotor turns in its housing however the body around it moves. (This also fixes the elbow and
-forearm-rotation motor rotors of the robot arm, which drifted away from their housings when the arm
-moved.)
+rotor turns in its housing however the body around it moves.
+
+## Postures and gestures
+
+`POSE` moves a robot into a **posture**, and `GESTURE` plays a timed sequence of them. They work on every
+library robot: the humanoid, the robot arm, hand, finger, thumb, leg, and head & neck. Joints are named
+by standard ids: `neck yaw`, `trunk flex`, `right shoulder abduction`, `left elbow`, `right index pip`,
+`left knee`, `right ankle pitch`. A group sets several at once: `elbow` sets both elbows, `right index`
+the three index joints, and `*` sets every joint.
+
+```text
+POSE squat                                 preset posture, on the selected (or first) robot
+POSE "Humanoid Robot 1" t_pose hand_fist   presets combine; later entries win
+POSE right elbow 90 neck yaw -30 IN 1.5    joint angles in degrees, in 1.5 s
+POSE JOINTS                                every joint: id, angle, hard stops
+POSE LIST          GESTURE LIST            presets, and the robots in the project
+GESTURE wave       GESTURE wave MIRROR     right arm, or the left
+GESTURE march LOOP SPEED 1.5               loop it, 1.5x faster
+```
+
+How a move is made:
+
+1. **Clamped to the hard stops.** An angle past a stop is set to the stop, with a note.
+2. **Turned into motor angles.** Joints that share a motor (the underactuated fingers' MCP, PIP and DIP,
+   and the thumb's MCP and IP) get the best least-squares fit, with a note on how far it lands.
+3. **Timed by the motors.** A posture takes the time you give (`IN s`); without one it takes as little
+   as the motors allow, at least 0.6 s. A move is never faster than a motor's rated speed: a gesture step
+   that would be is lengthened, with a note.
+4. **Feet stay level and on the floor.** Unless a posture names an ankle, both ankle joints are solved
+   from the real hip, knee and ankle axes so each sole stays exactly flat, all along the move, not only at
+   its end. A foot that cannot lie flat (its ankle at a hard stop) is reported. The body rises and
+   sinks with a `<robot> Stance` motion so the lowest sole stays on the ground, as in a squat.
+
+Joints a posture does not name hold still. Every move starts from the posture the robot holds, so you can
+chain them: `POSE squat`, then `POSE stand`.
+
+**Postures:** `stand`, `t_pose`, `a_pose`, `arms_up`, `arms_forward`, `squat` (parallel: thighs level,
+shins forward 20°, arms forward for balance), `sit`, `bow`, `balance` (on the right leg), `point`,
+`wave_ready`, `salute` (fingertips to the brow), `thumbs_up`, `look_left`, `look_right`, `look_up`,
+`look_down`. Hand shapes work on either hand: `hand_open`, `hand_relaxed`, `hand_fist`, `hand_point`,
+`hand_thumbs_up`, `hand_peace`, `hand_ok`, `hand_pinch`, `hand_grasp`, `hand_spread`.
+
+**Gestures:** `wave`, `nod`, `shake`, `bow`, `point`, `thumbs_up`, `salute`, `grasp`, `count` (one to five
+on the fingers), `squat`, `look_around`, `stretch`, `march` (loops: legs alternate, arms swing with the
+opposite leg). A right-handed gesture on a left hand or arm plays mirrored automatically.
+
+In the app: **Simulation → Motion Study → Robot pose** picks the robot, a posture (**Pose**) or a gesture
+(**Play**, with *Loop* and *Other side*), and plays it from the start. Over MCP: the `set_pose` and
+`play_gesture` tools.
+
+Sign conventions, from the standing pose: + is flexion, abduction, internal rotation, plantarflexion,
+inversion, toe extension and ulnar deviation. Neck yaw + turns left and neck roll + tilts right. Forearm
+rotation + supinates from the pronated zero.
 
 ## Demos
 
 `DEMO` on the Humanoid Robot:
 
-- **Range of motion** (default): every joint sweeps 0 → limit → 0 at once.
-- **March in place:** the legs alternate (hip 50°, knee 75°, ankle 15°, 0.7 s per stride) and each arm
-  swings with the opposite leg (shoulder 30°, elbow 30°); the other joints hold still.
-- **Still:** only the heart pump turns; pose it yourself with `MOTION` or the Motion Study panel.
+- **Range of motion** (default): every joint moves through its full standard range,
+  0 → + direction → − direction → 0, holding 0.25 s at each end, at its motor's rated speed.
+- **March in place:** the legs alternate (hip 50°, knee 75°, ankle 15°) and each arm swings with the
+  opposite leg (shoulder 30°, elbow 30°); the other joints hold still.
+- **Still:** only the heart pump turns; pose it with `POSE`, `GESTURE` or the Motion Study panel.
 
 ## Examples
 
@@ -135,6 +195,8 @@ PART HEADNECK NECK_YAW 60                     head and neck on a pedestal
 PART TORSO HEART_RATE 90                      pelvis to chest, heart pump at 90 bpm
 PART LEG SIDE LEFT @-700,0,0                  left leg on its stand
 PART THIGH   PART SHIN   PART FOOT            single parts
+POSE squat    POSE stand IN 2                 squat, then stand up in 2 s
+GESTURE wave  GESTURE march LOOP              wave, then march in place
 SIM PLAY      SIM AT 0.7                       joint angles at 0.7 s
-MOTION CIRCLE "Humanoid Robot 1 Motor Right Knee Drive" RANGE 240   knee to 60 deg at gear 4
+MOTION CIRCLE "Humanoid Robot 1 Motor Right Knee Drive" KEYS 0:0,1:240,2:0   knee 0-60-0 deg at gear 4
 ```

@@ -103,6 +103,9 @@ of the 3D model without changing it — Stop puts every body back where it was m
   (default: the wheel's size), so the wheels drive the vehicle — stop or reverse them and it stops or backs up.
 - **Range & mode:** an optional sweep (deg) or stroke (mm) with Continuous, Loop, Oscillate (back and
   forth) or Once; a start delay; negative speeds reverse. Each motion can be switched on and off.
+- **Keyframes & hard stops:** a motion can follow keyframes (`KEYS t:v,...`), moving from key to key on
+  a minimum-jerk path (smooth start and stop, the way people and tuned servos move), and can have hard
+  stops (`LIMITS lo hi`) it never passes, even when it follows another motion.
 - **Chained motions:** a body in several motions gets them in list order, the first outermost — e.g. a
   linear *Drive* on all bodies listed before a circular *Wheel spin* on the wheels carries the spinning
   wheels along.
@@ -121,6 +124,7 @@ MOTION LINEAR Drive DIR X SPEED 20 STROKE 200 OSC BODIES ALL
 MOTION CIRCLE "Wheel spin" AXIS Y RPM 30 EACH BODIES "Wheel 1" "Wheel 2" "Wheel 3"
 MOTION LINEAR Drive FOLLOW "Wheel spin"        # the body rolls with the wheels (RADIUS r to override)
 MOTION CIRCLE Turntable AXIS Z AT 0,0,0 SPEED -45 RANGE 90 ONCE START 2
+MOTION CIRCLE Arm KEYS 0:0,1.5:90,2:90,3.5:0 LIMITS -10 95 BODIES Arm   # keyframed, with hard stops
 MOTION   MOTION OFF Drive   MOTION DELETE Drive
 SIM PLAY   SIM PAUSE   SIM STOP   SIM TIME 2.5   SIM SPEED 2   SIM DURATION 12   SIM AXES OFF   SIM AT 3
 ```
@@ -179,6 +183,14 @@ parametric: they save as parameters and rebuild exactly when the project opens.
 - **Humanoid body** joints (neck ×3, waist, trunk ×2, hip ×3, knee, ankle ×2, toe; shoulders ×3 on the
   chest) work the same way, within human range of motion; the Humanoid Robot puts it all together, head
   to toe. Anatomy mapping, limits and demos: [docs/humanoid-body.md](docs/humanoid-body.md).
+- **Standard range of motion:** every robot joint moves both ways between hard stops from the human
+  standard (AAOS): e.g. hip −30° … 120°, ankle −20° (dorsiflexion) … 50°, neck rotation ±80°, finger MCP
+  −30° … 110°.
+- **Postures and gestures:** `POSE` and `GESTURE` (or *Motion Study → Robot pose*) move any library robot
+  into presets (stand, squat, T-pose, salute, fist, OK...) or exact joint angles, and play gestures (wave,
+  nod, point, count, march...). Moves are clamped to the hard stops, use minimum-jerk paths within the
+  motors' rated speed, and keep a humanoid's feet flat on the floor all along the move:
+  [postures and gestures](docs/humanoid-body.md#postures-and-gestures).
 
 ```text
 PART                              (lists the library)
@@ -191,6 +203,7 @@ PART SPUR MODULE 2 TEETH 24 WIDTH 10 BORE 4      PART HELICAL TEETH 30 HELIX 20 
 PART GEARPAIR TEETH1 16 TEETH2 48      PART PLANETARY SUN_TEETH 18 PLANET_TEETH 18      PART WORMDRIVE
 SCALE "DC Motor 1" 2      SCALE "Gear Pair 1 Driver" TO 1
 MOTION CIRCLE Output FOLLOW "DC Motor 1 Drive" RATIO -0.25 BODIES "Spur Gear 1"
+PART HUMANOID DEMO STILL    POSE squat    POSE stand IN 2    POSE right elbow 90 neck yaw -30    GESTURE wave
 ```
 
 ## Tools (left rail)
@@ -294,6 +307,7 @@ SI CDM includes a [Model Context Protocol](https://modelcontextprotocol.io) serv
 and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`, `create_solid`, `extrude`, `modify`, `delete`,
 `create_motion`, `delete_motion`, `simulate` (play / pause / seek, or body poses at a time — headless too),
 `insert_part`, `list_parts` (library motors, gears and gear trains; `modify` takes a `scale`),
+`set_pose`, `play_gesture` (robot postures and gestures),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

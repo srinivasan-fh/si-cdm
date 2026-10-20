@@ -2,6 +2,7 @@
 
 #include "core/Command.hpp"
 #include "core/Library.hpp"
+#include "core/Pose.hpp"
 #include "core/Units.hpp"
 #include "ui/Theme.hpp"
 #include "ui/ToolIcons.hpp"
@@ -2135,6 +2136,81 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             cmd.commands.push_back(line);
         }
         if (automatic) ImGui::EndDisabled();
+    }
+
+    // Postures and gestures of the library robots (humanoid, arm, hand, leg, neck...).
+    if (const std::vector<std::string> robots = robotNames(scene); !robots.empty()) {
+        theme::caption("Robot pose");
+        static std::string robot;
+        static int posture = 0, gesture = 0;
+        static bool loopGesture = false, mirrorGesture = false;
+        if (std::find(robots.begin(), robots.end(), robot) == robots.end()) robot = robots.front();
+        if (hasSel && !bodies[static_cast<std::size_t>(st.selectedBody)].component.empty()) {
+            const std::string& c = bodies[static_cast<std::size_t>(st.selectedBody)].component;
+            if (std::find(robots.begin(), robots.end(), c) != robots.end()) robot = c;
+        }
+        const auto& postures = namedPostures();
+        const auto& gestures = namedGestures();
+        const float labelW = 64.0f, buttonW = 64.0f;
+        const float fieldW = ImGui::GetContentRegionAvail().x - labelW - buttonW - 2 * ImGui::GetStyle().ItemSpacing.x;
+        auto label = [&](const char* text) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", text);
+            ImGui::SameLine(labelW);
+        };
+        const std::string quoted = "\"" + robot + "\"";
+        label("Robot");
+        ImGui::SetNextItemWidth(fieldW + buttonW + ImGui::GetStyle().ItemSpacing.x);
+        if (ImGui::BeginCombo("##robot", robot.c_str())) {
+            for (const std::string& r : robots)
+                if (ImGui::Selectable(r.c_str(), r == robot)) robot = r;
+            ImGui::EndCombo();
+        }
+        label("Posture");
+        ImGui::SetNextItemWidth(fieldW);
+        posture = std::clamp(posture, 0, static_cast<int>(postures.size()) - 1);
+        if (ImGui::BeginCombo("##posture", postures[static_cast<std::size_t>(posture)].name)) {
+            for (int i = 0; i < static_cast<int>(postures.size()); ++i) {
+                if (ImGui::Selectable(postures[static_cast<std::size_t>(i)].name, i == posture)) posture = i;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", postures[static_cast<std::size_t>(i)].summary);
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Pose", {buttonW, 0})) {
+            cmd.commands.push_back("POSE " + quoted + " " + postures[static_cast<std::size_t>(posture)].name);
+            cmd.commands.push_back("SIM STOP");
+            cmd.commands.push_back("SIM PLAY");
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Move into the posture from the one it holds: joints clamped to their hard stops,\n"
+                              "minimum-jerk paths within the motors' rated speed, feet kept on the floor");
+        label("Gesture");
+        ImGui::SetNextItemWidth(fieldW);
+        gesture = std::clamp(gesture, 0, static_cast<int>(gestures.size()) - 1);
+        if (ImGui::BeginCombo("##gesture", gestures[static_cast<std::size_t>(gesture)].name)) {
+            for (int i = 0; i < static_cast<int>(gestures.size()); ++i) {
+                if (ImGui::Selectable(gestures[static_cast<std::size_t>(i)].name, i == gesture)) {
+                    gesture = i;
+                    loopGesture = gestures[static_cast<std::size_t>(i)].loop;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", gestures[static_cast<std::size_t>(i)].summary);
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Play", {buttonW, 0})) {
+            cmd.commands.push_back("GESTURE " + quoted + " " + gestures[static_cast<std::size_t>(gesture)].name +
+                                   (loopGesture ? " LOOP" : " ONCE") + (mirrorGesture ? " MIRROR" : ""));
+            cmd.commands.push_back("SIM STOP");
+            cmd.commands.push_back("SIM PLAY");
+        }
+        ImGui::Dummy({labelW - ImGui::GetStyle().ItemSpacing.x, 0});
+        ImGui::SameLine(labelW);
+        ImGui::Checkbox("Loop##gesture", &loopGesture);
+        ImGui::SameLine();
+        ImGui::Checkbox("Other side", &mirrorGesture);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play it with the left arm / hand");
     }
 
     theme::caption("Motions");

@@ -41,11 +41,19 @@ constexpr CommandSpec kCommands[] = {
     {"EXPORT", "EXP", "EXPORT path.stl|.obj|.dxf|.svg", "STL/OBJ of visible bodies; DXF/SVG of the sketch plane"},
     // Motion & simulation
     {"MOTION", "MOT MOTIONS", "MOTION CIRCLE|LINEAR [name] [AXIS X|Y|Z|x,y,z] [AT x,y,z] [SPEED v] [RANGE r] "
-     "[MODE CONT|LOOP|OSC|ONCE] [START s] [EACH] [FOLLOW circular|NONE] [RATIO r] [RADIUS r] [STEP s] [PATH] [BODIES name... | ALL]  |  "
+     "[MODE CONT|LOOP|OSC|ONCE] [START s] [EACH] [FOLLOW circular|NONE] [RATIO r] [RADIUS r] [STEP s] [PATH] "
+     "[KEYS t:v,t:v...|NONE] [LIMITS lo hi|OFF] [BODIES name... | ALL]  |  "
      "MOTION DELETE|ON|OFF name  |  MOTION",
      "Circular (deg/s about an axis; EACH: every body about its own centre) or linear (mm/s along a direction) "
      "motion of bodies; FOLLOW makes a linear motion roll with a wheel spin (travel = angle x RADIUS, "
      "default the wheel's size); no args lists them"},
+    {"POSE", "POSTURE", "POSE [robot] name | joint angle... [IN s]  |  POSE [robot] JOINTS  |  POSE LIST",
+     "Move a library robot (humanoid, arm, hand, leg, neck...) into a posture: a preset (STAND, SQUAT, T_POSE, "
+     "HAND_FIST...) and/or joint angles in degrees (RIGHT ELBOW 90, NECK YAW -30); clamped to the joints' "
+     "hard stops and reached on minimum-jerk paths within the motors' rated speed"},
+    {"GESTURE", "GEST", "GESTURE [robot] name [LOOP|ONCE] [SPEED x|DURATION s] [LEFT|RIGHT|MIRROR]  |  GESTURE LIST",
+     "Play a gesture (WAVE, NOD, SHAKE, BOW, POINT, THUMBS_UP, SALUTE, GRASP, COUNT, SQUAT, LOOK_AROUND, "
+     "STRETCH, MARCH) on a library robot from the posture it holds"},
     {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t]",
      "Open the Simulation window and control playback; SIM AT t reports body poses at time t"},
     // Library

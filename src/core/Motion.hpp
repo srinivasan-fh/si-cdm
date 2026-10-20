@@ -2,6 +2,7 @@
 
 #include "core/Math.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -23,6 +24,12 @@ enum class MotionMode {
     Loop,       // 0 -> range, then jumps back to 0
     Oscillate,  // 0 -> range -> 0 (back and forth)
     Once,       // 0 -> range, then stops
+};
+
+// A keyframe: value (deg / mm) at t seconds after the motion's start.
+struct MotionKey {
+    float t = 0.0f;
+    float value = 0.0f;
 };
 
 struct Motion {
@@ -50,8 +57,22 @@ struct Motion {
     // belt along its own loop (see loopTravel()); usually it follows the driver
     // sprocket / pulley with radius = its pitch radius.
     bool alongLoop = false;
+    // Keyframes (postures over time). When set they replace speed / range / follow:
+    // the motion moves between them on minimum-jerk curves (zero velocity and
+    // acceleration at every key, so it settles exactly on each value); Loop repeats
+    // them, any other mode holds the last value.
+    std::vector<MotionKey> keys;
+    // false: minimum-jerk from key to key (stops on each: postures, gestures);
+    // true: smooth spline through the keys (densely sampled tracks such as a stance).
+    bool keySpline = false;
+    // Joint limits (hard stops): the value is held within [lo, hi] whatever drives it.
+    bool hasLimits = false;
+    float lo = 0.0f, hi = 0.0f;
 
     bool moves(std::string_view bodyName) const;
+    // Keeps the keys in time order (call after editing them).
+    void sortKeys();
+    float clampToLimits(float v) const noexcept { return hasLimits ? std::clamp(v, lo, hi) : v; }
     const char* unit() const noexcept { return kind == MotionKind::Circular ? "deg" : "mm"; }
     const char* rateUnit() const noexcept { return kind == MotionKind::Circular ? "deg/s" : "mm/s"; }
 };
@@ -66,7 +87,13 @@ float motionRate(const Scene& scene, const Motion& m, float t);
 Mat4 motionMatrix(const Motion& m, float t) noexcept;
 // The same with the rotation axis through `origin` instead of m.origin.
 Mat4 motionMatrix(const Motion& m, float t, const Vec3& origin) noexcept;
-// Seconds for one full cycle (loop / oscillate / once); 0 for unlimited motions.
+// Value of a keyframed motion at time t and (optional) its rate: minimum-jerk
+// interpolation 10s^3 - 15s^4 + 6s^5 between neighbouring keys, or a C1 cubic
+// spline through them (keySpline).
+float keyedValue(const Motion& m, float t, float* rate = nullptr) noexcept;
+// Peak speed of the keyframed path (deg/s or mm/s): 1.875 x the steepest key-to-key slope.
+float keyedPeakRate(const Motion& m) noexcept;
+// Seconds for one full cycle (loop / oscillate / once, or the keys); 0 for unlimited motions.
 float motionCycle(const Motion& m) noexcept;
 
 // Per-body world transform at time t (identity for bodies nothing moves). A body

@@ -31,6 +31,52 @@ bool Motion::moves(std::string_view bodyName) const {
     return false;
 }
 
+void Motion::sortKeys() {
+    std::stable_sort(keys.begin(), keys.end(), [](const MotionKey& a, const MotionKey& b) { return a.t < b.t; });
+}
+
+float keyedValue(const Motion& m, float t, float* rate) noexcept {
+    if (rate) *rate = 0.0f;
+    const auto& k = m.keys;
+    if (k.empty()) return 0.0f;
+    float u = std::max(t - m.start, 0.0f);
+    const float end = k.back().t;
+    if (m.mode == MotionMode::Loop && end > 0.0f) u = std::fmod(u, end);
+    if (u <= k.front().t) return k.front().value;
+    if (u >= end) return k.back().value;
+    std::size_t i = 0;
+    while (i + 2 < k.size() && u >= k[i + 1].t) ++i;
+    const float dt = k[i + 1].t - k[i].t;
+    if (dt <= 0.0f) return k[i + 1].value;
+    const float s = (u - k[i].t) / dt, d = k[i + 1].value - k[i].value;
+    const float s2 = s * s, s3 = s2 * s;
+    if (m.keySpline) { // cubic Hermite, tangents from the neighbours (zero at the ends)
+        auto slope = [&](std::size_t j) {
+            if (j == 0 || j + 1 >= k.size()) return 0.0f;
+            const float span = k[j + 1].t - k[j - 1].t;
+            return span > 0.0f ? (k[j + 1].value - k[j - 1].value) / span : 0.0f;
+        };
+        const float m0 = slope(i) * dt, m1 = slope(i + 1) * dt;
+        const float h00 = 2 * s3 - 3 * s2 + 1, h10 = s3 - 2 * s2 + s, h01 = -2 * s3 + 3 * s2, h11 = s3 - s2;
+        if (rate)
+            *rate = ((6 * s2 - 6 * s) * k[i].value + (3 * s2 - 4 * s + 1) * m0 + (-6 * s2 + 6 * s) * k[i + 1].value +
+                     (3 * s2 - 2 * s) * m1) /
+                    dt;
+        return h00 * k[i].value + h10 * m0 + h01 * k[i + 1].value + h11 * m1;
+    }
+    if (rate) *rate = d * (30.0f * s2 - 60.0f * s3 + 30.0f * s2 * s2) / dt;
+    return k[i].value + d * (10.0f * s3 - 15.0f * s2 * s2 + 6.0f * s3 * s2);
+}
+
+float keyedPeakRate(const Motion& m) noexcept {
+    float peak = 0.0f;
+    for (std::size_t i = 0; i + 1 < m.keys.size(); ++i) {
+        const float dt = m.keys[i + 1].t - m.keys[i].t, d = std::fabs(m.keys[i + 1].value - m.keys[i].value);
+        if (d > 0.0f) peak = std::max(peak, dt > 0.0f ? 1.875f * d / dt : 1e30f);
+    }
+    return peak;
+}
+
 namespace {
 
 float smoothValue(const Motion& m, float t) noexcept {
@@ -53,11 +99,21 @@ float smoothValue(const Motion& m, float t) noexcept {
 } // namespace
 
 float motionValue(const Motion& m, float t) noexcept {
+    if (!m.keys.empty()) return m.clampToLimits(keyedValue(m, t));
     const float v = smoothValue(m, t);
-    return m.step > 0.0f ? std::trunc(v / m.step + 1e-4f * (v < 0.0f ? -1.0f : 1.0f)) * m.step : v;
+    return m.clampToLimits(m.step > 0.0f ? std::trunc(v / m.step + 1e-4f * (v < 0.0f ? -1.0f : 1.0f)) * m.step : v);
 }
 
 float motionRate(const Motion& m, float t) noexcept {
+    if (!m.keys.empty()) {
+        float rate = 0.0f;
+        const float v = keyedValue(m, t, &rate);
+        return m.hasLimits && (v < m.lo || v > m.hi) ? 0.0f : rate;
+    }
+    if (m.hasLimits) { // stopped against a limit
+        const float v = smoothValue(m, t);
+        if (v < m.lo || v > m.hi) return 0.0f;
+    }
     if (t < m.start || m.speed == 0.0f) return 0.0f;
     if (!limited(m)) return m.speed;
     const float travel = (t - m.start) * std::fabs(m.speed);
@@ -110,18 +166,27 @@ float rollRadius(const Scene& scene, const Motion& m, const Motion& driver) {
     return 0.0f;
 }
 
+// Unclamped value of a follower (its leader's value through the ratio / roll radius).
+float followedValue(const Scene& scene, const Motion& m, const Motion& d, float t, int depth) {
+    const float lead = valueAt(scene, d, t, depth - 1);
+    return m.kind == MotionKind::Linear ? radians(lead) * rollRadius(scene, m, d) : lead * m.ratio;
+}
+
 float valueAt(const Scene& scene, const Motion& m, float t, int depth) {
-    if (m.follow.empty()) return motionValue(m, t);
+    if (m.follow.empty() || !m.keys.empty()) return motionValue(m, t);
     const Motion* d = depth > 0 ? driverOf(scene, m) : nullptr;
-    if (!d) return 0.0f;
-    const float lead = valueAt(scene, *d, t, depth - 1);
-    return m.kind == MotionKind::Linear ? radians(lead) * rollRadius(scene, m, *d) : lead * m.ratio;
+    if (!d) return m.clampToLimits(0.0f);
+    return m.clampToLimits(followedValue(scene, m, *d, t, depth)); // a joint stops at its hard stops
 }
 
 float rateAt(const Scene& scene, const Motion& m, float t, int depth) {
-    if (m.follow.empty()) return motionRate(m, t);
+    if (m.follow.empty() || !m.keys.empty()) return motionRate(m, t);
     const Motion* d = depth > 0 ? driverOf(scene, m) : nullptr;
     if (!d) return 0.0f;
+    if (m.hasLimits) {
+        const float v = followedValue(scene, m, *d, t, depth);
+        if (v < m.lo || v > m.hi) return 0.0f;
+    }
     const float lead = rateAt(scene, *d, t, depth - 1);
     return m.kind == MotionKind::Linear ? radians(lead) * rollRadius(scene, m, *d) : lead * m.ratio;
 }
@@ -146,6 +211,7 @@ float motionValue(const Scene& scene, const Motion& m, float t) { return valueAt
 float motionRate(const Scene& scene, const Motion& m, float t) { return rateAt(scene, m, t, kMaxFollowDepth); }
 
 float motionCycle(const Motion& m) noexcept {
+    if (!m.keys.empty()) return m.keys.back().t;
     if (!limited(m) || m.speed == 0.0f) return 0.0f;
     const float one = m.range / std::fabs(m.speed);
     return m.mode == MotionMode::Oscillate ? 2.0f * one : one;
@@ -317,6 +383,17 @@ std::string describeMotion(const Motion& m) {
     if (m.step > 0.0f) {
         char r[48];
         std::snprintf(r, sizeof(r), "  steps of %g %s", static_cast<double>(m.step), m.unit());
+        s += r;
+    }
+    if (!m.keys.empty()) {
+        char r[96];
+        std::snprintf(r, sizeof(r), "  keyframed: %zu keys over %g s%s", m.keys.size(), static_cast<double>(m.keys.back().t),
+                      m.mode == MotionMode::Loop ? ", looping" : "");
+        s += r;
+    }
+    if (m.hasLimits) {
+        char r[64];
+        std::snprintf(r, sizeof(r), "  limits %g..%g %s", static_cast<double>(m.lo), static_cast<double>(m.hi), m.unit());
         s += r;
     }
     std::string targets;

@@ -309,6 +309,13 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (!m.follow.empty()) jm.set("follow", m.follow).set("radius", m.radius).set("ratio", m.ratio);
         if (m.step > 0.0f) jm.set("step", m.step);
         if (m.alongLoop) jm.set("along_loop", true);
+        if (!m.keys.empty()) {
+            Json keys = Json::array();
+            for (const MotionKey& k : m.keys) keys.push(Json(Json::Array{k.t, k.value}));
+            jm.set("keys", keys);
+            if (m.keySpline) jm.set("key_curve", "spline");
+        }
+        if (m.hasLimits) jm.set("limits", Json(Json::Array{m.lo, m.hi}));
         motions.push(jm);
     }
     doc.set("motions", motions);
@@ -439,6 +446,15 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         m.ratio = jm["ratio"].asFloat(1.0f);
         m.step = std::max(jm["step"].asFloat(), 0.0f);
         m.alongLoop = jm["along_loop"].asBool(false);
+        for (const Json& k : jm["keys"].items())
+            if (k.isArray() && k.size() >= 2) m.keys.push_back({std::max(k[0].asFloat(), 0.0f), k[1].asFloat()});
+        m.sortKeys();
+        m.keySpline = jm["key_curve"].asString() == "spline";
+        if (jm["limits"].isArray() && jm["limits"].size() >= 2) {
+            m.hasLimits = true;
+            m.lo = std::min(jm["limits"][0].asFloat(), jm["limits"][1].asFloat());
+            m.hi = std::max(jm["limits"][0].asFloat(), jm["limits"][1].asFloat());
+        }
         loaded.motions().push_back(std::move(m));
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);

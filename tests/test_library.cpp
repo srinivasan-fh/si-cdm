@@ -69,6 +69,14 @@ bool closedSurfaces(const MeshData& m) {
     return !edges.empty();
 }
 
+// When a motor's keyframed range-of-motion cycle reaches its main-direction extreme.
+float peakTime(const Motion& drive) {
+    float best = 0.0f, at = 0.0f;
+    for (const MotionKey& k : drive.keys)
+        if (k.value > best) best = k.value, at = k.t;
+    return drive.keys.empty() ? drive.range / drive.speed : drive.start + at;
+}
+
 const Body* body(const Scene& s, const std::string& name) {
     for (const Body& b : s.bodies())
         if (b.name == name) return &b;
@@ -494,9 +502,10 @@ TEST_CASE("robot hand: links, DC motors in the forearm, joints within their limi
 
     const Motion* drive = motion(d.scene, "Robot Hand 1 Motor Index Flex Drive");
     REQUIRE(drive);
-    CHECK(drive->mode == MotionMode::Oscillate);
-    CHECK_NEAR(drive->range, 4 * 90, 1e-4); // gear x MCP limit
-    const float closed = drive->range / drive->speed;
+    CHECK(drive->mode == MotionMode::Loop);
+    REQUIRE(!drive->keys.empty());
+    CHECK_NEAR(motionValue(*drive, peakTime(*drive)), 4 * 90, 1e-3); // gear x MCP limit
+    const float closed = peakTime(*drive);
     const std::pair<const char*, float> limits[] = {{"Index MCP", 90}, {"Index PIP", 100}, {"Index DIP", 80},
                                                     {"Thumb MCP", 50}, {"Thumb IP", 80},   {"Wrist Flex", 80}};
     for (const auto& [joint, limit] : limits) {
@@ -504,10 +513,11 @@ TEST_CASE("robot hand: links, DC motors in the forearm, joints within their limi
         REQUIRE(j);
         const Motion* lead = motion(d.scene, j->follow);
         REQUIRE(lead);
-        CHECK_NEAR(motionValue(d.scene, *j, lead->range / lead->speed), limit, 1e-2);
+        CHECK_NEAR(motionValue(d.scene, *j, peakTime(*lead)), limit, 1e-2);
+        CHECK(j->hasLimits);
         for (float t = 0; t < 12; t += 0.07f) {
             const float a = motionValue(d.scene, *j, t);
-            CHECK(a >= -1e-3f && a <= limit + 1e-2f);
+            CHECK(a >= j->lo - 1e-3f && a <= limit + 1e-2f);
         }
     }
 
@@ -573,7 +583,7 @@ TEST_CASE("robot arm: shoulder to hand, every joint on a DC motor within its lim
         REQUIRE(j);
         const Motion* lead = motion(d.scene, j->follow);
         REQUIRE(lead);
-        CHECK_NEAR(motionValue(d.scene, *j, lead->range / lead->speed), limit, 1e-2);
+        CHECK_NEAR(motionValue(d.scene, *j, peakTime(*lead)), limit, 1e-2);
     }
     // Shoulder 300 mm + forearm 250 mm: the wrist is 550 mm ahead of the shoulder joint.
     const Body* palm = body(d.scene, "Robot Arm 1 Palm");
@@ -582,7 +592,7 @@ TEST_CASE("robot arm: shoulder to hand, every joint on a DC motor within its lim
     CHECK_NEAR(palm->offset.y - upper->offset.y, 550, 1e-3);
     // Raising the shoulder lifts the hand; the pedestal stays put.
     const Motion* raise = motion(d.scene, "Robot Arm 1 Shoulder Flex");
-    const float t = motion(d.scene, raise->follow)->range / motion(d.scene, raise->follow)->speed;
+    const float t = peakTime(*motion(d.scene, raise->follow));
     for (Motion& m : d.scene.motions()) m.enabled = m.name == raise->name || m.name == raise->follow;
     const auto tf = motionTransforms(d.scene, t);
     std::size_t pi = 0, si = 0;
@@ -665,10 +675,10 @@ TEST_CASE("humanoid joints follow DC gear motors and stay within human range of 
         const Motion* lead = motion(s, j->follow);
         REQUIRE(lead);
         CHECK(lead->name.find("Motor") != std::string::npos);
-        CHECK_NEAR(motionValue(s, *j, lead->range / lead->speed), limit, 1e-2);
+        CHECK_NEAR(motionValue(s, *j, peakTime(*lead)), limit, 1e-2);
         for (float t = 0; t < 12; t += 0.13f) {
             const float a = motionValue(s, *j, t);
-            CHECK(a >= -1e-3f && a <= limit + 1e-2f);
+            CHECK(a >= j->lo - 1e-3f && a <= limit + 1e-2f);
         }
     }
     // Every joint comes before every motor drive: rotors stay in their housings while the body moves.
@@ -698,7 +708,7 @@ TEST_CASE("humanoid joints follow DC gear motors and stay within human range of 
     auto only = [&](Document& doc, const std::string& joint) {
         for (Motion& m : doc.scene.motions()) m.enabled = m.name == n + joint || m.name == motion(s, n + joint)->follow;
         const Motion* lead = motion(doc.scene, motion(doc.scene, n + joint)->follow);
-        return motionTransforms(doc.scene, lead->range / lead->speed);
+        return motionTransforms(doc.scene, peakTime(*lead));
     };
     Document e = d;
     auto tf = only(e, "Right Hip Flex");
@@ -820,4 +830,58 @@ TEST_CASE("indexed motion lookup matches matching every motion against every bod
                        0, 1e-3);
         }
     }
+}
+
+TEST_CASE("standard range of motion: joints move both ways and stop at their hard stops") {
+    Document d;
+    REQUIRE(run(d, "PART HUMANOID NECK_YAW 60").ok);
+    REQUIRE(run(d, "PART ROBOTHAND DRIVE 1 @2000,0,0").ok);
+    const Scene& s = d.scene;
+    auto sweep = [&](const std::string& name, float& lo, float& hi) {
+        const Motion* j = motion(s, name);
+        lo = 1e9f, hi = -1e9f;
+        if (!j) return false;
+        for (float t = 0; t < 30; t += 0.01f) {
+            const float a = motionValue(s, *j, t);
+            lo = std::min(lo, a), hi = std::max(hi, a);
+        }
+        return true;
+    };
+    struct Expect {
+        const char* joint;
+        float lo, hi;         // demo sweep both ways
+        float stopLo, stopHi; // hard stops
+    };
+    const Expect expect[] = {
+        {"Humanoid Robot 1 Neck Yaw", -60, 60, -80, 80},             // symmetric: turns both ways
+        {"Humanoid Robot 1 Neck Pitch", -50, 45, -60, 60},          // extension / flexion
+        {"Humanoid Robot 1 Trunk Flex", -25, 60, -30, 80},
+        {"Humanoid Robot 1 Right Hip Flex", -20, 90, -30, 120},      // hip extension 30
+        {"Humanoid Robot 1 Left Hip Rotation", -40, 35, -45, 45},    // external / internal
+        {"Humanoid Robot 1 Right Knee", 0, 130, 0, 140},             // no hyperextension
+        {"Humanoid Robot 1 Left Ankle Pitch", -20, 45, -20, 50},     // dorsiflexion / plantarflexion
+        {"Humanoid Robot 1 Right Ankle Roll", -15, 30, -15, 35},     // eversion / inversion
+        {"Humanoid Robot 1 Right Shoulder Flex", -50, 90, -60, 180},
+        {"Humanoid Robot 1 Right Arm Wrist Flex", -60, 80, -70, 90}, // extension / flexion
+        {"Humanoid Robot 1 Right Arm Index MCP", 0, 90, -30, 110},   // underactuated: the coupled PIP keeps it from hyperextending
+        {"Robot Hand 1 Index MCP", -20, 90, -30, 110},               // fully actuated: hyperextends
+        {"Robot Hand 1 Index Abduction", -20, 20, -30, 30},
+        {"Robot Hand 1 Thumb IP", -15, 80, -20, 90},
+    };
+    for (const Expect& e : expect) {
+        float lo = 0, hi = 0;
+        REQUIRE(sweep(e.joint, lo, hi));
+        CHECK_NEAR(lo, e.lo, 0.05);
+        CHECK_NEAR(hi, e.hi, 0.05);
+        const Motion* j = motion(s, e.joint);
+        CHECK(j->hasLimits && j->lo == e.stopLo && j->hi == e.stopHi);
+    }
+    // Motors never exceed their rated speed (the minimum-jerk peak equals it).
+    for (const Motion& m : s.motions())
+        if (!m.keys.empty()) CHECK(keyedPeakRate(m) <= std::fabs(m.speed) * 1.001f);
+    // A pose past a hard stop holds at the stop.
+    Document e;
+    REQUIRE(run(e, "PART ROBOTHAND").ok);
+    REQUIRE(run(e, "MOTION CIRCLE \"Robot Hand 1 Motor Wrist Flex Drive\" KEYS 0:0,1:1000 MODE ONCE").ok);
+    CHECK_NEAR(motionValue(e.scene, *motion(e.scene, "Robot Hand 1 Wrist Flex"), 2), 90, 1e-3);
 }
