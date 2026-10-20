@@ -577,6 +577,7 @@ void Application::endSculpt() {
     Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(m_sculptBody)];
     m_sculptMesh.writeTo(body, true);
     m_doc.scene.touchBodies();
+    m_doc.scene.sealUndo();
     const std::size_t open = openEdgeCount(body.mesh);
     char info[160];
     std::snprintf(info, sizeof(info), "%s: %zu triangles%s", body.name.c_str(), body.mesh.indices.size() / 3,

@@ -18,43 +18,11 @@ namespace sicdm {
 
 namespace {
 
-// A triangle mesh with shared vertices (identical positions merged).
+// A triangle mesh with shared vertices.
 struct WMesh {
     std::vector<Vec3> p;
     std::vector<std::array<std::uint32_t, 3>> t;
 };
-
-struct PosKey {
-    float x, y, z;
-    bool operator==(const PosKey& o) const { return x == o.x && y == o.y && z == o.z; }
-};
-struct PosHash {
-    std::size_t operator()(const PosKey& k) const {
-        std::uint32_t a, b, c;
-        std::memcpy(&a, &k.x, 4);
-        std::memcpy(&b, &k.y, 4);
-        std::memcpy(&c, &k.z, 4);
-        return (static_cast<std::size_t>(a) * 73856093u) ^ (static_cast<std::size_t>(b) * 19349663u) ^
-               (static_cast<std::size_t>(c) * 83492791u);
-    }
-};
-
-WMesh welded(const MeshData& m) {
-    WMesh w;
-    std::unordered_map<PosKey, std::uint32_t, PosHash> id;
-    std::vector<std::uint32_t> r(m.vertices.size());
-    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
-        const Vec3& q = m.vertices[i].position;
-        const auto [it, fresh] = id.try_emplace(PosKey{q.x + 0.0f, q.y + 0.0f, q.z + 0.0f}, static_cast<std::uint32_t>(w.p.size()));
-        if (fresh) w.p.push_back(q);
-        r[i] = it->second;
-    }
-    for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) {
-        const std::array<std::uint32_t, 3> t{r[m.indices[k]], r[m.indices[k + 1]], r[m.indices[k + 2]]};
-        if (t[0] != t[1] && t[1] != t[2] && t[2] != t[0]) w.t.push_back(t);
-    }
-    return w;
-}
 
 std::uint64_t ekey(std::uint32_t a, std::uint32_t b) {
     if (a > b) std::swap(a, b);
@@ -361,10 +329,32 @@ bool shellBody(Body& body, const ShellOptions& o, std::string* error) {
         }
         world = std::move(open);
     }
-    const WMesh w = welded(world);
+    // Welded with a tolerance: the seams of round primitives close up.
+    Body surface;
+    surface.mesh = std::move(world);
+    const SculptMesh sm(surface);
+    WMesh w;
+    w.p = sm.positions();
+    w.t = sm.triangles();
     if (w.t.empty()) {
         if (error) *error = body.name + " has no surface to shell";
         return false;
+    }
+    // Hollowing a closed solid inwards: the wall must leave a cavity.
+    if (!o.outward && sm.openEdges() == 0) {
+        AABB bb;
+        for (const Vec3& p : w.p) bb.expand(p);
+        const Vec3 ext = bb.max - bb.min;
+        const float minDim = std::min({ext.x, ext.y, ext.z});
+        if (o.thickness * 2.0f >= minDim) {
+            if (error) {
+                char b[160];
+                std::snprintf(b, sizeof(b), "A %g mm wall leaves no cavity in %s (%g mm thin): use less, or OUTWARD",
+                              static_cast<double>(o.thickness), body.name.c_str(), static_cast<double>(minDim));
+                *error = b;
+            }
+            return false;
+        }
     }
     std::vector<Vec3> dir;
     offsetDirections(w, dir);
@@ -373,7 +363,16 @@ bool shellBody(Body& body, const ShellOptions& o, std::string* error) {
         if (o.outward) outer[v] = w.p[v] + dir[v] * o.thickness;
         else inner[v] = w.p[v] - dir[v] * o.thickness;
     }
+    for (std::size_t v = 0; v < w.p.size(); ++v)
+        if (!std::isfinite(outer[v].x + outer[v].y + outer[v].z + inner[v].x + inner[v].y + inner[v].z)) {
+            if (error) *error = "That thickness is out of range";
+            return false;
+        }
     MeshData m = shellBetween(w, outer, inner);
+    if (m.indices.empty()) {
+        if (error) *error = body.name + ": the shell came out empty";
+        return false;
+    }
     store(body, std::move(m));
     // Keep the body where it was placed (mesh relative to its offset).
     if (keepOffset.x != 0 || keepOffset.y != 0 || keepOffset.z != 0) {
@@ -733,7 +732,7 @@ InterferenceReport checkInterference(const Scene& scene, const std::vector<std::
 
 bool lightenBody(Body& body, const LightenOptions& o, std::string* error, double* volumeBefore, double* volumeAfter) {
     const MeshData world = worldMesh(body);
-    if (openEdgeCount(world) != 0) {
+    if (SculptMesh(body).openEdges() != 0) { // welded with a tolerance: round primitives have seams
         if (error) *error = body.name + " is not closed: lightening needs a solid";
         return false;
     }

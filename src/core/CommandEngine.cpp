@@ -271,7 +271,20 @@ std::vector<std::string> describeDocument(const Document& doc) {
     return l;
 }
 
+namespace {
+CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view);
+} // namespace
+
 CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* view) {
+    CommandOutput out = runCommand(doc, line, view);
+    // An edit that kept an undo snapshot and succeeded: record the state it left.
+    doc.scene.sealUndo();
+    return out;
+}
+
+namespace {
+
+CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     CommandOutput out;
     const ParsedCommand pc = tokenizeCommand(line);
     if (pc.name.empty()) return out;
@@ -1237,9 +1250,11 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
         return out;
     }
     if (cmd == "UNDO") {
-        const std::string what = doc.scene.undo();
-        if (what.empty()) return out.fail("Nothing to undo");
-        if (doc.selectedBody >= static_cast<int>(doc.scene.bodies().size())) doc.selectedBody = -1;
+        const std::size_t count = doc.scene.bodies().size();
+        std::string why;
+        const std::string what = doc.scene.undo(&why);
+        if (what.empty()) return out.fail(why.empty() ? "Nothing to undo" : why);
+        if (doc.scene.bodies().size() != count || doc.selectedBody >= static_cast<int>(count)) doc.selectedBody = -1;
         markChanged(doc);
         out.say("Undid " + what);
         return out;
@@ -2293,5 +2308,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     }
     return out.fail("Command not implemented: " + cmd);
 }
+
+} // namespace
 
 } // namespace sicdm

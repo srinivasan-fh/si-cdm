@@ -1065,6 +1065,19 @@ MeshData assemble(const std::vector<OutTri>& soup, double tol) {
 
 } // namespace
 
+std::size_t SculptMesh::openEdges() const {
+    std::unordered_map<std::uint64_t, int> count;
+    for (const auto& t : m_t)
+        for (int c = 0; c < 3; ++c) {
+            std::uint32_t a = t[static_cast<std::size_t>(c)], b = t[static_cast<std::size_t>((c + 1) % 3)];
+            if (a > b) std::swap(a, b);
+            ++count[static_cast<std::uint64_t>(a) << 32 | b];
+        }
+    std::size_t open = 0;
+    for (const auto& [e, n] : count) open += n == 1 ? 1 : 0;
+    return open;
+}
+
 std::size_t openEdgeCount(const MeshData& m) {
     struct Key {
         float x, y, z;

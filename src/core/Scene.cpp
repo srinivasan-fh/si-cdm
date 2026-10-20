@@ -67,9 +67,45 @@ void Scene::removeImage(std::size_t index) {
     m_imageRevision = nextRevision();
 }
 
+namespace {
+
+// The motions as far as an undo cares: their names and what they move.
+std::string motionsKey(const std::vector<Motion>& motions) {
+    std::string k;
+    for (const Motion& m : motions) {
+        k += m.name;
+        k += '\x1f';
+        for (const std::string& b : m.bodies) {
+            k += b;
+            k += '\x1e';
+        }
+        k += '\x1d';
+    }
+    return k;
+}
+
+} // namespace
+
 void Scene::pushUndo(std::string label) {
-    m_undo.push_back({std::move(label), m_bodies});
-    // At most 16 steps and about 2 million vertices of history.
+    Snapshot s;
+    s.label = std::move(label);
+    s.bodies = m_bodies;
+    s.motions = m_motions;
+    s.before = m_revision;
+    m_undo.push_back(std::move(s));
+}
+
+void Scene::sealUndo() {
+    if (m_undo.empty() || m_undo.back().sealed) return;
+    Snapshot& s = m_undo.back();
+    s.sealed = true;
+    s.after = m_revision;
+    s.afterBodies.clear();
+    for (const Body& b : m_bodies) s.afterBodies.push_back({b.name, b.offset, b.color, b.visible});
+    s.afterMotions = motionsKey(m_motions);
+    s.motionsChanged = s.afterMotions != motionsKey(s.motions);
+    // At most 16 steps and about 2 million vertices of history (trimmed only once an
+    // edit has succeeded, so a failed one costs no history).
     std::size_t vertices = 0;
     for (std::size_t i = m_undo.size(); i-- > 0;) {
         for (const Body& b : m_undo[i].bodies) vertices += b.mesh.vertices.size();
@@ -80,12 +116,41 @@ void Scene::pushUndo(std::string label) {
     }
 }
 
-std::string Scene::undo() {
+std::string Scene::undo(std::string* why) {
     if (m_undo.empty()) return "";
     Snapshot s = std::move(m_undo.back());
     m_undo.pop_back();
+    if (s.sealed) {
+        const char* changed = m_revision != s.after || s.afterBodies.size() != m_bodies.size() ? "bodies were added, removed or rebuilt"
+                              : s.motionsChanged && motionsKey(m_motions) != s.afterMotions ? "the motions changed"
+                                                                                            : nullptr;
+        if (changed) {
+            if (why) *why = std::string("Cannot undo ") + s.label + ": " + changed + " since (undo history cleared)";
+            m_undo.clear();
+            return "";
+        }
+        // Keep what was done to the bodies since the edit: moves, colours, renames.
+        for (std::size_t i = 0; i < m_bodies.size(); ++i) {
+            const BodyState& was = s.afterBodies[i];
+            const Body& now = m_bodies[i];
+            for (Body& b : s.bodies) {
+                if (b.name != was.name) continue;
+                b.offset += now.offset - was.offset;
+                if (now.color.x != was.color.x || now.color.y != was.color.y || now.color.z != was.color.z) b.color = now.color;
+                if (now.visible != was.visible) b.visible = now.visible;
+                b.name = now.name;
+                break;
+            }
+        }
+        if (s.motionsChanged) m_motions = std::move(s.motions);
+    } else {
+        m_motions = std::move(s.motions); // a failed edit: everything as it was
+    }
     m_bodies = std::move(s.bodies);
     m_revision = nextRevision();
+    // Back to the state before this edit, which the edit before it left (unless
+    // something changed in between): that one can be undone next.
+    if (!m_undo.empty() && m_undo.back().sealed && m_undo.back().after == s.before) m_undo.back().after = m_revision;
     return s.label;
 }
 

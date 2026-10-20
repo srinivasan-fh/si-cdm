@@ -112,11 +112,16 @@ public:
     // Call after changing a body's mesh in place (rebuild, setScale).
     void touchBodies() noexcept { m_revision = nextRevision(); }
 
-    // Shape edits (sculpting, booleans) can be undone: a snapshot of the bodies is
-    // kept before each one (the last few, within a memory budget).
+    // Shape edits (sculpting, booleans, armour, joints) can be undone: a snapshot of
+    // the bodies and motions is kept before each one (the last few, within a memory
+    // budget). Once the edit has succeeded, sealUndo() records the state it left.
     void pushUndo(std::string label);
-    // Restores the last snapshot; returns its label, or "" when there is none.
-    std::string undo();
+    void sealUndo();
+    // Restores the last snapshot; returns its label, or "" when there is none. A sealed
+    // snapshot is restored only while no body was added, removed or rebuilt since its
+    // edit (else `why` says so and the history is dropped); moves, colours and renames
+    // made since are kept. An unsealed one (a failed edit) is restored as it is.
+    std::string undo(std::string* why = nullptr);
     std::size_t undoDepth() const noexcept { return m_undo.size(); }
 
     // Bumped whenever bodies are added or removed (GPU buffers must be rebuilt).
@@ -142,9 +147,22 @@ private:
     std::vector<Motion> m_motions;
     PhysicsSettings m_physics;
     std::uint64_t m_imageRevision = nextRevision();
+    struct BodyState { // what a later move or rename may change
+        std::string name;
+        Vec3 offset;
+        Vec3 color;
+        bool visible = true;
+    };
     struct Snapshot {
         std::string label;
         std::vector<Body> bodies;
+        std::vector<Motion> motions;
+        bool sealed = false;
+        std::uint64_t before = 0;        // revision when it was taken
+        std::uint64_t after = 0;         // revision the edit left
+        std::vector<BodyState> afterBodies;
+        std::string afterMotions;        // motionsKey() the edit left
+        bool motionsChanged = false;
     };
     std::vector<Snapshot> m_undo;
 };

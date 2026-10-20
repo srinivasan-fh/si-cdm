@@ -57,6 +57,9 @@ public:
     std::size_t vertexCount() const noexcept { return m_p.size(); }
     std::size_t triangleCount() const noexcept { return m_t.size(); }
     const std::vector<Vec3>& positions() const noexcept { return m_p; }
+    const std::vector<std::array<std::uint32_t, 3>>& triangles() const noexcept { return m_t; }
+    // Edges with only one triangle after welding (0: a closed solid).
+    std::size_t openEdges() const;
     // x of the symmetry plane (centre of the body when the copy was made).
     float mirrorX() const noexcept { return m_mirrorX; }
     bool empty() const noexcept { return m_t.empty(); }
