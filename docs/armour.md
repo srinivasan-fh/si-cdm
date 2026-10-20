@@ -43,7 +43,7 @@ exactly 100·80·60 − 92·72·52 mm³ and closed.
 **Limits.**
 
 - The wall must be at least half a voxel thick. That is about 2 mm on the humanoid's chest plate
-  and under 1 mm on a forearm; the command names the minimum.
+  and about 1 mm on a forearm; the command names the minimum.
 - A large clearance costs little: exact distances are computed only near the surface and the two
   faces, and a coarse pass bounds the rest.
 
