@@ -66,7 +66,7 @@ the return side is fixed by the standard.
 
 | Part (`PART` key) | Bodies | Main parameters |
 | --- | --- | --- |
-| **Male Humanoid Robot** (`HUMANOID`, `MALE`) | Head, neck, chest, heart, midriff, gut, pelvis, 2 legs, 2 arms with hands, 20 + 14 + hand motors; ultra-muscular build | `HEIGHT` 1676.4 to 1828.8 mm (5.5 to 6 ft, default 1752.6 = 5 ft 9 in), `SUIT` None / Armour / Futuristic, `GLOVES`, `SHOES`, `HELMET`, `SIZE`, `FINISH` White / Black shells, `DEMO` Range of motion / March in place / Still, `DRIVE` (hands), `RPM`, `GEAR`, every limit above, `HEART_RATE` |
+| **Male Humanoid Robot** (`HUMANOID`, `MALE`) | Head, neck, chest, heart, midriff, gut, pelvis, 2 legs, 2 arms with hands, 20 + 14 + hand motors; ultra-muscular build | `HEIGHT` 1676.4 to 1828.8 mm (5.5 to 6 ft, default 1752.6 = 5 ft 9 in), `FACE` Full black glass / Half black glass, `SUIT` None / Armour / Futuristic, `GLOVES`, `SHOES`, `HELMET`, `SIZE`, `FINISH` White / Black shells, `DEMO` Range of motion / March in place / Still, `DRIVE` (hands), `RPM`, `GEAR`, every limit above, `HEART_RATE` |
 | **Female Humanoid Robot** (`HUMANOID_FEMALE`, `FEMALE`) | The same parts, joints and motors; ultra-slim build | `HEIGHT` 1371.6 to 1676.4 mm (4.5 to 5.5 ft, default 1524 = 5 ft), and the same options as the male |
 | **Robot Head & Neck** (`HEADNECK`) | Head, visor, neck on a pedestal, 3 motors | `SIZE`, `FINISH`, `RPM`, `GEAR`, `NECK_YAW` `NECK_PITCH` `NECK_ROLL` |
 | **Robot Upper Body** (`TORSO`) | Pelvis on a stand, gut, midriff, chest, heart, 3 motors | `SIZE`, `FINISH`, `RPM`, `GEAR`, `WAIST_ROT` `TRUNK_FLEX` `TRUNK_BEND`, `HEART_RATE` |
@@ -100,10 +100,19 @@ head, and `SIZE` multiplies that.
 | Shoulders and chest | Broad (chest 470 wide): deltoid caps, pectorals, trapezius, latissimus | Narrow (330), a smooth tapered rib cage, small shoulder caps |
 | Waist | V-taper to a narrow waist, with six abdominal plates | Very narrow waist (172), with hips wider than the waist |
 | Arms | Biceps, triceps, forearm muscle mass (upper arm 86 thick) | Slender (upper arm 48), smooth |
+| Head | Real adult size, **232 × 155 × 190 mm** (height × width × front to back) | **215 × 145 × 180 mm** |
 | Legs | Quadriceps, vastus "teardrops", hamstrings, a big calf | Slim, smooth taper to slim knees and ankles |
 
 Both keep every joint, motor, range of motion, posture and gesture. At the same height the male is about
-1.4 times as wide.
+1.4 times as wide. The head stays the average adult head size, whatever the robot's height. It has a human
+oval shape (elliptic sections, not a deep box), and the body below it scales to make up the height.
+
+### Face
+
+| `FACE` | Look |
+| --- | --- |
+| **Full black glass** (default) | One smooth dark glass over the whole face, brow to chin, following the head's curve. |
+| **Half black glass** | A dark glass band across the eyes, wrapping round toward the ears, RoboCop style. The lower face is smooth shell. |
 
 ## Outfits: suits, gloves, shoes and a helmet
 
@@ -124,7 +133,8 @@ finger link.
 Gloves, shoes and the helmet take the suit's style, or the futuristic style without a suit.
 
 ```text
-PART HUMANOID                                            male, 5 ft 9 in
+PART HUMANOID                                            male, 5 ft 9 in, full black glass face
+PART HUMANOID FACE HALF                                  half black glass face
 PART FEMALE HEIGHT 1600 @800,0,0                         female, 5 ft 3 in
 PART HUMANOID SUIT ARMOUR GLOVES YES SHOES YES HELMET YES
 PART FEMALE SUIT FUTURISTIC GLOVES YES SHOES YES HELMET YES FINISH BLACK

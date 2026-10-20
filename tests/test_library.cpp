@@ -9,6 +9,7 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <tuple>
 
 using namespace sicdm;
@@ -651,7 +652,7 @@ TEST_CASE("humanoid robot: head to toe, standing, facing the front view") {
     for (const Body& b : s.bodies()) all.expand(b.bounds());
     CHECK_NEAR(all.min.z, 0, 1e-3);           // soles on the ground
     CHECK_NEAR(all.max.z, 1752.6, 2.0);      // the male default: 5 ft 9 in
-    CHECK(body(s, n + "Visor")->bounds().center().y < -80);       // the face looks toward -Y (Front view)
+    CHECK(body(s, n + "Visor")->bounds().center().y < body(s, n + "Head")->bounds().center().y - 30); // the face looks toward -Y (Front view)
     CHECK(body(s, n + "Right Foot")->bounds().center().x < 0);    // its right side is on the viewer's left
     CHECK(body(s, n + "Right Arm Palm")->bounds().center().x < -150);
     CHECK(body(s, n + "Right Arm Palm")->bounds().max.z < 1000);  // arms hang beside the thighs
@@ -988,4 +989,46 @@ TEST_CASE("humanoid outfits: armour or futuristic suit, gloves, shoes and helmet
     Document plain;
     REQUIRE(run(plain, "PART humanoid").ok);
     CHECK(!body(plain.scene, "Male Humanoid Robot 1 Helmet"));
+}
+
+TEST_CASE("humanoid faces: full black glass or half black glass, on a real-size oval head") {
+    struct Faces {
+        AABB head, glass;
+    };
+    auto faceOf = [](const char* robot, const char* face, const char* height = nullptr) {
+        Document d;
+        executeCommand(d, std::string("PART ") + robot + " FACE " + face + (height ? std::string(" HEIGHT ") + height : ""), nullptr);
+        Faces f;
+        for (const Body& b : d.scene.bodies()) {
+            if (b.name.size() > 5 && b.name.compare(b.name.size() - 5, 5, " Head") == 0) f.head = b.bounds();
+            if (b.name.size() > 6 && b.name.compare(b.name.size() - 6, 6, " Visor") == 0) f.glass = b.bounds();
+        }
+        return f;
+    };
+    for (const char* robot : {"humanoid", "humanoid_female"}) {
+        const Faces full = faceOf(robot, "FULL"), half = faceOf(robot, "HALF");
+        REQUIRE(full.head.valid() && full.glass.valid() && half.glass.valid());
+        const float headH = full.head.max.z - full.head.min.z, headW = full.head.max.x - full.head.min.x;
+        // Full black glass: most of the face, brow to chin, and wide.
+        CHECK(full.glass.max.z - full.glass.min.z > 0.55f * headH);
+        CHECK(full.glass.max.x - full.glass.min.x > 0.6f * headW);
+        // Half black glass: a band across the eyes, wrapping to the sides; the lower face is shell.
+        CHECK(half.glass.max.z - half.glass.min.z < 0.25f * headH);
+        CHECK(half.glass.min.z > full.head.min.z + 0.4f * headH);
+        CHECK(half.glass.max.x - half.glass.min.x > 0.8f * headW);
+    }
+    CHECK(!run(*std::make_unique<Document>(), "PART humanoid FACE SCULPTED").ok);
+    // Real adult head size (not scaled with the body), and not too deep: male about
+    // 232 x 155 x 190 mm, female 215 x 145 x 180 mm (height, width, front to back without the
+    // ear pods), whatever the robot's height.
+    for (const char* height : {"1676.4", "1828.8"}) {
+        const Faces m = faceOf("humanoid", "FULL", height);
+        CHECK_NEAR(m.head.max.z - m.head.min.z, 232 * (0.97 + 5.0 / 230), 4.0); // chin to crown, and the neck socket
+        CHECK(m.head.max.y - m.head.min.y < 200.0f);
+    }
+    for (const char* height : {"1371.6", "1676.4"}) {
+        const Faces f = faceOf("humanoid_female", "FULL", height);
+        CHECK_NEAR(f.head.max.z - f.head.min.z, 215 * (0.97 + 5.0 / 230), 4.0);
+        CHECK(f.head.max.y - f.head.min.y < 190.0f);
+    }
 }

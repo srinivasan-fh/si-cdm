@@ -620,12 +620,14 @@ Vec2 roundCorner(float a) {
     return {std::copysign(std::sqrt(std::fabs(c)), c), std::copysign(std::sqrt(std::fabs(s)), s)};
 }
 
-MeshData sweepY(const std::vector<Section>& secs, int n = 40) {
+// `elliptic`: plain ellipse sections instead of rounded boxes (heads).
+MeshData sweepY(const std::vector<Section>& secs, int n = 40, bool elliptic = false) {
     Builder b;
     auto ring = [&](const Section& q) {
         std::vector<Vec3> r(static_cast<std::size_t>(n));
         for (int k = 0; k < n; ++k) {
-            const Vec2 u = roundCorner(2.0f * kPi * static_cast<float>(k) / static_cast<float>(n));
+            const float a = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(n);
+            const Vec2 u = elliptic ? Vec2{std::cos(a), std::sin(a)} : roundCorner(a);
             r[static_cast<std::size_t>(k)] = {q.hw * u.x, q.y, q.zc + q.ht * u.y};
         }
         return r;
@@ -779,7 +781,7 @@ struct BodySection {
 
 // Rounded-box shell swept up (+Z) or, with `down`, down (-Z) through `secs`
 // (h increasing), with domed ends rounded over r0 (first) and r1 (last) mm.
-MeshData bodyShell(std::vector<BodySection> secs, float r0, float r1, bool down = false, int n = 48) {
+MeshData bodyShell(std::vector<BodySection> secs, float r0, float r1, bool down = false, int n = 48, bool elliptic = false) {
     std::vector<BodySection> all;
     constexpr int kSteps = 6;
     const BodySection a = secs.front(), b = secs.back();
@@ -795,7 +797,7 @@ MeshData bodyShell(std::vector<BodySection> secs, float r0, float r1, bool down 
     }
     std::vector<Section> s;
     for (const BodySection& q : all) s.push_back({q.h, q.hw, q.hd, down ? q.fwd : -q.fwd});
-    MeshData m = sweepY(s, n);
+    MeshData m = sweepY(s, n, elliptic);
     m.transform(rotateAxis({1, 0, 0}, down ? -kPi * 0.5f : kPi * 0.5f));
     return m;
 }
@@ -815,14 +817,46 @@ MeshData cylY(float y0, float y1, float r, float x, float z, int seg = 48) {
 
 // Head on the neck pivot (origin): rounded skull, ear sensor pods; or (visor) the
 // dark face shield.
-MeshData robotHead(float w, float d, float h, bool visor) {
+MeshData inflated(const MeshData& m, float t, const std::vector<std::function<float(const Vec3&)>>& fields = {});
+
+// Head on the neck pivot (origin): the shell with ear sensor pods, or (visor) its dark
+// glass. Faces: 0 the robot's eye visor; 1 a full black glass face; 2 a half black glass
+// face (a band across the eyes, RoboCop style). Builds 1 and 2 (the male and female
+// humanoids) have a human oval head with elliptic sections; 0 the rounded robot head.
+MeshData robotHead(float w, float d, float h, bool visor, int face = 0, int build = 0) {
     const float sx = w / 160.0f, sy = d / 200.0f, sz = h / 230.0f;
     const float z0 = -15.0f * sz; // chin
-    if (visor) return ellipsoid({0, (0.47f * 200.0f + 4.0f) * sy, z0 + 0.56f * h}, {0.40f * w, 0.09f * d, 0.17f * h});
-    auto sec = [&](float u, float kw, float kd, float f) { return BodySection{z0 + u * h, kw * w, kd * d, f * d}; };
-    MeshData m = bodyShell({sec(0.10f, 0.36f, 0.40f, 0.06f), sec(0.25f, 0.46f, 0.47f, 0.04f), sec(0.45f, 0.50f, 0.50f, 0.02f),
-                            sec(0.65f, 0.50f, 0.50f, 0.0f), sec(0.80f, 0.47f, 0.48f, -0.02f)},
-                           0.10f * h, 0.16f * h);
+    if (visor && face == 0) return ellipsoid({0, (0.47f * 200.0f + 4.0f) * sy, z0 + 0.56f * h}, {0.40f * w, 0.09f * d, 0.17f * h});
+    // Sections up the head: height fraction u, half width and depth (x w, d), forward shift (x d).
+    struct Row {
+        float u, kw, kd, f;
+    };
+    static const std::vector<Row> kNeutral = {{0.10f, 0.36f, 0.40f, 0.06f}, {0.25f, 0.46f, 0.47f, 0.04f}, {0.45f, 0.50f, 0.50f, 0.02f},
+                                              {0.65f, 0.50f, 0.50f, 0.0f},  {0.80f, 0.47f, 0.48f, -0.02f}};
+    static const std::vector<Row> kOval = {{0.07f, 0.24f, 0.36f, 0.07f}, {0.17f, 0.36f, 0.43f, 0.05f}, {0.31f, 0.44f, 0.48f, 0.03f},
+                                           {0.48f, 0.47f, 0.50f, 0.02f}, {0.64f, 0.45f, 0.49f, 0.0f},  {0.78f, 0.39f, 0.46f, -0.02f}};
+    const std::vector<Row>& rows = build == 0 ? kNeutral : kOval;
+    auto zAt = [&](float u) { return z0 + u * h; };
+    std::vector<BodySection> secs;
+    for (const Row& r : rows) secs.push_back({zAt(r.u), r.kw * w, r.kd * d, r.f * d});
+    // Human heads are oval in section: the male and female heads use ellipses, the neutral
+    // robot head its rounded box.
+    MeshData shell = bodyShell(secs, (build == 0 ? 0.10f : 0.09f) * h, (build == 0 ? 0.16f : 0.19f) * h, false,
+                               build == 0 ? 48 : 64, build != 0);
+    if (visor) { // the dark glass parts
+        if (face == 1) { // full black glass: the face, brow to chin, under one smooth glass
+            const float zc = zAt(0.42f), rx = 0.42f * w, rz = 0.37f * h;
+            return inflated(shell, 1.5f * sy, {[=](const Vec3& p) { return p.y - 0.12f * d; },
+                                               [=](const Vec3& p) {
+                                                   const float ex = p.x / rx, ez = (p.z - zc) / rz;
+                                                   return 1.0f - (ex * ex + ez * ez);
+                                               }});
+        }
+        // Half black glass: a band wrapping across the eyes (RoboCop style).
+        return inflated(shell, 3.0f * sy, {[=](const Vec3& p) { return p.y + 0.05f * d; }, [=](const Vec3& p) { return p.z - zAt(0.50f); },
+                                           [=](const Vec3& p) { return zAt(0.66f) - p.z; }});
+    }
+    MeshData m = std::move(shell);
     m.append(cylX(-0.53f * w, 0.53f * w, 0.12f * h, -0.02f * d, z0 + 0.52f * h)); // ear sensor pods
     m.append(cylinderAt(0, -0.05f * d, 34.0f * std::min(sx, sy), z0 - 5.0f * sz, z0 + 0.12f * h)); // neck socket
     return m;
@@ -1565,7 +1599,7 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "robot_forearm" && ok(4)) return robotForearm(p[0], p[1], p[2], p[3], at(4) >= 0.5f, static_cast<int>(at(5)));
     if (k == "arm_link" && ok(2)) return armLink(p[0], p[1], static_cast<int>(at(2)));
     if (k == "robot_shoulder" && ok(2)) return robotShoulder(p[0], p[1]);
-    if (k == "robot_head" && ok(3)) return robotHead(p[0], p[1], p[2], at(3) >= 0.5f);
+    if (k == "robot_head" && ok(3)) return robotHead(p[0], p[1], p[2], at(3) >= 0.5f, static_cast<int>(at(4)), static_cast<int>(at(5)));
     if (k == "robot_neck" && ok(2)) return robotNeck(p[0], p[1]);
     if (k == "robot_chest" && ok(3)) return robotChest(p[0], p[1], p[2], static_cast<int>(at(3)));
     if (k == "robot_heart" && ok(1)) return robotHeart(p[0], static_cast<int>(at(1)));
@@ -1714,7 +1748,8 @@ const std::vector<LibraryItem>& libraryItems() {
         // the max is the mechanical hard stop. 0 deg = straight (no hyperextension).
         const LibraryParam side{"hand", "Hand", 0.0f, 0.0f, 1.0f, "", true, "Right|Left"};
         const LibraryParam handRpm{"rpm", "Motor speed", 120.0f, 1.0f, 600.0f, "rpm"};
-        const LibraryParam outfit[] = {{"suit", "Suit", 0.0f, 0.0f, 2.0f, "", true, "None|Armour suit|Futuristic suit"},
+        const LibraryParam outfit[] = {{"face", "Face", 0.0f, 0.0f, 1.0f, "", true, "Full black glass|Half black glass"},
+                                       {"suit", "Suit", 0.0f, 0.0f, 2.0f, "", true, "None|Armour suit|Futuristic suit"},
                                        {"gloves", "Gloves", 0.0f, 0.0f, 1.0f, "", true, "No|Yes"},
                                        {"shoes", "Shoes", 0.0f, 0.0f, 1.0f, "", true, "No|Yes"},
                                        {"helmet", "Helmet", 0.0f, 0.0f, 1.0f, "", true, "No|Yes"}};
@@ -1893,7 +1928,7 @@ const std::vector<LibraryItem>& libraryItems() {
             {"humanoid", "HUMANOID HUMANOIDROBOT ANDROID ROBOTBODY MALEHUMANOID MALE MALEROBOT", "Male Humanoid Robot", "Humanoid body",
              "Male, ultra-muscular build (broad V-taper, chest, arms, legs), 5.5 to 6 ft: 20 body + 14 arm joints and two hands on DC gear motors; "
              "armour or futuristic suit, gloves, shoes, helmet",
-             {{"height", "Height (5.5 - 6 ft)", 1752.6f, 1676.4f, 1828.8f, "mm"}, outfit[0], outfit[1], outfit[2], outfit[3], size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
+             {{"height", "Height (5.5 - 6 ft)", 1752.6f, 1676.4f, 1828.8f, "mm"}, outfit[0], outfit[1], outfit[2], outfit[3], outfit[4], size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
               {"drive", "Hand drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"}, handRpm, gear,
               neckYaw, neckPitch, neckRoll, waistRot, trunkFlex, trunkBend, heartRate,
               {"shoulder_flex", "Shoulder flexion (forward)", 90.0f, 1.0f, 180.0f, "deg"},
@@ -1904,7 +1939,7 @@ const std::vector<LibraryItem>& libraryItems() {
             {"humanoid_female", "FEMALEHUMANOID FEMALE FEMALEROBOT GYNOID", "Female Humanoid Robot", "Humanoid body",
              "Female, ultra-slim build (narrow waist, curved hips, slender limbs), 4.5 to 5.5 ft: the same joints, motors and hands; "
              "armour or futuristic suit, gloves, shoes, helmet",
-             {{"height", "Height (4.5 - 5.5 ft)", 1524.0f, 1371.6f, 1676.4f, "mm"}, outfit[0], outfit[1], outfit[2], outfit[3], size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
+             {{"height", "Height (4.5 - 5.5 ft)", 1524.0f, 1371.6f, 1676.4f, "mm"}, outfit[0], outfit[1], outfit[2], outfit[3], outfit[4], size, finish, {"demo", "Motion", 0.0f, 0.0f, 2.0f, "", true, "Range of motion|March in place|Still"},
               {"drive", "Hand drive", 0.0f, 0.0f, 1.0f, "", true, "Underactuated (6 motors)|Fully actuated (15 motors)"}, handRpm, gear,
               neckYaw, neckPitch, neckRoll, waistRot, trunkFlex, trunkBend, heartRate,
               {"shoulder_flex", "Shoulder flexion (forward)", 90.0f, 1.0f, 180.0f, "deg"},
@@ -2335,18 +2370,26 @@ struct HumanoidBuild {
 // slender limbs).
 constexpr HumanoidBuild kBuilds[] = {
     {280, 180, 260, 180, 230, 160, 380, 230, 130, 140, 100, 110, 34, 160, 200, 230, 32, 70, 95},
-    {290, 190, 280, 190, 250, 172, 470, 268, 168, 180, 126, 142, 46, 166, 206, 232, 43, 84, 100},
-    {300, 176, 196, 146, 172, 130, 330, 202, 116, 124, 84, 94, 26, 148, 188, 220, 24, 58, 90},
+    {290, 190, 280, 190, 250, 172, 470, 268, 168, 180, 126, 142, 46, 155, 190, 232, 43, 84, 100},
+    {300, 176, 196, 146, 172, 130, 330, 202, 116, 124, 84, 94, 26, 145, 180, 215, 24, 58, 90},
 };
 // Height of the humanoid at size 1 (sole to the top of the head), mm.
-float humanoidModelHeight(float headH) { return kNeckZ + kNeck - 15.0f + 0.96f * headH; }
+// Body scale for a whole robot `height` mm tall (sole to the top of the head) whose head
+// is the real adult head size of the build (head dims in kBuilds are absolute mm for the
+// male and female): the head is not scaled, the body below the chin fills the rest.
+// (The oval head's top is 0.97 of its height above its chin, which is 15 / 230 of its
+// height below the neck pivot.)
+float humanoidBodyScale(float height, const HumanoidBuild& b, int /*build*/) {
+    const float head = (0.97f - 15.0f / 230.0f) * b.headH;
+    return (height - head) / (kNeckZ + kNeck);
+}
 
 // The surface of `m` moved out `t` mm along its (averaged) normals: a skin-tight cover.
 // With `fields`, only where every field(p) >= 0, cut cleanly along field = 0 (triangles
 // are clipped, so bands, stripes and the helmet's face opening have smooth edges; use
 // straight fields such as z - z0 for exact cuts).
 using CoverField = std::function<float(const Vec3&)>;
-MeshData inflated(const MeshData& m, float t, const std::vector<CoverField>& fields = {}) {
+MeshData inflated(const MeshData& m, float t, const std::vector<CoverField>& fields) {
     std::map<std::tuple<long, long, long>, Vec3> normals;
     auto key = [](const Vec3& p) {
         return std::make_tuple(std::lround(p.x * 20.0f), std::lround(p.y * 20.0f), std::lround(p.z * 20.0f));
@@ -2533,7 +2576,7 @@ void dressHumanoid(LibraryComponent& c, const std::function<float(const char*)>&
         const float hh = hb.max.z - hb.min.z, hd = hb.max.y - hb.min.y, hw = hb.max.x - hb.min.x;
         auto openFace = [=](const Vec3& p) { // outside the face window (mm)
             const float z = (p.z - hb.min.z) / std::max(hh, 1e-3f);
-            return -std::min({p.y - (hb.min.y + 0.62f * hd), (z - 0.30f) * hh, (0.78f - z) * hh, 0.46f * hw - std::fabs(p.x)});
+            return -std::min({p.y - (hb.min.y + 0.58f * hd), (z - 0.06f) * hh, (0.80f - z) * hh, 0.44f * hw - std::fabs(p.x)});
         };
         cover(headBody, "Helmet", armour ? 8.0f : 6.0f, armour ? plate : fabric, {openFace});
         if (armour)
@@ -2560,7 +2603,9 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
     const int build = all ? (female ? 2 : 1) : 0;
     const HumanoidBuild& B = kBuilds[build];
     // A whole robot is made the height asked for (sole to the top of the head).
-    const float s = v("size") * (all ? v("height") / humanoidModelHeight(B.headH) : 1.0f), gear = v("gear"), rpm = v("rpm");
+    const float s = v("size") * (all ? humanoidBodyScale(v("height"), B, build) : 1.0f), gear = v("gear"), rpm = v("rpm");
+    // A whole robot's head is drawn at its real size (x SIZE), whatever the body scale.
+    const float headK = all ? v("size") / s : 1.0f;
     const float shoulderX = 200.0f * B.chestW / 380.0f, hipX = B.hipX;
     const float shoulderK = shoulderX / 200.0f; // shoulder motors follow the shoulder width
     const bool black = v("finish") >= 0.5f;
@@ -2620,8 +2665,11 @@ void buildHumanoid(LibraryComponent& c, const std::string& key, const std::funct
             rollDrive = motor(h, "Neck Roll", "neck_roll", 0.9f, {34, -104, kNeckZ - 70}, &aboveTrunk);
         }
         add("Neck", "robot_neck", {kNeck, B.neckR}, {0, 0, kNeckZ}, accent, &neckHead);
-        add("Head", "robot_head", {B.headW, B.headD, B.headH, 0}, {0, 0, kNeckZ + kNeck}, shell, &headOnlyBodies);
-        add("Visor", "robot_head", {B.headW, B.headD, B.headH, 1}, {0, 0, kNeckZ + kNeck}, kVisor, &headOnlyBodies);
+        const float face = all ? v("face") + 1.0f : 0.0f; // whole robots: glass face, half visor or sculpted face
+        add("Head", "robot_head", {B.headW * headK, B.headD * headK, B.headH * headK, 0, face, static_cast<float>(build)},
+            {0, 0, kNeckZ + kNeck}, shell, &headOnlyBodies);
+        add("Visor", "robot_head", {B.headW * headK, B.headD * headK, B.headH * headK, 1, face, static_cast<float>(build)},
+            {0, 0, kNeckZ + kNeck}, kVisor, &headOnlyBodies);
         neckHead.insert(neckHead.end(), headOnlyBodies.begin(), headOnlyBodies.end());
         aboveTrunk.insert(aboveTrunk.end(), neckHead.begin(), neckHead.end());
     }
