@@ -41,18 +41,33 @@ float keyedValue(const Motion& m, float t, float* rate) noexcept {
     if (k.empty()) return 0.0f;
     float u = std::max(t - m.start, 0.0f);
     const float end = k.back().t;
-    if (m.mode == MotionMode::Loop && end > 0.0f) u = std::fmod(u, end);
-    if (u <= k.front().t) return k.front().value;
-    if (u >= end) return k.back().value;
+    // Loop repeats the keys; with keysAdvance each cycle carries on from where the last
+    // one ended (a walk keeps advancing): value + cycles x (last - first).
+    const bool cyclic = m.mode == MotionMode::Loop && end > 0.0f && k.size() > 1;
+    const float carry = m.keysAdvance ? k.back().value - k.front().value : 0.0f;
+    float offset = 0.0f;
+    if (cyclic) {
+        const float cycles = std::floor(u / end);
+        u -= cycles * end;
+        offset = cycles * carry;
+    }
+    if (u <= k.front().t) return k.front().value + offset;
+    if (u >= end) return k.back().value + offset;
     std::size_t i = 0;
     while (i + 2 < k.size() && u >= k[i + 1].t) ++i;
     const float dt = k[i + 1].t - k[i].t;
     if (dt <= 0.0f) return k[i + 1].value;
     const float s = (u - k[i].t) / dt, d = k[i + 1].value - k[i].value;
     const float s2 = s * s, s3 = s2 * s;
-    if (m.keySpline) { // cubic Hermite, tangents from the neighbours (zero at the ends)
+    if (m.keySpline) { // cubic Hermite, tangents from the neighbours (zero at the ends unless cyclic)
+        const std::size_t n = k.size();
         auto slope = [&](std::size_t j) {
-            if (j == 0 || j + 1 >= k.size()) return 0.0f;
+            if (j == 0 || j + 1 >= n) {
+                // A cyclic spline runs smoothly through the wrap: the neighbours across it.
+                if (!cyclic || n < 3) return 0.0f;
+                const float span = (k[1].t - k[0].t) + (end - k[n - 2].t);
+                return span > 0.0f ? (k[1].value - (k[n - 2].value - carry)) / span : 0.0f;
+            }
             const float span = k[j + 1].t - k[j - 1].t;
             return span > 0.0f ? (k[j + 1].value - k[j - 1].value) / span : 0.0f;
         };
@@ -62,10 +77,10 @@ float keyedValue(const Motion& m, float t, float* rate) noexcept {
             *rate = ((6 * s2 - 6 * s) * k[i].value + (3 * s2 - 4 * s + 1) * m0 + (-6 * s2 + 6 * s) * k[i + 1].value +
                      (3 * s2 - 2 * s) * m1) /
                     dt;
-        return h00 * k[i].value + h10 * m0 + h01 * k[i + 1].value + h11 * m1;
+        return h00 * k[i].value + h10 * m0 + h01 * k[i + 1].value + h11 * m1 + offset;
     }
     if (rate) *rate = d * (30.0f * s2 - 60.0f * s3 + 30.0f * s2 * s2) / dt;
-    return k[i].value + d * (10.0f * s3 - 15.0f * s2 * s2 + 6.0f * s3 * s2);
+    return k[i].value + d * (10.0f * s3 - 15.0f * s2 * s2 + 6.0f * s3 * s2) + offset;
 }
 
 float keyedPeakRate(const Motion& m) noexcept {

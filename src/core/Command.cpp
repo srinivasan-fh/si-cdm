@@ -53,7 +53,7 @@ constexpr CommandSpec kCommands[] = {
      "hard stops and reached on minimum-jerk paths within the motors' rated speed"},
     {"GESTURE", "GEST", "GESTURE [robot] name [LOOP|ONCE] [SPEED x|DURATION s] [LEFT|RIGHT|MIRROR]  |  GESTURE LIST",
      "Play a gesture (WAVE, NOD, SHAKE, BOW, POINT, THUMBS_UP, SALUTE, GRASP, COUNT, SQUAT, LOOK_AROUND, "
-     "STRETCH, MARCH) on a library robot from the posture it holds"},
+     "STRETCH, MARCH, WALK) on a library robot from the posture it holds"},
     {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t]",
      "Open the Simulation window and control playback; SIM AT t reports body poses at time t"},
     // Library

@@ -286,3 +286,59 @@ TEST_CASE("a posture survives save and load") {
         CHECK(std::fabs(soleBottom(e.scene, t) - soleBottom(d.scene, t)) < 1e-2f);
     }
 }
+
+TEST_CASE("walk plays a real gait cycle and travels without the stance foot slipping") {
+    const Gesture* walk = findGesture("walk");
+    REQUIRE(walk != nullptr);
+    CHECK(walk->loop && walk->smooth && walk->travel);
+    Document d;
+    REQUIRE(run(d, "PART humanoid RPM 300").ok); // fast motors: the natural 1.1 s stride
+    const CommandOutput o = run(d, "GESTURE walk");
+    REQUIRE(o.ok);
+    CHECK(said(o, "travels"));
+    const Motion* hip = motion(d.scene, "Humanoid Robot 1 Motor Right Hip Flex Drive");
+    const Motion* travel = motion(d.scene, "Humanoid Robot 1 Walk");
+    REQUIRE(hip != nullptr && travel != nullptr);
+    const float T = hip->keys.back().t;
+    CHECK(std::fabs(T - 1.1f) < 1e-3f);
+    // Normative sagittal angles: hip 30 deg at heel strike, 10 deg extension at heel off;
+    // the left leg half a cycle behind; knee about 58 deg in swing.
+    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Hip Flex", 0.0f) - 30.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Hip Flex", T * 0.5f) + 10.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Left Hip Flex", 0.0f) + 10.0f) < 1e-3f);
+    CHECK(std::fabs(angle(d.scene, "Humanoid Robot 1 Right Knee", T * 0.7f) - 58.0f) < 1e-3f);
+    // Smooth through the loop: no stop at the wrap.
+    CHECK(std::fabs(motionRate(d.scene, *hip, T - 1e-3f) - motionRate(d.scene, *hip, T + 1e-3f)) < 2.0f);
+    CHECK(std::fabs(motionRate(d.scene, *hip, 0.3f * T)) > 20.0f);
+    // It keeps advancing, a stride every cycle.
+    const float stride = motionValue(d.scene, *travel, T) - motionValue(d.scene, *travel, 0.0f);
+    CHECK(stride > 700.0f && stride < 1600.0f);
+    CHECK(std::fabs(motionValue(d.scene, *travel, 2.3f * T) - motionValue(d.scene, *travel, 1.3f * T) - stride) < 1e-2f);
+    // The lowest foot touches the floor, and the point it stands on does not slide
+    // (allowing the instants the contact passes from one foot to the other).
+    const float ground = soleBottom(d.scene, 0.0f);
+    const auto movers = bodyMotions(d.scene);
+    int samples = 0, slipping = 0;
+    for (float t = 0.0f; t < 2.0f * T; t += 0.01f) {
+        CHECK(std::fabs(soleBottom(d.scene, t) - ground) < 2.0f);
+        float low = 1e30f;
+        std::size_t body = 0;
+        Vec3 local{};
+        for (std::size_t i = 0; i < d.scene.bodies().size(); ++i) {
+            const Body& b = d.scene.bodies()[i];
+            if (b.name.find(" Sole") == std::string::npos) continue;
+            const Mat4 tf = bodyMotionTransform(d.scene, i, t, static_cast<std::size_t>(-1), movers[i]);
+            for (const Vertex& v : b.mesh.vertices)
+                if (const Vec3 p = tf.transformPoint(v.position + b.offset); p.z < low) low = p.z, body = i, local = v.position + b.offset;
+        }
+        const Vec3 a = bodyMotionTransform(d.scene, body, t, static_cast<std::size_t>(-1), movers[body]).transformPoint(local);
+        const Vec3 c = bodyMotionTransform(d.scene, body, t + 0.002f, static_cast<std::size_t>(-1), movers[body]).transformPoint(local);
+        ++samples;
+        if (std::hypot(c.x - a.x, c.y - a.y) / 0.002f > 60.0f) ++slipping; // walking pace is ~900 mm/s
+    }
+    CHECK(slipping * 20 < samples); // under 5 % of the cycle
+    // Default motors are slower than a human knee in swing: the cycle stretches, shape kept.
+    Document slow;
+    REQUIRE(run(slow, "PART humanoid").ok);
+    CHECK(said(run(slow, "GESTURE walk"), "slowed to"));
+}

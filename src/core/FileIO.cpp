@@ -314,6 +314,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             for (const MotionKey& k : m.keys) keys.push(Json(Json::Array{k.t, k.value}));
             jm.set("keys", keys);
             if (m.keySpline) jm.set("key_curve", "spline");
+            if (m.keysAdvance) jm.set("keys_advance", true);
         }
         if (m.hasLimits) jm.set("limits", Json(Json::Array{m.lo, m.hi}));
         motions.push(jm);
@@ -450,6 +451,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             if (k.isArray() && k.size() >= 2) m.keys.push_back({std::max(k[0].asFloat(), 0.0f), k[1].asFloat()});
         m.sortKeys();
         m.keySpline = jm["key_curve"].asString() == "spline";
+        m.keysAdvance = jm["keys_advance"].asBool();
         if (jm["limits"].isArray() && jm["limits"].size() >= 2) {
             m.hasLimits = true;
             m.lo = std::min(jm["limits"][0].asFloat(), jm["limits"][1].asFloat());

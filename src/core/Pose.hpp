@@ -57,6 +57,8 @@ struct Gesture {
     const char* summary;
     std::vector<std::pair<float, Posture>> frames; // seconds, posture changes since the last frame
     bool loop = false;
+    bool smooth = false; // a smooth spline through the frames (gait) instead of stopping on each
+    bool travel = false; // the robot moves over the ground: the foot in contact does not slip
 };
 
 const std::vector<NamedPosture>& namedPostures();

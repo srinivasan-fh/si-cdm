@@ -188,7 +188,8 @@ parametric: they save as parameters and rebuild exactly when the project opens.
   −30° … 110°.
 - **Postures and gestures:** `POSE` and `GESTURE` (or *Motion Study → Robot pose*) move any library robot
   into presets (stand, squat, T-pose, salute, fist, OK...) or exact joint angles, and play gestures (wave,
-  nod, point, count, march...). Moves are clamped to the hard stops, use minimum-jerk paths within the
+  nod, point, count, march, and `walk`: a real gait cycle from normative human kinematics that travels
+forward without the stance foot slipping). Moves are clamped to the hard stops, use minimum-jerk paths within the
   motors' rated speed, and keep a humanoid's feet flat on the floor all along the move:
   [postures and gestures](docs/humanoid-body.md#postures-and-gestures).
 

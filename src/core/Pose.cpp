@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <set>
 #include <sstream>
@@ -227,7 +228,9 @@ Solved solvePosture(const Robot& robot, const Posture& p, std::map<std::string, 
             want[a->id] = angle;
             out.levelled.insert(a->id);
         }
-        if (tilt > 0.5f) out.notes.push_back(std::string(side) + " foot tilts " + fmtNum(tilt) + " deg: its ankle reaches a hard stop");
+        bool allFree = true; // a named ankle tilts the foot on purpose
+        for (const RobotJoint* j : chain) allFree = allFree && (!isAnkle(*j) || free.count(j));
+        if (allFree && tilt > 0.5f) out.notes.push_back(std::string(side) + " foot tilts " + fmtNum(tilt) + " deg: its ankle reaches a hard stop");
     }
     out.joints = static_cast<int>(want.size());
     out.named = named;
@@ -309,9 +312,10 @@ int countMatches(const Robot& robot, const Posture& p) {
 // Keeps a humanoid's lowest sole on the ground: a vertical stance motion, outermost,
 // carries the whole robot so it sinks into a squat instead of lifting its feet.
 void plantFeet(Scene& scene, const std::string& comp, float duration, bool loop) {
-    const std::string name = comp + " Stance";
+    const std::string name = comp + " Stance", walk = comp + " Walk";
     auto& motions = scene.motions();
-    motions.erase(std::remove_if(motions.begin(), motions.end(), [&](const Motion& m) { return m.name == name; }), motions.end());
+    motions.erase(std::remove_if(motions.begin(), motions.end(), [&](const Motion& m) { return m.name == name || m.name == walk; }),
+                  motions.end());
     std::vector<std::size_t> soles;
     std::vector<std::string> all;
     for (std::size_t i = 0; i < scene.bodies().size(); ++i) {
@@ -350,6 +354,86 @@ void plantFeet(Scene& scene, const std::string& comp, float duration, bool loop)
     stance.mode = loop ? MotionMode::Loop : MotionMode::Once;
     stance.speed = 0.0f;
     motions.insert(motions.begin(), std::move(stance));
+}
+
+// Moves the robot over the ground as it walks: the sole points in contact with the
+// floor (the lowest foot's points within 1 mm of the floor) stay where they are, so the
+// body is carried forward by the stance leg instead of the feet sliding. Adds a
+// "<comp> Walk" linear motion (looping and advancing each cycle when `loop`) and returns the
+// distance per cycle in mm (0 when it does not travel).
+float walkOver(Scene& scene, const std::string& comp, float duration, bool loop) {
+    const std::string name = comp + " Walk";
+    auto& motions = scene.motions();
+    if (duration <= 0.0f) return 0.0f;
+    // Soles grouped by foot ("... Right Foot Sole" and "... Right Toe Sole" are one foot).
+    std::map<std::string, std::vector<std::size_t>> feet;
+    std::vector<std::string> all;
+    for (std::size_t i = 0; i < scene.bodies().size(); ++i) {
+        const Body& b = scene.bodies()[i];
+        if (b.component != comp) continue;
+        all.push_back(b.name);
+        for (const char* suffix : {" Foot Sole", " Toe Sole"})
+            if (b.name.size() > std::strlen(suffix) && b.name.compare(b.name.size() - std::strlen(suffix), std::string::npos, suffix) == 0)
+                feet[b.name.substr(0, b.name.size() - std::strlen(suffix))].push_back(i);
+    }
+    if (feet.empty()) return 0.0f;
+    const auto movers = bodyMotions(scene);
+    auto points = [&](const std::vector<std::size_t>& soles, float t) {
+        std::vector<Vec3> p;
+        for (std::size_t i : soles) {
+            const Body& b = scene.bodies()[i];
+            const Mat4 tf = bodyMotionTransform(scene, i, t, static_cast<std::size_t>(-1), movers[i]);
+            for (const Vertex& v : b.mesh.vertices) p.push_back(tf.transformPoint(v.position + b.offset));
+        }
+        return p;
+    };
+    constexpr float kStep = 0.01f;
+    const int n = std::max(2, static_cast<int>(std::ceil(duration / kStep)));
+    std::vector<Vec3> travel{{0, 0, 0}};
+    std::string foot;               // foot in contact at the previous sample
+    std::vector<std::size_t> touch; // its points on the floor then
+    std::vector<Vec3> before;       // all its points then
+    for (int k = 0; k <= n; ++k) {
+        const float t = duration * static_cast<float>(k) / static_cast<float>(n);
+        // The lowest foot carries the robot.
+        std::string low;
+        float lowest = 1e30f;
+        std::map<std::string, std::vector<Vec3>> at;
+        for (const auto& [f, soles] : feet) {
+            at[f] = points(soles, t);
+            for (const Vec3& p : at[f])
+                if (p.z < lowest) lowest = p.z, low = f;
+        }
+        if (k > 0) {
+            Vec3 shift{0, 0, 0};
+            if (low == foot && !touch.empty()) { // the contact points must not move over the floor
+                const std::vector<Vec3>& now = at[foot];
+                for (std::size_t i : touch) shift += Vec3{now[i].x - before[i].x, now[i].y - before[i].y, 0.0f};
+                shift = shift * (1.0f / static_cast<float>(touch.size()));
+            }
+            travel.push_back(travel.back() - shift);
+        }
+        foot = low;
+        before = at[low];
+        touch.clear();
+        for (std::size_t i = 0; i < before.size(); ++i)
+            if (before[i].z < lowest + 1.0f) touch.push_back(i);
+    }
+    const Vec3 total = travel.back();
+    if (length(total) < 1.0f) return 0.0f;
+    Motion walk;
+    walk.name = name;
+    walk.kind = MotionKind::Linear;
+    walk.axis = normalize(total);
+    walk.bodies = all;
+    for (int k = 0; k <= n; ++k)
+        walk.keys.push_back({duration * static_cast<float>(k) / static_cast<float>(n), dot(travel[static_cast<std::size_t>(k)], walk.axis)});
+    walk.keySpline = true;
+    walk.mode = loop ? MotionMode::Loop : MotionMode::Once;
+    walk.keysAdvance = loop;
+    walk.speed = 0.0f;
+    motions.insert(motions.begin(), std::move(walk));
+    return length(total);
 }
 
 // Keeps the levelled ankles level all along the move, not only at its keys: their
@@ -489,6 +573,45 @@ Posture rightArm(float flex, float abd, float rot, float elbow, float forearm, f
 
 Posture waveReady() { return rightArm(0, 85, -85, 95, 90, 0) + handShape("open", "right"); }
 
+// Normal walking, one gait cycle from right heel strike (normative sagittal joint
+// angles, Perry / Winter): hip flexion 30 deg at heel strike to 10 deg extension at
+// heel off; knee 15-20 deg loading flexion, 60 deg in swing; ankle 5 deg plantar at
+// loading, 10 deg dorsiflexion in late stance, 15 deg push-off. The left leg is half
+// a cycle behind and each arm swings with the opposite leg.
+struct GaitSample {
+    float hip, knee, ankle;
+};
+constexpr GaitSample kGait[] = {
+    {30, 5, 0},   // 0%  initial contact (heel strike)
+    {25, 18, 5},  // 10% loading response
+    {15, 14, -3}, // 20%
+    {5, 8, -8},   // 30% mid stance
+    {-5, 5, -10}, // 40% terminal stance
+    {-10, 8, -6}, // 50% heel off
+    {-5, 35, 15}, // 60% pre-swing, push-off (toe off ~62%)
+    {15, 58, 8},  // 70% initial swing
+    {28, 50, -2}, // 80% mid swing
+    {32, 20, -2}, // 90% terminal swing
+};
+constexpr float kGaitCycle = 1.1f; // s per stride (~109 steps a minute)
+
+std::vector<std::pair<float, Posture>> gaitFrames() {
+    constexpr int n = static_cast<int>(std::size(kGait));
+    std::vector<std::pair<float, Posture>> frames;
+    for (int i = 0; i <= n; ++i) {
+        const GaitSample& r = kGait[i % n];
+        const GaitSample& l = kGait[(i + n / 2) % n];
+        const float phase = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(n);
+        const float swing = -std::cos(phase); // right arm back at right heel strike
+        frames.push_back({kGaitCycle * static_cast<float>(i) / static_cast<float>(n),
+                          {{"right hip flex", r.hip}, {"right knee", r.knee}, {"right ankle pitch", r.ankle},
+                           {"left hip flex", l.hip}, {"left knee", l.knee}, {"left ankle pitch", l.ankle},
+                           {"right shoulder flex", 15 * swing}, {"left shoulder flex", -15 * swing},
+                           {"right elbow", 22 + 8 * swing}, {"left elbow", 22 - 8 * swing}}});
+    }
+    return frames;
+}
+
 Posture marchStep(const char* leg, const char* arm, bool up) {
     const std::string l = leg, a = arm;
     const float k = up ? 1.0f : 0.0f;
@@ -584,6 +707,8 @@ const std::vector<Gesture>& namedGestures() {
             {0.0f, marchStep("right", "left", false) + marchStep("left", "right", false)},
             {0.6f, marchStep("right", "left", true)}, {1.2f, marchStep("right", "left", false)},
             {1.8f, marchStep("left", "right", true)}, {2.4f, marchStep("left", "right", false)}}, true});
+        g.push_back({"walk", "Walks forward: a real gait cycle, 1.1 s per stride, heel strike to toe off",
+                     gaitFrames(), true, true, true});
         return g;
     }();
     return list;
@@ -738,8 +863,9 @@ MoveResult playGesture(Scene& scene, const Robot& robot, const Gesture& gesture,
     }
     for (const std::string& id : named) levelled.erase(id); // an ankle the gesture sets itself
     // Lengthen any step a motor could not make at its rated speed (the others keep their timing).
+    // (A smooth gesture is checked on its actual spline below.)
     float added = 0.0f, prev = 0.0f;
-    for (std::size_t i = 1; i < keyed.size(); ++i) {
+    for (std::size_t i = 1; i < keyed.size() && !gesture.smooth; ++i) {
         const float dt = keyed[i].first - prev;
         prev = keyed[i].first;
         float needed = 0.0f;
@@ -760,10 +886,35 @@ MoveResult playGesture(Scene& scene, const Robot& robot, const Gesture& gesture,
         else // joints the gesture does not move hold still
             d->keys = {{0.0f, keyed.front().second.at(j.drive)}};
         d->mode = loop && touched.count(j.drive) ? MotionMode::Loop : MotionMode::Once;
+        d->keySpline = gesture.smooth && touched.count(j.drive);
     }
     r.duration = keyed.empty() ? 0.0f : keyed.back().first;
+    if (gesture.smooth && r.duration > 0.0f) {
+        // Peak speed of the spline itself; slow the whole gesture evenly (its rhythm kept)
+        // until every motor is within its rated speed.
+        float factor = 1.0f;
+        for (const std::string& drive : touched)
+            if (const Motion* d = motionNamed(scene, drive))
+                for (int k = 0; k <= 800; ++k)
+                    factor = std::max(factor, std::fabs(motionRate(*d, r.duration * static_cast<float>(k) / 800.0f)) /
+                                                  ratedSpeed(scene, drive));
+        if (factor > 1.0001f) {
+            for (const std::string& drive : touched)
+                if (Motion* d = motionNamed(scene, drive))
+                    for (MotionKey& k : d->keys) k.t *= factor;
+            r.duration *= factor;
+            r.notes.push_back("slowed to " + fmtNum(r.duration) + " s per cycle (x" + fmtNum(factor) +
+                              ") to stay within the motors' rated speed; a higher motor RPM plays it faster");
+        }
+    }
     levelAlongPath(scene, robot, levelled, r.duration, loop);
     plantFeet(scene, robot.component, r.duration, loop);
+    if (gesture.travel) {
+        const float stride = walkOver(scene, robot.component, r.duration, loop);
+        if (stride > 0.0f)
+            r.notes.push_back("travels " + fmtNum(stride) + " mm per cycle (" + fmtNum(stride / r.duration / 1000.0f) +
+                              " m/s); the foot on the ground does not slip");
+    }
     return r;
 }
 

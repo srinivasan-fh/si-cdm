@@ -63,8 +63,12 @@ struct Motion {
     // them, any other mode holds the last value.
     std::vector<MotionKey> keys;
     // false: minimum-jerk from key to key (stops on each: postures, gestures);
-    // true: smooth spline through the keys (densely sampled tracks such as a stance).
+    // true: smooth spline through the keys (densely sampled tracks such as a stance,
+    // gait cycles); a repeating spline runs smoothly through the wrap.
     bool keySpline = false;
+    // Loop: each cycle carries on from the last one's end value instead of jumping back
+    // (a walk's travel keeps growing).
+    bool keysAdvance = false;
     // Joint limits (hard stops): the value is held within [lo, hi] whatever drives it.
     bool hasLimits = false;
     float lo = 0.0f, hi = 0.0f;

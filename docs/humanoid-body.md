@@ -165,7 +165,32 @@ shins forward 20°, arms forward for balance), `sit`, `bow`, `balance` (on the r
 
 **Gestures:** `wave`, `nod`, `shake`, `bow`, `point`, `thumbs_up`, `salute`, `grasp`, `count` (one to five
 on the fingers), `squat`, `look_around`, `stretch`, `march` (loops: legs alternate, arms swing with the
-opposite leg). A right-handed gesture on a left hand or arm plays mirrored automatically.
+opposite leg), `walk` (below). A right-handed gesture on a left hand or arm plays mirrored automatically.
+
+### Walking: a real gait cycle
+
+`GESTURE walk` plays normal human walking, built from normative gait kinematics (Perry / Winter), one
+stride every 1.1 s (about 109 steps a minute), the left leg half a cycle behind the right:
+
+| Phase (% of the cycle) | Hip | Knee | Ankle |
+| --- | --- | --- | --- |
+| 0 % initial contact (heel strike) | 30° flexion | 5° | 0° |
+| 10 % loading response | 25° | 18° (shock absorbing flexion) | 5° plantarflexion |
+| 30 % mid stance | 5° | 8° | 8° dorsiflexion |
+| 50 % heel off | 10° extension | 8° | 6° dorsiflexion |
+| 60 % pre-swing, push-off (toe off ≈ 62 %) | 5° extension | 35° | 15° plantarflexion |
+| 70 % initial swing | 15° | 58° (peak, foot clearance) | 8° plantarflexion |
+| 90 % terminal swing | 32° | 20° | 2° dorsiflexion |
+
+Each arm swings with the opposite leg (shoulder ±15°, elbow 14–30°). The joints follow a smooth
+periodic spline through these values (no stop at any key or at the wrap), and the robot **walks over the
+ground**: the points of the foot on the floor stay where they are while the stance leg carries the body
+forward, so it does not slide. A `<robot> Walk` motion keeps advancing a stride every cycle (about 1 m at
+the default size), and the lowest sole stays on the floor through heel strike, roll-over and toe off.
+
+The swing knee of a human reaches about 350°/s. At the default 120 rpm (180°/s per joint) the
+robot plays the same cycle more slowly, 1.93 s per stride, and says so. `PART HUMANOID RPM 210` or more
+walks at the natural pace. `GESTURE walk ONCE` plays one stride, and `SPEED 0.8` walks more slowly.
 
 In the app: **Simulation → Motion Study → Robot pose** picks the robot, a posture (**Pose**) or a gesture
 (**Play**, with *Loop* and *Other side*), and plays it from the start. Over MCP: the `set_pose` and
@@ -197,6 +222,7 @@ PART LEG SIDE LEFT @-700,0,0                  left leg on its stand
 PART THIGH   PART SHIN   PART FOOT            single parts
 POSE squat    POSE stand IN 2                 squat, then stand up in 2 s
 GESTURE wave  GESTURE march LOOP              wave, then march in place
+PART HUMANOID RPM 300    GESTURE walk          walk forward at the natural pace
 SIM PLAY      SIM AT 0.7                       joint angles at 0.7 s
 MOTION CIRCLE "Humanoid Robot 1 Motor Right Knee Drive" KEYS 0:0,1:240,2:0   knee 0-60-0 deg at gear 4
 ```
