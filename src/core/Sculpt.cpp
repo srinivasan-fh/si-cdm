@@ -256,7 +256,91 @@ SculptMesh::SculptMesh(const Body& body) {
     }
     m_p.reserve(pts.size());
     for (const D3& p : pts) m_p.push_back(p.f());
+    // Booleans can also leave needles: two corners a hair apart. Refining splits the
+    // edges from both ends alike until their new points round to the same floats.
+    const float hair = m_size * 1e-6f;
+    std::vector<char> hairy(m_p.size(), 0);
+    bool needles = false;
+    for (const auto& t : m_t)
+        for (int e = 0; e < 3; ++e) {
+            const Vec3 d = m_p[t[(e + 1) % 3]] - m_p[t[e]];
+            if (dot(d, d) < hair * hair) {
+                hairy[t[e]] = hairy[t[(e + 1) % 3]] = 1;
+                needles = true;
+            }
+        }
+    if (needles) {
+        std::vector<std::uint32_t> around;
+        for (std::size_t i = 0; i < m_t.size(); ++i)
+            if (hairy[m_t[i][0]] || hairy[m_t[i][1]] || hairy[m_t[i][2]]) around.push_back(static_cast<std::uint32_t>(i));
+        collapseLocal(std::move(around), hair, {}, 0.0f, false);
+    }
+    flipCaps();
     updateNormals();
+}
+
+// Booleans can leave caps: flat triangles whose third corner lies on their longest
+// edge. Refining one splits it again and again until two new points round to the
+// same float, which pinches the surface. Each cap is flipped away with its neighbour
+// across that edge (the surface hardly moves: the cap has no area).
+void SculptMesh::flipCaps() {
+    auto isCap = [&](const std::array<std::uint32_t, 3>& t, int* longest) {
+        float l2 = 0.0f;
+        for (int e = 0; e < 3; ++e) {
+            const Vec3 d = m_p[t[(e + 1) % 3]] - m_p[t[e]];
+            if (dot(d, d) > l2) {
+                l2 = dot(d, d);
+                *longest = e;
+            }
+        }
+        if (!(l2 > 0)) return false;
+        const Vec3 cr = cross(m_p[t[1]] - m_p[t[0]], m_p[t[2]] - m_p[t[0]]);
+        return dot(cr, cr) <= 4e-8f * l2 * l2; // height under 2e-4 of the edge
+    };
+    for (int pass = 0; pass < 8; ++pass) {
+        std::vector<std::size_t> caps;
+        int e = 0;
+        for (std::size_t i = 0; i < m_t.size(); ++i)
+            if (isCap(m_t[i], &e)) caps.push_back(i);
+        if (caps.empty()) return;
+        // The edges of every triangle that meets a cap's corner: the cap's long edge
+        // with the neighbour across it, and any edge already joining the corner.
+        std::vector<char> near(m_p.size(), 0);
+        for (const std::size_t i : caps)
+            for (std::uint32_t v : m_t[i]) near[v] = 1;
+        std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> byEdge;
+        for (std::size_t i = 0; i < m_t.size(); ++i)
+            if (near[m_t[i][0]] || near[m_t[i][1]] || near[m_t[i][2]])
+                for (int k = 0; k < 3; ++k) byEdge[edgeKey(m_t[i][k], m_t[i][(k + 1) % 3])].push_back(static_cast<std::uint32_t>(i));
+        std::vector<char> changed(m_t.size(), 0);
+        std::size_t flips = 0;
+        for (const std::size_t i : caps) {
+            if (changed[i] || !isCap(m_t[i], &e)) continue;
+            const std::uint32_t a = m_t[i][e], b = m_t[i][(e + 1) % 3], c = m_t[i][(e + 2) % 3];
+            const auto& across = byEdge[edgeKey(a, b)];
+            if (across.size() != 2) continue;
+            const std::uint32_t j = across[0] == i ? across[1] : across[0];
+            if (changed[j]) continue;
+            int k = 0;
+            while (k < 3 && !(m_t[j][k] == b && m_t[j][(k + 1) % 3] == a)) ++k;
+            if (k == 3) continue; // not consistently oriented
+            const std::uint32_t d = m_t[j][(k + 2) % 3];
+            if (d == c || byEdge.count(edgeKey(c, d))) continue;
+            // The corner must lie inside the edge, and the new triangles face the same way.
+            const Vec3 ab = m_p[b] - m_p[a];
+            const float u = dot(m_p[c] - m_p[a], ab) / dot(ab, ab);
+            if (!(u > 1e-3f && u < 1.0f - 1e-3f)) continue;
+            const Vec3 nj = cross(m_p[a] - m_p[b], m_p[d] - m_p[b]);
+            const Vec3 n1 = cross(m_p[d] - m_p[a], m_p[c] - m_p[a]), n2 = cross(m_p[b] - m_p[d], m_p[c] - m_p[d]);
+            if (!(dot(n1, nj) > 0) || !(dot(n2, nj) > 0)) continue;
+            m_t[i] = {a, d, c};
+            m_t[j] = {d, b, c};
+            changed[i] = changed[j] = 1;
+            byEdge[edgeKey(c, d)] = {static_cast<std::uint32_t>(i), j};
+            ++flips;
+        }
+        if (flips == 0) return;
+    }
 }
 
 void SculptMesh::updateNormals() {
@@ -434,35 +518,49 @@ void SculptMesh::refineAll(float detail, std::size_t maxTriangles) {
     updateNormals();
 }
 
-std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float radius) {
+std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float radius, bool keepShape) {
+    // The triangles that can take part: under the brush, every triangle on an edge
+    // short enough to go has a corner within radius + minEdge of the centre (so the
+    // rings of the edge's ends are complete); else all of them.
+    std::vector<std::uint32_t> local;
+    if (radius > 0) {
+        local = trianglesNear(centre, radius + minEdge);
+    } else {
+        local.resize(m_t.size());
+        for (std::size_t i = 0; i < local.size(); ++i) local[i] = static_cast<std::uint32_t>(i);
+    }
+    const std::size_t n = collapseLocal(std::move(local), minEdge, centre, radius, keepShape);
+    if (n > 0) updateNormals();
+    return n;
+}
+
+std::vector<std::uint32_t> SculptMesh::trianglesNear(const Vec3& centre, float reach) const {
+    std::vector<std::uint32_t> out;
+    const float reach2 = reach * reach;
+    for (std::size_t i = 0; i < m_t.size(); ++i)
+        for (std::uint32_t v : m_t[i]) {
+            const Vec3 q = m_p[v] - centre;
+            if (dot(q, q) <= reach2) {
+                out.push_back(static_cast<std::uint32_t>(i));
+                break;
+            }
+        }
+    return out;
+}
+
+// `local` holds every triangle around the ends of each edge that may go. A collapse
+// moves corners only within that set, so it holds for every pass. Collapsed
+// triangles are marked dead and dropped at the end.
+std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float minEdge, const Vec3& centre, float radius, bool keepShape) {
     const float min2 = minEdge * minEdge, r2 = radius * radius;
     std::size_t total = 0;
+    std::vector<char> dead(m_t.size(), 0);
     for (int pass = 0; pass < 12; ++pass) {
-        // The triangles that can take part: under the brush, every triangle on an edge
-        // short enough to go has a corner within radius + minEdge of the centre (so
-        // the rings of the edge's ends are complete); else all of them.
-        std::vector<std::uint32_t> local;
-        if (radius > 0) {
-            const float reach2 = (radius + minEdge) * (radius + minEdge);
-            for (std::size_t i = 0; i < m_t.size(); ++i)
-                for (std::uint32_t v : m_t[i]) {
-                    const Vec3 q = m_p[v] - centre;
-                    if (dot(q, q) <= reach2) {
-                        local.push_back(static_cast<std::uint32_t>(i));
-                        break;
-                    }
-                }
-        } else {
-            local.resize(m_t.size());
-            for (std::size_t i = 0; i < local.size(); ++i) local[i] = static_cast<std::uint32_t>(i);
-        }
+        local.erase(std::remove_if(local.begin(), local.end(), [&](std::uint32_t i) { return dead[i] != 0; }), local.end());
         if (local.empty()) break;
-        // Vertex -> triangles, and open-border vertices (left alone).
-        std::vector<std::vector<std::uint32_t>> around(m_p.size());
-        for (std::uint32_t i : local)
-            for (std::uint32_t v : m_t[i]) around[v].push_back(i);
         // Edge use counts by sorting the edge keys (an edge at the rim of the local set
-        // counts once: its ends are out of reach and so never collapse).
+        // counts once: its ends are out of reach and so never collapse), and the
+        // open-border vertices (left alone).
         std::vector<std::uint64_t> keys;
         keys.reserve(local.size() * 3);
         for (std::uint32_t i : local) {
@@ -495,7 +593,11 @@ std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float r
         }
         if (edges.empty()) break;
         std::sort(edges.begin(), edges.end());
-        std::vector<char> locked(m_p.size(), 0), dead(m_t.size(), 0);
+        // Vertex -> triangles (only once there is something to collapse).
+        std::vector<std::vector<std::uint32_t>> around(m_p.size());
+        for (std::uint32_t i : local)
+            for (std::uint32_t v : m_t[i]) around[v].push_back(i);
+        std::vector<char> locked(m_p.size(), 0);
         std::size_t collapsed = 0;
         std::vector<std::uint32_t> ringA, ringB;
         auto ring = [&](std::uint32_t v, std::vector<std::uint32_t>& out) {
@@ -525,7 +627,7 @@ std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float r
                 for (std::uint32_t ti : around[v])
                     if (!dead[ti]) regionN += cross(m_p[m_t[ti][1]] - m_p[m_t[ti][0]], m_p[m_t[ti][2]] - m_p[m_t[ti][0]]);
             regionN = normalize(regionN);
-            bool ok = length(regionN) > 0.5f;
+            bool ok = !keepShape || length(regionN) > 0.5f;
             for (std::uint32_t v : {a, b}) {
                 if (!ok) break;
                 for (std::uint32_t ti : around[v]) {
@@ -541,7 +643,7 @@ std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float r
                     const Vec3 before = cross(m_p[t[1]] - m_p[t[0]], m_p[t[2]] - m_p[t[0]]);
                     const Vec3 after = cross(q[1] - q[0], q[2] - q[0]);
                     const float la = length(after);
-                    if (la <= 1e-12f || dot(before, after) <= 0.0f || dot(after, regionN) <= 0.85f * la) {
+                    if (la <= 1e-12f || dot(before, after) <= 0.0f || (keepShape && dot(after, regionN) <= 0.85f * la)) {
                         ok = false;
                         break;
                     }
@@ -567,14 +669,13 @@ std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float r
             ++collapsed;
         }
         if (collapsed == 0) break;
-        std::vector<std::array<std::uint32_t, 3>> kept;
-        kept.reserve(m_t.size());
-        for (std::size_t i = 0; i < m_t.size(); ++i)
-            if (!dead[i]) kept.push_back(m_t[i]);
-        m_t = std::move(kept);
         total += collapsed;
     }
     if (total > 0) {
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < m_t.size(); ++i)
+            if (!dead[i]) m_t[n++] = m_t[i];
+        m_t.resize(n);
         // Drop vertices no triangle uses any more.
         std::vector<std::uint32_t> remap(m_p.size(), 0xFFFFFFFFu);
         std::vector<Vec3> p;
@@ -587,7 +688,7 @@ std::size_t SculptMesh::collapseShort(float minEdge, const Vec3& centre, float r
                 v = remap[v];
             }
         m_p = std::move(p);
-        updateNormals();
+        m_n.resize(m_p.size()); // stale: the caller updates the normals
     }
     return total;
 }
@@ -689,11 +790,11 @@ void SculptMesh::dab(const Vec3& centre, const SculptSettings& s) {
         updateNormals();
     }
     applyDab(centre, s);
-    if (s.refine) { // and coarsen where the clay was squashed (edges far below the detail size)
-        collapseShort(detail * 0.3f, centre, R);
-        if (mirror) collapseShort(detail * 0.3f, mc, R);
-    }
     if (mirror) applyDab(mc, s);
+    if (s.refine) { // and coarsen where the clay was squashed (edges far below the detail size)
+        collapseLocal(trianglesNear(centre, R + detail * 0.3f), detail * 0.3f, centre, R, true);
+        if (mirror) collapseLocal(trianglesNear(mc, R + detail * 0.3f), detail * 0.3f, mc, R, true);
+    }
     updateNormals();
 }
 
@@ -796,14 +897,19 @@ void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSetti
         sm.beginGrab(sm.closestPoint(points.front()), s);
         sm.grabTo(delta);
     } else {
+        // The path runs between the points snapped to the surface. Snapping the dabs
+        // of a path that floats off the surface would bunch them on the nearest bumps.
+        std::vector<Vec3> path;
+        path.reserve(points.size());
+        for (const Vec3& p : points) path.push_back(sm.closestPoint(p));
         // At most ~1000 dabs a stroke, whatever the radius.
         float total = 0.0f;
-        for (std::size_t i = 1; i < points.size(); ++i) total += length(points[i] - points[i - 1]);
+        for (std::size_t i = 1; i < path.size(); ++i) total += length(path[i] - path[i - 1]);
         const float spacing = std::max({s.radius * 0.25f, total / 1000.0f, 1e-3f});
-        sm.dab(sm.closestPoint(points.front()), s);
+        sm.dab(sm.closestPoint(path.front()), s);
         float carry = 0.0f;
-        for (std::size_t i = 1; i < points.size(); ++i) {
-            const Vec3 a = points[i - 1], b = points[i];
+        for (std::size_t i = 1; i < path.size(); ++i) {
+            const Vec3 a = path[i - 1], b = path[i];
             const float len = length(b - a);
             float at = spacing - carry;
             while (at <= len) {

@@ -173,6 +173,11 @@ POCKET AT 60,30,20 BOX WIDTH 18 LENGTH 28 DEPTH 5                 CHANNEL PATH -
 TRIM PLANE 0,0,5 NORMAL 0,0,-1      BOSS AT -60,30,20 DIAMETER 14 HEIGHT 9      BOOLEAN A SUBTRACT B     UNDO
 ```
 
+A whole head-and-shoulders bust, sculpted from a ball by a 68-command script
+([docs/examples/head-bust.txt](docs/examples/head-bust.txt)): `RUN docs/examples/head-bust.txt`.
+
+![A head bust sculpted from a ball with the brushes](docs/head-bust.png)
+
 Details: [docs/sculpting.md](docs/sculpting.md).
 
 ## Armour and exoskeletons
@@ -351,6 +356,7 @@ BOX 40 30 20 @10,0,5          CYLINDER 10 30           SPHERE 8              TOR
 EXTRUDE 15                    EXTRUDE "Circle 2" 20 SYMMETRIC KEEP
 SELECT Block 1   MOVE 0,0,10   ERASE        VIEW FRONT   2D RIGHT   3D   ROLL 90   DISPLAY HIDDEN
 IMPORT "plans/scan.jpg" WIDTH 150 @0,0      EXPORT part.stl      SAVE project.sicdm      OPEN project.sicdm
+RUN docs/examples/head-bust.txt               (a script: one command a line, # comments)
 ```
 
 With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,dy` (relative) or

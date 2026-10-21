@@ -5,6 +5,7 @@
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -273,4 +274,59 @@ TEST_CASE("undo keeps later work and restores motions") {
     const auto r = run(d, "UNDO");
     CHECK(!r.ok);
     CHECK(d.scene.bodies().size() == 3);
+}
+
+TEST_CASE("refining the union of round primitives keeps it closed") {
+    // Booleans leave caps (a corner on the far edge) and needles (two corners a hair
+    // apart); refined, they used to pinch the surface into open edges.
+    Document d;
+    for (const char* c : {"SPHERE 82 @0,5,253", "SPHERE 75 @0,25,270", "SPHERE 55 @0,-25,195", "CYLINDER 45 170 @0,15,100",
+                          "BOOLEAN \"Sphere 1\" UNION \"Sphere 2\"", "BOOLEAN \"Sphere 1\" UNION \"Sphere 3\"",
+                          "BOOLEAN \"Sphere 1\" UNION \"Cylinder 4\""})
+        REQUIRE(run(d, c).ok);
+    const auto r = run(d, "SCULPT \"Sphere 1\" REFINE 10");
+    REQUIRE(r.ok);
+    CHECK(r.lines[0].find(", closed") != std::string::npos);
+    CHECK(openEdgeCount(d.scene.bodies()[0].mesh) == 0);
+}
+
+TEST_CASE("RUN sculpts the head bust example from a ball") {
+    Document d;
+    const auto r = run(d, std::string("RUN ") + SICDM_SOURCE_DIR + "/docs/examples/head-bust.txt");
+    REQUIRE(r.ok);
+    REQUIRE(d.scene.bodies().size() == 1);
+    const Body& bust = d.scene.bodies()[0];
+    CHECK(openEdgeCount(bust.mesh) == 0);
+    const AABB box = bust.bounds();
+    CHECK_NEAR(box.min.z, 30.0, 1e-3); // cut flat underneath
+    CHECK_NEAR(box.max.z, 415.0, 5.0); // the crown
+    CHECK(box.max.x - box.min.x > 350.0f); // shoulders
+
+    const SculptMesh sm(bust);
+    CHECK(sm.openEdges() == 0);
+    // The front of the face (y, looking along +y), and the sides of the head (x).
+    auto front = [&](float x, float z) {
+        const auto h = sm.raycast({{x, -500.0f, z}, {0, 1, 0}});
+        return h ? h->y : 1e9f;
+    };
+    auto side = [&](float dir, float y, float z) {
+        const auto h = sm.raycast({{dir * 500.0f, y, z}, {-dir, 0, 0}});
+        return h ? h->x : 1e9f;
+    };
+    CHECK(front(0, 290) < front(0, 260) - 15.0f); // the nose stands out over the lip
+    CHECK(front(0, 254) > front(0, 260) + 0.8f);   // the mouth is a line between the lips
+    CHECK(front(0, 254) > front(0, 247) + 0.8f);
+    CHECK(front(30, 318) > front(30, 340) + 3.0f); // the eyes sit under the brow
+    CHECK(side(1, 25, 310) > side(1, 25, 350) + 5.0f); // the ears stand out from the skull
+    CHECK_NEAR(side(1, 25, 310), -side(-1, 25, 310), 1.0);
+    // Mirrored strokes: the head is the same on both sides, within the remeshing.
+    float worst = 0.0f;
+    for (int x = 4; x <= 70; x += 6)
+        for (int z = 228; z <= 410; z += 7) { // above the chin, where rays graze the jaw
+            const float a = front(static_cast<float>(x), static_cast<float>(z)), b = front(static_cast<float>(-x), static_cast<float>(z));
+            if (a < 1e8f && b < 1e8f) worst = std::max(worst, std::fabs(a - b));
+        }
+    CHECK(worst < 1.5f);
+
+    CHECK(!run(d, "RUN /no/such/script.txt").ok);
 }

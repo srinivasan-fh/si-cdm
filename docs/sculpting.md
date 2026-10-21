@@ -35,6 +35,8 @@ scan.
 - One dab may add only about as many triangles as its own disc needs.
 - A stroke has at most about 1000 dabs.
 - The brush is never smaller than 0.2 % of the body's size, so a tiny radius cannot run away.
+- Slivers that a boolean leaves (a corner lying on the far edge, or two corners a hair apart) are
+  flipped or merged first, so a refined boolean result stays closed.
 
 **How a dab works.**
 
@@ -44,6 +46,46 @@ scan.
 - Dabs are spaced a quarter radius apart along the stroke, each snapped to the surface.
 
 Hard CAD edges stay crisp in the shading: normals are smoothed only across edges that turn less than 40°.
+
+## Example: a head bust
+
+![A head-and-shoulders bust sculpted from a ball: skull, brow, eyes with lids, nose, lips, chin, ears, neck muscles and collarbones](head-bust.png)
+
+[examples/head-bust.txt](examples/head-bust.txt) sculpts this bust in 68 commands: brush strokes,
+and five booleans for the neck and shoulders. Run it in the app (it opens a new file tab and takes
+about 15 s):
+
+```text
+RUN docs/examples/head-bust.txt
+```
+
+The script works the way a sculptor blocks out a head:
+
+1. **Head.** A ball with an even mesh. Large grabs (radius 55–100 mm) pull it into a skull and a jaw.
+   A grab's falloff is smooth, so big forms come out without seams. A grab much smaller than its
+   move pulls out a point, so the radius is kept larger than the move.
+2. **Face.**
+   - Grabs bring the forehead and chin forward and push in the eye sockets.
+   - Draw strokes raise the brow ridge, the nose bridge and the lips. A grab pulls the nose tip
+     out and Pinch narrows the bridge.
+   - Crease cuts the mouth line and the folds round the nose wings. Inflate fills out the cheeks.
+   - The eyes are a small grab out of each socket with drawn lids. Each ear is a grabbed flap with
+     its bowl pressed in and a drawn rim.
+   - Every face stroke uses `SYMMETRY`, so it is placed once.
+3. **Neck and shoulders.** A refined cylinder for the neck and a block cut by three balls for the
+   shoulder slope, the chest and the back. They are joined on with exact unions. Smooth strokes blend
+   the joins, and Draw strokes add the neck muscles and collarbones.
+
+Points in a script only need to be near the surface: each one is snapped onto it, and a stroke runs
+along the surface between the snapped points. The result is one closed body of about 84,000
+triangles, ready for `EXPORT bust.stl`. The test suite runs the script and checks the result:
+
+- it is closed;
+- the nose stands out over the lips;
+- the mouth line lies between the lips;
+- the eyes sit under the brow;
+- the ears stand out from the skull;
+- the two sides match to within 1.5 mm.
 
 ## Cuts and booleans
 
@@ -121,11 +163,13 @@ TRIM    [body] [PLANE] x,y,z NORMAL x,y,z [SMALLER]        removes the side the 
 BOSS    [body] [AT] x,y,z [DIR x,y,z] [CYLINDER|BOX|BALL] DIAMETER d HEIGHT h
 BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]
 UNDO
+RUN script.txt                             the commands in a file, one a line (# comments); stops at a failure
 ```
 
 Points are snapped to the nearest surface, and the tool goes in against the surface normal there
-(unless `DIR`). The body defaults to the selection. A point far from the body is refused. Each command
-reports the triangle count and whether the result is closed.
+(unless `DIR`). A stroke runs along the surface between its snapped points. The body defaults to
+the selection. A point far from the body is refused. Each command reports the triangle count and
+whether the result is closed.
 
 Over MCP: the `sculpt` tool (`operation` = a brush name, `hole`, `pocket`, `channel`, `trim`, `boss`,
 `boolean`, `refine` or `undo`).

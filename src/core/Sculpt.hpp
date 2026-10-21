@@ -79,7 +79,7 @@ public:
     void refineAll(float detail, std::size_t maxTriangles = 600000);
     // Collapses edges shorter than `minEdge` (within `radius` of `centre`, or
     // everywhere when radius <= 0), keeping the surface closed and unfolded.
-    std::size_t collapseShort(float minEdge, const Vec3& centre = {}, float radius = 0.0f);
+    std::size_t collapseShort(float minEdge, const Vec3& centre = {}, float radius = 0.0f, bool keepShape = true);
 
     // Writes back: kind "mesh", normals smoothed across edges turning less than
     // `smoothAngle` degrees, feature edges if asked.
@@ -89,6 +89,9 @@ private:
     void refineRegion(const Vec3& centre, float radius, float detail);
     void applyDab(const Vec3& centre, const SculptSettings& s);
     void updateNormals();
+    void flipCaps();
+    std::size_t collapseLocal(std::vector<std::uint32_t> local, float minEdge, const Vec3& centre, float radius, bool keepShape);
+    std::vector<std::uint32_t> trianglesNear(const Vec3& centre, float reach) const;
     bool splitEdges(const std::vector<std::uint64_t>& edges, std::size_t maxTriangles);
 
     std::vector<Vec3> m_p;                         // positions
@@ -106,8 +109,8 @@ private:
     std::vector<GrabVert> m_grab;
 };
 
-// Dabs along a polyline every radius / 4 (each point snapped to the surface), or a
-// grab from points[0] moved by `grabDelta`. Writes the body back.
+// Dabs every radius / 4 along the polyline through the points snapped to the surface,
+// or a grab from points[0] moved by `grabDelta`. Writes the body back.
 void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta = {});
 
 // Refines the whole body until no edge is longer than `detail` (for sculpting a coarse CAD mesh).

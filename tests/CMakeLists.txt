@@ -21,3 +21,5 @@ add_executable(sicdm_tests
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 sicdm_set_compile_options(sicdm_tests)
 add_test(NAME sicdm_tests COMMAND sicdm_tests)
+# Tests that read example files from the source tree.
+target_compile_definitions(sicdm_tests PRIVATE SICDM_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

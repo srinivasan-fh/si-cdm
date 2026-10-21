@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 
 namespace sicdm {
 
@@ -458,6 +459,36 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.primitiveSerial = 0;
         out.documentReplaced = true;
         out.say("New empty project");
+        return out;
+    }
+    if (cmd == "RUN") {
+        // Each line as if typed, stopping at the first that fails.
+        static thread_local int depth = 0;
+        if (a.empty()) return usage();
+        if (depth >= 8) return out.fail("RUN nests too deep");
+        const std::string path = joinArgs(a);
+        std::ifstream in(path);
+        if (!in) return out.fail("Cannot read " + path);
+        ++depth;
+        struct Leave {
+            ~Leave() { --depth; }
+        } leave;
+        std::string text;
+        int lineNo = 0, ran = 0;
+        while (std::getline(in, text)) {
+            ++lineNo;
+            if (!text.empty() && text.back() == '\r') text.pop_back();
+            const std::size_t first = text.find_first_not_of(" \t");
+            if (first == std::string::npos || text[first] == '#') continue;
+            const CommandOutput r = executeCommand(doc, text, view);
+            out.clearHistory = out.clearHistory || r.clearHistory;
+            out.documentReplaced = out.documentReplaced || r.documentReplaced;
+            ++ran;
+            if (!r.ok)
+                return out.fail(path + fmt(" line %g: ", static_cast<double>(lineNo)) + text.substr(first) + "  -> " +
+                                (r.lines.empty() ? "failed" : r.lines.back()));
+        }
+        out.say(fmt("Ran %g commands from ", static_cast<double>(ran)) + path);
         return out;
     }
     if (cmd == "OPEN") {
