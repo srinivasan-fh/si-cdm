@@ -34,13 +34,16 @@ void main() {
 constexpr const char* kMeshVS = R"(#version 410 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
+layout(location = 2) in float aMask;
 uniform mat4 uViewProj;
 uniform mat4 uModel; // body offset and simulated motion (rigid)
 out vec3 vWorldPos;
 out vec3 vNormal;
+out float vMask;
 void main() {
     vWorldPos = (uModel * vec4(aPos, 1.0)).xyz;
     vNormal = mat3(uModel) * aNormal;
+    vMask = aMask;
     gl_Position = uViewProj * vec4(vWorldPos, 1.0);
 }
 )";
@@ -48,6 +51,7 @@ void main() {
 constexpr const char* kMeshFS = R"(#version 410 core
 in vec3 vWorldPos;
 in vec3 vNormal;
+in float vMask;
 uniform vec3 uColor;
 uniform vec3 uCamPos;
 uniform vec3 uCamRight;
@@ -88,6 +92,7 @@ void main() {
     vec3 ambient = mix(vec3(0.16, 0.15, 0.14), vec3(0.24, 0.26, 0.30), hemi);
 
     vec3 base = mix(uColor, vec3(0.30, 0.65, 1.00), uHighlight * 0.55);
+    base *= 1.0 - 0.6 * clamp(vMask, 0.0, 1.0); // masked: darker
     vec3 c = base * (ambient + diff) + vec3(spec);
     // Light rim to separate silhouettes from the background.
     c += pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.08;
@@ -234,6 +239,9 @@ GpuMesh uploadMesh(const MeshData& m) {
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
                           reinterpret_cast<const void*>(offsetof(Vertex, normal)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+                          reinterpret_cast<const void*>(offsetof(Vertex, mask)));
     g.indexCount = static_cast<GLsizei>(m.indices.size());
 
     if (!m.edgeVertices.empty()) {

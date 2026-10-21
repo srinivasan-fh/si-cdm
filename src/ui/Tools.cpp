@@ -79,6 +79,13 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::SculptSmooth, C::Sculpt, "Smooth", "", "Relax bumps and noise (Laplacian smoothing). Shift smooths with any brush.", true},
     {T::SculptFlatten, C::Sculpt, "Flatten", "", "Press the surface flat to the average plane under the brush.", true},
     {T::SculptScrape, C::Sculpt, "Scrape (Trim)", "", "Shave off the high spots down to a plane, like a trimming knife (Ctrl fills).", true},
+    {T::SculptLayer, C::Sculpt, "Layer", "", "Raise the surface to an even height over the stroke, once per stroke (Ctrl lowers).", true},
+    {T::SculptClayStrips, C::Sculpt, "Clay Strips", "", "Lay on flat-topped strips of clay along the stroke (square brush). Ctrl removes.", true},
+    {T::SculptFill, C::Sculpt, "Fill", "", "Raise the low spots up to the plane under the brush (Ctrl scrapes).", true},
+    {T::SculptBlob, C::Sculpt, "Blob", "", "Swell rounded blobs that spread from the centre (Ctrl: dents).", true},
+    {T::SculptSnakeHook, C::Sculpt, "Snake Hook", "", "Pull the surface out along the stroke, for horns, tentacles and strands.", true},
+    {T::SculptNudge, C::Sculpt, "Nudge", "", "Push the surface along itself in the stroke's direction.", true},
+    {T::SculptMask, C::Sculpt, "Mask", "", "Paint a mask: masked surface holds still under the other brushes. Ctrl unmasks.", true},
 
     {T::CutHole, C::Cut, "Drill Hole", "", "Click a surface to drill a hole along its normal: through, or blind with a 118 deg tip.", true},
     {T::CutPocket, C::Cut, "Pocket", "", "Click a surface to hollow a rectangular, round or ball-end pocket.", true},
@@ -118,10 +125,11 @@ constexpr ToolId gAirfoil[] = {T::TwistedAirfoil, T::TubercleWing};
 constexpr ToolId gTopo[] = {T::TopologyOptimized};
 constexpr ToolId gLattice[] = {T::TpmsLattice};
 constexpr ToolId gMesh[] = {T::MeshImport, T::PointCloud, T::SubD};
-constexpr ToolId gSculptAdd[] = {T::SculptDraw, T::SculptClay, T::SculptCarve, T::SculptInflate};
-constexpr ToolId gSculptGrab[] = {T::SculptGrab};
+constexpr ToolId gSculptAdd[] = {T::SculptDraw, T::SculptClay, T::SculptClayStrips, T::SculptLayer, T::SculptCarve, T::SculptInflate, T::SculptBlob};
+constexpr ToolId gSculptGrab[] = {T::SculptGrab, T::SculptSnakeHook, T::SculptNudge};
 constexpr ToolId gSculptPinch[] = {T::SculptPinch, T::SculptCrease};
-constexpr ToolId gSculptSmooth[] = {T::SculptSmooth, T::SculptFlatten, T::SculptScrape};
+constexpr ToolId gSculptSmooth[] = {T::SculptSmooth, T::SculptFlatten, T::SculptScrape, T::SculptFill};
+constexpr ToolId gSculptMask[] = {T::SculptMask};
 constexpr ToolId gCutHole[] = {T::CutHole, T::CutPocket, T::CutChannel};
 constexpr ToolId gCutKnife[] = {T::CutKnife};
 constexpr ToolId gBoss[] = {T::AddBoss};
@@ -138,7 +146,7 @@ constexpr ToolGroup kGroups[] = {
     {C::Solid, gCylinder},  {C::Solid, gSphere},    {C::Feature, gExtrude},  {C::Feature, gSweep},
     {C::Feature, gRib},     {C::Surface, gPlane},   {C::Surface, gPatch},    {C::ClassA, gNurbs},
     {C::ClassA, gAirfoil},  {C::Generative, gTopo}, {C::Generative, gLattice}, {C::Mesh, gMesh},
-    {C::Sculpt, gSculptAdd}, {C::Sculpt, gSculptGrab}, {C::Sculpt, gSculptPinch}, {C::Sculpt, gSculptSmooth},
+    {C::Sculpt, gSculptAdd}, {C::Sculpt, gSculptGrab}, {C::Sculpt, gSculptPinch}, {C::Sculpt, gSculptSmooth}, {C::Sculpt, gSculptMask},
     {C::Cut, gCutHole},     {C::Cut, gCutKnife},    {C::Cut, gBoss},        {C::Cut, gBoolean},
     {C::Wearable, gShell},  {C::Wearable, gArmor},  {C::Wearable, gJoint},  {C::Wearable, gInterference},
 };

@@ -481,6 +481,62 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
         g.poly({{-0.75f, -0.05f}, {0.85f, -0.05f}, {0.65f, -0.3f}}, true, true); // blade
         break;
 
+    case ToolId::SculptClayStrips:
+        g.line(-0.9f, 0.65f, 0.9f, 0.65f);
+        g.poly({{-0.75f, 0.65f}, {-0.75f, 0.3f}, {-0.15f, 0.3f}, {-0.15f, 0.65f}}, false, true);
+        g.poly({{0.15f, 0.65f}, {0.15f, 0.3f}, {0.75f, 0.3f}, {0.75f, 0.65f}}, false, true);
+        g.poly({{-0.4f, 0.3f}, {-0.4f, -0.05f}, {0.4f, -0.05f}, {0.4f, 0.3f}}, false, true);
+        g.line(-0.6f, -0.55f, 0.5f, -0.55f);
+        arrowHead(g, 0.6f, -0.55f, 1, 0, 0.22f);
+        break;
+    case ToolId::SculptLayer:
+        g.line(-0.9f, 0.65f, -0.6f, 0.65f);
+        g.bezier(-0.6f, 0.65f, -0.5f, 0.65f, -0.5f, 0.1f, -0.35f, 0.1f);
+        g.line(-0.35f, 0.1f, 0.35f, 0.1f);
+        g.bezier(0.35f, 0.1f, 0.5f, 0.1f, 0.5f, 0.65f, 0.6f, 0.65f);
+        g.line(0.6f, 0.65f, 0.9f, 0.65f);
+        g.dashed(-0.35f, -0.25f, 0.35f, -0.25f, 4);
+        g.line(0, -0.55f, 0, -0.35f);
+        arrowHead(g, 0, -0.3f, 0, 1, 0.2f);
+        break;
+    case ToolId::SculptBlob:
+        g.line(-0.9f, 0.65f, -0.55f, 0.65f);
+        g.line(0.55f, 0.65f, 0.9f, 0.65f);
+        g.bezier(-0.55f, 0.65f, -0.75f, -0.6f, 0.75f, -0.6f, 0.55f, 0.65f);
+        g.dot(-0.15f, 0.05f, 0.08f);
+        break;
+    case ToolId::SculptSnakeHook:
+        g.line(-0.9f, 0.65f, -0.35f, 0.65f);
+        g.bezier(-0.35f, 0.65f, -0.2f, 0.1f, 0.1f, -0.2f, 0.45f, -0.6f);
+        g.bezier(0.45f, -0.6f, 0.2f, -0.1f, 0.15f, 0.3f, 0.25f, 0.65f);
+        g.line(0.25f, 0.65f, 0.9f, 0.65f);
+        arrowHead(g, 0.55f, -0.72f, 0.7f, -0.7f, 0.22f);
+        break;
+    case ToolId::SculptNudge:
+        g.line(-0.9f, 0.55f, -0.2f, 0.55f);
+        g.bezier(-0.2f, 0.55f, 0.0f, 0.55f, 0.1f, 0.2f, 0.35f, 0.2f);
+        g.bezier(0.35f, 0.2f, 0.55f, 0.2f, 0.55f, 0.55f, 0.9f, 0.55f);
+        g.line(-0.6f, -0.35f, 0.45f, -0.35f);
+        arrowHead(g, 0.55f, -0.35f, 1, 0, 0.24f);
+        break;
+    case ToolId::SculptFill:
+        g.line(-0.9f, 0.0f, -0.55f, 0.0f);
+        g.bezier(-0.55f, 0.0f, -0.4f, 0.0f, -0.4f, 0.6f, -0.2f, 0.6f);
+        g.line(-0.2f, 0.6f, 0.2f, 0.6f);
+        g.bezier(0.2f, 0.6f, 0.4f, 0.6f, 0.4f, 0.0f, 0.55f, 0.0f);
+        g.line(0.55f, 0.0f, 0.9f, 0.0f);
+        g.dashed(-0.45f, 0.0f, 0.45f, 0.0f, 4);
+        g.line(0, -0.7f, 0, -0.2f);
+        arrowHead(g, 0, -0.15f, 0, 1, 0.2f);
+        break;
+    case ToolId::SculptMask:
+        g.circle(0, 0, 0.7f, false);
+        g.poly({{-0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, -0.5f}, {-0.5f, -0.5f}}, true, false);
+        g.line(-0.5f, -0.1f, 0.1f, 0.5f);
+        g.line(-0.5f, -0.5f, 0.5f, 0.5f);
+        g.line(-0.1f, -0.5f, 0.5f, 0.1f);
+        break;
+
     // ---- Cuts & booleans ----------------------------------------------------
     case ToolId::CutHole:
         g.poly({{-0.85f, -0.2f}, {0.85f, -0.2f}, {0.85f, 0.75f}, {-0.85f, 0.75f}}, true, true);

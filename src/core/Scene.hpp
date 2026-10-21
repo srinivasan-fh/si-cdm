@@ -125,6 +125,11 @@ public:
     // made since are kept. An unsealed one (a failed edit) is restored as it is.
     std::string undo(std::string* why = nullptr);
     std::size_t undoDepth() const noexcept { return m_undo.size(); }
+    // Puts back what the last undo took away; returns its label, or "". Refused (and
+    // the redo history dropped) once bodies were added, removed or rebuilt since; a
+    // new edit drops it too. Moves, colours and renames since the undo are kept.
+    std::string redo(std::string* why = nullptr);
+    std::size_t redoDepth() const noexcept { return m_redo.size(); }
 
     // Bumped whenever bodies are added or removed (GPU buffers must be rebuilt).
     std::uint64_t revision() const noexcept { return m_revision; }
@@ -167,6 +172,17 @@ private:
         bool motionsChanged = false;
     };
     std::vector<Snapshot> m_undo;
+    struct Redo {
+        std::string label;
+        std::vector<Body> bodies;   // as the edit had left them
+        std::vector<Motion> motions;
+        std::uint64_t at = 0;       // revision the undo left
+        std::uint64_t from = 0;     // revision before the undo (what the redo brings back)
+        std::vector<BodyState> atBodies;
+    };
+    std::vector<Redo> m_redo;
+    // Carries moves, colours, visibility and renames made since `was` onto `bodies`.
+    void keepLaterChanges(std::vector<Body>& bodies, const std::vector<BodyState>& was) const;
 };
 
 } // namespace sicdm

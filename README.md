@@ -156,9 +156,11 @@ temperature halos, trails, field arrows, wavefronts and an energy-balance panel.
 
 Two sections at the bottom of the tool rail turn any body into digital clay and cut it like a CAD solid.
 
-- **Digital Sculpting:** Draw (push / pull), Clay (add), Carve (remove), Inflate, Grab, Pinch, Crease,
-  Smooth, Flatten and Scrape (trim). Drag over a body; Ctrl inverts, Shift smooths, `[` `]` resize.
-  The mesh refines itself under the brush (dynamic topology), with optional X symmetry.
+- **Digital Sculpting:** 17 brushes: Draw, Clay, Clay Strips, Layer, Carve, Inflate, Blob, Grab, Snake
+  Hook, Nudge, Pinch, Crease, Smooth, Flatten, Scrape, Fill and Mask. Drag over a body; Ctrl inverts,
+  Shift smooths, `[` `]` resize. There are falloff curves, X / Y / Z and radial symmetry, and masking.
+  The mesh refines itself under the brush (dynamic topology). Also: voxel remesh, Loop subdivision,
+  symmetrize, decimate, undo and redo.
 - **Cuts & Booleans:** Drill Hole (through, or blind with a drill point), Pocket (box, round, ball end),
   Channel (drag a groove), Knife / Trim (drag a line: the smaller side goes, the cut is capped),
   Add Volume (boss, pad, dome), and exact Union / Subtract / Intersect of two bodies.

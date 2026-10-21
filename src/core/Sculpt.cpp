@@ -34,7 +34,22 @@ constexpr BrushInfo kBrushes[] = {
     {SculptBrush::Smooth, "smooth", "Smooth"},
     {SculptBrush::Flatten, "flatten", "Flatten"},
     {SculptBrush::Scrape, "scrape", "Scrape (trim)"},
+    {SculptBrush::Layer, "layer", "Layer (raise to a height)"},
+    {SculptBrush::ClayStrips, "claystrips", "Clay Strips"},
+    {SculptBrush::Fill, "fill", "Fill (raise the low spots)"},
+    {SculptBrush::Blob, "blob", "Blob"},
+    {SculptBrush::SnakeHook, "snakehook", "Snake Hook (pull out along the stroke)"},
+    {SculptBrush::Nudge, "nudge", "Nudge (push along the surface)"},
+    {SculptBrush::Mask, "mask", "Mask (hold the surface still)"},
 };
+
+struct FalloffInfo {
+    SculptFalloff falloff;
+    const char* key;
+};
+constexpr FalloffInfo kFalloffs[] = {{SculptFalloff::Smooth, "smooth"}, {SculptFalloff::Sphere, "sphere"},
+                                     {SculptFalloff::Sharp, "sharp"},   {SculptFalloff::Linear, "linear"},
+                                     {SculptFalloff::Constant, "constant"}};
 
 std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -63,6 +78,22 @@ std::optional<SculptBrush> sculptBrushFromKey(const std::string& key) noexcept {
     if (k == "add") return SculptBrush::Clay;
     if (k == "remove") return SculptBrush::Carve;
     if (k == "trim") return SculptBrush::Scrape;
+    if (k == "strips") return SculptBrush::ClayStrips;
+    if (k == "snake") return SculptBrush::SnakeHook;
+    return std::nullopt;
+}
+
+const char* sculptFalloffKey(SculptFalloff f) noexcept {
+    for (const FalloffInfo& i : kFalloffs)
+        if (i.falloff == f) return i.key;
+    return "smooth";
+}
+
+std::optional<SculptFalloff> sculptFalloffFromKey(const std::string& key) noexcept {
+    const std::string k = lower(key);
+    for (const FalloffInfo& i : kFalloffs)
+        if (k == i.key) return i.falloff;
+    if (k == "flat") return SculptFalloff::Constant;
     return std::nullopt;
 }
 
@@ -222,12 +253,19 @@ Vec3 closestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& 
     return a + ab * (vb * denom) + ac * (vc * denom);
 }
 
-float smoothFalloff(float d, float r) {
+// The brush's weight at distance d from its centre (1 there, 0 at the rim r).
+float falloffOf(float d, float r, SculptFalloff f) {
     const float t = std::clamp(1.0f - d / r, 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
+    switch (f) {
+    case SculptFalloff::Smooth: return t * t * (3.0f - 2.0f * t);
+    case SculptFalloff::Sphere: return std::sqrt(std::max(0.0f, 1.0f - (1.0f - t) * (1.0f - t)));
+    case SculptFalloff::Sharp: return t * t;
+    case SculptFalloff::Linear: return t;
+    case SculptFalloff::Constant: return t > 0.0f ? 1.0f : 0.0f;
+    }
+    return t;
 }
 
-Vec3 mirroredX(const Vec3& p, float mx) { return {2.0f * mx - p.x, p.y, p.z}; }
 
 } // namespace
 
@@ -238,7 +276,8 @@ SculptMesh::SculptMesh(const Body& body) {
     const AABB b = body.bounds();
     if (!b.valid()) return;
     m_size = std::max(length(b.max - b.min), 1e-3f);
-    m_mirrorX = b.center().x;
+    m_centre = b.center();
+    m_mirrorX = m_centre.x;
     const auto& v = body.mesh.vertices;
     const auto& idx = body.mesh.indices;
     std::vector<D3> corners;
@@ -255,6 +294,11 @@ SculptMesh::SculptMesh(const Body& body) {
     }
     m_p.reserve(pts.size());
     for (const D3& p : pts) m_p.push_back(p.f());
+    // A vertex welded from several corners is as masked as the most masked of them.
+    if (std::any_of(v.begin(), v.end(), [](const Vertex& c) { return c.mask > 0.0f; })) {
+        m_mask.assign(m_p.size(), 0.0f);
+        for (std::size_t k = 0; k < id.size() && k < idx.size(); ++k) m_mask[id[k]] = std::max(m_mask[id[k]], v[idx[k]].mask);
+    }
     // Booleans can also leave needles: two corners a hair apart. Refining splits the
     // edges from both ends alike until their new points round to the same floats.
     const float hair = m_size * 1e-6f;
@@ -405,15 +449,12 @@ bool SculptMesh::splitEdges(const std::vector<std::uint64_t>& edges, std::size_t
         const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
         if (!m_cut.empty() && m_cut.count(k)) continue; // a window's cut border stays as the mesh around it has it
         mid.emplace(k, static_cast<std::uint32_t>(m_p.size()));
-        if (!m_from.empty()) {
-            m_from.push_back(0xFFFFFFFFu);
-            m_pinned.push_back(0);
-        }
         // Not exactly half way: crossing edges (the overlapping slivers a boolean can
         // leave) would otherwise get the same midpoint. At most 0.05% of the edge.
         const float t = 0.5f + static_cast<float>(static_cast<int>((k * 2654435761ull >> 20) % 1001) - 500) * 1e-6f;
         m_p.push_back(m_p[a] + (m_p[b] - m_p[a]) * t);
         m_n.push_back(normalize(m_n[a] + m_n[b]));
+        addVertexExtras(a, b);
         touched[a] = touched[b] = 1;
     }
     if (mid.empty()) return false;
@@ -668,6 +709,8 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
                 around[a].push_back(ti);
             }
             m_p[a] = m;
+            if (!m_mask.empty()) m_mask[a] = std::max(m_mask[a], m_mask[b]);
+            if (!m_layer.empty()) m_layer[a] = 0.5f * (m_layer[a] + m_layer[b]);
             locked[a] = locked[b] = 1;
             for (std::uint32_t w : ringA) locked[w] = 1;
             for (std::uint32_t w : ringB) locked[w] = 1;
@@ -694,6 +737,7 @@ void SculptMesh::dropUnused() {
     std::vector<Vec3> p;
     std::vector<std::uint32_t> from;
     std::vector<char> pins;
+    std::vector<float> mask, layer;
     for (auto& t : m_t)
         for (auto& v : t) {
             if (remap[v] == 0xFFFFFFFFu) {
@@ -703,6 +747,8 @@ void SculptMesh::dropUnused() {
                     from.push_back(m_from[v]);
                     pins.push_back(m_pinned[v]);
                 }
+                if (!m_mask.empty()) mask.push_back(m_mask[v]);
+                if (!m_layer.empty()) layer.push_back(m_layer[v]);
             }
             v = remap[v];
         }
@@ -711,17 +757,90 @@ void SculptMesh::dropUnused() {
         m_from = std::move(from);
         m_pinned = std::move(pins);
     }
+    if (!m_mask.empty()) m_mask = std::move(mask);
+    if (!m_layer.empty()) m_layer = std::move(layer);
 }
 
-void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
-    const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f}), R2 = R * R;
+void SculptMesh::addVertexExtras(std::uint32_t a, std::uint32_t b) {
+    if (!m_from.empty()) {
+        m_from.push_back(0xFFFFFFFFu);
+        m_pinned.push_back(0);
+    }
+    if (!m_mask.empty()) m_mask.push_back(0.5f * (m_mask[a] + m_mask[b]));
+    if (!m_layer.empty()) m_layer.push_back(0.5f * (m_layer[a] + m_layer[b]));
+}
+
+std::vector<SculptMesh::Image> SculptMesh::images(const Vec3& centre, const SculptSettings& s, float R) const {
+    // Every combination of the mirrors, each turned through the radial copies, about
+    // the body's centre. Copies that land almost on another (a dab on a mirror plane)
+    // are dropped, so the plane gets no double strength.
+    std::vector<Image> out;
+    const int copies = std::max(1, s.radial);
+    const int ra = std::clamp(s.radialAxis, 0, 2);
+    for (int m = 0; m < 8; ++m) {
+        if (((m & 1) && !s.symmetryX) || ((m & 2) && !s.symmetryY) || ((m & 4) && !s.symmetryZ)) continue;
+        const Vec3 flip{(m & 1) ? -1.0f : 1.0f, (m & 2) ? -1.0f : 1.0f, (m & 4) ? -1.0f : 1.0f};
+        for (int k = 0; k < copies; ++k) {
+            const float ang = 2.0f * kPi * static_cast<float>(k) / static_cast<float>(copies);
+            const float c = std::cos(ang), sn = std::sin(ang);
+            auto turn = [&](Vec3 v) {
+                const int a = (ra + 1) % 3, b = (ra + 2) % 3; // the plane of the turn
+                float* f = &v.x;
+                const float x = f[a], y = f[b];
+                f[a] = x * c - y * sn;
+                f[b] = x * sn + y * c;
+                return v;
+            };
+            Image img{};
+            img.axes[0] = turn({flip.x, 0, 0});
+            img.axes[1] = turn({0, flip.y, 0});
+            img.axes[2] = turn({0, 0, flip.z});
+            img.centre = m_centre + img.apply(centre - m_centre);
+            bool near = false;
+            for (const Image& o : out) near = near || length(o.centre - img.centre) <= R * 0.25f;
+            if (!near) out.push_back(img);
+        }
+    }
+    return out;
+}
+
+void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s, const Vec3& dir) {
+    const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
+    // Clay Strips works on a square under the brush, the rest on its disc.
+    const float reach = s.brush == SculptBrush::ClayStrips ? R * 1.15f : R, reach2 = reach * reach;
     std::vector<std::pair<std::uint32_t, float>> region;
     for (std::size_t i = 0; i < m_p.size(); ++i) {
         const Vec3 d = m_p[i] - centre;
         const float dd = dot(d, d);
-        if (dd < R2 && !pinned(static_cast<std::uint32_t>(i))) region.emplace_back(static_cast<std::uint32_t>(i), smoothFalloff(std::sqrt(dd), R));
+        if (dd < reach2 && !pinned(static_cast<std::uint32_t>(i))) region.emplace_back(static_cast<std::uint32_t>(i), falloffOf(std::sqrt(dd), R, s.falloff));
     }
     if (region.empty()) return;
+    // Front faces only: the surface facing the way the dab's own spot does. A brush
+    // larger than a thin part would otherwise reach through to its far side (and
+    // pull its plane there).
+    {
+        std::uint32_t nearest = region.front().first;
+        float best = 1e30f;
+        for (const auto& [i, f] : region) {
+            const Vec3 d = m_p[i] - centre;
+            if (dot(d, d) < best) {
+                best = dot(d, d);
+                nearest = i;
+            }
+        }
+        const Vec3 facing = m_n[nearest];
+        region.erase(std::remove_if(region.begin(), region.end(), [&](const auto& e) { return dot(m_n[e.first], facing) <= 0.0f; }),
+                     region.end());
+        if (region.empty()) return;
+    }
+
+    const float sign = s.invert ? -1.0f : 1.0f;
+    const float st = std::isfinite(s.strength) ? std::clamp(s.strength, 0.0f, 1.0f) : 0.0f;
+    if (s.brush == SculptBrush::Mask) { // paints the mask (inverted: wipes it)
+        if (m_mask.empty()) m_mask.assign(m_p.size(), 0.0f);
+        for (const auto& [i, f] : region) m_mask[i] = std::clamp(m_mask[i] + sign * st * f, 0.0f, 1.0f);
+        return;
+    }
 
     // Brush plane: weighted average position and normal under the brush.
     Vec3 N{}, C{};
@@ -736,8 +855,6 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
     if (length(N) < 1e-6f) closestPoint(centre, &N);
     N = normalize(N);
 
-    const float sign = s.invert ? -1.0f : 1.0f;
-    const float st = std::isfinite(s.strength) ? std::clamp(s.strength, 0.0f, 1.0f) : 0.0f;
     const float k = st * 0.1f * R; // displacement per dab at the centre
 
     std::vector<Vec3> avg;
@@ -756,10 +873,20 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
         for (std::size_t r = 0; r < region.size(); ++r)
             avg[r] = cnt[r] > 0 ? avg[r] / cnt[r] : m_p[region[r].first];
     }
+    // The stroke's heading in the brush plane (Clay Strips, Nudge), and a frame for the strip.
+    Vec3 along = dir - N * dot(dir, N);
+    const bool heading = length(along) > 1e-6f;
+    if (!heading) along = std::fabs(N.x) < 0.9f ? cross(N, Vec3{1, 0, 0}) : cross(N, Vec3{0, 1, 0});
+    along = normalize(along);
+    const Vec3 side = cross(N, along);
+    if (s.brush == SculptBrush::Layer && m_layer.size() != m_p.size()) m_layer.assign(m_p.size(), 0.0f);
+    const float layerHeight = 0.25f * R * st;
 
     const Vec3 clayPlane = C + N * (sign * 0.12f * R * st);
     for (std::size_t r = 0; r < region.size(); ++r) {
-        const auto [i, f] = region[r];
+        auto [i, f] = region[r];
+        f *= 1.0f - held(i); // masked: held still
+        if (f <= 0.0f) continue;
         Vec3& p = m_p[i];
         switch (s.brush) {
         case SculptBrush::Draw: p += N * (sign * k * f); break;
@@ -769,7 +896,33 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
             if (gap > 0) p += N * (sign * gap * f * 0.5f);
             break;
         }
+        case SculptBrush::ClayStrips: {
+            // A flat-topped strip under a square brush, laid along the stroke.
+            const Vec3 d = p - centre;
+            const float q = std::max(std::fabs(dot(d, along)) / R, std::fabs(dot(d, side)) / (0.55f * R));
+            if (q >= 1.0f) break;
+            const float w = falloffOf(q * R, R, s.falloff) * (1.0f - held(i));
+            const float gap = dot(clayPlane - p, N) * sign;
+            if (gap > 0) p += N * (sign * gap * w * 0.6f);
+            break;
+        }
         case SculptBrush::Inflate: p += m_n[i] * (sign * k * f); break;
+        case SculptBrush::Blob: { // swells out along its own normals and spreads from the centre
+            p += m_n[i] * (sign * k * f);
+            Vec3 v = p - C;
+            v -= N * dot(v, N);
+            p += v * (sign * 0.12f * st * f);
+            break;
+        }
+        case SculptBrush::Layer: { // up to a constant height over the surface, once a stroke
+            const float target = sign * layerHeight * f, done = m_layer[i];
+            const float step = sign > 0 ? std::min(target - done, k * 2.0f * f) : std::max(target - done, -k * 2.0f * f);
+            if (step * sign > 0) {
+                p += m_n[i] * step;
+                m_layer[i] += step;
+            }
+            break;
+        }
         case SculptBrush::Pinch: {
             Vec3 v = C - p;
             v -= N * dot(v, N);
@@ -790,65 +943,195 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
             if (h * sign > 0) p -= N * (h * f * st);
             break;
         }
-        case SculptBrush::Grab: break;
+        case SculptBrush::Fill: {
+            const float h = dot(C - p, N); // below the plane (or above when inverted): fill up to it
+            if (h * sign > 0) p += N * (h * f * st);
+            break;
+        }
+        case SculptBrush::SnakeHook: {
+            // The surface follows the brush. Fully out to 60% of the radius: what moves
+            // stays under the brush for the next dab, so the strand keeps its girth.
+            const float w = std::clamp((R - length(p - centre)) / (0.4f * R), 0.0f, 1.0f) * (1.0f - held(i));
+            p += dir * std::min(st * 2.0f, 1.0f) * w;
+            break;
+        }
+        case SculptBrush::Nudge: p += along * (heading ? length(dir - N * dot(dir, N)) * st * f : 0.0f); break;
+        case SculptBrush::Grab:
+        case SculptBrush::Mask: break;
         }
     }
 }
 
-void SculptMesh::dab(const Vec3& centre, const SculptSettings& s) {
+void SculptMesh::dab(const Vec3& centre, const SculptSettings& s, const Vec3& dir) {
     if (s.brush == SculptBrush::Grab || m_t.empty()) return;
     // A brush no smaller than 0.2% of the body: below that, dynamic topology
     // would refine without end.
     const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
     const float detail = std::max(s.detail > 0 ? s.detail : R * 0.25f, m_size * 2e-4f);
-    // Mirror only when the two dabs do not overlap much (no double strength on the plane).
-    const bool mirror = s.symmetryX && std::fabs(centre.x - m_mirrorX) > R * 0.25f;
-    const Vec3 mc = mirroredX(centre, m_mirrorX);
-    if (s.refine) {
-        refineRegion(centre, R, detail);
-        if (mirror) refineRegion(mc, R, detail);
+    const std::vector<Image> copies = images(centre, s, R);
+    const bool topology = s.refine && s.brush != SculptBrush::Mask; // a mask needs no new triangles
+    if (topology) {
+        for (const Image& c : copies) refineRegion(c.centre, R, detail);
         updateNormals();
     }
-    applyDab(centre, s);
-    if (mirror) applyDab(mc, s);
-    if (s.refine) { // and coarsen where the clay was squashed (edges far below the detail size)
-        collapseLocal(trianglesNear(centre, R + detail * 0.3f), detail * 0.3f, centre, R, true);
-        if (mirror) collapseLocal(trianglesNear(mc, R + detail * 0.3f), detail * 0.3f, mc, R, true);
-    }
+    for (const Image& c : copies) applyDab(c.centre, s, c.apply(dir));
+    if (topology) // and coarsen where the clay was squashed (edges far below the detail size)
+        for (const Image& c : copies) collapseLocal(trianglesNear(c.centre, R + detail * 0.3f), detail * 0.3f, c.centre, R, true);
     updateNormals();
 }
 
 void SculptMesh::beginGrab(const Vec3& centre, const SculptSettings& s) {
     m_grab.clear();
     const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
+    m_grabImages = images(centre, s, R);
+    if (m_grabImages.size() > 255) m_grabImages.resize(255);
     if (s.refine) { // something to hold on to, even on a coarse block
         const float detail = std::max(s.detail > 0 ? s.detail : R * 0.25f, m_size * 2e-4f);
-        refineRegion(centre, R, detail);
-        if (s.symmetryX && std::fabs(centre.x - m_mirrorX) > R * 0.25f) refineRegion(mirroredX(centre, m_mirrorX), R, detail);
+        for (const Image& c : m_grabImages) refineRegion(c.centre, R, detail);
         updateNormals();
     }
     const float st = std::clamp(s.strength * 2.0f, 0.0f, 1.0f); // strength 0.5 follows the mouse
     std::vector<char> taken(m_p.size(), 0);
-    auto collect = [&](const Vec3& c, bool mirrored) {
+    for (std::size_t c = 0; c < m_grabImages.size(); ++c)
         for (std::size_t i = 0; i < m_p.size(); ++i) {
             if (taken[i] || pinned(static_cast<std::uint32_t>(i))) continue;
-            const float d = length(m_p[i] - c);
+            const float d = length(m_p[i] - m_grabImages[c].centre);
             if (d >= R) continue;
             taken[i] = 1;
-            m_grab.push_back({static_cast<std::uint32_t>(i), smoothFalloff(d, R) * st, m_p[i], mirrored});
+            const float w = falloffOf(d, R, s.falloff) * st * (1.0f - held(static_cast<std::uint32_t>(i)));
+            m_grab.push_back({static_cast<std::uint32_t>(i), w, m_p[i], static_cast<std::uint8_t>(c)});
         }
-    };
-    collect(centre, false);
-    if (s.symmetryX && std::fabs(centre.x - m_mirrorX) > R * 0.25f) collect(mirroredX(centre, m_mirrorX), true);
 }
 
 void SculptMesh::grabTo(const Vec3& delta) {
     if (m_grab.empty()) return;
-    for (const GrabVert& g : m_grab) {
-        const Vec3 d = g.mirrored ? Vec3{-delta.x, delta.y, delta.z} : delta;
-        m_p[g.v] = g.start + d * g.w;
-    }
+    for (const GrabVert& g : m_grab) m_p[g.v] = g.start + m_grabImages[g.image].apply(delta) * g.w;
     updateNormals();
+}
+
+void SculptMesh::maskEdit(MaskOp op) {
+    if (op == MaskOp::Clear) {
+        m_mask.clear();
+        return;
+    }
+    if (op == MaskOp::All) {
+        m_mask.assign(m_p.size(), 1.0f);
+        return;
+    }
+    if (m_mask.empty()) {
+        if (op == MaskOp::Invert) m_mask.assign(m_p.size(), 1.0f);
+        return; // nothing to smooth, grow or shrink
+    }
+    if (op == MaskOp::Invert) {
+        for (float& m : m_mask) m = 1.0f - m;
+        return;
+    }
+    // Over each vertex's neighbours: the average (smooth), the most (grow) or the least (shrink).
+    std::vector<float> next = m_mask, sum(m_p.size(), 0.0f), cnt(m_p.size(), 0.0f);
+    for (const auto& t : m_t)
+        for (int e = 0; e < 3; ++e) {
+            const std::uint32_t v = t[static_cast<std::size_t>(e)];
+            for (int o = 1; o <= 2; ++o) {
+                const float w = m_mask[t[static_cast<std::size_t>((e + o) % 3)]];
+                if (op == MaskOp::Grow) next[v] = std::max(next[v], w);
+                else if (op == MaskOp::Shrink) next[v] = std::min(next[v], w);
+                sum[v] += w;
+                cnt[v] += 1.0f;
+            }
+        }
+    if (op == MaskOp::Smooth)
+        for (std::size_t v = 0; v < next.size(); ++v)
+            if (cnt[v] > 0) next[v] = 0.5f * m_mask[v] + 0.5f * sum[v] / cnt[v];
+    m_mask = std::move(next);
+}
+
+bool SculptMesh::loopSubdivide(std::size_t maxTriangles) {
+    if (m_t.empty() || m_t.size() * 4 > maxTriangles) return false;
+    // Loop's scheme: a new point on each edge, 3/8 of its ends and 1/8 of the two
+    // corners across it (the middle, on a border); each old point moves towards its
+    // neighbours by Warren's weight (on a border: 3/4 itself, 1/8 each border neighbour).
+    std::unordered_map<std::uint64_t, std::array<std::uint32_t, 3>> edges; // opposite corners, count
+    edges.reserve(m_t.size() * 2);
+    for (const auto& t : m_t)
+        for (int e = 0; e < 3; ++e) {
+            auto& rec = edges.try_emplace(edgeKey(t[static_cast<std::size_t>(e)], t[static_cast<std::size_t>((e + 1) % 3)]),
+                                          std::array<std::uint32_t, 3>{0xFFFFFFFFu, 0xFFFFFFFFu, 0})
+                            .first->second;
+            const std::uint32_t opp = t[static_cast<std::size_t>((e + 2) % 3)];
+            if (rec[2] < 2) rec[rec[2]] = opp;
+            ++rec[2];
+        }
+    const std::size_t V = m_p.size();
+    std::vector<Vec3> ring(V, Vec3{}), border(V, Vec3{});
+    std::vector<int> valence(V, 0), borders(V, 0);
+    for (const auto& [k, rec] : edges) {
+        const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+        ring[a] += m_p[b];
+        ring[b] += m_p[a];
+        ++valence[a];
+        ++valence[b];
+        if (rec[2] != 2) { // a border (or a seam of more than two faces): kept as a crease
+            border[a] += m_p[b];
+            border[b] += m_p[a];
+            ++borders[a];
+            ++borders[b];
+        }
+    }
+    std::vector<Vec3> moved(V);
+    for (std::size_t v = 0; v < V; ++v) {
+        if (borders[v] >= 2) {
+            moved[v] = m_p[v] * 0.75f + border[v] * (0.25f / static_cast<float>(borders[v]));
+        } else if (valence[v] > 0) {
+            const float n = static_cast<float>(valence[v]);
+            const float beta = valence[v] == 3 ? 3.0f / 16.0f : 3.0f / (8.0f * n);
+            moved[v] = m_p[v] * (1.0f - n * beta) + ring[v] * beta;
+        } else {
+            moved[v] = m_p[v];
+        }
+    }
+    std::unordered_map<std::uint64_t, std::uint32_t> mid;
+    mid.reserve(edges.size());
+    for (const auto& [k, rec] : edges) {
+        const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+        Vec3 q = (m_p[a] + m_p[b]) * 0.5f;
+        if (rec[2] == 2) q = (m_p[a] + m_p[b]) * 0.375f + (m_p[rec[0]] + m_p[rec[1]]) * 0.125f;
+        mid.emplace(k, static_cast<std::uint32_t>(moved.size()));
+        moved.push_back(q);
+        addVertexExtras(a, b);
+    }
+    m_p = std::move(moved);
+    std::vector<std::array<std::uint32_t, 3>> tris;
+    tris.reserve(m_t.size() * 4);
+    for (const auto& t : m_t) {
+        const std::uint32_t ab = mid[edgeKey(t[0], t[1])], bc = mid[edgeKey(t[1], t[2])], ca = mid[edgeKey(t[2], t[0])];
+        tris.push_back({t[0], ab, ca});
+        tris.push_back({ab, t[1], bc});
+        tris.push_back({ca, bc, t[2]});
+        tris.push_back({ab, bc, ca});
+    }
+    m_t = std::move(tris);
+    updateNormals();
+    return true;
+}
+
+bool SculptMesh::decimateTo(std::size_t target) {
+    if (m_t.size() <= target) return true;
+    double sum = 0;
+    std::size_t n = 0;
+    for (const auto& t : m_t)
+        for (int e = 0; e < 3; ++e) {
+            sum += length(m_p[t[static_cast<std::size_t>((e + 1) % 3)]] - m_p[t[static_cast<std::size_t>(e)]]);
+            ++n;
+        }
+    // Collapse ever longer edges (shortest first) until few enough are left.
+    float edge = static_cast<float>(sum / static_cast<double>(std::max<std::size_t>(n, 1)));
+    for (int round = 0; round < 40 && m_t.size() > target; ++round) {
+        const std::size_t before = m_t.size();
+        collapseShort(edge);
+        if (m_t.size() <= target) break;
+        if (m_t.size() > before * 97 / 100) edge *= 1.3f;
+    }
+    return m_t.size() <= target * 11 / 10 + 8;
 }
 
 void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const {
@@ -892,7 +1175,7 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
                 }
             if (out_i == 0xFFFFFFFFu) {
                 out_i = static_cast<std::uint32_t>(out.vertices.size());
-                out.vertices.push_back({m_p[v] - body.offset, n});
+                out.vertices.push_back({m_p[v] - body.offset, n, held(static_cast<std::uint32_t>(v))});
                 clusters.emplace_back(n, out_i);
             }
             const auto& t = m_t[g];
@@ -916,6 +1199,9 @@ void SculptMesh::stroke(const std::vector<Vec3>& points, const SculptSettings& s
     std::vector<Vec3> path;
     if (grab) {
         path.push_back(closestPoint(points.front()));
+    } else if (s.brush == SculptBrush::SnakeHook) { // pulled out of the surface: only the start is on it
+        path = points;
+        path.front() = closestPoint(points.front());
     } else {
         path.reserve(points.size());
         for (const Vec3& p : points) path.push_back(closestPoint(p));
@@ -927,11 +1213,12 @@ void SculptMesh::stroke(const std::vector<Vec3>& points, const SculptSettings& s
     float longest = 0.0f;
     for (std::size_t i = 1; i < path.size(); ++i) longest = std::max(longest, length(path[i] - path[i - 1]));
     const float margin = 2.0f * R + 0.25f * longest;
-    std::vector<AABB> boxes(1);
-    for (const Vec3& q : path) boxes[0].expand(q);
-    if (s.symmetryX) {
-        boxes.emplace_back();
-        for (const Vec3& q : path) boxes[1].expand(mirroredX(q, m_mirrorX));
+    // A box round the path, and round each of its mirrored and radial copies.
+    std::vector<AABB> boxes;
+    for (const Vec3& q : path) {
+        const std::vector<Image> copies = images(q, s, 0.0f);
+        if (boxes.size() < copies.size()) boxes.resize(copies.size());
+        for (std::size_t c = 0; c < copies.size(); ++c) boxes[c].expand(copies[c].centre);
     }
     for (AABB& b : boxes) {
         b.min = b.min - Vec3{margin, margin, margin};
@@ -957,18 +1244,25 @@ void SculptMesh::runStroke(const std::vector<Vec3>& path, const SculptSettings& 
         grabTo(grabDelta);
         return;
     }
-    // At most ~1000 dabs a stroke, whatever the radius.
+    beginStroke();
+    // At most ~1000 dabs a stroke, whatever the radius. Each dab knows the step from
+    // the last one (the stroke's heading); a Snake Hook follows the path itself.
+    const bool onSurface = s.brush != SculptBrush::SnakeHook;
     float total = 0.0f;
     for (std::size_t i = 1; i < path.size(); ++i) total += length(path[i] - path[i - 1]);
     const float spacing = std::max({s.radius * 0.25f, total / 1000.0f, 1e-3f});
-    dab(closestPoint(path.front()), s);
+    Vec3 last = closestPoint(path.front());
+    dab(last, s);
     float carry = 0.0f;
     for (std::size_t i = 1; i < path.size(); ++i) {
         const Vec3 a = path[i - 1], b = path[i];
         const float len = length(b - a);
         float at = spacing - carry;
         while (at <= len) {
-            dab(closestPoint(a + (b - a) * (at / len)), s);
+            const Vec3 q = a + (b - a) * (at / len);
+            const Vec3 c = onSurface ? closestPoint(q) : q;
+            dab(c, s, c - last);
+            last = c;
             at += spacing;
         }
         carry = len - (at - spacing);
@@ -979,6 +1273,7 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
     SculptMesh w;
     w.m_size = m_size;
     w.m_mirrorX = m_mirrorX;
+    w.m_centre = m_centre;
     constexpr std::uint32_t kNone = 0xFFFFFFFFu;
     std::vector<std::uint32_t> toWindow(m_p.size(), kNone);
     std::vector<char> in(m_t.size(), 0);
@@ -1001,6 +1296,7 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
                 w.m_p.push_back(m_p[v]);
                 w.m_n.push_back(m_n[v]);
                 w.m_from.push_back(v);
+                if (!m_mask.empty()) w.m_mask.push_back(m_mask[v]);
             }
             wt[static_cast<std::size_t>(c)] = toWindow[v];
         }
@@ -1024,13 +1320,16 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
 
 void SculptMesh::stitch(const SculptMesh& w, const std::vector<std::uint32_t>& taken) {
     std::vector<std::uint32_t> toMesh(w.m_p.size());
+    if (!w.m_mask.empty() && m_mask.empty()) m_mask.assign(m_p.size(), 0.0f); // the window painted the first mask
     for (std::size_t i = 0; i < w.m_p.size(); ++i) {
         if (w.m_from[i] != 0xFFFFFFFFu) {
             toMesh[i] = w.m_from[i];
             m_p[w.m_from[i]] = w.m_p[i];
+            if (!m_mask.empty()) m_mask[w.m_from[i]] = w.m_mask[i];
         } else {
             toMesh[i] = static_cast<std::uint32_t>(m_p.size());
             m_p.push_back(w.m_p[i]);
+            if (!m_mask.empty()) m_mask.push_back(w.m_mask[i]);
         }
     }
     std::vector<char> gone(m_t.size(), 0);
@@ -1070,6 +1369,91 @@ void sculptRefine(Body& body, float detail) {
     if (sm.empty() || !(detail > 0)) return;
     sm.refineAll(detail);
     sm.writeTo(body, true);
+}
+
+void maskBody(Body& body, MaskOp op) {
+    SculptMesh sm(body);
+    if (sm.empty()) return;
+    sm.maskEdit(op);
+    sm.writeTo(body, true);
+}
+
+float maskedFraction(const Body& body) {
+    const auto& v = body.mesh.vertices;
+    if (v.empty()) return 0.0f;
+    double sum = 0;
+    for (const Vertex& c : v) sum += c.mask;
+    return static_cast<float>(sum / static_cast<double>(v.size()));
+}
+
+bool subdivideBody(Body& body, int levels, std::size_t maxTriangles, std::string* error) {
+    SculptMesh sm(body);
+    if (sm.empty()) {
+        if (error) *error = body.name + " has no surface";
+        return false;
+    }
+    for (int i = 0; i < levels; ++i)
+        if (!sm.loopSubdivide(maxTriangles)) {
+            if (error) {
+                char b[96];
+                std::snprintf(b, sizeof(b), " again would pass %zu triangles", maxTriangles);
+                *error = "Subdividing " + body.name + b;
+            }
+            return false;
+        }
+    sm.writeTo(body, true);
+    return true;
+}
+
+bool decimateBody(Body& body, std::size_t targetTriangles, std::string* error) {
+    SculptMesh sm(body);
+    if (sm.empty() || targetTriangles < 4) {
+        if (error) *error = sm.empty() ? body.name + " has no surface" : "Keep at least 4 triangles";
+        return false;
+    }
+    sm.decimateTo(targetTriangles);
+    sm.writeTo(body, true);
+    return true;
+}
+
+bool symmetrizeBody(Body& body, int axis, bool positive, std::string* error) {
+    // Cut on the plane through the body's origin, mirror the kept half onto the other
+    // side and fuse the two (their cut faces lie back to back on the plane, and go).
+    axis = std::clamp(axis, 0, 2);
+    Vec3 n{};
+    (axis == 0 ? n.x : axis == 1 ? n.y : n.z) = positive ? -1.0f : 1.0f; // the side the cut removes
+    Body half = body;
+    std::string err;
+    if (!trimByPlane(half, body.offset, n, &err)) {
+        if (error) *error = err.empty() ? "Nothing of " + body.name + " is on that side of its origin" : err;
+        return false;
+    }
+    // In the body's own frame the plane is at 0: the cut face is snapped onto it and
+    // the mirror is an exact negation, so the two cut faces lie exactly back to back.
+    half.mesh.transform(translate(half.offset - body.offset));
+    half.offset = body.offset;
+    const AABB hb = half.mesh.bounds();
+    const float snap = std::max(length(hb.max - hb.min), 1e-3f) * 1e-6f;
+    auto coord = [axis](Vec3& v) -> float& { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; };
+    for (Vertex& v : half.mesh.vertices)
+        if (std::fabs(coord(v.position)) <= snap) coord(v.position) = 0.0f;
+    MeshData m = half.mesh;
+    for (Vertex& v : m.vertices) {
+        coord(v.position) = -coord(v.position);
+        coord(v.normal) = -coord(v.normal);
+    }
+    for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) std::swap(m.indices[k + 1], m.indices[k + 2]);
+    Body mirror = meshBody(body.name + " mirror", std::move(m));
+    mirror.offset = body.offset;
+    if (!bodyBoolean(half, mirror, BooleanOp::Union, &err)) {
+        if (error) *error = err;
+        return false;
+    }
+    body.mesh = std::move(half.mesh);
+    body.offset = half.offset;
+    body.kind = "mesh";
+    body.params.clear();
+    return true;
 }
 
 // ---------------------------------------------------------------------------

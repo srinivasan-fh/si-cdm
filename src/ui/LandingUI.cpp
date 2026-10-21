@@ -565,7 +565,33 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::SetNextItemWidth(80);
         ImGui::SliderFloat("##sstrength", &st.sculptStrength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         ImGui::SameLine();
-        ImGui::Checkbox("Symmetry X", &st.sculptSymmetry);
+        ImGui::TextDisabled("Symmetry");
+        ImGui::SameLine();
+        ImGui::Checkbox("X##symx", &st.sculptSymmetry);
+        ImGui::SameLine();
+        ImGui::Checkbox("Y##symy", &st.sculptSymmetryY);
+        ImGui::SameLine();
+        ImGui::Checkbox("Z##symz", &st.sculptSymmetryZ);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        ImGui::InputInt("##radial", &st.sculptRadial, 1, 4);
+        st.sculptRadial = std::clamp(st.sculptRadial, 1, 64);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radial symmetry: copies of each dab around the body's vertical axis (1: none)");
+        ImGui::SameLine();
+        {
+            static const char* kFalloffs[] = {"Smooth", "Sphere", "Sharp", "Linear", "Flat"};
+            ImGui::SetNextItemWidth(78);
+            ImGui::Combo("##falloff", &st.sculptFalloff, kFalloffs, 5);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush falloff from its centre to its rim");
+        }
+        if (tool.id == ToolId::SculptMask) {
+            ImGui::SameLine();
+            if (ImGui::Button("Clear mask")) cmd.commands.push_back("MASK CLEAR");
+            ImGui::SameLine();
+            if (ImGui::Button("Invert")) cmd.commands.push_back("MASK INVERT");
+            ImGui::SameLine();
+            if (ImGui::Button("Blur")) cmd.commands.push_back("MASK SMOOTH");
+        }
         ImGui::SameLine();
         ImGui::Checkbox("Dyntopo", &st.sculptRefine);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dynamic topology: split long edges under the brush so detail can be added anywhere");
@@ -579,6 +605,8 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         }
         ImGui::SameLine();
         if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
+        ImGui::SameLine();
+        if (ImGui::Button("Redo")) cmd.commands.push_back("REDO");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Drag over a body. Ctrl inverts the brush, Shift smooths, [ and ] change the size.%s%s",
                               st.sculptInfo.empty() ? "" : "\n", st.sculptInfo.c_str());
@@ -646,6 +674,8 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         }
         ImGui::SameLine();
         if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
+        ImGui::SameLine();
+        if (ImGui::Button("Redo")) cmd.commands.push_back("REDO");
     } else if (isWearableTool(tool.id)) {
         auto field = [&](const char* label, const char* id, float* v, float lo) {
             ImGui::TextDisabled("%s", label);
@@ -707,6 +737,8 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         }
         ImGui::SameLine();
         if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
+        ImGui::SameLine();
+        if (ImGui::Button("Redo")) cmd.commands.push_back("REDO");
     } else if (isPrimitiveTool(tool.id)) {
         const std::string snap = lengthText(5.0);
         if (is2D) ImGui::TextDisabled("Click to place on the %s plane (%s snap)", shortPlaneName(st.plane), snap.c_str());

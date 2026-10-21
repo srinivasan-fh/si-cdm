@@ -93,6 +93,7 @@ void Scene::pushUndo(std::string label) {
     s.motions = m_motions;
     s.before = m_revision;
     m_undo.push_back(std::move(s));
+    m_redo.clear(); // a new edit: what was undone is gone for good
 }
 
 void Scene::sealUndo() {
@@ -130,33 +131,70 @@ std::string Scene::undo(std::string* why) {
             return "";
         }
         // Keep what was done to the bodies since the edit: moves, colours, renames.
-        for (std::size_t i = 0; i < m_bodies.size(); ++i) {
-            const BodyState& was = s.afterBodies[i];
-            const Body& now = m_bodies[i];
-            for (Body& b : s.bodies) {
-                if (b.name != was.name) continue;
-                b.offset += now.offset - was.offset;
-                if (now.color.x != was.color.x || now.color.y != was.color.y || now.color.z != was.color.z) b.color = now.color;
-                if (now.visible != was.visible) b.visible = now.visible;
-                b.name = now.name;
-                break;
-            }
-        }
+        keepLaterChanges(s.bodies, s.afterBodies);
+        Redo r{s.label, m_bodies, m_motions, 0, m_revision, {}};
         if (s.motionsChanged) m_motions = std::move(s.motions);
+        m_bodies = std::move(s.bodies);
+        m_revision = nextRevision();
+        r.at = m_revision;
+        for (const Body& b : m_bodies) r.atBodies.push_back({b.name, b.offset, b.color, b.visible});
+        m_redo.push_back(std::move(r));
     } else {
         m_motions = std::move(s.motions); // a failed edit: everything as it was
+        m_bodies = std::move(s.bodies);
+        m_revision = nextRevision();
     }
-    m_bodies = std::move(s.bodies);
-    m_revision = nextRevision();
     // Back to the state before this edit, which the edit before it left (unless
     // something changed in between): that one can be undone next.
     if (!m_undo.empty() && m_undo.back().sealed && m_undo.back().after == s.before) m_undo.back().after = m_revision;
     return s.label;
 }
 
+void Scene::keepLaterChanges(std::vector<Body>& bodies, const std::vector<BodyState>& was) const {
+    for (std::size_t i = 0; i < m_bodies.size() && i < was.size(); ++i) {
+        const BodyState& w = was[i];
+        const Body& now = m_bodies[i];
+        for (Body& b : bodies) {
+            if (b.name != w.name) continue;
+            b.offset += now.offset - w.offset;
+            if (now.color.x != w.color.x || now.color.y != w.color.y || now.color.z != w.color.z) b.color = now.color;
+            if (now.visible != w.visible) b.visible = now.visible;
+            b.name = now.name;
+            break;
+        }
+    }
+}
+
+std::string Scene::redo(std::string* why) {
+    if (m_redo.empty()) return "";
+    Redo r = std::move(m_redo.back());
+    m_redo.pop_back();
+    if (m_revision != r.at || r.atBodies.size() != m_bodies.size()) {
+        if (why) *why = "Cannot redo " + r.label + ": bodies were added, removed or rebuilt since (redo history cleared)";
+        m_redo.clear();
+        return "";
+    }
+    keepLaterChanges(r.bodies, r.atBodies);
+    // Undoable again: the state before the redo is the snapshot.
+    Snapshot s;
+    s.label = r.label;
+    s.bodies = m_bodies;
+    s.motions = m_motions;
+    s.before = m_revision;
+    m_bodies = std::move(r.bodies);
+    m_motions = std::move(r.motions);
+    m_revision = nextRevision();
+    m_undo.push_back(std::move(s));
+    sealUndo();
+    // Back to the state the undo before this one left: that one can be redone next.
+    if (!m_redo.empty() && m_redo.back().at == r.from) m_redo.back().at = m_revision;
+    return r.label;
+}
+
 void Scene::clear() {
     m_bodies.clear();
     m_undo.clear();
+    m_redo.clear();
     m_images.clear();
     m_motions.clear();
     m_physics = PhysicsSettings{};
@@ -169,6 +207,7 @@ void Scene::clear() {
 void Scene::assign(Scene&& other) {
     m_bodies = std::move(other.m_bodies);
     m_undo = std::move(other.m_undo);
+    m_redo = std::move(other.m_redo);
     m_images = std::move(other.m_images);
     m_motions = std::move(other.m_motions);
     m_physics = other.m_physics;

@@ -25,7 +25,8 @@ enum class ToolId {
     MeshImport, PointCloud, SubD,
     // VIII. Digital sculpting (clay brushes on any body)
     SculptDraw, SculptClay, SculptCarve, SculptInflate, SculptGrab, SculptPinch, SculptCrease, SculptSmooth,
-    SculptFlatten, SculptScrape,
+    SculptFlatten, SculptScrape, SculptLayer, SculptClayStrips, SculptFill, SculptBlob, SculptSnakeHook, SculptNudge,
+    SculptMask,
     // IX. Cuts & booleans (exact, closed results)
     CutHole, CutPocket, CutChannel, CutKnife, AddBoss, BooleanBodies,
     // X. Armour & exoskeletons (wearable parts over a human base)

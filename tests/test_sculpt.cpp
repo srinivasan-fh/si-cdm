@@ -2,11 +2,13 @@
 
 #include "core/Command.hpp"
 #include "core/Document.hpp"
+#include "core/FileIO.hpp"
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <string>
 
 using namespace sicdm;
@@ -119,14 +121,19 @@ TEST_CASE("brushes add, remove, push, pinch and smooth clay") {
         switch (brush) {
         case SculptBrush::Draw:
         case SculptBrush::Clay:
+        case SculptBrush::ClayStrips:
+        case SculptBrush::Layer:
+        case SculptBrush::Blob:
         case SculptBrush::Inflate: CHECK(v > v0 + 100); break;
         case SculptBrush::Carve:
         case SculptBrush::Crease: CHECK(v < v0 - 100); break;
         case SculptBrush::Grab: CHECK(b.bounds().max.z > 101.0f); break;
+        case SculptBrush::Mask: CHECK_NEAR(v, v0, 1e-3); break; // paints the mask, moves nothing
         default: CHECK(std::fabs(v - v0) < v0 * 0.01); break; // reshapes without much volume change
         }
-        // The flat 12-triangle block was refined under the brush (except a grab of no vertices).
-        if (brush != SculptBrush::Grab) CHECK(b.mesh.indices.size() / 3 > 100);
+        // The flat 12-triangle block was refined under the brush (except a grab of no
+        // vertices, and the mask, which needs no new triangles).
+        if (brush != SculptBrush::Grab && brush != SculptBrush::Mask) CHECK(b.mesh.indices.size() / 3 > 100);
     }
 
     // Inverting a brush reverses it.
@@ -409,4 +416,228 @@ TEST_CASE("a stroke on a dense mesh only touches the surface it reaches") {
         moved = std::max(moved, std::fabs(length(after.closestPoint(p) - p)));
     }
     CHECK(moved < 1e-3f);
+}
+
+namespace {
+
+// A dense ball to sculpt on (about 1.5 mm edges).
+Body denseBall(float r = 40) {
+    Body b = makeBody("Ball", "sphere", {r});
+    sculptRefine(b, 1.5f);
+    return b;
+}
+
+// Surface height along a ray from outside towards the ball's centre (0, 0, r),
+// tilted a little off the sphere's rings and meridians (a ray along an edge can slip
+// between its triangles).
+float radiusAt(const Body& b, const Vec3& dir, float r = 40) {
+    const SculptMesh sm(b);
+    const Vec3 c{0, 0, r};
+    const Vec3 d = normalize(normalize(dir) + Vec3{0.0123f, 0.0071f, 0.0173f});
+    const auto h = sm.raycast({c + d * 400.0f, -d});
+    return h ? length(*h - c) : 0.0f;
+}
+
+} // namespace
+
+TEST_CASE("the mask holds the surface still, and can be inverted, blurred, grown, saved") {
+    Body b = denseBall();
+    SculptSettings s;
+    s.brush = SculptBrush::Mask;
+    s.radius = 15;
+    s.strength = 1;
+    sculptStroke(b, {{0, -40, 40}}, s); // mask the front
+    CHECK(maskedFraction(b) > 0.005f);
+    s.brush = SculptBrush::Draw;
+    s.radius = 30;
+    sculptStroke(b, {{0, -40, 40}, {0, -40, 55}}, s); // a stroke over the mask and past it
+    CHECK(radiusAt(b, {0, -1, 0}) < 40.2f);              // held
+    CHECK(radiusAt(b, {0, -1, 0.7f}) > 40.5f);           // raised beyond the mask
+    CHECK(openEdgeCount(b.mesh) == 0);
+
+    const float masked = maskedFraction(b);
+    maskBody(b, MaskOp::Grow);
+    CHECK(maskedFraction(b) > masked);
+    maskBody(b, MaskOp::Shrink);
+    maskBody(b, MaskOp::Smooth);
+    CHECK(maskedFraction(b) > 0.0f);
+    maskBody(b, MaskOp::Invert);
+    CHECK(maskedFraction(b) > 0.9f);
+    maskBody(b, MaskOp::Clear);
+    CHECK(maskedFraction(b) == 0.0f);
+
+    // The mask is saved with the project.
+    Document d;
+    REQUIRE(run(d, "SPHERE 20 @0,0,0").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" REFINE 2").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" MASK AT 0,-20,20 RADIUS 8 STRENGTH 1").ok);
+    REQUIRE(run(d, "MASK \"Sphere 1\" SMOOTH 2").ok);
+    const float before = maskedFraction(d.scene.bodies()[0]);
+    CHECK(before > 0.0f);
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_mask_test.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene loaded;
+    ProjectState st;
+    REQUIRE(loadProject(loaded, st, path, &err));
+    CHECK_NEAR(maskedFraction(loaded.bodies()[0]), before, 1e-4);
+    std::filesystem::remove(path);
+    CHECK(!run(d, "MASK \"Sphere 1\" SIDEWAYS").ok);
+}
+
+TEST_CASE("symmetry on any axis, radial symmetry and falloffs") {
+    SculptSettings s;
+    s.brush = SculptBrush::Draw;
+    s.radius = 10;
+    s.strength = 1;
+    // Four bumps round the ball's vertical axis from one dab.
+    Body b = denseBall();
+    s.radial = 4;
+    sculptStroke(b, {{40, 0, 40}}, s);
+    for (const Vec3& d : {Vec3{1, 0, 0}, Vec3{0, 1, 0}, Vec3{-1, 0, 0}, Vec3{0, -1, 0}}) CHECK(radiusAt(b, d) > 40.4f);
+    CHECK(radiusAt(b, {1, 1, 0}) < 40.2f); // between them
+    // Mirrored across y = centre and z = centre at once: four bumps.
+    Body c = denseBall();
+    s.radial = 0;
+    s.symmetryY = s.symmetryZ = true;
+    sculptStroke(c, {{0, 28.28f, 68.28f}}, s);
+    CHECK(radiusAt(c, {0, 1, 1}) > 40.4f);
+    CHECK(radiusAt(c, {0, -1, 1}) > 40.4f);
+    CHECK(radiusAt(c, {0, 1, -1}) > 40.4f);
+    CHECK(radiusAt(c, {0, -1, -1}) > 40.4f);
+    // A flat falloff lifts the rim of the dab as much as its centre; a sharp one hardly at all.
+    auto rimLift = [&](SculptFalloff f) {
+        Body e = denseBall();
+        SculptSettings t;
+        t.brush = SculptBrush::Draw;
+        t.radius = 12;
+        t.strength = 1;
+        t.refine = false;
+        t.falloff = f;
+        sculptStroke(e, {{0, -40, 40}}, t);
+        return radiusAt(e, {std::sin(0.2f), -std::cos(0.2f), 0}) - 40.0f; // 8 mm out from the centre
+    };
+    CHECK(rimLift(SculptFalloff::Constant) > rimLift(SculptFalloff::Smooth));
+    CHECK(rimLift(SculptFalloff::Smooth) > rimLift(SculptFalloff::Sharp));
+    CHECK(sculptFalloffFromKey("sphere") == SculptFalloff::Sphere);
+    Document d;
+    REQUIRE(run(d, "SPHERE 40 @0,0,0").ok);
+    CHECK(run(d, "SCULPT \"Sphere 1\" DRAW AT 40,0,40 RADIUS 8 RADIAL 6 Z FALLOFF SPHERE SYMMETRY XY").ok);
+    CHECK(!run(d, "SCULPT \"Sphere 1\" DRAW AT 40,0,40 FALLOFF WOBBLY").ok);
+    CHECK(!run(d, "SCULPT \"Sphere 1\" DRAW AT 40,0,40 RADIAL 0").ok);
+}
+
+TEST_CASE("layer, clay strips, fill, blob, snake hook and nudge") {
+    SculptSettings s;
+    s.radius = 12;
+    s.strength = 1;
+    // Layer builds to its height once a stroke, however often it passes.
+    Body b = denseBall();
+    s.brush = SculptBrush::Layer;
+    sculptStroke(b, {{0, -40, 34}, {0, -40, 46}, {0, -40, 34}, {0, -40, 46}, {0, -40, 34}}, s);
+    const float lift = radiusAt(b, {0, -1, 0}) - 40.0f;
+    CHECK(lift > 1.0f);
+    CHECK(lift < 0.25f * 12.0f + 0.3f);
+    // Snake Hook pulls the surface out along the path (off the surface).
+    Body c = denseBall();
+    s.brush = SculptBrush::SnakeHook;
+    s.radius = 8;
+    sculptStroke(c, {{0, -40, 40}, {0, -55, 40}, {0, -70, 40}}, s);
+    CHECK(c.bounds().min.y < -50.0f);
+    CHECK(openEdgeCount(c.mesh) == 0);
+    // Nudge slides the surface along itself: little volume change, but it moves.
+    Body e = denseBall();
+    const double ve = meshVolume(worldMesh(e));
+    s.brush = SculptBrush::Nudge;
+    s.radius = 10;
+    sculptStroke(e, {{0, -40, 35}, {0, -40, 45}}, s);
+    CHECK(std::fabs(meshVolume(worldMesh(e)) - ve) < ve * 0.01);
+    // Clay strips and blob add; fill raises a dent back up.
+    for (const SculptBrush br : {SculptBrush::ClayStrips, SculptBrush::Blob}) {
+        Body f = denseBall();
+        const double v0 = meshVolume(worldMesh(f));
+        s.brush = br;
+        sculptStroke(f, {{0, -40, 35}, {0, -40, 45}}, s);
+        CHECK(meshVolume(worldMesh(f)) > v0 + 50);
+    }
+    // Fill raises a dent in a flat top back up towards the plane around it.
+    Body g = makeBody("Slab", "box", {0, 0, 0, 60, 60, 10});
+    sculptRefine(g, 1.5f);
+    auto top = [&] {
+        const auto h = SculptMesh(g).raycast({{30.13f, 30.07f, 100.0f}, {0, 0, -1}});
+        return h ? h->z : 0.0f;
+    };
+    s.brush = SculptBrush::Draw;
+    s.invert = true;
+    s.radius = 6;
+    sculptStroke(g, {{30, 30, 10}, {30.5f, 30, 10}, {30, 30, 10}}, s); // a dent
+    const float dent = top();
+    CHECK(dent < 9.5f);
+    s.invert = false;
+    s.brush = SculptBrush::Fill;
+    s.radius = 14;
+    sculptStroke(g, {{30, 30, 10}}, s);
+    CHECK(top() > dent + 0.2f);
+    CHECK(top() <= 10.01f);
+}
+
+TEST_CASE("SUBDIVIDE, SYMMETRIZE and DECIMATE keep bodies closed") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 40 @0,0,0").ok);
+    auto r = run(d, "SUBDIVIDE \"Block 1\" LEVELS 2");
+    REQUIRE(r.ok);
+    const Body& cube = d.scene.bodies()[0];
+    CHECK(cube.mesh.indices.size() / 3 == 12 * 16);
+    CHECK(openEdgeCount(cube.mesh) == 0);
+    const double vc = meshVolume(worldMesh(cube));
+    CHECK(vc < 64000.0);         // the corners round off
+    CHECK(vc > 64000.0 * 0.4);
+
+    // A bump on +x only; symmetrized it is on both sides.
+    REQUIRE(run(d, "SPHERE 30 @200,0,0").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 2\" REFINE 2").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 2\" DRAW AT 230,0,30 RADIUS 10 STRENGTH 1").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 2\" DRAW AT 230,0,30 RADIUS 10 STRENGTH 1").ok);
+    AABB box = d.scene.bodies()[1].bounds();
+    CHECK(box.max.x - 200.0f > 200.0f - box.min.x + 1.0f);
+    REQUIRE(run(d, "SYMMETRIZE \"Sphere 2\" X").ok);
+    const Body& sym = d.scene.bodies()[1];
+    box = sym.bounds();
+    CHECK_NEAR(box.max.x - 200.0f, 200.0f - box.min.x, 0.05);
+    CHECK(box.max.x - 200.0f > 31.0f);
+    CHECK(openEdgeCount(sym.mesh) == 0);
+
+    const double v0 = meshVolume(worldMesh(sym));
+    REQUIRE(run(d, "DECIMATE \"Sphere 2\" TO 3000").ok);
+    const Body& dec = d.scene.bodies()[1];
+    CHECK(dec.mesh.indices.size() / 3 <= 3400);
+    CHECK(openEdgeCount(dec.mesh) == 0);
+    CHECK_NEAR(meshVolume(worldMesh(dec)), v0, v0 * 0.03);
+    CHECK(!run(d, "DECIMATE \"Sphere 2\" TO 2").ok);
+    CHECK(!run(d, "SUBDIVIDE \"Nobody\"").ok);
+}
+
+TEST_CASE("REDO puts back what UNDO took, until something else changes") {
+    Document d;
+    REQUIRE(run(d, "SPHERE 20 @0,0,0").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" DRAW AT 0,-20,20 RADIUS 8 STRENGTH 1").ok);
+    const double v1 = meshVolume(worldMesh(d.scene.bodies()[0]));
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" DRAW AT 0,20,20 RADIUS 8 STRENGTH 1").ok);
+    const double v2 = meshVolume(worldMesh(d.scene.bodies()[0]));
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK_NEAR(meshVolume(worldMesh(d.scene.bodies()[0])), v1, 1e-6);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK_NEAR(meshVolume(worldMesh(d.scene.bodies()[0])), v2, 1e-6);
+    CHECK(!run(d, "REDO").ok); // nothing left
+    REQUIRE(run(d, "UNDO").ok); // and undoable again
+    CHECK_NEAR(meshVolume(worldMesh(d.scene.bodies()[0])), v1, 1e-6);
+    // A new edit drops what was undone.
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" SMOOTH AT 0,-20,20 RADIUS 8").ok);
+    CHECK(!run(d, "REDO").ok);
+    // A body added since the undo: redo is refused, not mixed in.
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "BOX 10 10 10 @100,0,0").ok);
+    CHECK(!run(d, "REDO").ok);
 }

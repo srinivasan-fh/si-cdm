@@ -32,7 +32,13 @@ namespace sicdm {
 struct Body;
 class Scene;
 
-enum class SculptBrush { Draw, Clay, Carve, Inflate, Grab, Pinch, Crease, Smooth, Flatten, Scrape };
+enum class SculptBrush { Draw, Clay, Carve, Inflate, Grab, Pinch, Crease, Smooth, Flatten, Scrape,
+                         Layer, ClayStrips, Fill, Blob, SnakeHook, Nudge, Mask };
+
+// How a brush's effect falls off from its centre to its rim.
+enum class SculptFalloff { Smooth, Sphere, Sharp, Linear, Constant };
+const char* sculptFalloffKey(SculptFalloff f) noexcept;
+std::optional<SculptFalloff> sculptFalloffFromKey(const std::string& key) noexcept;
 
 const char* sculptBrushKey(SculptBrush b) noexcept;  // "draw", "clay", ...
 const char* sculptBrushName(SculptBrush b) noexcept; // "Draw (Push / Pull)", ...
@@ -45,9 +51,21 @@ struct SculptSettings {
     float strength = 0.5f;   // 0..1
     bool invert = false;     // remove instead of add, push instead of pull...
     bool symmetryX = false;  // mirror across the body's centre plane (x = const)
+    bool symmetryY = false;  // ... and y = const, z = const (any combination)
+    bool symmetryZ = false;
+    int radial = 0;          // radial symmetry: this many copies around an axis through the centre
+    int radialAxis = 2;      // 0 X, 1 Y, 2 Z
+    SculptFalloff falloff = SculptFalloff::Smooth;
     bool refine = true;      // dynamic topology: split long edges under the brush
     float detail = 0.0f;     // mm, longest edge left under the brush; 0 = radius / 4
 };
+
+enum class MaskOp { Clear, Invert, Smooth, Grow, Shrink, All };
+// Whole-body mask edits (the Mask brush paints it): CLEAR, INVERT, SMOOTH (blur),
+// GROW / SHRINK by one ring of vertices, ALL (mask everything).
+void maskBody(Body& body, MaskOp op);
+// Fraction of the surface's vertices masked (0..1, weighted by the mask).
+float maskedFraction(const Body& body);
 
 // A welded, editable copy of a body's surface (world coordinates).
 class SculptMesh {
@@ -70,11 +88,24 @@ public:
     // Closest surface point to q, with the face normal.
     Vec3 closestPoint(const Vec3& q, Vec3* normal = nullptr) const;
 
-    // One brush dab centred at `centre` (on the surface). Not for Grab.
-    void dab(const Vec3& centre, const SculptSettings& s);
+    // One brush dab centred at `centre` (on the surface), heading along `dir` (the
+    // stroke's step since the last dab: Snake Hook, Nudge and Clay Strips use it).
+    // Not for Grab.
+    void dab(const Vec3& centre, const SculptSettings& s, const Vec3& dir = {});
+    // Starts a stroke: the Layer brush builds up to its height once per stroke.
+    void beginStroke() { m_layer.clear(); }
     // Grab: pick up the surface around `centre`, then move it by `delta` from where it was.
     void beginGrab(const Vec3& centre, const SculptSettings& s);
     void grabTo(const Vec3& delta);
+
+    // Loop subdivision of the whole surface (false past `maxTriangles`).
+    bool loopSubdivide(std::size_t maxTriangles);
+    // Collapses the shortest edges until about `target` triangles are left.
+    bool decimateTo(std::size_t target);
+
+    // Masks (per vertex, 0..1; empty: none).
+    const std::vector<float>& mask() const noexcept { return m_mask; }
+    void maskEdit(MaskOp op);
 
     // A stroke (dabs along the points, snapped to the surface) or a grab from
     // points[0] by `grabDelta`, run on the part of the surface it can reach.
@@ -92,7 +123,17 @@ public:
 
 private:
     void refineRegion(const Vec3& centre, float radius, float detail);
-    void applyDab(const Vec3& centre, const SculptSettings& s);
+    void applyDab(const Vec3& centre, const SculptSettings& s, const Vec3& dir);
+    // The brush's mirrored and radial copies: each a centre and how it maps directions.
+    struct Image {
+        Vec3 centre;
+        Vec3 axes[3]; // the image of x, y and z
+        Vec3 apply(const Vec3& d) const { return axes[0] * d.x + axes[1] * d.y + axes[2] * d.z; }
+    };
+    std::vector<Image> images(const Vec3& centre, const SculptSettings& s, float R) const;
+    // Per-vertex extras that follow the vertices through splits, collapses and windows.
+    void addVertexExtras(std::uint32_t a, std::uint32_t b);
+    float held(std::uint32_t v) const noexcept { return m_mask.empty() ? 0.0f : m_mask[v]; }
     void updateNormals();
     void flipCaps();
     std::size_t collapseLocal(std::vector<std::uint32_t> local, float minEdge, const Vec3& centre, float radius, bool keepShape);
@@ -110,7 +151,10 @@ private:
     std::vector<Vec3> m_n;                         // smooth vertex normals
     std::vector<std::array<std::uint32_t, 3>> m_t; // triangles
     float m_mirrorX = 0.0f;
+    Vec3 m_centre{};     // symmetry centre (the body's, when the copy was made)
     float m_size = 1.0f; // bounding diagonal
+    std::vector<float> m_mask;  // per vertex, or empty
+    std::vector<float> m_layer; // Layer brush: how far each vertex has risen this stroke
     // A window on a larger mesh: where each vertex came from there (kFresh: made
     // here), and the vertices on the cut border, which nothing may move or split.
     std::vector<std::uint32_t> m_from;
@@ -121,9 +165,10 @@ private:
         std::uint32_t v;
         float w;
         Vec3 start;
-        bool mirrored;
+        std::uint8_t image; // which copy of the brush took it
     };
     std::vector<GrabVert> m_grab;
+    std::vector<Image> m_grabImages;
 };
 
 // Dabs every radius / 4 along the polyline through the points snapped to the surface,
@@ -134,6 +179,14 @@ void sculptStroke(Body& body, SculptMesh& surface, const std::vector<Vec3>& poin
 
 // Refines the whole body until no edge is longer than `detail` (for sculpting a coarse CAD mesh).
 void sculptRefine(Body& body, float detail);
+// Loop subdivision: each level splits every triangle in four and smooths the surface
+// (corners and creases round off). False (unchanged) past `maxTriangles`.
+bool subdivideBody(Body& body, int levels, std::size_t maxTriangles = 4000000, std::string* error = nullptr);
+// Makes a body mirror-symmetric: the side of the centre plane (normal along `axis`,
+// 0 X 1 Y 2 Z) that `positive` names is kept and mirrored onto the other.
+bool symmetrizeBody(Body& body, int axis, bool positive, std::string* error = nullptr);
+// Coarsens to about `targetTriangles` by collapsing the shortest edges (closed stays closed).
+bool decimateBody(Body& body, std::size_t targetTriangles, std::string* error = nullptr);
 // Coarsens a dense mesh by collapsing edges shorter than `edge` (closed stays closed).
 void simplifyMesh(MeshData& mesh, float edge);
 

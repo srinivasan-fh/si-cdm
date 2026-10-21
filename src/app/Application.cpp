@@ -461,6 +461,13 @@ SculptBrush brushOf(ToolId t) {
     case ToolId::SculptSmooth: return SculptBrush::Smooth;
     case ToolId::SculptFlatten: return SculptBrush::Flatten;
     case ToolId::SculptScrape: return SculptBrush::Scrape;
+    case ToolId::SculptLayer: return SculptBrush::Layer;
+    case ToolId::SculptClayStrips: return SculptBrush::ClayStrips;
+    case ToolId::SculptFill: return SculptBrush::Fill;
+    case ToolId::SculptBlob: return SculptBrush::Blob;
+    case ToolId::SculptSnakeHook: return SculptBrush::SnakeHook;
+    case ToolId::SculptNudge: return SculptBrush::Nudge;
+    case ToolId::SculptMask: return SculptBrush::Mask;
     default: return SculptBrush::Draw;
     }
 }
@@ -504,6 +511,10 @@ bool Application::beginSculpt(float x, float y) {
     s.radius = std::max(m_uiState.sculptRadius, 0.01f);
     s.strength = std::clamp(m_uiState.sculptStrength, 0.0f, 1.0f);
     s.symmetryX = m_uiState.sculptSymmetry;
+    s.symmetryY = m_uiState.sculptSymmetryY;
+    s.symmetryZ = m_uiState.sculptSymmetryZ;
+    s.radial = m_uiState.sculptRadial > 1 ? m_uiState.sculptRadial : 0;
+    s.falloff = static_cast<SculptFalloff>(std::clamp(m_uiState.sculptFalloff, 0, 4));
     s.refine = m_uiState.sculptRefine;
     s.detail = std::max(m_uiState.sculptDetail, 0.0f);
     m_sculptSettings = s;
@@ -517,6 +528,7 @@ bool Application::beginSculpt(float x, float y) {
         m_sculptMesh.beginGrab(p, s);
         m_grabPoint = p;
     } else {
+        m_sculptMesh.beginStroke();
         m_sculptMesh.dab(p, s);
         ++m_dabs;
     }
@@ -560,7 +572,7 @@ void Application::continueSculpt(float x, float y) {
         const int steps = std::min(static_cast<int>(len / spacing), 64);
         for (int i = 1; i <= steps; ++i) {
             const Vec3 q = m_sculptMesh.closestPoint(from + (*hit - from) * (static_cast<float>(i) * spacing / len));
-            m_sculptMesh.dab(q, m_sculptSettings);
+            m_sculptMesh.dab(q, m_sculptSettings, q - m_lastDab);
             ++m_dabs;
             m_lastDab = q;
         }

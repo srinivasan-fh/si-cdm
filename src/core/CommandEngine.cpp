@@ -1290,6 +1290,94 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         out.say("Undid " + what);
         return out;
     }
+    if (cmd == "REDO") {
+        std::string why;
+        const std::string what = doc.scene.redo(&why);
+        if (what.empty()) return out.fail(why.empty() ? "Nothing to redo" : why);
+        if (doc.selectedBody >= static_cast<int>(doc.scene.bodies().size())) doc.selectedBody = -1;
+        markChanged(doc);
+        out.say("Redid " + what);
+        return out;
+    }
+    if (cmd == "MASK" || cmd == "SUBDIVIDE" || cmd == "SYMMETRIZE" || cmd == "DECIMATE") {
+        // MASK [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]   SUBDIVIDE [body] [LEVELS n]
+        // SYMMETRIZE [body] [X|Y|Z] [-]                          DECIMATE [body] TO n | RATIO r
+        static const char* const kWords[] = {"clear", "invert", "smooth", "blur", "grow", "shrink", "all", "levels", "level",
+                                             "to", "ratio", "x", "y", "z", "+x", "-x", "+y", "-y", "+z", "-z", "-", "+"};
+        auto isWord = [&](std::size_t k) {
+            if (quotedArg(k)) return false;
+            const std::string w = lower(a[k]);
+            if (parseNumber(a[k])) return true;
+            for (const char* q : kWords)
+                if (w == q) return true;
+            return false;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        if (quotedArg(0)) nameWords.push_back(a[i++]);
+        else
+            while (i < a.size() && !isWord(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (body.mesh.indices.empty()) return out.fail(body.name + " has no surface");
+        std::vector<std::string> rest(a.begin() + static_cast<std::ptrdiff_t>(i), a.end());
+        for (std::string& w : rest) w = lower(w);
+        const std::size_t before = body.mesh.indices.size() / 3;
+        std::string error, done;
+        doc.scene.pushUndo(cmd + " " + body.name);
+        bool ok = true;
+        if (cmd == "MASK") {
+            if (rest.empty()) return doc.scene.undo(), usage();
+            const std::string& w = rest[0];
+            const MaskOp op = w == "clear" ? MaskOp::Clear : w == "invert" ? MaskOp::Invert : w == "smooth" || w == "blur" ? MaskOp::Smooth
+                              : w == "grow" ? MaskOp::Grow : w == "shrink" ? MaskOp::Shrink : MaskOp::All;
+            if (op == MaskOp::All && w != "all") return doc.scene.undo(), usage();
+            const auto times = rest.size() > 1 ? parseNumber(rest[1]) : std::nullopt;
+            const int n = times ? std::clamp(static_cast<int>(*times), 1, 50) : 1;
+            for (int k = 0; k < (op == MaskOp::Smooth || op == MaskOp::Grow || op == MaskOp::Shrink ? n : 1); ++k) maskBody(body, op);
+            done = "mask " + w + fmt(", %.0f%% masked", 100.0 * maskedFraction(body));
+        } else if (cmd == "SUBDIVIDE") {
+            int levels = 1;
+            for (std::size_t k = 0; k < rest.size(); ++k)
+                if (const auto n = parseNumber(rest[k])) levels = std::clamp(static_cast<int>(*n), 1, 6);
+            ok = subdivideBody(body, levels, 4000000, &error);
+            done = fmt("subdivided %g times", static_cast<double>(levels));
+        } else if (cmd == "SYMMETRIZE") {
+            int axis = 0;
+            bool positive = true;
+            for (const std::string& w : rest) {
+                if (w.find('x') != std::string::npos) axis = 0;
+                if (w.find('y') != std::string::npos) axis = 1;
+                if (w.find('z') != std::string::npos) axis = 2;
+                if (!w.empty() && w[0] == '-') positive = false;
+            }
+            ok = symmetrizeBody(body, axis, positive, &error);
+            done = std::string("symmetrized: the ") + (positive ? "+" : "-") + "xyz"[axis] + " side mirrored across";
+        } else { // DECIMATE
+            std::optional<double> to, ratio;
+            for (std::size_t k = 0; k + 1 < rest.size(); ++k) {
+                if (rest[k] == "to") to = parseNumber(rest[k + 1]);
+                if (rest[k] == "ratio") ratio = parseNumber(rest[k + 1]);
+            }
+            if (!to && !ratio && !rest.empty()) to = parseNumber(rest[0]);
+            if ((!to || *to < 4) && (!ratio || !(*ratio > 0) || *ratio >= 1)) return doc.scene.undo(), usage();
+            const std::size_t target = to ? static_cast<std::size_t>(*to) : static_cast<std::size_t>(static_cast<double>(before) * *ratio);
+            ok = decimateBody(body, target, &error);
+            done = "decimated";
+        }
+        if (!ok) {
+            doc.scene.undo();
+            return out.fail(error.empty() ? "Nothing changed" : error);
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        const std::size_t open = openEdgeCount(body.mesh);
+        out.say(body.name + ": " + done + fmt(", %g triangles", static_cast<double>(body.mesh.indices.size() / 3)) +
+                fmt(" (was %g)", static_cast<double>(before)) + (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))));
+        return out;
+    }
     if (cmd == "SCULPT" || cmd == "HOLE" || cmd == "POCKET" || cmd == "CHANNEL" || cmd == "TRIM" || cmd == "BOSS") {
         if (cmd == "SCULPT" && a.size() == 1 && iequal(a[0], "list")) {
             out.say("Brushes:");
@@ -1297,7 +1385,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             return out;
         }
         // Leading words name the body (default: the selection), up to the first keyword or point.
-        static const char* const kKeys[] = {"at", "dir", "radius", "strength", "invert", "symmetry", "sym", "detail",
+        static const char* const kKeys[] = {"at", "dir", "radius", "strength", "invert", "symmetry", "sym", "detail", "falloff", "radial",
                                             "norefine", "move", "refine", "diameter", "d", "depth", "through", "box",
                                             "round", "ball", "width", "length", "angle", "path", "plane", "normal",
                                             "smaller", "cylinder", "height"};
@@ -1356,7 +1444,30 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             } else if (k == "invert") {
                 ss.invert = !ss.invert;
             } else if (k == "symmetry" || k == "sym") {
-                ss.symmetryX = true;
+                // SYMMETRY alone mirrors across x; SYMMETRY XZ (any of x, y, z) across those.
+                const std::string axes = i + 1 < a.size() && !quotedArg(i + 1) ? lower(a[i + 1]) : "";
+                if (!axes.empty() && axes.find_first_not_of("xyz") == std::string::npos) {
+                    ++i;
+                    ss.symmetryX = axes.find('x') != std::string::npos;
+                    ss.symmetryY = axes.find('y') != std::string::npos;
+                    ss.symmetryZ = axes.find('z') != std::string::npos;
+                } else {
+                    ss.symmetryX = true;
+                }
+            } else if (k == "radial") {
+                // RADIAL n [X|Y|Z]: n copies around an axis through the body's centre (default Z).
+                const auto n = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!n || *n < 1 || *n > 64) return out.fail("RADIAL needs a count, 1 to 64");
+                ss.radial = static_cast<int>(*n);
+                const std::string ax = i + 1 < a.size() && !quotedArg(i + 1) ? lower(a[i + 1]) : "";
+                if (ax == "x" || ax == "y" || ax == "z") {
+                    ++i;
+                    ss.radialAxis = ax == "x" ? 0 : ax == "y" ? 1 : 2;
+                }
+            } else if (k == "falloff") {
+                const auto f = i + 1 < a.size() ? sculptFalloffFromKey(a[++i]) : std::nullopt;
+                if (!f) return out.fail("FALLOFF is one of SMOOTH SPHERE SHARP LINEAR CONSTANT");
+                ss.falloff = *f;
             } else if (k == "detail") {
                 if (!lengthArg(ss.detail, "DETAIL")) return out.fail("DETAIL needs a length");
             } else if (k == "norefine") {
@@ -1416,7 +1527,11 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             } else {
                 if (!haveBrush) return doc.scene.undo(), out.fail("Name a brush (SCULPT LIST)");
                 if (points.empty()) return doc.scene.undo(), out.fail("SCULPT needs a point on the surface: AT x,y,z");
-                for (const Vec3& q : points) onSurface(q, nullptr);
+                // A Snake Hook starts on the surface and pulls it out along the rest of the path.
+                for (const Vec3& q : points) {
+                    onSurface(q, nullptr);
+                    if (ss.brush == SculptBrush::SnakeHook) break;
+                }
                 if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
                 sculptStroke(body, surface, points, ss, move.value_or(Vec3{}));
                 ok = true;

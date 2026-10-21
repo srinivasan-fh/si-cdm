@@ -11,6 +11,7 @@ namespace sicdm {
 struct Vertex {
     Vec3 position;
     Vec3 normal;
+    float mask = 0.0f; // sculpt mask: 1 holds the surface still under the brushes
 };
 
 // Renderable tessellation of a body: shaded triangles plus the

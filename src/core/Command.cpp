@@ -31,12 +31,17 @@ constexpr CommandSpec kCommands[] = {
      "Extrude a closed sketch curve (selected or named) into a solid along its plane normal"},
     // Sculpting & booleans
     {"SCULPT", "SCULPTING BRUSH",
-     "SCULPT [body] brush [AT] x,y,z [x,y,z...] [RADIUS r] [STRENGTH 0-1] [INVERT] [SYMMETRY] [DETAIL d] [NOREFINE] "
-     "[MOVE dx,dy,dz]  |  SCULPT [body] REFINE detail  |  SCULPT LIST",
-     "Digital clay: DRAW (pull, INVERT pushes), CLAY (add), CARVE (remove), INFLATE, GRAB (MOVE), PINCH, CREASE, "
-     "SMOOTH, FLATTEN, SCRAPE (trim). Dabs along the points every radius / 4; the mesh refines itself under the brush"},
+     "SCULPT [body] brush [AT] x,y,z [x,y,z...] [RADIUS r] [STRENGTH 0-1] [INVERT] [SYMMETRY [X|Y|Z...]] [RADIAL n [X|Y|Z]] "
+     "[FALLOFF smooth|sphere|sharp|linear|constant] [DETAIL d] [NOREFINE] [MOVE dx,dy,dz]  |  SCULPT [body] REFINE detail  |  SCULPT LIST",
+     "Digital clay: DRAW (pull, INVERT pushes), CLAY, CLAYSTRIPS, LAYER, CARVE, INFLATE, BLOB, GRAB (MOVE), SNAKEHOOK, NUDGE, "
+     "PINCH, CREASE, SMOOTH, FLATTEN, SCRAPE, FILL, MASK. Dabs along the points every radius / 4; the mesh refines itself"},
     {"REMESH", "DYNAMESH VOXEL", "REMESH [body [\"other\"...]] [VOXEL v] [BLEND b] [SMOOTH s]",
      "Voxel remesh: fuse bodies into one evenly meshed solid, joins filleted to the blend radius, detail finer than s rounded"},
+    {"MASK", "", "MASK [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]",
+     "Edit the sculpt mask (the MASK brush paints it; masked surface holds still under the brushes)"},
+    {"SUBDIVIDE", "SUBD", "SUBDIVIDE [body] [LEVELS n]", "Loop subdivision: four triangles for each, smoothed"},
+    {"SYMMETRIZE", "SYMM", "SYMMETRIZE [body] [X|Y|Z] [-]", "Mirror one side of the body's origin onto the other (+ side by default)"},
+    {"DECIMATE", "", "DECIMATE [body] TO n | RATIO r", "Reduce to about n triangles (or the ratio), keeping it closed"},
     {"HOLE", "DRILL", "HOLE [body] [AT] x,y,z [DIR x,y,z] DIAMETER d [DEPTH h | THROUGH]",
      "Drill a hole into the surface at a point (along the surface normal unless DIR); blind holes get a 118 deg tip"},
     {"POCKET", "", "POCKET [body] [AT] x,y,z [DIR x,y,z] [BOX|ROUND|BALL] WIDTH w [LENGTH l] DEPTH d [ANGLE deg]",
@@ -50,6 +55,7 @@ constexpr CommandSpec kCommands[] = {
     {"BOOLEAN", "CSG BOOL", "BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]",
      "Combine two bodies exactly; the other body is used up unless KEEP"},
     {"UNDO", "U", "UNDO", "Undo the last sculpt, cut, boolean or armour edit"},
+    {"REDO", "", "REDO", "Put back what the last UNDO took away"},
     // Wearable armour & exoskeletons
     {"SHELL", "SOLIDIFY HOLLOW", "SHELL [body] THICKNESS t [OUTWARD] [OPEN x,y,z NORMAL x,y,z]",
      "Hollow a solid to a wall thickness, or solidify a surface; OPEN cuts an opening first (the side the normal points to)"},

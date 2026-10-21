@@ -1,8 +1,22 @@
 # Digital sculpting and cuts
 
 Any body can be shaped like clay and cut like a CAD solid. The two tool sections at the bottom of the
-tool rail hold the tools, the options bar holds their settings, and every edit can be undone (`UNDO`,
-or the **Undo** button in the options bar).
+tool rail hold the tools, the options bar holds their settings, and every edit can be undone and
+redone (`UNDO`, `REDO`, or the buttons in the options bar).
+
+The toolset follows the common ground of the professional sculpting tools: ZBrush, Blender,
+3DCoat, Mudbox and Nomad Sculpt. It covers:
+
+- seventeen brushes;
+- falloff curves;
+- mirror and radial symmetry;
+- masking;
+- dynamic topology;
+- voxel remesh;
+- subdivision, symmetrize and decimation;
+- undo and redo.
+
+The code is our own. No code from those tools is used.
 
 ![A clay hump on a plate with drilled holes, a channel, a pocket and a boss](sculpting.png)
 
@@ -22,9 +36,45 @@ Drag over a body. **Ctrl** inverts the brush, **Shift** smooths with any brush, 
 | **Smooth** | Laplacian smoothing: each vertex moves towards the average of its neighbours | |
 | **Flatten** | Presses the surface onto the average plane under the brush | |
 | **Scrape** | Shaves off the high spots down to that plane, like a trimming knife | Fills the low spots |
+| **Clay Strips** | Lays flat-topped strips of clay under a square brush, along the stroke | Removes |
+| **Layer** | Raises the surface to an even height over the stroke, at most once a stroke however often it passes | Lowers |
+| **Blob** | Swells rounded blobs that spread out from the centre | Dents |
+| **Snake Hook** | Pulls the surface out along the stroke, for horns, tentacles and strands; it keeps the strand's girth | |
+| **Nudge** | Pushes the surface along itself in the stroke's direction | |
+| **Fill** | Raises the low spots up to the plane under the brush | Scrapes |
+| **Mask** | Paints a mask; masked surface (shown darker) holds still under every other brush | Unmasks |
 
-The settings are radius, strength (0 to 1), **Symmetry X** (mirrors the stroke across the body's centre)
-and **Dyntopo**.
+![A mask (the dark band) holds the surface still under a Draw stroke across it; a Snake Hook pulls out a strand](sculpt-tools.png)
+
+The settings in the options bar:
+
+- radius and strength (0 to 1);
+- **Symmetry X / Y / Z**: mirrors each dab across the body's centre planes, in any combination;
+- **radial count**: copies of each dab around the body's vertical axis, for wheels, flowers and
+  rosettes;
+- **falloff**: smooth, sphere, sharp, linear or flat, from the centre to the rim;
+- **Dyntopo**.
+
+A copy that lands almost on another, such as a dab on a mirror plane, is left out, so the plane
+does not get double strength.
+
+**Front faces only.** A dab moves only the surface that faces the way its own spot does. A brush
+larger than a thin part, such as an ear or a 10 mm slab, does not reach through to the far side or
+pull its plane there.
+
+**Masking.** The Mask brush paints a mask from 0 to 1 on the vertices. `MASK CLEAR`, `INVERT`,
+`SMOOTH`, `GROW`, `SHRINK` and `ALL` edit the whole mask. A masked vertex moves by (1 − mask) of
+what the brush would do. The mask follows the surface through dynamic topology and is saved with
+the project.
+
+**Subdivide, symmetrize, decimate.**
+
+- `SUBDIVIDE` is Loop subdivision. Each level splits every triangle in four and smooths: corners
+  round off, and borders stay put.
+- `SYMMETRIZE` cuts the body on the plane through its origin, mirrors the kept side exactly and fuses
+  the halves into one closed solid.
+- `DECIMATE TO n` collapses the shortest edges until about n triangles are left. The surface stays
+  closed and its volume stays within a few per cent.
 
 **Dynamic topology.** Each dab first splits the edges that pass under the brush and are longer than
 the detail size (default: a quarter of the radius), and the longest edge of each triangle it touches.
@@ -196,8 +246,10 @@ printing, or to CAM for CNC machining.
 ## Commands
 
 ```text
-SCULPT [body] brush [AT] x,y,z [x,y,z...] [RADIUS r] [STRENGTH 0-1] [INVERT] [SYMMETRY] [DETAIL d]
-       [NOREFINE] [MOVE dx,dy,dz]          brushes: DRAW CLAY CARVE INFLATE GRAB PINCH CREASE SMOOTH FLATTEN SCRAPE
+SCULPT [body] brush [AT] x,y,z [x,y,z...] [RADIUS r] [STRENGTH 0-1] [INVERT] [SYMMETRY [X|Y|Z...]]
+       [RADIAL n [X|Y|Z]] [FALLOFF smooth|sphere|sharp|linear|constant] [DETAIL d] [NOREFINE] [MOVE dx,dy,dz]
+       brushes: DRAW CLAY CLAYSTRIPS LAYER CARVE INFLATE BLOB GRAB SNAKEHOOK NUDGE PINCH CREASE
+                SMOOTH FLATTEN SCRAPE FILL MASK
 SCULPT [body] REFINE edge-length           refine the whole body before sculpting
 SCULPT LIST
 HOLE    [body] [AT] x,y,z [DIR x,y,z] DIAMETER d [DEPTH h | THROUGH]
@@ -210,6 +262,11 @@ UNDO
 REMESH  [body ["other"...]] [VOXEL v] [BLEND b] [SMOOTH s]   voxel remesh: fuse into one even, closed solid
 SCALE   body sx,sy,sz                      stretch along x, y, z (about the body's origin)
 ROTATE  body rx,ry,rz                      orient: degrees about X, then Y, then Z
+MASK    [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]   edit the mask (the MASK brush paints it)
+SUBDIVIDE [body] [LEVELS n]                Loop subdivision
+SYMMETRIZE [body] [X|Y|Z] [-]              mirror the + side (or the - side) across the body's origin
+DECIMATE [body] TO n | RATIO r             reduce to about n triangles
+REDO                                       put back what the last UNDO took away
 RUN script.txt                             the commands in a file, one a line (# comments); stops at a failure
 ```
 
@@ -219,4 +276,5 @@ the selection. A point far from the body is refused. Each command reports the tr
 whether the result is closed.
 
 Over MCP: the `sculpt` tool (`operation` = a brush name, `hole`, `pocket`, `channel`, `trim`, `boss`,
-`boolean`, `refine`, `remesh` or `undo`).
+`boolean`, `refine`, `remesh`, `subdivide`, `symmetrize`, `decimate`, `mask_clear`, `mask_invert`,
+`mask_smooth`, `undo` or `redo`; `symmetry_axes`, `radial` and `falloff` for the brushes).

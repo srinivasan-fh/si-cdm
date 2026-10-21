@@ -53,6 +53,9 @@ struct UiState {
     float sculptRadius = 20.0f;   // mm
     float sculptStrength = 0.5f;  // 0..1
     bool sculptSymmetry = false;  // mirror across the body's centre (X)
+    bool sculptSymmetryY = false, sculptSymmetryZ = false;
+    int sculptRadial = 1;         // radial copies around the body's Z axis (1: none)
+    int sculptFalloff = 0;        // SculptFalloff
     bool sculptRefine = true;     // dynamic topology under the brush
     float sculptDetail = 0.0f;    // longest edge under the brush (mm); 0 = radius / 4
     std::string sculptInfo;       // triangles / closed state of the body being edited

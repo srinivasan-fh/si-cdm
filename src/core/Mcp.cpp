@@ -343,9 +343,10 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("operation", prop("string",
-                                "A brush: draw (pull; invert pushes), clay (add), carve (remove), inflate, grab, pinch, "
-                                "crease, smooth, flatten, scrape (trim) -- or hole, pocket, channel, trim (knife), boss "
-                                "(add volume), boolean, refine, remesh (voxel: fuse 'body' with 'others'), undo"));
+                                "A brush: draw (pull; invert pushes), clay, claystrips, layer, carve, inflate, blob, grab, "
+                                "snakehook, nudge, pinch, crease, smooth, flatten, scrape, fill, mask -- or hole, pocket, "
+                                "channel, trim (knife), boss (add volume), boolean, refine, remesh (voxel: fuse 'body' with "
+                                "'others'), subdivide, symmetrize, decimate, mask_clear, mask_invert, mask_smooth, undo, redo"));
         p.set("body", prop("string", "Body to work on (default: the selection)"));
         p.set("points", prop("array", "Points [[x,y,z], ...] in mm on the surface: the stroke, the hole / pocket / boss "
                                       "position, the channel path or a point of the knife plane"));
@@ -356,6 +357,13 @@ Json McpServer::toolDefinitions() {
         p.set("strength", prop("number", "Brush strength 0-1 (default 0.5)"));
         p.set("invert", prop("boolean", "Invert the brush (push instead of pull, remove instead of add)"));
         p.set("symmetry", prop("boolean", "Mirror the stroke across the body's centre (X)"));
+        p.set("symmetry_axes", prop("string", "Mirror across these of the body's centre planes: any of \"xyz\""));
+        p.set("radial", prop("number", "Radial symmetry: copies around the body's axis (radial_axis, default z)"));
+        p.set("radial_axis", prop("string", "x | y | z"));
+        p.set("falloff", prop("string", "smooth | sphere | sharp | linear | constant"));
+        p.set("levels", prop("number", "subdivide: levels (default 1)"));
+        p.set("axis", prop("string", "symmetrize: x | y | z, with a leading - to keep the negative side"));
+        p.set("target", prop("number", "decimate: triangles to keep"));
         p.set("detail", prop("number", "Longest edge left under the brush, mm (refine: the target edge length)"));
         p.set("move", prop("array", "grab: [dx,dy,dz] mm"));
         p.set("diameter", prop("number", "hole / boss diameter, mm"));
@@ -764,6 +772,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         const std::string op = a["operation"].asString();
         auto vec = [&](const Json& v) { return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber()); };
         if (op == "undo") return runLine("UNDO");
+        if (op == "redo") return runLine("REDO");
         std::string body = a["body"].isString() ? quote(a["body"].asString()) : "";
         std::string pts;
         if (a["points"].isArray())
@@ -776,6 +785,14 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!a["body"].isString() || !a["other"].isString()) return textResult("boolean needs 'body' and 'other'", true);
             line = "BOOLEAN " + body + " " + a["boolean_op"].asString("subtract") + " " + quote(a["other"].asString()) +
                    (a["keep"].asBool() ? " KEEP" : "");
+        } else if (op == "subdivide") {
+            line = "SUBDIVIDE " + body + " LEVELS " + num(a["levels"].asNumber(1));
+        } else if (op == "symmetrize") {
+            line = "SYMMETRIZE " + body + " " + a["axis"].asString("x");
+        } else if (op == "decimate") {
+            line = "DECIMATE " + body + " TO " + num(a["target"].asNumber(10000));
+        } else if (op == "mask_clear" || op == "mask_invert" || op == "mask_smooth") {
+            line = "MASK " + body + " " + op.substr(5);
         } else if (op == "remesh") {
             line = "REMESH " + body;
             if (a["others"].isArray())
@@ -798,7 +815,10 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                    opt("height", "HEIGHT");
         } else {
             line = "SCULPT " + body + " " + op + " AT" + pts + opt("radius", "RADIUS") + opt("strength", "STRENGTH") +
-                   opt("detail", "DETAIL") + (a["invert"].asBool() ? " INVERT" : "") + (a["symmetry"].asBool() ? " SYMMETRY" : "") +
+                   opt("detail", "DETAIL") + (a["invert"].asBool() ? " INVERT" : "") +
+                   (a["symmetry_axes"].isString() ? " SYMMETRY " + a["symmetry_axes"].asString() : a["symmetry"].asBool() ? " SYMMETRY" : "") +
+                   (a["radial"].isNumber() ? " RADIAL " + num(a["radial"].asNumber()) + " " + a["radial_axis"].asString("z") : "") +
+                   (a["falloff"].isString() ? " FALLOFF " + a["falloff"].asString() : "") +
                    (a["move"].isArray() ? " MOVE " + vec(a["move"]) : "");
         }
         if (a["direction"].isArray() && (op == "hole" || op == "pocket" || op == "boss" || op == "channel"))

@@ -287,6 +287,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             for (const Vec3& e : b.mesh.edgeVertices) edges.push(e.x).push(e.y).push(e.z);
             Json mesh = Json::object();
             mesh.set("positions", pos).set("normals", nrm).set("indices", idx).set("edges", edges);
+            if (std::any_of(b.mesh.vertices.begin(), b.mesh.vertices.end(), [](const Vertex& v) { return v.mask > 0.0f; })) {
+                Json mask = Json::array(); // the sculpt mask, only when there is one
+                for (const Vertex& v : b.mesh.vertices) mask.push(v.mask);
+                mesh.set("mask", mask);
+            }
             jb.set("mesh", mesh);
         }
         bodies.push(jb);
@@ -399,10 +404,12 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             const Json& m = jb["mesh"];
             const auto& pos = m["positions"].items();
             const auto& nrm = m["normals"].items();
+            const auto& mask = m["mask"].items();
             for (std::size_t i = 0; i + 2 < pos.size(); i += 3) {
                 Vertex v;
                 v.position = {pos[i].asFloat(), pos[i + 1].asFloat(), pos[i + 2].asFloat()};
                 if (i + 2 < nrm.size()) v.normal = {nrm[i].asFloat(), nrm[i + 1].asFloat(), nrm[i + 2].asFloat()};
+                if (i / 3 < mask.size()) v.mask = std::clamp(mask[i / 3].asFloat(), 0.0f, 1.0f);
                 b.mesh.vertices.push_back(v);
             }
             for (const Json& i : m["indices"].items()) {
