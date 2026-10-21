@@ -1358,9 +1358,8 @@ bool genParallel(Ctx& c, std::string* err) {
             if (keep) runs.back().push_back({q, z});
             else if (!runs.back().empty()) runs.emplace_back();
         }
-        for (auto& run : runs) {
-            if (run.size() < 2) continue;
-            // Midpoints that the straight move would cut into: add them (to depth 5).
+        // Midpoints that a straight move would cut into: added, to depth 5.
+        auto refineRun = [&](std::vector<Pt>& run) {
             for (int pass = 0; pass < 5; ++pass) {
                 std::vector<Pt> out{run[0]};
                 bool more = false;
@@ -1380,15 +1379,23 @@ bool genParallel(Ctx& c, std::string* err) {
                 run = std::move(out);
                 if (!more) break;
             }
+        };
+        for (auto& run : runs) {
+            if (run.size() < 2) continue;
+            refineRun(run);
             // Link from the last pass along the surface when it is close, else lift.
             const P2 cur{o.at.x, o.at.y};
             if (o.started && dist2(cur, run[0].q) <= 2.0 * s && o.at.z < c.retractZ - 1e-6) {
+                // Over the surface to the next pass, refined like the passes are.
                 const int m = std::max(1, static_cast<int>(std::ceil(dist2(cur, run[0].q) / step)));
+                std::vector<Pt> link{{cur, o.at.z}};
                 for (int i = 1; i < m; ++i) {
                     const P2 q{cur.x + (run[0].q.x - cur.x) * i / m, cur.y + (run[0].q.y - cur.y) * i / m};
-                    o.feed(q.x, q.y, c.cl(q.x, q.y, floor));
+                    link.push_back({q, c.cl(q.x, q.y, floor)});
                 }
-                o.feed(run[0].q.x, run[0].q.y, run[0].z);
+                link.push_back(run[0]);
+                refineRun(link);
+                for (std::size_t i = 1; i < link.size(); ++i) o.feed(link[i].q.x, link[i].q.y, link[i].z);
             } else {
                 o.travel(run[0].q, run[0].z + c.approach, run[0].z + c.approach, floor);
                 o.plunge(run[0].q.x, run[0].q.y, run[0].z);
@@ -1838,10 +1845,12 @@ bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string*
     if (!generateAll(job, part, error)) return false;
     const CamSetup& su = job.setup;
     const double w = su.stockMax.x - su.stockMin.x, hgt = su.stockMax.y - su.stockMin.y;
-    double minR = 1e9;
+    double minR = 1e9, maxR = 0;
     for (const CamOperation& op : job.ops)
-        if (const CamTool* t = job.tool(op.tool)) minR = std::min(minR, t->radius());
-    const double cell = std::clamp(std::max(minR / 8.0, std::sqrt(w * hgt / 2.5e6)), 0.02, 1.0);
+        if (const CamTool* t = job.tool(op.tool)) minR = std::min(minR, t->radius()), maxR = std::max(maxR, t->radius());
+    // An eighth of the smallest tool's radius; coarser when the stock is big, or when the
+    // biggest tool would cover more than about 250 000 cells.
+    const double cell = std::clamp(std::max({minR / 8.0, std::sqrt(w * hgt / 2.5e6), maxR * 0.0035}), 0.02, 1.0);
     const int nx = std::max(1, static_cast<int>(std::ceil(w / cell))), ny = std::max(1, static_cast<int>(std::ceil(hgt / cell)));
     out.cell = cell;
     out.nx = nx;
@@ -1873,27 +1882,54 @@ bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string*
             if (m.kind == CamMove::Rapid) out.rapidLength += len;
             else out.cutLength += len;
             if (std::min(a.z, b.z) >= top - 1e-9) continue; // above the stock
-            const int steps = std::max(1, static_cast<int>(std::ceil(len / (cell * 0.5))));
             bool crashed = false, shank = false;
-            for (int k = (len > 0 ? 1 : 0); k <= steps; ++k) {
-                const double t = static_cast<double>(k) / steps;
-                const double px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t, pz = a.z + (b.z - a.z) * t;
-                const int i0 = std::max(0, static_cast<int>(std::floor((px - R - x0) / cell))), i1 = std::min(nx - 1, static_cast<int>(std::floor((px + R - x0) / cell)));
-                const int j0 = std::max(0, static_cast<int>(std::floor((py - R - y0) / cell))), j1 = std::min(ny - 1, static_cast<int>(std::floor((py + R - y0) / cell)));
-                for (int j = j0; j <= j1; ++j)
-                    for (int i = i0; i <= i1; ++i) {
-                        const double cx = x0 + (i + 0.5) * cell, cy = y0 + (j + 0.5) * cell;
-                        const double d = std::hypot(cx - px, cy - py);
+            // The move's sweep, cell by cell: the lowest the tool's cutting edge gets over
+            // the cell's centre during the move (exact for flat moves; along a ramp the
+            // lowest of the tip height plus the tool's shape, which is convex in time).
+            const double ax = a.x, ay = a.y, az = a.z, dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+            const double l2 = dx * dx + dy * dy;
+            const int i0 = std::max(0, static_cast<int>(std::floor((std::min(a.x, b.x) - R - x0) / cell)));
+            const int i1 = std::min(nx - 1, static_cast<int>(std::floor((std::max(a.x, b.x) + R - x0) / cell)));
+            const int j0 = std::max(0, static_cast<int>(std::floor((std::min(a.y, b.y) - R - y0) / cell)));
+            const int j1 = std::min(ny - 1, static_cast<int>(std::floor((std::max(a.y, b.y) + R - y0) / cell)));
+            const bool flatTool = cut.coneSlope <= 0 && cut.rc <= 0;
+            if (l2 < 1e-18 && dz >= 0) continue; // straight up: it cuts nothing new
+            for (int j = j0; j <= j1; ++j)
+                for (int i = i0; i <= i1; ++i) {
+                    const double cx = x0 + (i + 0.5) * cell, cy = y0 + (j + 0.5) * cell;
+                    double hz;
+                    if (l2 < 1e-18) { // straight up or down: the lower end cuts the most
+                        const double d = std::hypot(cx - ax, cy - ay);
                         if (d > R - 1e-6) continue;
-                        const double hz = std::max(pz + cut.h(d), static_cast<double>(su.stockMin.z)); // nothing below the stock
-                        double& v = h[static_cast<std::size_t>(j * nx + i)];
-                        if (v <= hz + 1e-6) continue;
-                        if (m.kind == CamMove::Rapid) crashed = true;
-                        if (v > pz + tool->fluteLength) shank = true;
-                        removed += (v - hz) * cell * cell;
-                        v = hz;
+                        hz = std::min(az, static_cast<double>(b.z)) + cut.h(d);
+                    } else {
+                        const double tl = ((cx - ax) * dx + (cy - ay) * dy) / l2; // along the line
+                        const double perp = std::fabs((cx - ax) * dy - (cy - ay) * dx) / std::sqrt(l2);
+                        if (perp > R - 1e-6) continue;
+                        const double half = std::sqrt(std::max(0.0, (R - 1e-6) * (R - 1e-6) - perp * perp) / l2);
+                        const double lo = std::max(0.0, tl - half), hi = std::min(1.0, tl + half);
+                        if (lo > hi) continue;
+                        auto f = [&](double t) { return az + dz * t + cut.h(std::min(R, std::hypot(perp, (tl - t) * std::sqrt(l2)))); };
+                        if (std::fabs(dz) < 1e-12) hz = az + cut.h(std::hypot(perp, std::max(0.0, std::max(lo - tl, tl - hi)) * std::sqrt(l2)));
+                        else if (flatTool) hz = az + dz * (dz > 0 ? lo : hi);
+                        else {
+                            constexpr double g = 0.6180339887498949;
+                            double u = lo, v2 = hi, p1 = v2 - g * (v2 - u), p2 = u + g * (v2 - u), f1 = f(p1), f2 = f(p2);
+                            for (int it = 0; it < 32; ++it) {
+                                if (f1 > f2) u = p1, p1 = p2, f1 = f2, p2 = u + g * (v2 - u), f2 = f(p2);
+                                else v2 = p2, p2 = p1, f2 = f1, p1 = v2 - g * (v2 - u), f1 = f(p1);
+                            }
+                            hz = std::min({f(lo), f(hi), f1, f2});
+                        }
                     }
-            }
+                    hz = std::max(hz, static_cast<double>(su.stockMin.z)); // nothing below the stock
+                    double& v = h[static_cast<std::size_t>(j * nx + i)];
+                    if (v <= hz + 1e-6) continue;
+                    if (m.kind == CamMove::Rapid && v > hz + 1e-3) crashed = true; // a micron of stock or more
+                    if (v > hz + tool->fluteLength) shank = true;
+                    removed += (v - hz) * cell * cell;
+                    v = hz;
+                }
             out.rapidCrashes += crashed ? 1 : 0;
             out.shankHits += shank ? 1 : 0;
         }
@@ -1913,11 +1949,25 @@ bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string*
         const double dx = (topAt(i + 1, j) - topAt(i - 1, j)) / (2 * cell), dy = (topAt(i, j + 1) - topAt(i, j - 1)) / (2 * cell);
         return 1.0 / std::sqrt(1.0 + dx * dx + dy * dy);
     };
+    // A path may run the tolerance sideways into a wall: against the lowest part within
+    // that reach of the cell (none at the part's edge), such cells aren't gouges.
+    const int reach = static_cast<int>(std::ceil(gougeTol / cell));
+    auto lowestNear = [&](int i, int j) {
+        double lo = kInf;
+        for (int jj = j - reach; jj <= j + reach; ++jj)
+            for (int ii = i - reach; ii <= i + reach; ++ii) {
+                if ((ii - i) * (ii - i) + (jj - j) * (jj - j) > reach * reach) continue;
+                if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) return -kInf;
+                lo = std::min(lo, partTop[static_cast<std::size_t>(jj * nx + ii)]);
+            }
+        return lo;
+    };
     for (std::size_t k = 0; k < h.size(); ++k) {
         if (!std::isfinite(partTop[k])) continue;
         const double left = h[k] - partTop[k];
-        if (left < -gougeTol) {
-            const double normal = -left * slopeCos(static_cast<int>(k % static_cast<std::size_t>(nx)), static_cast<int>(k / static_cast<std::size_t>(nx)));
+        const int ci = static_cast<int>(k % static_cast<std::size_t>(nx)), cj = static_cast<int>(k / static_cast<std::size_t>(nx));
+        if (left < -gougeTol && h[k] < lowestNear(ci, cj) - gougeTol) {
+            const double normal = -left * slopeCos(ci, cj);
             if (normal > gougeTol) {
                 ++out.gouges;
                 out.deepestGouge = std::max(out.deepestGouge, normal);

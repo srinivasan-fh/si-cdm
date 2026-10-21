@@ -31,6 +31,9 @@ struct HistoryStep {
     bool undoable = true;     // an UNDO takes it back
     bool millimetres = false; // typed by an MCP tool (bare numbers in mm)
     LengthUnit unit = LengthUnit::Millimeter; // the units its lengths were typed in
+    // What was selected when it ran (a click selects without a command): commands that
+    // default to the selection find the same body and curve again on replay.
+    std::string selectedBody, selectedCurve;
 };
 
 struct ProjectState {

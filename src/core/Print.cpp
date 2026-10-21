@@ -581,6 +581,10 @@ bool sliceToGcode(const Body& body, const PrintSettings& s, const std::string& p
         if (error) *error = "Layer height, line width and filament need sensible sizes";
         return false;
     }
+    if (s.layerHeight > s.lineWidth * 0.8f) { // the line is squashed flat: thicker won't stick
+        if (error) *error = "The layer height can be at most 80% of the line width (" + std::to_string(s.lineWidth * 0.8f).substr(0, 4) + " mm here)";
+        return false;
+    }
     const SculptMesh sm(body);
     std::vector<Vec3> p = sm.positions();
     const auto& tris = sm.triangles();

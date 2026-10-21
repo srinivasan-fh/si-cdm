@@ -215,15 +215,17 @@ CAM SIMULATE [SHOW]
 ```
 
 The stock is modelled as a fine height field: a grid of an eighth of the smallest tool's
-radius, up to 2.5 million points. Each move cuts it with the tool's real shape (flat, ball,
-bull nose or drill point).
+radius, up to 2.5 million points (coarser when one tool would cover more than about 250 000).
+Each move cuts it with the tool's real shape (flat, ball, bull nose or drill point), exactly
+along the move: the lowest the cutting edge reaches over each point.
 
 The report gives:
 
 - **Volume removed.**
 - **Stock left on the part:** the most and the average.
 - **Gouges:** points cut into the part by more than twice the tolerance, measured square to
-  the surface.
+  the surface. A path may sit the tolerance sideways into a wall, so the part's height is taken
+  as the lowest within that reach of each point.
 - **Rapid moves through stock.**
 - **Shank hits:** stock above a tool's flute length while it is cutting.
 - **Cycle time:** the feeds, the rapid rate and the tool changes.

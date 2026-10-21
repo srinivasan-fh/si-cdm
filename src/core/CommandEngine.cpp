@@ -295,7 +295,8 @@ bool historyCommand(const std::string& cmd) {
     return false;
 }
 
-void recordHistory(Document& doc, std::string_view line, const CommandOutput& out, bool startedEmpty) {
+void recordHistory(Document& doc, std::string_view line, const CommandOutput& out, bool startedEmpty, const std::string& selBody,
+                   const std::string& selCurve) {
     ProjectState& st = doc.state;
     if (!out.ok) return;
     const ParsedCommand pc = tokenizeCommand(line);
@@ -326,13 +327,20 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     }
     if (!historyCommand(cmd)) return;
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
-    if (st.history.empty() && st.plane != SketchPlane::Top && cmd != "PLANE") // the plane the history starts on
-        st.history.push_back({"PLANE " + toUpper(planeKey(st.plane)), false, false, st.units.unit});
+    if (st.history.empty() && st.plane != SketchPlane::Top && cmd != "PLANE") { // the plane the history starts on
+        HistoryStep plane;
+        plane.line = "PLANE " + toUpper(planeKey(st.plane));
+        plane.undoable = false;
+        plane.unit = st.units.unit;
+        st.history.push_back(std::move(plane));
+    }
     HistoryStep step;
     step.line = std::string(line);
     step.undoable = cmd != "SELECT" && cmd != "PLANE";
     step.millimetres = doc.apiMillimeters;
     step.unit = st.units.unit;
+    step.selectedBody = selBody;
+    step.selectedCurve = selCurve;
     st.history.push_back(std::move(step));
     st.historyRedo.clear();
 }
@@ -345,10 +353,16 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     if (!doc.replaying && doc.state.historyRevision != 0 && doc.scene.revision() != doc.state.historyRevision && !doc.state.history.empty())
         doc.state.historyComplete = false;
     const bool empty = doc.scene.bodies().empty() && doc.scene.sketch().curves().empty() && doc.scene.images().empty();
+    const auto& bodies = doc.scene.bodies();
+    const auto& curves = doc.scene.sketch().curves();
+    const std::string selBody = doc.selectedBody >= 0 && doc.selectedBody < static_cast<int>(bodies.size())
+                                    ? bodies[static_cast<std::size_t>(doc.selectedBody)].name : std::string();
+    const std::string selCurve = doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(curves.size())
+                                     ? curves[static_cast<std::size_t>(doc.selectedCurve)].name : std::string();
     CommandOutput out = runCommand(doc, line, view);
     // An edit that kept an undo snapshot and succeeded: record the state it left.
     doc.scene.sealUndo();
-    if (!doc.replaying) recordHistory(doc, line, out, empty);
+    if (!doc.replaying) recordHistory(doc, line, out, empty, selBody, selCurve);
     doc.state.historyRevision = doc.scene.revision();
     return out;
 }

@@ -423,22 +423,25 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             if (ti != bi && op == BooleanOp::Union) copies.insert(copies.begin(), world);
             if (ti != bi && op == BooleanOp::Subtract) copies.insert(copies.begin(), world);
             std::size_t done = 0;
+            const bool wasClosed = openEdgeCount(target.mesh) == 0;
             for (MeshData& m : copies) {
                 const Body tool = meshBody("tool", std::move(m));
                 std::string e;
-                if (!bodyBoolean(target, tool, op, &e)) {
+                if (!bodyBoolean(target, tool, op, &e) || (wasClosed && openEdgeCount(target.mesh) > 0)) {
+                    if (e.empty()) e = "the result came out with holes";
                     doc.scene.undo();
-                    return out.fail("The " + what + " pattern's copy " + std::to_string(done + 1) + " failed: " + e);
+                    return out.fail("The " + what + " copy " + std::to_string(done + 1) + " couldn't be " +
+                                    (op == BooleanOp::Union ? "joined" : "cut") + ": " + e + " (nothing changed)");
                 }
                 ++done;
             }
-            if (ti != bi) { // the original was used up
-                doc.scene.bodies().erase(doc.scene.bodies().begin() + bi);
-                if (doc.selectedBody == bi) doc.selectedBody = -1;
-            }
+            const int targetAt = ti > bi ? ti - 1 : ti; // where the target is once the original goes
+            if (ti != bi) doc.scene.bodies().erase(doc.scene.bodies().begin() + bi); // the original was used up
+            doc.selectedBody = targetAt;
+            doc.selectedCurve = doc.selectedImage = -1;
             doc.scene.touchBodies();
             doc.dirty = true;
-            const Body& t = doc.scene.bodies()[static_cast<std::size_t>(ti > bi && ti != bi ? ti - 1 : ti)];
+            const Body& t = doc.scene.bodies()[static_cast<std::size_t>(targetAt)];
             out.say(std::string(op == BooleanOp::Union ? "Joined " : "Cut ") + std::to_string(done) + " copies of " + src.name + " (" + what + ")" +
                     (op == BooleanOp::Union ? " into " : " from ") + t.name + ": " + closedText(t.mesh));
             return out;
@@ -613,6 +616,9 @@ bool regenerate(Document& doc, const std::vector<HistoryStep>& steps, CommandOut
     for (std::size_t k = 0; k < steps.size(); ++k) {
         doc.apiMillimeters = steps[k].millimetres;
         doc.state.units.unit = steps[k].unit;
+        // The selection the step ran with.
+        doc.selectedBody = steps[k].selectedBody.empty() ? -1 : bodyNamed(doc, steps[k].selectedBody);
+        doc.selectedCurve = steps[k].selectedCurve.empty() ? -1 : curveNamed(doc, steps[k].selectedCurve);
         const CommandOutput r = executeCommand(doc, steps[k].line, nullptr);
         if (!r.ok) {
             doc.replaying = false;
@@ -690,6 +696,8 @@ CommandOutput runHistoryCommand(Document& doc, const std::string& cmd, const std
             step.unit = st.units.unit;
             if (sub == "edit") {
                 step.undoable = steps[k].undoable;
+                step.selectedBody = steps[k].selectedBody; // the step's selection stays
+                step.selectedCurve = steps[k].selectedCurve;
                 step.millimetres = false;
                 steps[k] = step;
             } else

@@ -175,6 +175,7 @@ TEST_CASE("SLICE writes G-code: heats, homes, layer by layer, inside the part's 
     CHECK(lo < 128.0 - 9.0); // the outer wall is half a line inside the edge
     std::filesystem::remove(path);
     CHECK(!run(d, "SLICE \"Block 1\"").ok); // no TO
+    CHECK(!run(d, "SLICE \"Block 1\" TO " + path + " LAYER 1").ok); // thicker than the line can be laid
 }
 
 TEST_CASE("EXPORT .3mf writes a 3MF package the slicers read") {

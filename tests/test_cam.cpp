@@ -5,6 +5,7 @@
 #include "core/Document.hpp"
 #include "core/Scene.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -383,4 +384,22 @@ TEST_CASE("CAM commands refuse what they can't do") {
     CHECK(d.state.cam.ops.empty());
     REQUIRE(run(d, "CAM CLEAR").ok);
     CHECK(d.state.cam.empty());
+}
+
+TEST_CASE("CAM simulation: wide stepover links don't gouge edges; tiny and huge tools in one job stay quick and exact") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10 @0,0,0").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 0 TOP 0").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 30").ok);
+    REQUIRE(run(d, "CAM TOOL 2 FLAT 0.1").ok);
+    REQUIRE(run(d, "CAM TOOL 3 BALL 2").ok);
+    REQUIRE(run(d, "CAM CONTOUR TOOL 1").ok);
+    REQUIRE(run(d, "CAM CONTOUR TOOL 2 STEPDOWN 5").ok);
+    REQUIRE(run(d, "CAM PARALLEL TOOL 3 STEPOVER 3").ok); // passes 3 mm apart, linked over the block's edges
+    const auto t0 = std::chrono::steady_clock::now();
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 20.0);
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
 }

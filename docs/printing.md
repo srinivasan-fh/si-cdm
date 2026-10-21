@@ -90,6 +90,9 @@ SLICE ["body"] TO part.gcode [LAYER h] [WIDTH w] [INFILL %] [WALLS n] [TOP n] [B
 | Filament | 1.75 mm |
 | Retraction | 0.8 mm |
 
+The layer height can be at most 80% of the line width. A thicker layer can't be squashed onto
+the one below it.
+
 The slicer works in these steps:
 
 1. **Layers:** the part is cut at the middle of each layer. The cut segments are chained into closed

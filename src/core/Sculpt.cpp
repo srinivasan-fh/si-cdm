@@ -2847,7 +2847,27 @@ std::size_t shellCount(const MeshData& m) {
     return roots.size();
 }
 
-bool robustBoolean(MeshData& a, const MeshData& tool, BooleanOp op) {
+namespace {
+
+// Welded, with the needles and caps (zero-area slivers) an earlier boolean left taken
+// out: fed to the next boolean, they come back as holes. The nudged retries leave
+// steps a hair high where faces were coplanar: edges under 2e-5 of the size go too.
+MeshData cleanForBoolean(const MeshData& m) {
+    if (m.indices.empty()) return m;
+    Body b;
+    b.mesh = m;
+    SculptMesh sm(b);
+    const AABB box = m.bounds();
+    sm.collapseShort(length(box.max - box.min) * 2e-5f, {}, 0.0f, false); // a corner moves a hair at most
+    sm.writeTo(b, true, 40.0f);
+    return std::move(b.mesh);
+}
+
+} // namespace
+
+bool robustBoolean(MeshData& aIn, const MeshData& toolIn, BooleanOp op) {
+    MeshData a = cleanForBoolean(aIn);
+    const MeshData tool = cleanForBoolean(toolIn);
     // Closed once welded (round primitives have seams of nearly equal points); the
     // cutters close up within the boolean.
     Body input;
@@ -2890,7 +2910,7 @@ bool robustBoolean(MeshData& a, const MeshData& tool, BooleanOp op) {
             if (meshBoolean(r, t, op) && (!closedInput || openEdgeCount(r) == 0) && shellCount(r) < apart) best = std::move(r);
         }
     }
-    a = std::move(best);
+    aIn = cleanForBoolean(best);
     return true;
 }
 

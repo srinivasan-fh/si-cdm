@@ -328,3 +328,31 @@ TEST_CASE("Feature history: recorded, edited, inserted, deleted, regenerated, un
     CHECK(d.state.history.empty());
     CHECK(d.state.cam.empty());
 }
+
+TEST_CASE("Booleans on boolean results stay closed: a pattern cut from its own copies, then mirrored and joined") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10 @0,0,0").ok);
+    REQUIRE(run(d, "PATTERN \"Block 1\" LINEAR 3 SPACING 5 UNION").ok); // x -5 .. 15
+    CHECK(closed(d.scene.bodies()[0]));
+    REQUIRE(run(d, "PATTERN \"Block 1\" LINEAR 3 SPACING 5 SUBTRACT \"Block 1\"").ok); // leaves x -5 .. 0
+    CHECK(closed(d.scene.bodies()[0]));
+    CHECK_NEAR(volumeOf(d.scene.bodies()[0]), 500.0, 0.5);
+    REQUIRE(run(d, "MIRROR \"Block 1\" PLANE YZ UNION").ok); // x -5 .. 5
+    CHECK(closed(d.scene.bodies()[0]));
+    CHECK_NEAR(volumeOf(d.scene.bodies()[0]), 1000.0, 0.5);
+    CHECK(text(run(d, "PRINTCHECK")).find("ready to print") != std::string::npos);
+}
+
+TEST_CASE("REGEN replays what was selected by a click (not a command) when each step ran") {
+    Document d;
+    REQUIRE(run(d, "BOX 20 20 20 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 20 20 20 @50,0,0").ok);
+    d.selectedBody = 0; // a click in the view: no SELECT command
+    REQUIRE(run(d, "FILLET RADIUS 3").ok);
+    const double rounded = volumeOf(*named(d, "Block 1"));
+    CHECK(rounded < 7999.0);
+    d.selectedBody = 1;
+    REQUIRE(run(d, "REGEN").ok);
+    CHECK_NEAR(volumeOf(*named(d, "Block 1")), rounded, 1.0); // the first block again, not the selected one
+    CHECK_NEAR(volumeOf(*named(d, "Block 2")), 8000.0, 1e-3);
+}

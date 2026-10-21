@@ -376,6 +376,8 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             if (!step.undoable) j.set("undoable", false);
             if (step.millimetres) j.set("mm", true);
             j.set("unit", unitInfo(step.unit).symbol);
+            if (!step.selectedBody.empty()) j.set("body", step.selectedBody);
+            if (!step.selectedCurve.empty()) j.set("curve", step.selectedCurve);
             h.push(j);
         }
         doc.set("history", h);
@@ -565,6 +567,8 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         step.undoable = j["undoable"].asBool(true);
         step.millimetres = j["mm"].asBool(false);
         if (const auto u = parseUnitName(j["unit"].asString("mm"))) step.unit = *u;
+        step.selectedBody = j["body"].asString("");
+        step.selectedCurve = j["curve"].asString("");
         if (!step.line.empty()) st.history.push_back(std::move(step));
     }
     st.historyComplete = (*doc)["history_complete"].asBool(true);
