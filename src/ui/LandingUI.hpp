@@ -206,6 +206,9 @@ private:
     enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
+    // Design menu inputs.
+    float m_revolveAngle = 360.0f, m_filletRadius = 2.0f, m_patternSpacing = 20.0f, m_patternAngle = 360.0f;
+    int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;
     int m_closeAfterSave = -1;    // file tab id to close once Save As succeeds

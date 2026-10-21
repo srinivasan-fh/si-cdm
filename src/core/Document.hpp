@@ -27,6 +27,8 @@ struct Document {
     // Commands built by the MCP tools pass plain numbers in millimetres whatever the
     // document's display units are; set while such a tool runs.
     bool apiMillimeters = false;
+    // Set while REGEN replays the history (the replayed commands aren't recorded again).
+    bool replaying = false;
 
     bool snapGrid = true;
     bool snapPoints = true;

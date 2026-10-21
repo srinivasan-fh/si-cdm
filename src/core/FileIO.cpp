@@ -368,6 +368,19 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     }
     if (state.simDuration > 0.0f) doc.set("simulation_duration", state.simDuration);
     if (!state.cam.empty()) doc.set("cam", camToJson(state.cam));
+    if (!state.history.empty()) {
+        Json h = Json::array();
+        for (const HistoryStep& step : state.history) {
+            Json j = Json::object();
+            j.set("line", step.line);
+            if (!step.undoable) j.set("undoable", false);
+            if (step.millimetres) j.set("mm", true);
+            j.set("unit", unitInfo(step.unit).symbol);
+            h.push(j);
+        }
+        doc.set("history", h);
+        doc.set("history_complete", state.historyComplete);
+    }
 
     return writeFile(path, doc.dump() + "\n", error);
 }
@@ -546,6 +559,15 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);
     if (const Json& cj = (*doc)["cam"]; cj.isObject()) camFromJson(cj, st.cam);
+    for (const Json& j : (*doc)["history"].items()) {
+        HistoryStep step;
+        step.line = j["line"].asString("");
+        step.undoable = j["undoable"].asBool(true);
+        step.millimetres = j["mm"].asBool(false);
+        if (const auto u = parseUnitName(j["unit"].asString("mm"))) step.unit = *u;
+        if (!step.line.empty()) st.history.push_back(std::move(step));
+    }
+    st.historyComplete = (*doc)["history_complete"].asBool(true);
     const Json& du = (*doc)["display_units"];
     st.units = UnitSettings{};
     if (const auto u = parseUnitName(du["unit"].asString("mm"))) st.units.unit = *u;

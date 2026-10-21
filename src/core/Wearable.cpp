@@ -194,6 +194,8 @@ std::optional<float> TriGrid::nearest(const Vec3& q, float reach, bool* front) c
     return std::sqrt(best);
 }
 
+} // namespace
+
 // The surface f = 0 of a field sampled at the centres of a voxel grid (marching
 // tetrahedra, closed wherever the field is), triangles facing the side where
 // f > 0 (`facePositive`) or f < 0.
@@ -259,6 +261,8 @@ MeshData marchTets(const std::vector<float>& f, int nx, int ny, int nz, const Ve
     return out;
 }
 
+namespace {
+
 // Taubin smoothing (alternating shrink / inflate steps): removes voxel terraces
 // without shrinking the surface.
 void taubin(const WMesh& w, std::vector<Vec3>& q, int iterations) {
@@ -278,6 +282,8 @@ void taubin(const WMesh& w, std::vector<Vec3>& q, int iterations) {
     }
 }
 
+} // namespace
+
 // Smooths a marched surface and gives it vertex normals.
 void finishMarched(MeshData& m, int iterations) {
     WMesh w;
@@ -293,6 +299,8 @@ void finishMarched(MeshData& m, int iterations) {
     }
     for (Vertex& v : m.vertices) v.normal = normalize(v.normal);
 }
+
+namespace {
 
 // Writes a world-space mesh into the body, with auto-smoothed normals and the edges
 // sharper than `edgeAngle` (marched surfaces only show their real creases).

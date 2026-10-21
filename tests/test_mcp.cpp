@@ -269,3 +269,26 @@ TEST_CASE("MCP cam sets up, adds tools and operations, simulates and posts") {
     CHECK(tool(s, "cam", R"({"operation":"juggle"})")["isError"].asBool());
     CHECK(tool(s, "cam", R"({"operation":"tool","number":2})")["isError"].asBool());
 }
+
+TEST_CASE("MCP cad revolves, patterns, fillets, weighs and edits the history") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "run_command", R"({"command":"PLANE FRONT"})")["isError"].asBool());
+    CHECK(!tool(s, "run_command", R"({"command":"RECT 10,0 @10,30"})")["isError"].asBool());
+    Json r = tool(s, "cad", R"({"operation":"revolve","curve":"Rectangle 1","angle":360})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("closed") != std::string::npos);
+    r = tool(s, "cad", R"({"operation":"pattern","body":"Revolve 1","type":"linear","count":3,"spacing":50,"direction":[1,0,0]})");
+    CHECK(!r["isError"].asBool());
+    CHECK(d.scene.bodies().size() == 3);
+    r = tool(s, "cad", R"({"operation":"fillet","body":"Revolve 1","radius":2})");
+    CHECK(!r["isError"].asBool());
+    r = tool(s, "cad", R"({"operation":"massprops","body":"Revolve 1","material":"aluminium"})");
+    CHECK(r["content"][0]["text"].asString().find("centre of mass") != std::string::npos);
+    r = tool(s, "cad", R"j({"operation":"measure","body":"Revolve 1","other":"Revolve 1 (2)"})j");
+    CHECK(r["content"][0]["text"].asString().find("Closest distance") != std::string::npos);
+    r = tool(s, "cad", R"({"operation":"history"})");
+    CHECK(r["content"][0]["text"].asString().find("REVOLVE") != std::string::npos);
+    CHECK(tool(s, "cad", R"({"operation":"fillet"})")["isError"].asBool()); // no radius
+    CHECK(tool(s, "cad", R"({"operation":"bend"})")["isError"].asBool());
+}

@@ -85,4 +85,11 @@ struct RemeshOptions {
 bool remeshBodies(Body& target, const std::vector<const Body*>& others, const RemeshOptions& options,
                   std::string* error = nullptr);
 
+// Voxel helpers shared with the other field-based tools (Features.cpp).
+// The surface f = 0 of a field sampled at voxel centres, index (x * ny + y) * nz + z,
+// with triangles facing where f > 0 (`facePositive`) or f < 0.
+MeshData marchTets(const std::vector<float>& f, int nx, int ny, int nz, const Vec3& origin, float h, bool facePositive);
+// Taubin-smooths a marched surface (`iterations`) and gives it vertex normals.
+void finishMarched(MeshData& m, int iterations);
+
 } // namespace sicdm
