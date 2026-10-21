@@ -425,10 +425,68 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Design")) {
-        ImGui::MenuItem("Sketch", nullptr, false, false);
-        ImGui::MenuItem("Extrude", nullptr, false, false);
-        ImGui::MenuItem("Revolve", nullptr, false, false);
-        ImGui::MenuItem("Fillet / Chamfer", nullptr, false, false);
+        const bool curve = st.selectedCurve >= 0, body = st.selectedBody >= 0;
+        auto fmtNum = [](float v) {
+            char b[32];
+            std::snprintf(b, sizeof(b), "%g", static_cast<double>(v));
+            return std::string(b);
+        };
+        ImGui::TextDisabled("Sketch features (select a closed curve)");
+        if (ImGui::MenuItem("Extrude 20", nullptr, false, curve)) cmd.commands.push_back("EXTRUDE 20");
+        if (ImGui::BeginMenu("Revolve", curve)) {
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputFloat("degrees", &m_revolveAngle, 15.0f, 90.0f, "%.0f");
+            m_revolveAngle = std::clamp(m_revolveAngle, 1.0f, 360.0f);
+            if (ImGui::MenuItem("About the Vertical Axis")) cmd.commands.push_back("REVOLVE ANGLE " + fmtNum(m_revolveAngle) + " AXIS V");
+            if (ImGui::MenuItem("About the Horizontal Axis")) cmd.commands.push_back("REVOLVE ANGLE " + fmtNum(m_revolveAngle) + " AXIS U");
+            ImGui::EndMenu();
+        }
+        ImGui::TextDisabled("Sweep and loft: SWEEP profile ALONG path, LOFT a b AT d");
+        ImGui::Separator();
+        ImGui::TextDisabled("Body features (select a body)");
+        if (ImGui::BeginMenu("Fillet (Round Edges)", body)) {
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputFloat("radius mm", &m_filletRadius, 0.5f, 1.0f, "%.2f");
+            m_filletRadius = std::max(m_filletRadius, 0.1f);
+            if (ImGui::MenuItem("Round the Outside Edges")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius));
+            if (ImGui::MenuItem("Fill the Inside Corners")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius) + " CONCAVE");
+            if (ImGui::MenuItem("Both")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius) + " BOTH");
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Pattern", body)) {
+            static const char* const kAxes[] = {"X", "Y", "Z"};
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputInt("count", &m_patternCount);
+            m_patternCount = std::clamp(m_patternCount, 2, 500);
+            ImGui::SetNextItemWidth(120);
+            ImGui::Combo("axis", &m_patternAxis, kAxes, 3);
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputFloat("spacing mm", &m_patternSpacing, 1.0f, 10.0f, "%.2f");
+            ImGui::SetNextItemWidth(120);
+            ImGui::InputFloat("total degrees", &m_patternAngle, 15.0f, 90.0f, "%.0f");
+            m_patternAngle = std::clamp(m_patternAngle, 1.0f, 360.0f);
+            const std::string n = std::to_string(m_patternCount), ax = kAxes[m_patternAxis];
+            if (ImGui::MenuItem("Linear")) cmd.commands.push_back("PATTERN LINEAR " + n + " SPACING " + fmtNum(m_patternSpacing) + " DIR " + ax);
+            if (ImGui::MenuItem("Circular (about the origin)"))
+                cmd.commands.push_back("PATTERN CIRCULAR " + n + " ANGLE " + fmtNum(m_patternAngle) + " AXIS " + ax);
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Mirror", body)) {
+            for (const char* p : {"YZ", "XZ", "XY"}) {
+                if (ImGui::MenuItem((std::string("Copy across ") + p).c_str())) cmd.commands.push_back(std::string("MIRROR PLANE ") + p);
+                if (ImGui::MenuItem((std::string("Join across ") + p + " (symmetric)").c_str()))
+                    cmd.commands.push_back(std::string("MIRROR PLANE ") + p + " UNION");
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Mass Properties", body)) {
+            for (const char* m : {"steel", "aluminium", "brass", "titanium", "abs", "pla", "wood"})
+                if (ImGui::MenuItem(m)) cmd.commands.push_back(std::string("MASSPROPS MATERIAL ") + m);
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Feature History")) cmd.commands.push_back("HISTORY");
+        if (ImGui::MenuItem("Regenerate")) cmd.commands.push_back("REGEN");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Manufacture")) {

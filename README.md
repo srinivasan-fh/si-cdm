@@ -208,6 +208,32 @@ JOINT "Visor" TO "Helmet" AT 0,-120,1700 AXIS X RANGE 0 80      LIGHTEN "Back Pl
 
 Details: [docs/armour.md](docs/armour.md).
 
+## Part features (CAD)
+
+The *Design* menu (or the command line) adds part features to sketches and solids:
+
+- **Revolve, sweep and loft:** from closed sketch curves.
+- **Pattern:** linear, in rows, or circular. The copies can be joined into a part or cut from it.
+- **Mirror.**
+- **Fillets:** rolling-ball rounds of convex and concave edges, accurate to hundredths of a
+  millimetre.
+- **Mass properties:** volume, mass, centre of mass and the inertia tensor.
+- **Measure:** distances between points and between bodies.
+
+Every model command goes into a **feature history**. Edit, insert or delete a step and the part
+is rebuilt (`REGEN`), as in a parametric CAD system.
+
+```text
+REVOLVE "Profile" AXIS V        SWEEP "Circle 3" ALONG "Path"        LOFT "Base" "Neck" AT 40 SMOOTH
+PATTERN "Boss" CIRCULAR 6 AXIS Z      PATTERN "Pin" LINEAR 3 SPACING 20 SUBTRACT "Plate"
+MIRROR "Half" PLANE YZ UNION    FILLET "Housing" RADIUS 2 BOTH       MASSPROPS "Housing" MATERIAL aluminium
+HISTORY      HISTORY EDIT 2 HOLE "Block 1" AT -20,0,15 DIAMETER 10 THROUGH      REGEN
+```
+
+![Part features: a revolved vase, a loft, a swept pipe, a rounded block with a pattern of holes](docs/cad-features.png)
+
+Details: [docs/cad.md](docs/cad.md).
+
 ## 3D printing
 
 *Manufacture → 3D Print* (or the command line) gets a part ready for a printer.
@@ -444,6 +470,7 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 `sculpt` (brushes, cuts, booleans), `armor` (shell, armour, joints, lattice, interference),
 `print` (printability check, repair, orient, slice to G-code, 3MF),
 `cam` (CNC milling: setup, tools, operations, simulation, G-code post),
+`cad` (revolve, sweep, loft, pattern, mirror, fillet, mass properties, measure, feature history),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

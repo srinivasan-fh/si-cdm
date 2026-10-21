@@ -12,8 +12,10 @@
 #include "core/Scene.hpp"
 #include "core/Units.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace sicdm {
 
@@ -23,11 +25,23 @@ FileKind fileKindOf(const std::string& path);
 const char* fileKindName(FileKind k);
 
 // Document-level state saved alongside the scene.
+// One model-building command in the feature history (REGEN replays them in order).
+struct HistoryStep {
+    std::string line;
+    bool undoable = true;     // an UNDO takes it back
+    bool millimetres = false; // typed by an MCP tool (bare numbers in mm)
+    LengthUnit unit = LengthUnit::Millimeter; // the units its lengths were typed in
+};
+
 struct ProjectState {
     SketchPlane plane = SketchPlane::Top;
     UnitSettings units{};     // display / input units (geometry is always stored in mm)
     float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
     CamJob cam;               // CAM: setup, tools and operations (toolpaths are remade)
+    std::vector<HistoryStep> history;     // the feature history
+    std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)
+    bool historyComplete = true;          // false: the model was also changed outside commands
+    std::uint64_t historyRevision = 0;    // the scene's revision after the last command (not saved)
 };
 
 bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error);

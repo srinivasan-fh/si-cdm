@@ -1,0 +1,20 @@
+# Part features: a revolved vase, a swept pipe, a loft, and a rounded block with a pattern of holes.
+NEW
+PLANE FRONT
+PLINE 0,0 20,0 23,8 17,28 11,42 15,58 0,58 CLOSE
+REVOLVE "Polyline 1" AXIS V
+PLANE TOP
+PLINE 50,30 90,30 90,60 130,60
+PLANE RIGHT
+CIRCLE 0,0 5
+SWEEP "Circle 3" ALONG "Polyline 2"
+PLANE TOP
+CIRCLE -70,0 15
+RECT -80,-10 @20,20
+CIRCLE -70,0 8
+LOFT "Circle 4" "Rectangle 5" AT 30 "Circle 6" AT 60
+BOX 50 30 20 @90,-50,0
+FILLET "Block 4" RADIUS 4
+CYLINDER 3 30 @75,-50,-5
+PATTERN "Cylinder 5" LINEAR 3 SPACING 15 DIR X SUBTRACT "Block 4"
+MASSPROPS "Block 4" MATERIAL aluminium

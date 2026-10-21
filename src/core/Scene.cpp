@@ -217,6 +217,18 @@ void Scene::assign(Scene&& other) {
     m_sketch.touch();
 }
 
+void Scene::restore(Scene&& other) {
+    m_bodies = std::move(other.m_bodies);
+    m_undo = std::move(other.m_undo);
+    m_redo = std::move(other.m_redo);
+    m_images = std::move(other.m_images);
+    m_motions = std::move(other.m_motions);
+    m_physics = other.m_physics;
+    m_sketch = std::move(other.m_sketch);
+    m_revision = other.m_revision;
+    m_imageRevision = other.m_imageRevision;
+}
+
 AABB Body::bounds() const noexcept {
     AABB b = mesh.bounds();
     if (b.valid()) {

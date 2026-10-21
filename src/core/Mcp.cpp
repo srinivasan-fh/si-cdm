@@ -481,6 +481,47 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("operation", prop("string", "revolve | sweep | loft | pattern | mirror | fillet | massprops | measure | history | regen | "
+                                          "history_edit | history_insert | history_delete"));
+        p.set("curve", prop("string", "revolve: the closed sketch curve; sweep: the profile"));
+        p.set("path", prop("string", "sweep: the path curve"));
+        p.set("sections", prop("array", "loft: the closed sketch curves, in order"));
+        p.set("offsets", prop("array", "loft: each section's offset along its plane's normal, mm"));
+        p.set("ruled", prop("boolean", "loft: straight between sections (default smooth)"));
+        p.set("angle", prop("number", "revolve / circular pattern: degrees (default 360)"));
+        p.set("axis", prop("string", "revolve: u, v or a sketch line's name; pattern: x, y or z"));
+        p.set("body", prop("string", "pattern / mirror / fillet / massprops / measure: the body (default: the selection)"));
+        p.set("type", prop("string", "pattern: linear or circular"));
+        p.set("count", prop("number", "pattern: copies including the original"));
+        p.set("spacing", prop("number", "linear pattern: mm between copies"));
+        p.set("direction", prop("array", "linear pattern: [x, y, z]"));
+        p.set("rows", prop("number", "linear pattern: rows in a second direction"));
+        p.set("spacing2", prop("number", "linear pattern: mm between rows"));
+        p.set("direction2", prop("array", "linear pattern: the rows' direction [x, y, z]"));
+        p.set("center", prop("array", "circular pattern: a point on the axis [x, y, z]; mirror: a point on the plane"));
+        p.set("union", prop("string", "pattern: join the copies into this body"));
+        p.set("subtract", prop("string", "pattern: cut the copies from this body"));
+        p.set("plane", prop("string", "mirror: xy, yz or xz (default yz)"));
+        p.set("normal", prop("array", "mirror: the plane's normal [x, y, z]"));
+        p.set("move", prop("boolean", "mirror: flip the body itself instead of making a copy"));
+        p.set("join", prop("boolean", "mirror: join the copy to the body"));
+        p.set("radius", prop("number", "fillet: the ball's radius, mm"));
+        p.set("edges", prop("string", "fillet: convex (default), concave or both"));
+        p.set("material", prop("string", "massprops: steel, aluminium, brass, copper, titanium, abs, pla, wood, ..."));
+        p.set("density", prop("number", "massprops: g/cm3"));
+        p.set("other", prop("string", "measure: the second body"));
+        p.set("points", prop("array", "measure: two points [[x, y, z], [x, y, z]]"));
+        p.set("step", prop("number", "history_edit / insert / delete: the step's number (1-based)"));
+        p.set("command", prop("string", "history_edit / insert: the new command line"));
+        p.set("force", prop("boolean", "regen: rebuild even if the model was changed outside commands"));
+        tools.push(tool("cad",
+                        "Part features: revolve, sweep and loft sketch curves into solids; linear and circular patterns; mirror; "
+                        "rolling-ball fillets; mass properties (volume, mass, centre of mass, inertia); measure distances; and "
+                        "the feature history (list, edit, insert, delete a step, regenerate).",
+                        p, {"operation"}));
+    }
+    {
+        Json p = Json::object();
         p.set("path", prop("string", "File path (.sicdm). Optional for save when the project already has a path"));
         tools.push(tool("save_project", "Save the project.", p, {}));
         Json o = Json::object();
@@ -814,6 +855,85 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine("EXPORT " + quote(a["path"].asString()));
         }
         return textResult("operation is one of check, repair, orient, slice, export_3mf", true);
+    }
+    if (name == "cad") {
+        const std::string op = a["operation"].asString();
+        auto opt = [&](const char* key, const char* word) {
+            return a[key].isNumber() ? std::string(" ") + word + " " + num(a[key].asNumber()) : std::string();
+        };
+        auto named = [&](const char* key) { return a[key].isString() ? " " + quote(a[key].asString()) : std::string(); };
+        auto vec = [&](const char* key) {
+            const Json& v = a[key];
+            return v.isArray() && v.size() == 3 ? num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber()) : std::string();
+        };
+        if (op == "revolve") {
+            std::string line = "REVOLVE" + named("curve") + opt("angle", "ANGLE");
+            if (a["axis"].isString()) {
+                const std::string ax = a["axis"].asString();
+                line += " AXIS " + (ax == "u" || ax == "v" || ax == "U" || ax == "V" ? ax : quote(ax));
+            }
+            return runLine(line);
+        }
+        if (op == "sweep") {
+            if (!a["path"].isString()) return textResult("sweep needs 'path'", true);
+            return runLine("SWEEP" + named("curve") + " ALONG " + quote(a["path"].asString()));
+        }
+        if (op == "loft") {
+            if (!a["sections"].isArray() || a["sections"].size() < 2) return textResult("loft needs two 'sections' or more", true);
+            std::string line = "LOFT";
+            for (std::size_t k = 0; k < a["sections"].size(); ++k) {
+                line += " " + quote(a["sections"][k].asString());
+                if (a["offsets"].isArray() && k < a["offsets"].size()) line += " AT " + num(a["offsets"][k].asNumber());
+            }
+            return runLine(line + (a["ruled"].asBool() ? " RULED" : ""));
+        }
+        if (op == "pattern") {
+            const std::string type = a["type"].asString("linear");
+            if (!a["count"].isNumber()) return textResult("pattern needs 'count'", true);
+            std::string line = "PATTERN" + named("body") + (type == "circular" ? " CIRCULAR " : " LINEAR ") + num(a["count"].asNumber());
+            line += opt("spacing", "SPACING") + opt("rows", "ROWS") + opt("spacing2", "SPACING2") + opt("angle", "ANGLE");
+            if (!vec("direction").empty()) line += " DIR " + vec("direction");
+            if (!vec("direction2").empty()) line += " DIR2 " + vec("direction2");
+            if (a["axis"].isString()) line += " AXIS " + a["axis"].asString();
+            if (!vec("center").empty()) line += " AT " + vec("center");
+            if (a["union"].isString()) line += " UNION " + quote(a["union"].asString());
+            if (a["subtract"].isString()) line += " SUBTRACT " + quote(a["subtract"].asString());
+            return runLine(line);
+        }
+        if (op == "mirror") {
+            std::string line = "MIRROR" + named("body");
+            if (a["plane"].isString()) line += " PLANE " + a["plane"].asString();
+            if (!vec("center").empty()) line += " AT " + vec("center");
+            if (!vec("normal").empty()) line += " NORMAL " + vec("normal");
+            if (a["move"].asBool()) line += " MOVE";
+            if (a["join"].asBool()) line += " UNION";
+            return runLine(line);
+        }
+        if (op == "fillet") {
+            if (!a["radius"].isNumber()) return textResult("fillet needs 'radius'", true);
+            return runLine("FILLET" + named("body") + opt("radius", "RADIUS") + (a["edges"].isString() ? " " + toUpper(a["edges"].asString()) : std::string()));
+        }
+        if (op == "massprops")
+            return runLine("MASSPROPS" + named("body") + opt("density", "DENSITY") + (a["material"].isString() ? " MATERIAL " + a["material"].asString() : std::string()));
+        if (op == "measure") {
+            if (a["points"].isArray() && a["points"].size() == 2) {
+                auto pt = [&](const Json& v) { return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber()); };
+                return runLine("MEASURE " + pt(a["points"][0]) + " " + pt(a["points"][1]));
+            }
+            if (!a["other"].isString()) return textResult("measure needs 'points', or 'body' and 'other'", true);
+            return runLine("MEASURE" + named("body") + named("other"));
+        }
+        if (op == "history") return runLine("HISTORY");
+        if (op == "regen") return runLine(std::string("REGEN") + (a["force"].asBool() ? " FORCE" : ""));
+        if (op == "history_edit" || op == "history_insert" || op == "history_delete") {
+            if (!a["step"].isNumber()) return textResult(op + " needs 'step'", true);
+            const std::string what = op.substr(8);
+            if (what != "delete" && !a["command"].isString()) return textResult(op + " needs 'command'", true);
+            return runLine("HISTORY " + toUpper(what) + " " + num(a["step"].asNumber()) + (what != "delete" ? " " + a["command"].asString() : std::string()));
+        }
+        return textResult("operation is one of revolve, sweep, loft, pattern, mirror, fillet, massprops, measure, history, regen, history_edit, "
+                          "history_insert, history_delete",
+                          true);
     }
     if (name == "cam") {
         const std::string op = a["operation"].asString();

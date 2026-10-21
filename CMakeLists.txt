@@ -48,6 +48,8 @@ add_library(sicdm_core STATIC
     src/core/Section.cpp
     src/core/Cam.cpp
     src/core/CamCommand.cpp
+    src/core/FeatureCommand.cpp
+    src/core/Features.cpp
     src/core/Library.cpp
     src/core/CommandEngine.cpp
     src/core/FileIO.cpp

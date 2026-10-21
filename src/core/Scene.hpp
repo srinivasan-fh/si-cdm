@@ -92,6 +92,9 @@ public:
     void clear();
     // Takes over another scene's content with fresh change stamps.
     void assign(Scene&& other);
+    // Puts back a copy taken earlier in the same command, change stamps and all (nothing
+    // was drawn in between, so the views still hold what it describes).
+    void restore(Scene&& other);
 
     // Motions played by the Simulation window (saved with the project).
     std::vector<Motion>& motions() noexcept { return m_motions; }

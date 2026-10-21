@@ -5,6 +5,7 @@
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
 #include "core/CamCommand.hpp"
+#include "core/FeatureCommand.hpp"
 #include "core/Print.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
@@ -278,10 +279,77 @@ namespace {
 CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view);
 } // namespace
 
+namespace {
+
+// The commands that build the model: the feature history records them, and REGEN
+// replays them. SELECT and PLANE are there because later commands default to them.
+bool historyCommand(const std::string& cmd) {
+    static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
+                                         "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
+                                         "MIRROR",   "FILLET",  "SCULPT",  "REMESH",   "MASK",      "SUBDIVIDE", "SYMMETRIZE", "DECIMATE", "HOLE",
+                                         "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
+                                         "PART",     "PARAM",   "ROTATE",  "SCALE",    "ERASE",     "MOVE",    "SELECT",   "REPAIR",  "ORIENT",
+                                         "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS"};
+    for (const char* k : kModel)
+        if (cmd == k) return true;
+    return false;
+}
+
+void recordHistory(Document& doc, std::string_view line, const CommandOutput& out, bool startedEmpty) {
+    ProjectState& st = doc.state;
+    if (!out.ok) return;
+    const ParsedCommand pc = tokenizeCommand(line);
+    const CommandSpec* spec = findCommand(pc.name);
+    if (!spec) return;
+    const std::string cmd = spec->name;
+    if (cmd == "NEW") {
+        st.history.clear();
+        st.historyRedo.clear();
+        st.historyComplete = true;
+        return;
+    }
+    if (cmd == "UNDO") { // the last step an UNDO takes back goes to the redo list
+        for (std::size_t i = st.history.size(); i-- > 0;)
+            if (st.history[i].undoable) {
+                st.historyRedo.push_back(st.history[i]);
+                st.history.erase(st.history.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
+        return;
+    }
+    if (cmd == "REDO") {
+        if (!st.historyRedo.empty()) {
+            st.history.push_back(st.historyRedo.back());
+            st.historyRedo.pop_back();
+        }
+        return;
+    }
+    if (!historyCommand(cmd)) return;
+    if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
+    if (st.history.empty() && st.plane != SketchPlane::Top && cmd != "PLANE") // the plane the history starts on
+        st.history.push_back({std::string("PLANE ") + planeName(st.plane), false, false, st.units.unit});
+    HistoryStep step;
+    step.line = std::string(line);
+    step.undoable = cmd != "SELECT" && cmd != "PLANE";
+    step.millimetres = doc.apiMillimeters;
+    step.unit = st.units.unit;
+    st.history.push_back(std::move(step));
+    st.historyRedo.clear();
+}
+
+} // namespace
+
 CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* view) {
+    // The model changed since the last command, by a brush stroke, a drag or a panel:
+    // the history no longer rebuilds it exactly.
+    if (!doc.replaying && doc.state.historyRevision != 0 && doc.scene.revision() != doc.state.historyRevision && !doc.state.history.empty())
+        doc.state.historyComplete = false;
+    const bool empty = doc.scene.bodies().empty() && doc.scene.sketch().curves().empty() && doc.scene.images().empty();
     CommandOutput out = runCommand(doc, line, view);
     // An edit that kept an undo snapshot and succeeded: record the state it left.
     doc.scene.sealUndo();
+    if (!doc.replaying) recordHistory(doc, line, out, empty);
+    doc.state.historyRevision = doc.scene.revision();
     return out;
 }
 
@@ -459,6 +527,11 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.dirty = false;
         doc.clearSelection();
         doc.primitiveSerial = 0;
+        doc.state.cam = CamJob{}; // the job belonged to the old parts
+        doc.state.history.clear();
+        doc.state.historyRedo.clear();
+        doc.state.historyComplete = true;
+        doc.state.simDuration = 0.0f;
         out.documentReplaced = true;
         out.say("New empty project");
         return out;
@@ -1302,6 +1375,10 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         return out;
     }
     if (cmd == "CAM") return runCamCommand(doc, a, pc.quoted);
+    if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
+        cmd == "MEASURE")
+        return runFeatureCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "HISTORY" || cmd == "REGEN") return runHistoryCommand(doc, cmd, a, pc.quoted);
     if (cmd == "PRINTCHECK" || cmd == "REPAIR" || cmd == "ORIENT" || cmd == "SLICE") {
         // PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]      REPAIR [body]      ORIENT [body] [OVERHANG deg]
         // SLICE [body] TO path.gcode [LAYER h] [WIDTH w] [INFILL %] [WALLS n] [TOP n] [BOTTOM n] [NOZZLE t] [BED t]

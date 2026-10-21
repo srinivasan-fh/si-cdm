@@ -81,6 +81,21 @@ constexpr CommandSpec kCommands[] = {
     {"EXPORT", "EXP", "EXPORT path.stl|.obj|.3mf|.dxf|.svg", "STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane"},
     {"RUN", "SCRIPT", "RUN path.txt", "Run the commands in a text file, one a line (# starts a comment)"},
     // 3D printing
+    {"REVOLVE", "REV", "REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [KEEP]",
+     "Turn a closed sketch curve about an axis in its plane into a solid (360: closed; less: capped)"},
+    {"SWEEP", "", "SWEEP [profile] ALONG path [KEEP]", "Carry a closed profile along a path curve, square to it, mitred at corners"},
+    {"LOFT", "", "LOFT \"section\" [AT d] \"section\" [AT d] ... [SMOOTH|RULED] [KEEP]",
+     "A solid through closed sections (AT: offset along each section's plane normal)"},
+    {"PATTERN", "ARRAY", "PATTERN [body] LINEAR n SPACING d [DIR x,y,z] [ROWS m SPACING2 d DIR2 x,y,z] | CIRCULAR n [ANGLE a] [AXIS X|Y|Z] [AT x,y,z] "
+     "[UNION|SUBTRACT \"target\"]", "Linear or circular copies of a body, or joined into / cut from a target"},
+    {"MIRROR", "", "MIRROR [body] [PLANE XY|YZ|XZ] [AT x,y,z] [NORMAL x,y,z] [COPY|MOVE] [UNION]", "Mirror a body across a plane"},
+    {"FILLET", "ROUND", "FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v]", "Round a solid's edges with a rolling ball"},
+    {"MASSPROPS", "MASS", "MASSPROPS [body] [DENSITY g/cm3 | MATERIAL name]",
+     "Volume, area, mass, centre of mass, inertia tensor and principal moments"},
+    {"MEASURE", "DIST", "MEASURE x,y,z x,y,z | MEASURE \"body\" \"body\"", "Distance between two points, or the closest distance between two bodies"},
+    {"HISTORY", "HIST", "HISTORY [LIST] | HISTORY EDIT n command | HISTORY INSERT n command | HISTORY DELETE n | HISTORY CLEAR",
+     "The feature history: the model commands in order; edit, insert or delete a step and the model is rebuilt"},
+    {"REGEN", "REGENERATE", "REGEN [FORCE]", "Rebuild the model from its feature history"},
     {"CAM", "MILL MACHINE", "CAM SETUP|TOOL|FACE|ROUGH|POCKET|CONTOUR|PARALLEL|WATERLINE|DRILL|BORE|HOLES|TOOLS|LIST|SIMULATE|POST ...",
      "CNC milling: CAM SETUP [body] [STOCK margin|x,y,z] [MATERIAL m] [ORIGIN CORNER|CENTRE|MODEL]; CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|"
      "CHAMFER|TAP d; operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d]...; CAM SIMULATE [SHOW]; "
