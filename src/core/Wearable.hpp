@@ -12,6 +12,8 @@
 //   Joints       hinge or ball joints that articulate one part against another
 //   Lighten      hollows a thick part to a skin and fills it with a gyroid lattice
 //                (generative lightweighting for printed parts)
+//   Remesh       fuses parts into one evenly meshed solid with filleted joins
+//                (block out a form from primitives, then sculpt it)
 
 #include "core/Geometry.hpp"
 #include "core/Math.hpp"
@@ -70,5 +72,17 @@ struct LightenOptions {
 // Replaces the inside of a closed body with a gyroid lattice (or a void).
 bool lightenBody(Body& body, const LightenOptions& options, std::string* error = nullptr, double* volumeBefore = nullptr,
                  double* volumeAfter = nullptr);
+
+struct RemeshOptions {
+    float voxel = 0.0f; // mm, voxel size (0: the parts' size / 160); the new triangles are about this size
+    float blend = 0.0f; // mm, fillet radius where parts meet (0: a sharp union)
+    float smooth = -1.0f; // mm, rounds over detail finer than this (facets, dents); < 0: one voxel
+};
+// Voxel remesh (like a DynaMesh): fuses the target with `others` (overlapping or
+// not) into one closed solid with evenly sized triangles, and replaces the target's
+// mesh. Open or self-overlapping input is fine: inside is what a flood from outside
+// cannot reach.
+bool remeshBodies(Body& target, const std::vector<const Body*>& others, const RemeshOptions& options,
+                  std::string* error = nullptr);
 
 } // namespace sicdm

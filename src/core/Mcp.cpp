@@ -345,7 +345,7 @@ Json McpServer::toolDefinitions() {
         p.set("operation", prop("string",
                                 "A brush: draw (pull; invert pushes), clay (add), carve (remove), inflate, grab, pinch, "
                                 "crease, smooth, flatten, scrape (trim) -- or hole, pocket, channel, trim (knife), boss "
-                                "(add volume), boolean, refine, undo"));
+                                "(add volume), boolean, refine, remesh (voxel: fuse 'body' with 'others'), undo"));
         p.set("body", prop("string", "Body to work on (default: the selection)"));
         p.set("points", prop("array", "Points [[x,y,z], ...] in mm on the surface: the stroke, the hole / pocket / boss "
                                       "position, the channel path or a point of the knife plane"));
@@ -368,6 +368,10 @@ Json McpServer::toolDefinitions() {
         p.set("other", prop("string", "boolean: the second body"));
         p.set("boolean_op", prop("string", "boolean: union|subtract|intersect"));
         p.set("keep", prop("boolean", "boolean: keep the second body (default: it is used up)"));
+        p.set("others", prop("array", "remesh: names of bodies fused into 'body' (they are used up)"));
+        p.set("voxel", prop("number", "remesh: voxel size, mm (default: the size / 160)"));
+        p.set("blend", prop("number", "remesh: fillet radius where parts meet, mm"));
+        p.set("smooth", prop("number", "remesh: rounds over detail finer than this, mm"));
         tools.push(tool("sculpt",
                         "Digital sculpting and CAD cuts on a body's mesh: clay brushes with dynamic topology, exact "
                         "boolean holes, pockets, channels, knife trims, bosses and body unions / subtractions / "
@@ -772,6 +776,11 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!a["body"].isString() || !a["other"].isString()) return textResult("boolean needs 'body' and 'other'", true);
             line = "BOOLEAN " + body + " " + a["boolean_op"].asString("subtract") + " " + quote(a["other"].asString()) +
                    (a["keep"].asBool() ? " KEEP" : "");
+        } else if (op == "remesh") {
+            line = "REMESH " + body;
+            if (a["others"].isArray())
+                for (std::size_t i = 0; i < a["others"].size(); ++i) line += " " + quote(a["others"][i].asString());
+            line += opt("voxel", "VOXEL") + opt("blend", "BLEND") + opt("smooth", "SMOOTH");
         } else if (op == "refine") {
             line = "SCULPT " + body + " REFINE " + num(a["detail"].asNumber(2));
         } else if (op == "hole") {

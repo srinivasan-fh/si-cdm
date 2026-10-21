@@ -1418,7 +1418,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                 if (points.empty()) return doc.scene.undo(), out.fail("SCULPT needs a point on the surface: AT x,y,z");
                 for (const Vec3& q : points) onSurface(q, nullptr);
                 if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
-                sculptStroke(body, points, ss, move.value_or(Vec3{}));
+                sculptStroke(body, surface, points, ss, move.value_or(Vec3{}));
                 ok = true;
                 done = std::string(sculptBrushKey(ss.brush)) + (ss.invert ? " (inverted)" : "") +
                        fmt(" stroke, radius %g", ss.radius);
@@ -1866,6 +1866,103 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         const std::size_t open = openEdgeCount(r.mesh);
         out.say(an + " " + booleanOpKey(op) + " " + bn + fmt(": %g triangles", static_cast<double>(r.mesh.indices.size() / 3)) +
                 (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))) + (keep ? "" : " (" + bn + " used up)"));
+        return out;
+    }
+    if (cmd == "REMESH") {
+        // REMESH [body ["other" ...]] [VOXEL v] [BLEND b] [SMOOTH s]: the others are fused in and used up.
+        RemeshOptions ro;
+        std::vector<std::string> names, words;
+        auto flush = [&] {
+            if (!words.empty()) names.push_back(joinArgs(words));
+            words.clear();
+        };
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (quotedArg(i)) {
+                flush();
+                names.push_back(a[i]);
+            } else if (k == "voxel" || k == "blend" || k == "smooth") {
+                flush();
+                const auto v = i + 1 < a.size() ? parseLength(a[++i]) : std::nullopt;
+                if (!v || *v < 0 || !std::isfinite(*v)) return out.fail(toUpper(k) + " needs a length");
+                (k == "voxel" ? ro.voxel : k == "blend" ? ro.blend : ro.smooth) = static_cast<float>(*v);
+            } else {
+                words.push_back(a[i]);
+            }
+        }
+        flush();
+        std::vector<int> idx;
+        if (names.empty()) idx.push_back(doc.selectedBody);
+        for (const std::string& n : names) {
+            const int b = findBody(doc, n);
+            if (b < 0) return out.fail("No body named " + n);
+            if (std::find(idx.begin(), idx.end(), b) == idx.end()) idx.push_back(b);
+        }
+        auto& bodies = doc.scene.bodies();
+        if (idx[0] < 0 || idx[0] >= static_cast<int>(bodies.size())) return out.fail("Select a body first, or give its name");
+        doc.scene.pushUndo("REMESH " + bodies[static_cast<std::size_t>(idx[0])].name);
+        std::vector<const Body*> others;
+        for (std::size_t k = 1; k < idx.size(); ++k) others.push_back(&bodies[static_cast<std::size_t>(idx[k])]);
+        Body& target = bodies[static_cast<std::size_t>(idx[0])];
+        const std::size_t trisBefore = target.mesh.indices.size() / 3;
+        std::string error;
+        if (!remeshBodies(target, others, ro, &error)) {
+            doc.scene.undo();
+            return out.fail(error);
+        }
+        const std::string name = target.name;
+        const std::size_t tris = target.mesh.indices.size() / 3, open = openEdgeCount(target.mesh);
+        // The fused parts go (highest index first, so the rest keep theirs).
+        std::vector<int> gone(idx.begin() + 1, idx.end());
+        std::sort(gone.rbegin(), gone.rend());
+        for (const int g : gone) {
+            doc.scene.remove(static_cast<std::size_t>(g));
+            if (doc.selectedBody == g) doc.selectedBody = -1;
+            else if (doc.selectedBody > g) --doc.selectedBody;
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        out.say(name + ": remeshed" + (gone.empty() ? "" : fmt(" with %g more", static_cast<double>(gone.size()))) +
+                fmt(", %g triangles", static_cast<double>(tris)) + fmt(" (was %g)", static_cast<double>(trisBefore)) +
+                (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))));
+        return out;
+    }
+    if (cmd == "ROTATE") {
+        // ROTATE [name] rx,ry,rz: the orientation, degrees about X, then Y, then Z, about the body's origin.
+        if (a.empty()) return usage();
+        const auto deg = parseVec3(a.back());
+        if (!deg || !std::isfinite(deg->x) || !std::isfinite(deg->y) || !std::isfinite(deg->z)) return usage();
+        const std::vector<std::string> words(a.begin(), a.end() - 1);
+        const int bi = words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
+        Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (!b.component.empty()) return out.fail(b.name + " is part of " + b.component + ": its pose comes from the component");
+        b.setRotation(*deg);
+        doc.scene.touchBodies();
+        markChanged(doc);
+        out.say("Rotated " + b.name + " to " + fmt("(%g, ", deg->x) + fmt("%g, ", deg->y) + fmt("%g) deg", deg->z));
+        return out;
+    }
+    if (cmd == "SCALE" && !a.empty() && a.back().find(',') != std::string::npos) {
+        // SCALE [name] sx,sy,sz: stretches the body along its own axes, about its origin.
+        const auto k = parseVec3(a.back());
+        if (!k || !(k->x > 0) || !(k->y > 0) || !(k->z > 0)) return out.fail("SCALE needs three positive factors: sx,sy,sz");
+        const std::vector<std::string> words(a.begin(), a.end() - 1);
+        const int bi = words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
+        Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (!b.component.empty()) return out.fail(b.name + " is part of " + b.component + ": stretch a single body");
+        doc.scene.pushUndo("SCALE " + b.name);
+        b.mesh.transform(sicdm::scale(*k));
+        b.kind = "mesh"; // no longer the primitive it was
+        b.params.clear();
+        doc.scene.touchBodies();
+        markChanged(doc);
+        const AABB box = b.bounds();
+        out.say("Stretched " + b.name + " to " + fmt("%g x ", box.max.x - box.min.x) + fmt("%g x ", box.max.y - box.min.y) +
+                fmt("%g mm", box.max.z - box.min.z));
         return out;
     }
     if (cmd == "SCALE") {

@@ -35,6 +35,8 @@ constexpr CommandSpec kCommands[] = {
      "[MOVE dx,dy,dz]  |  SCULPT [body] REFINE detail  |  SCULPT LIST",
      "Digital clay: DRAW (pull, INVERT pushes), CLAY (add), CARVE (remove), INFLATE, GRAB (MOVE), PINCH, CREASE, "
      "SMOOTH, FLATTEN, SCRAPE (trim). Dabs along the points every radius / 4; the mesh refines itself under the brush"},
+    {"REMESH", "DYNAMESH VOXEL", "REMESH [body [\"other\"...]] [VOXEL v] [BLEND b] [SMOOTH s]",
+     "Voxel remesh: fuse bodies into one evenly meshed solid, joins filleted to the blend radius, detail finer than s rounded"},
     {"HOLE", "DRILL", "HOLE [body] [AT] x,y,z [DIR x,y,z] DIAMETER d [DEPTH h | THROUGH]",
      "Drill a hole into the surface at a point (along the surface normal unless DIR); blind holes get a 118 deg tip"},
     {"POCKET", "", "POCKET [body] [AT] x,y,z [DIR x,y,z] [BOX|ROUND|BALL] WIDTH w [LENGTH l] DEPTH d [ANGLE deg]",
@@ -102,8 +104,9 @@ constexpr CommandSpec kCommands[] = {
      "Insert a library component: motors, gears, racks, gear trains (PART alone lists them)"},
     {"PARAM", "PARAMS PARAMETERS", "PARAM [name] [key value]...",
      "Edit a placed library part: motor shafts (SHAFTS NONE|SINGLE|DUAL, SHAFT_LENGTH...), gear teeth...; no values lists them"},
-    {"SCALE", "SC RESIZE", "SCALE [name] factor | SCALE [name] TO size",
-     "Resize a body, or a whole library component with its motions"},
+    {"ROTATE", "ROT ORIENT", "ROTATE [name] rx,ry,rz", "Orient a body: degrees about X, then Y, then Z, about its origin"},
+    {"SCALE", "SC RESIZE", "SCALE [name] factor | SCALE [name] TO size | SCALE [name] sx,sy,sz",
+     "Resize a body, or a whole library component with its motions; three factors stretch a body along x, y, z"},
     // Editing
     {"SELECT", "SEL", "SELECT name | NONE", "Select a body, curve or image by name"},
     {"ERASE", "E DEL DELETE", "ERASE [name]", "Delete the selection (or the named item)"},

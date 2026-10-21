@@ -160,30 +160,35 @@ std::optional<float> TriGrid::nearest(const Vec3& q, float reach, bool* front) c
     if (q.x < box.min.x - reach || q.y < box.min.y - reach || q.z < box.min.z - reach || q.x > box.max.x + reach ||
         q.y > box.max.y + reach || q.z > box.max.z + reach)
         return std::nullopt;
-    int lo[3], hi[3];
-    index(q - Vec3{reach, reach, reach}, lo);
-    index(q + Vec3{reach, reach, reach}, hi);
     float best = reach * reach;
     bool found = false;
     Vec3 bestD;
     std::uint32_t bestI = 0;
-    for (int x = lo[0]; x <= hi[0]; ++x)
-        for (int y = lo[1]; y <= hi[1]; ++y)
-            for (int z = lo[2]; z <= hi[2]; ++z)
-                for (std::uint32_t i : cells[static_cast<std::size_t>((x * ny + y) * nz + z)]) {
-                    const AABB& b = boxes[i];
-                    const float ex = std::max({b.min.x - q.x, 0.0f, q.x - b.max.x}), ey = std::max({b.min.y - q.y, 0.0f, q.y - b.max.y}),
-                                ez = std::max({b.min.z - q.z, 0.0f, q.z - b.max.z});
-                    if (ex * ex + ey * ey + ez * ez >= best) continue;
-                    const Vec3 d = q - closestOnTri(q, tris[i][0], tris[i][1], tris[i][2]);
-                    const float d2 = dot(d, d);
-                    if (d2 < best) {
-                        best = d2;
-                        found = true;
-                        bestD = d;
-                        bestI = i;
+    // Outwards from the query: a box of half-size r holds every triangle closer
+    // than r, so a hit that close is the nearest; else the box doubles.
+    for (float r = std::min(cell, reach);; r = std::min(r * 2.0f, reach)) {
+        int lo[3], hi[3];
+        index(q - Vec3{r, r, r}, lo);
+        index(q + Vec3{r, r, r}, hi);
+        for (int x = lo[0]; x <= hi[0]; ++x)
+            for (int y = lo[1]; y <= hi[1]; ++y)
+                for (int z = lo[2]; z <= hi[2]; ++z)
+                    for (std::uint32_t i : cells[static_cast<std::size_t>((x * ny + y) * nz + z)]) {
+                        const AABB& b = boxes[i];
+                        const float ex = std::max({b.min.x - q.x, 0.0f, q.x - b.max.x}), ey = std::max({b.min.y - q.y, 0.0f, q.y - b.max.y}),
+                                    ez = std::max({b.min.z - q.z, 0.0f, q.z - b.max.z});
+                        if (ex * ex + ey * ey + ez * ez >= best) continue;
+                        const Vec3 d = q - closestOnTri(q, tris[i][0], tris[i][1], tris[i][2]);
+                        const float d2 = dot(d, d);
+                        if (d2 < best) {
+                            best = d2;
+                            found = true;
+                            bestD = d;
+                            bestI = i;
+                        }
                     }
-                }
+        if ((found && best <= r * r) || r >= reach) break;
+    }
     if (!found) return std::nullopt;
     if (front) *front = dot(bestD, normals[bestI]) >= 0;
     return std::sqrt(best);
@@ -883,6 +888,193 @@ bool lightenBody(Body& body, const LightenOptions& o, std::string* error, double
     body.mesh = std::move(result);
     body.kind = "mesh";
     body.params.clear();
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Voxel remesh
+
+bool remeshBodies(Body& target, const std::vector<const Body*>& others, const RemeshOptions& o, std::string* error) {
+    std::vector<MeshData> parts{worldMesh(target)};
+    for (const Body* b : others) parts.push_back(worldMesh(*b));
+    AABB bb;
+    for (std::size_t k = 0; k < parts.size(); ++k) {
+        if (parts[k].indices.empty()) {
+            if (error) *error = (k == 0 ? target.name : others[k - 1]->name) + " has no surface";
+            return false;
+        }
+        bb.expand(parts[k].bounds());
+    }
+    const Vec3 size = bb.max - bb.min;
+    const float h = o.voxel > 0 ? o.voxel : std::max({size.x, size.y, size.z}) / 160.0f;
+    const float blend = std::isfinite(o.blend) ? std::max(o.blend, 0.0f) : 0.0f;
+    const float sigma = !std::isfinite(o.smooth) ? 0.0f : o.smooth < 0 ? h : o.smooth;
+    const float reach = blend + 2.0f * sigma + 3.0f * h; // how far out the distances matter
+    const float pad = reach + 2.0f * h;
+    const double cells = (static_cast<double>(size.x + 2 * pad) / h + 2) * (static_cast<double>(size.y + 2 * pad) / h + 2) *
+                         (static_cast<double>(size.z + 2 * pad) / h + 2);
+    if (!(h > 0) || !std::isfinite(h) || cells > 6.4e7) {
+        char b[160];
+        std::snprintf(b, sizeof(b), "A %g mm voxel is too fine for parts this size: at least %.2g mm", static_cast<double>(h),
+                      static_cast<double>(h * std::cbrt(cells / 6.4e7) * 1.01));
+        if (error) *error = b;
+        return false;
+    }
+    const int nx = static_cast<int>((size.x + 2 * pad) / h) + 2, ny = static_cast<int>((size.y + 2 * pad) / h) + 2,
+              nz = static_cast<int>((size.z + 2 * pad) / h) + 2;
+    const Vec3 origin = bb.min - Vec3{pad, pad, pad};
+    const auto sx = static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz), sy = static_cast<std::size_t>(nz);
+    auto centreOf = [&](int x, int y, int z) {
+        return origin + Vec3{(static_cast<float>(x) + 0.5f) * h, (static_cast<float>(y) + 0.5f) * h, (static_cast<float>(z) + 0.5f) * h};
+    };
+    // The union's signed distance (positive outside), each part's added with a
+    // smooth minimum: where two parts meet, material fills in to a fillet of about
+    // the blend radius; elsewhere each surface stays where it was.
+    std::vector<float> field(static_cast<std::size_t>(nx) * sx, reach);
+    for (const MeshData& m : parts) {
+        // The part's box of voxels, with room for the distances that matter.
+        const AABB pb = m.bounds();
+        const float mn[3] = {pb.min.x, pb.min.y, pb.min.z}, mx[3] = {pb.max.x, pb.max.y, pb.max.z}, o0[3] = {origin.x, origin.y, origin.z};
+        const int n[3] = {nx, ny, nz};
+        int lo[3], cnt[3];
+        for (int k = 0; k < 3; ++k) {
+            lo[k] = std::clamp(static_cast<int>(std::floor((mn[k] - reach - h - o0[k]) / h)), 0, n[k] - 1);
+            const int hi = std::clamp(static_cast<int>(std::ceil((mx[k] + reach + h - o0[k]) / h)), 0, n[k] - 1);
+            cnt[k] = hi - lo[k] + 1;
+        }
+        const auto tx = static_cast<std::size_t>(cnt[1]) * static_cast<std::size_t>(cnt[2]), ty = static_cast<std::size_t>(cnt[2]);
+        const std::size_t total = static_cast<std::size_t>(cnt[0]) * tx;
+        auto at = [&](int x, int y, int z) { return static_cast<std::size_t>(x) * tx + static_cast<std::size_t>(y) * ty + static_cast<std::size_t>(z); };
+        auto local = [&](int x, int y, int z) { return centreOf(lo[0] + x, lo[1] + y, lo[2] + z); };
+        std::vector<float> d(total, 1e30f);
+        std::vector<Vec3> cp(total); // the nearest surface point found so far
+        std::vector<char> side(total, 1);
+        // Exact distances next to the surface: each triangle against the voxels around it.
+        const float band = 1.8f * h;
+        for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) {
+            const Vec3 a = m.vertices[m.indices[k]].position, b = m.vertices[m.indices[k + 1]].position, c = m.vertices[m.indices[k + 2]].position;
+            const Vec3 nrm = cross(b - a, c - a);
+            const Vec3 tl = vmin(a, vmin(b, c)) - Vec3{band, band, band}, th = vmax(a, vmax(b, c)) + Vec3{band, band, band};
+            const float tlo[3] = {tl.x, tl.y, tl.z}, thi[3] = {th.x, th.y, th.z};
+            int r0[3], r1[3];
+            for (int q = 0; q < 3; ++q) {
+                r0[q] = std::max(static_cast<int>(std::floor((tlo[q] - o0[q]) / h - 0.5f)) - lo[q], 0);
+                r1[q] = std::min(static_cast<int>(std::ceil((thi[q] - o0[q]) / h - 0.5f)) - lo[q], cnt[q] - 1);
+            }
+            for (int x = r0[0]; x <= r1[0]; ++x)
+                for (int y = r0[1]; y <= r1[1]; ++y)
+                    for (int z = r0[2]; z <= r1[2]; ++z) {
+                        const Vec3 p = local(x, y, z);
+                        const Vec3 on = closestOnTri(p, a, b, c);
+                        const float dd = length(p - on);
+                        const std::size_t i = at(x, y, z);
+                        if (dd < d[i] && dd <= band) {
+                            d[i] = dd;
+                            cp[i] = on;
+                            side[i] = dot(p - on, nrm) >= 0 ? 1 : 0;
+                        }
+                    }
+        }
+        // Out to the reach: each voxel takes the nearest point its neighbours know
+        // (two raster sweeps, forwards and back, over the 26 neighbours).
+        for (const int dir : {1, -1}) {
+            const int x0 = dir > 0 ? 0 : cnt[0] - 1, y0 = dir > 0 ? 0 : cnt[1] - 1, z0 = dir > 0 ? 0 : cnt[2] - 1;
+            for (int x = x0; x >= 0 && x < cnt[0]; x += dir)
+                for (int y = y0; y >= 0 && y < cnt[1]; y += dir)
+                    for (int z = z0; z >= 0 && z < cnt[2]; z += dir) {
+                        const std::size_t i = at(x, y, z);
+                        const Vec3 p = local(x, y, z);
+                        for (int ex = -1; ex <= 1; ++ex)
+                            for (int ey = -1; ey <= 1; ++ey)
+                                for (int ez = -1; ez <= 1; ++ez) {
+                                    // Only neighbours the sweep has already passed.
+                                    const int ord = ex != 0 ? ex : ey != 0 ? ey : ez;
+                                    if (ord != -dir) continue;
+                                    const int qx = x + ex, qy = y + ey, qz = z + ez;
+                                    if (qx < 0 || qy < 0 || qz < 0 || qx >= cnt[0] || qy >= cnt[1] || qz >= cnt[2]) continue;
+                                    const std::size_t j = at(qx, qy, qz);
+                                    if (d[j] >= 1e29f) continue;
+                                    const float dd = length(p - cp[j]);
+                                    if (dd < d[i] && dd <= reach) {
+                                        d[i] = dd;
+                                        cp[i] = cp[j];
+                                    }
+                                }
+                    }
+        }
+        // Inside and out away from the surface: a flood from the box's border that
+        // does not cross the voxels next to it. Next to it, the nearest face decides.
+        std::vector<char> outside(total, 0);
+        std::vector<std::size_t> stack;
+        auto open = [&](int x, int y, int z) {
+            const std::size_t i = at(x, y, z);
+            if (outside[i] || d[i] <= h) return;
+            outside[i] = 1;
+            stack.push_back(i);
+        };
+        for (int x = 0; x < cnt[0]; ++x)
+            for (int y = 0; y < cnt[1]; ++y)
+                for (int z = 0; z < cnt[2]; ++z)
+                    if (x == 0 || y == 0 || z == 0 || x == cnt[0] - 1 || y == cnt[1] - 1 || z == cnt[2] - 1) open(x, y, z);
+        while (!stack.empty()) {
+            const std::size_t i = stack.back();
+            stack.pop_back();
+            const int x = static_cast<int>(i / tx), y = static_cast<int>((i % tx) / ty), z = static_cast<int>(i % ty);
+            if (x > 0) open(x - 1, y, z);
+            if (x + 1 < cnt[0]) open(x + 1, y, z);
+            if (y > 0) open(x, y - 1, z);
+            if (y + 1 < cnt[1]) open(x, y + 1, z);
+            if (z > 0) open(x, y, z - 1);
+            if (z + 1 < cnt[2]) open(x, y, z + 1);
+        }
+        for (int x = 0; x < cnt[0]; ++x)
+            for (int y = 0; y < cnt[1]; ++y)
+                for (int z = 0; z < cnt[2]; ++z) {
+                    const std::size_t i = at(x, y, z);
+                    const float dist = std::min(d[i], reach);
+                    const bool inside = d[i] <= band ? !side[i] : !outside[i];
+                    const float sd = inside ? -dist : dist;
+                    float& f = field[static_cast<std::size_t>(lo[0] + x) * sx + static_cast<std::size_t>(lo[1] + y) * sy +
+                                     static_cast<std::size_t>(lo[2] + z)];
+                    if (blend > 0) {
+                        const float k = std::max(blend - std::fabs(f - sd), 0.0f) / blend;
+                        f = std::min(f, sd) - k * k * blend * 0.25f;
+                    } else {
+                        f = std::min(f, sd);
+                    }
+                }
+    }
+    // Rounds over what is finer than `sigma` (the flats of a faceted primitive, small
+    // dents): a Gaussian of the field, as [1 2 1] passes (each adds h^2 / 2 of variance).
+    if (sigma > 0) {
+        const int passes = std::clamp(static_cast<int>(std::lround(2.0f * sigma * sigma / (h * h))), 1, 64);
+        std::vector<float> tmp(field.size());
+        for (int pass = 0; pass < passes; ++pass)
+            for (int axis = 0; axis < 3; ++axis) {
+                const int len = axis == 0 ? nx : axis == 1 ? ny : nz;
+                const std::size_t stride = axis == 0 ? sx : axis == 1 ? sy : 1;
+                for (int x = 0; x < nx; ++x)
+                    for (int y = 0; y < ny; ++y)
+                        for (int z = 0; z < nz; ++z) {
+                            const std::size_t i = static_cast<std::size_t>(x) * sx + static_cast<std::size_t>(y) * sy + static_cast<std::size_t>(z);
+                            const int c = axis == 0 ? x : axis == 1 ? y : z;
+                            const float lo = c > 0 ? field[i - stride] : field[i], hi = c + 1 < len ? field[i + stride] : field[i];
+                            tmp[i] = (lo + field[i] * 2.0f + hi) * 0.25f;
+                        }
+                field.swap(tmp);
+            }
+    }
+    MeshData mesh = marchTets(field, nx, ny, nz, origin, h, true);
+    if (mesh.indices.empty()) {
+        if (error) *error = "Nothing solid to remesh in " + target.name;
+        return false;
+    }
+    finishMarched(mesh, 2);
+    simplifyMesh(mesh, h * 0.9f); // marching leaves slivers, and more triangles than the voxels hold
+    const Vec3 at = target.offset;
+    store(target, std::move(mesh));
+    target.mesh.transform(translate(-at));
+    target.offset = at;
     return true;
 }
 

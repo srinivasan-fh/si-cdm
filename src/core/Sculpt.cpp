@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <tuple>
 #include <unordered_map>
@@ -404,7 +403,12 @@ bool SculptMesh::splitEdges(const std::vector<std::uint64_t>& edges, std::size_t
     std::vector<char> touched(m_p.size(), 0);
     for (const std::uint64_t k : edges) {
         const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+        if (!m_cut.empty() && m_cut.count(k)) continue; // a window's cut border stays as the mesh around it has it
         mid.emplace(k, static_cast<std::uint32_t>(m_p.size()));
+        if (!m_from.empty()) {
+            m_from.push_back(0xFFFFFFFFu);
+            m_pinned.push_back(0);
+        }
         // Not exactly half way: crossing edges (the overlapping slivers a boolean can
         // leave) would otherwise get the same midpoint. At most 0.05% of the edge.
         const float t = 0.5f + static_cast<float>(static_cast<int>((k * 2654435761ull >> 20) % 1001) - 500) * 1e-6f;
@@ -412,6 +416,7 @@ bool SculptMesh::splitEdges(const std::vector<std::uint64_t>& edges, std::size_t
         m_n.push_back(normalize(m_n[a] + m_n[b]));
         touched[a] = touched[b] = 1;
     }
+    if (mid.empty()) return false;
     const std::size_t count = m_t.size();
     constexpr std::uint32_t kNone = 0xFFFFFFFFu;
     for (std::size_t i = 0; i < count; ++i) {
@@ -611,7 +616,7 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
         };
         for (const auto& [l2, k] : edges) {
             const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
-            if (locked[a] || locked[b] || border[a] || border[b]) continue;
+            if (locked[a] || locked[b] || border[a] || border[b] || pinned(a) || pinned(b)) continue;
             // Link condition: the edge's two opposite vertices are the only shared neighbours.
             ring(a, ringA);
             ring(b, ringB);
@@ -676,21 +681,36 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
         for (std::size_t i = 0; i < m_t.size(); ++i)
             if (!dead[i]) m_t[n++] = m_t[i];
         m_t.resize(n);
-        // Drop vertices no triangle uses any more.
-        std::vector<std::uint32_t> remap(m_p.size(), 0xFFFFFFFFu);
-        std::vector<Vec3> p;
-        for (auto& t : m_t)
-            for (auto& v : t) {
-                if (remap[v] == 0xFFFFFFFFu) {
-                    remap[v] = static_cast<std::uint32_t>(p.size());
-                    p.push_back(m_p[v]);
-                }
-                v = remap[v];
-            }
-        m_p = std::move(p);
+        dropUnused();
         m_n.resize(m_p.size()); // stale: the caller updates the normals
     }
     return total;
+}
+
+// Drops the vertices no triangle uses any more (a window keeps track of where its
+// vertices came from).
+void SculptMesh::dropUnused() {
+    std::vector<std::uint32_t> remap(m_p.size(), 0xFFFFFFFFu);
+    std::vector<Vec3> p;
+    std::vector<std::uint32_t> from;
+    std::vector<char> pins;
+    for (auto& t : m_t)
+        for (auto& v : t) {
+            if (remap[v] == 0xFFFFFFFFu) {
+                remap[v] = static_cast<std::uint32_t>(p.size());
+                p.push_back(m_p[v]);
+                if (!m_from.empty()) {
+                    from.push_back(m_from[v]);
+                    pins.push_back(m_pinned[v]);
+                }
+            }
+            v = remap[v];
+        }
+    m_p = std::move(p);
+    if (!m_from.empty()) {
+        m_from = std::move(from);
+        m_pinned = std::move(pins);
+    }
 }
 
 void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
@@ -699,7 +719,7 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s) {
     for (std::size_t i = 0; i < m_p.size(); ++i) {
         const Vec3 d = m_p[i] - centre;
         const float dd = dot(d, d);
-        if (dd < R2) region.emplace_back(static_cast<std::uint32_t>(i), smoothFalloff(std::sqrt(dd), R));
+        if (dd < R2 && !pinned(static_cast<std::uint32_t>(i))) region.emplace_back(static_cast<std::uint32_t>(i), smoothFalloff(std::sqrt(dd), R));
     }
     if (region.empty()) return;
 
@@ -811,7 +831,7 @@ void SculptMesh::beginGrab(const Vec3& centre, const SculptSettings& s) {
     std::vector<char> taken(m_p.size(), 0);
     auto collect = [&](const Vec3& c, bool mirrored) {
         for (std::size_t i = 0; i < m_p.size(); ++i) {
-            if (taken[i]) continue;
+            if (taken[i] || pinned(static_cast<std::uint32_t>(i))) continue;
             const float d = length(m_p[i] - c);
             if (d >= R) continue;
             taken[i] = 1;
@@ -886,39 +906,153 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
     body.params.clear();
 }
 
+void SculptMesh::stroke(const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta) {
+    if (points.empty() || m_t.empty()) return;
+    // The path runs between the points snapped to the surface. Snapping the dabs
+    // of a path that floats off the surface would bunch them on the nearest bumps.
+    const bool grab = s.brush == SculptBrush::Grab;
+    Vec3 delta = grabDelta;
+    if (grab && delta.x == 0 && delta.y == 0 && delta.z == 0 && points.size() >= 2) delta = points.back() - points.front();
+    std::vector<Vec3> path;
+    if (grab) {
+        path.push_back(closestPoint(points.front()));
+    } else {
+        path.reserve(points.size());
+        for (const Vec3& p : points) path.push_back(closestPoint(p));
+    }
+    // A dab reaches its radius, and refines up to an edge beyond it: everything else
+    // can be left out while the stroke runs, a great saving on a dense mesh. Between
+    // the points the dabs follow the surface, which can bow out of the points' box.
+    const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
+    float longest = 0.0f;
+    for (std::size_t i = 1; i < path.size(); ++i) longest = std::max(longest, length(path[i] - path[i - 1]));
+    const float margin = 2.0f * R + 0.25f * longest;
+    std::vector<AABB> boxes(1);
+    for (const Vec3& q : path) boxes[0].expand(q);
+    if (s.symmetryX) {
+        boxes.emplace_back();
+        for (const Vec3& q : path) boxes[1].expand(mirroredX(q, m_mirrorX));
+    }
+    for (AABB& b : boxes) {
+        b.min = b.min - Vec3{margin, margin, margin};
+        b.max = b.max + Vec3{margin, margin, margin};
+    }
+    std::vector<std::uint32_t> taken;
+    float longestCut = 0.0f;
+    SculptMesh w = window(boxes, taken, &longestCut);
+    // Not for most of the mesh (no saving), nor where the cut runs along edges longer
+    // than the margin, which the brush would refine (a coarse CAD block). Cut edges
+    // are never split, so the surface stays closed either way.
+    if (taken.size() * 10 > m_t.size() * 6 || longestCut > margin) {
+        runStroke(path, s, delta);
+        return;
+    }
+    w.runStroke(path, s, delta);
+    stitch(w, taken);
+}
+
+void SculptMesh::runStroke(const std::vector<Vec3>& path, const SculptSettings& s, const Vec3& grabDelta) {
+    if (s.brush == SculptBrush::Grab) {
+        beginGrab(path.front(), s);
+        grabTo(grabDelta);
+        return;
+    }
+    // At most ~1000 dabs a stroke, whatever the radius.
+    float total = 0.0f;
+    for (std::size_t i = 1; i < path.size(); ++i) total += length(path[i] - path[i - 1]);
+    const float spacing = std::max({s.radius * 0.25f, total / 1000.0f, 1e-3f});
+    dab(closestPoint(path.front()), s);
+    float carry = 0.0f;
+    for (std::size_t i = 1; i < path.size(); ++i) {
+        const Vec3 a = path[i - 1], b = path[i];
+        const float len = length(b - a);
+        float at = spacing - carry;
+        while (at <= len) {
+            dab(closestPoint(a + (b - a) * (at / len)), s);
+            at += spacing;
+        }
+        carry = len - (at - spacing);
+    }
+}
+
+SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::uint32_t>& taken, float* longestCut) const {
+    SculptMesh w;
+    w.m_size = m_size;
+    w.m_mirrorX = m_mirrorX;
+    constexpr std::uint32_t kNone = 0xFFFFFFFFu;
+    std::vector<std::uint32_t> toWindow(m_p.size(), kNone);
+    std::vector<char> in(m_t.size(), 0);
+    taken.clear();
+    for (std::size_t i = 0; i < m_t.size(); ++i) {
+        const auto& t = m_t[i];
+        const Vec3 lo = vmin(m_p[t[0]], vmin(m_p[t[1]], m_p[t[2]])), hi = vmax(m_p[t[0]], vmax(m_p[t[1]], m_p[t[2]]));
+        for (const AABB& b : boxes)
+            if (lo.x <= b.max.x && hi.x >= b.min.x && lo.y <= b.max.y && hi.y >= b.min.y && lo.z <= b.max.z && hi.z >= b.min.z) {
+                in[i] = 1;
+                break;
+            }
+        if (!in[i]) continue;
+        taken.push_back(static_cast<std::uint32_t>(i));
+        std::array<std::uint32_t, 3> wt{};
+        for (int c = 0; c < 3; ++c) {
+            const std::uint32_t v = t[static_cast<std::size_t>(c)];
+            if (toWindow[v] == kNone) {
+                toWindow[v] = static_cast<std::uint32_t>(w.m_p.size());
+                w.m_p.push_back(m_p[v]);
+                w.m_n.push_back(m_n[v]);
+                w.m_from.push_back(v);
+            }
+            wt[static_cast<std::size_t>(c)] = toWindow[v];
+        }
+        w.m_t.push_back(wt);
+    }
+    w.m_pinned.assign(w.m_p.size(), 0);
+    *longestCut = 0.0f;
+    for (std::size_t i = 0; i < m_t.size(); ++i) {
+        if (in[i]) continue;
+        const auto& t = m_t[i];
+        for (int c = 0; c < 3; ++c) {
+            const std::uint32_t a = t[static_cast<std::size_t>(c)], b = t[static_cast<std::size_t>((c + 1) % 3)];
+            if (toWindow[a] != kNone) w.m_pinned[toWindow[a]] = 1;
+            if (toWindow[a] == kNone || toWindow[b] == kNone) continue;
+            w.m_cut.insert(edgeKey(toWindow[a], toWindow[b]));
+            *longestCut = std::max(*longestCut, length(m_p[a] - m_p[b]));
+        }
+    }
+    return w;
+}
+
+void SculptMesh::stitch(const SculptMesh& w, const std::vector<std::uint32_t>& taken) {
+    std::vector<std::uint32_t> toMesh(w.m_p.size());
+    for (std::size_t i = 0; i < w.m_p.size(); ++i) {
+        if (w.m_from[i] != 0xFFFFFFFFu) {
+            toMesh[i] = w.m_from[i];
+            m_p[w.m_from[i]] = w.m_p[i];
+        } else {
+            toMesh[i] = static_cast<std::uint32_t>(m_p.size());
+            m_p.push_back(w.m_p[i]);
+        }
+    }
+    std::vector<char> gone(m_t.size(), 0);
+    for (const std::uint32_t i : taken) gone[i] = 1;
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < m_t.size(); ++i)
+        if (!gone[i]) m_t[n++] = m_t[i];
+    m_t.resize(n);
+    for (const auto& t : w.m_t) m_t.push_back({toMesh[t[0]], toMesh[t[1]], toMesh[t[2]]});
+    dropUnused(); // corners the window collapsed away
+    updateNormals();
+}
+
 void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta) {
     if (points.empty()) return;
     SculptMesh sm(body);
-    if (sm.empty()) return;
-    if (s.brush == SculptBrush::Grab) {
-        const Vec3 delta = (grabDelta.x != 0 || grabDelta.y != 0 || grabDelta.z != 0 || points.size() < 2)
-                               ? grabDelta
-                               : points.back() - points.front();
-        sm.beginGrab(sm.closestPoint(points.front()), s);
-        sm.grabTo(delta);
-    } else {
-        // The path runs between the points snapped to the surface. Snapping the dabs
-        // of a path that floats off the surface would bunch them on the nearest bumps.
-        std::vector<Vec3> path;
-        path.reserve(points.size());
-        for (const Vec3& p : points) path.push_back(sm.closestPoint(p));
-        // At most ~1000 dabs a stroke, whatever the radius.
-        float total = 0.0f;
-        for (std::size_t i = 1; i < path.size(); ++i) total += length(path[i] - path[i - 1]);
-        const float spacing = std::max({s.radius * 0.25f, total / 1000.0f, 1e-3f});
-        sm.dab(sm.closestPoint(path.front()), s);
-        float carry = 0.0f;
-        for (std::size_t i = 1; i < path.size(); ++i) {
-            const Vec3 a = path[i - 1], b = path[i];
-            const float len = length(b - a);
-            float at = spacing - carry;
-            while (at <= len) {
-                sm.dab(sm.closestPoint(a + (b - a) * (at / len)), s);
-                at += spacing;
-            }
-            carry = len - (at - spacing);
-        }
-    }
+    sculptStroke(body, sm, points, s, grabDelta);
+}
+
+void sculptStroke(Body& body, SculptMesh& sm, const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta) {
+    if (points.empty() || sm.empty()) return;
+    sm.stroke(points, s, grabDelta);
     sm.writeTo(body, true);
 }
 

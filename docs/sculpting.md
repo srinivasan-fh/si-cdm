@@ -47,45 +47,89 @@ scan.
 
 Hard CAD edges stay crisp in the shading: normals are smoothed only across edges that turn less than 40°.
 
+## Voxel remesh
+
+`REMESH` (like ZBrush's DynaMesh or Blender's voxel remesh) rebuilds a body as one closed solid with
+evenly sized triangles. Given several bodies, it fuses them, so a form can be blocked out from
+overlapping primitives and then sculpted.
+
+- `VOXEL v` sets the voxel size, and the new triangles are about that size. The default is the parts'
+  size / 160.
+- `BLEND b` fills in where parts meet, with a fillet of about `b` mm. Elsewhere each surface stays
+  where it was.
+- `SMOOTH s` rounds over detail finer than `s` mm, such as the flats of a faceted primitive (default:
+  one voxel).
+- Open or self-overlapping input works. Inside is whatever a flood from outside cannot reach.
+- The other bodies are used up. The result keeps the first body's name, colour and place.
+
+How it works:
+
+1. Each part's exact distance is computed in a thin band of voxels at its surface.
+2. Each voxel takes the nearest surface point its neighbours know. Two raster sweeps carry this out
+   to the fillet's reach in linear time.
+3. The parts' signed distances are joined with a smooth minimum, then lightly blurred.
+4. The surface at distance 0 is extracted with marching tetrahedra, smoothed, and coarsened to the
+   voxel size.
+
+`SCALE body sx,sy,sz` stretches a body along x, y and z, and `ROTATE body rx,ry,rz` tilts it. Both
+work about the body's origin, which is the base point of a primitive. Together with `SPHERE` they
+give ellipsoids of any proportion to block out with.
+
+**Strokes on dense meshes.** A stroke works on the part of the surface it can reach: the triangles
+within twice the brush radius of its path, and of its mirror. The edges on the window's border are
+pinned, so the surface stays closed. On a 150,000-triangle head, the dabs cost about as much as on a
+small mesh; only copying the surface in and out goes over all of it.
+
 ## Example: a head bust
 
-![A head-and-shoulders bust sculpted from a ball: skull, brow, eyes with lids, nose, lips, chin, ears, neck muscles and collarbones](head-bust.png)
+![A female head-and-shoulders bust sculpted in SI-CDM: skull, eyes under their lids, nose, lips, cheeks, ears, neck muscles, collarbones and shoulders](head-bust.png)
 
-[examples/head-bust.txt](examples/head-bust.txt) sculpts this bust in 68 commands: brush strokes,
-and five booleans for the neck and shoulders. Run it in the app (it opens a new file tab and takes
-about 15 s):
+[examples/head-bust.txt](examples/head-bust.txt) sculpts this bust in 92 commands. Run it in the app
+(it opens a new file tab and takes about 25 s):
 
 ```text
 RUN docs/examples/head-bust.txt
 ```
 
-The script works the way a sculptor blocks out a head:
+It works the way a sculptor works in clay:
 
-1. **Head.** A ball with an even mesh. Large grabs (radius 55–100 mm) pull it into a skull and a jaw.
-   A grab's falloff is smooth, so big forms come out without seams. A grab much smaller than its
-   move pulls out a point, so the radius is kept larger than the move.
-2. **Face.**
-   - Grabs bring the forehead and chin forward and push in the eye sockets.
-   - Draw strokes raise the brow ridge, the nose bridge and the lips. A grab pulls the nose tip
-     out and Pinch narrows the bridge.
-   - Crease cuts the mouth line and the folds round the nose wings. Inflate fills out the cheeks.
-   - The eyes are a small grab out of each socket with drawn lids. Each ear is a grabbed flap with
-     its bowl pressed in and a drawn rim.
-   - Every face stroke uses `SYMMETRY`, so it is placed once.
-3. **Neck and shoulders.** A refined cylinder for the neck and a block cut by three balls for the
-   shoulder slope, the chest and the back. They are joined on with exact unions. Smooth strokes blend
-   the joins, and Draw strokes add the neck muscles and collarbones.
+1. **Block out.** Twelve stretched balls give the big forms:
+   - the skull, the face and the mouth over the teeth;
+   - a broad forehead, the lower jaw and its sides, the chin;
+   - the cheekbones and the cheeks.
 
-Points in a script only need to be near the surface: each one is snapped onto it, and a stroke runs
-along the surface between the snapped points. The result is one closed body of about 84,000
-triangles, ready for `EXPORT bust.stl`. The test suite runs the script and checks the result:
+   `REMESH ... BLEND 24` fuses them into one smooth solid. The forms flow into each other with no
+   seams, and the mesh is even.
+2. **Features.** A grab pushes in the eye sockets. Then the eyeballs, the nose and the ears are added
+   as smaller forms. The nose is a bridge, a body, a tip and two wings, fused with each other first
+   (`BLEND 7`) so it reads as one form. They are fused on with tight 3 mm fillets.
+3. **Neck and shoulders.**
+   - The neck is a cylinder leaning forward, deeper than it is wide.
+   - The shoulders, their caps and the chest are stretched balls.
+   - They are fused with 30 mm fillets, cut flat underneath, and joined to the head with an exact
+     union. The join under the jaw is smoothed.
+4. **Detail with the brushes:**
+   - brows;
+   - eyes: the upper lid drawn over the ball, its fold, the lower lid and the inner corner;
+   - mouth: the lips with the upper lip's bow, the line between them, the corners and the groove
+     under the lower lip;
+   - ears: the bowl, the rim and the inner ridge;
+   - neck: the muscles from behind the ears to the notch, the notch, the collarbones.
+
+   Strokes use `SYMMETRY`, so each is placed once.
+
+Points in a script only need to be near the surface. Each one is snapped onto it, and a stroke runs
+along the surface between the snapped points. The result is one closed body of about 160,000
+triangles, ready for `EXPORT bust.stl`.
+
+The test suite runs the script and checks the result:
 
 - it is closed;
 - the nose stands out over the lips;
 - the mouth line lies between the lips;
 - the eyes sit under the brow;
 - the ears stand out from the skull;
-- the two sides match to within 1.5 mm.
+- the two sides of the face match to within 1 mm.
 
 ## Cuts and booleans
 
@@ -163,6 +207,9 @@ TRIM    [body] [PLANE] x,y,z NORMAL x,y,z [SMALLER]        removes the side the 
 BOSS    [body] [AT] x,y,z [DIR x,y,z] [CYLINDER|BOX|BALL] DIAMETER d HEIGHT h
 BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]
 UNDO
+REMESH  [body ["other"...]] [VOXEL v] [BLEND b] [SMOOTH s]   voxel remesh: fuse into one even, closed solid
+SCALE   body sx,sy,sz                      stretch along x, y, z (about the body's origin)
+ROTATE  body rx,ry,rz                      orient: degrees about X, then Y, then Z
 RUN script.txt                             the commands in a file, one a line (# comments); stops at a failure
 ```
 
@@ -172,4 +219,4 @@ the selection. A point far from the body is refused. Each command reports the tr
 whether the result is closed.
 
 Over MCP: the `sculpt` tool (`operation` = a brush name, `hole`, `pocket`, `channel`, `trim`, `boss`,
-`boolean`, `refine` or `undo`).
+`boolean`, `refine`, `remesh` or `undo`).

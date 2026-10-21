@@ -1,93 +1,127 @@
-# A head-and-shoulders bust, sculpted from a ball with the brushes only.
-#   RUN docs/examples/head-bust.txt        (from the repository folder; about 15 s)
-# Millimetres; z up, the face looks along -y. Every stroke with SYMMETRY is
-# mirrored across x = 0, so each feature is placed once, on the +x side.
-# Points only need to be near the surface: they are snapped onto it.
+# A head-and-shoulders bust, sculpted the way a sculptor works in clay:
+#   1. block out the big forms from stretched balls and fuse them (REMESH) with
+#      large fillets, so they flow into each other;
+#   2. add the eyeballs, the nose and the ears as smaller forms, fused tightly;
+#   3. the neck and shoulders the same way, joined on;
+#   4. the detail with brush strokes: lids, lips, brows, ears, neck muscles.
+#   RUN docs/examples/head-bust.txt        (from the repository folder; about 25 s)
+# Millimetres; z up, the face looks along -y. Strokes with SYMMETRY are mirrored
+# across x = 0, so each feature is placed once, on the +x side. Each form is
+# SPHERE 20 resting on a point, stretched by SCALE (and tilted by ROTATE) about it.
 
-# The head: a ball, its triangles evened out, then pulled into a skull and a jaw
 NEW
-SPHERE 85 @0,10,245
-SCULPT "Sphere 1" REFINE 6
-# even out the ball's triangles
-SCULPT "Sphere 1" SMOOTH AT 0,-75,380 0,-75,330 0,-75,280 40,-60,280 40,-60,330 40,-60,380 RADIUS 45 STRENGTH 0.4 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 75,10,380 75,10,330 75,10,280 RADIUS 45 STRENGTH 0.4 SYMMETRY
-# narrow the skull, deepen the back, pull the jaw and the chin down out of the ball
-SCULPT "Sphere 1" GRAB AT 85,10,330 MOVE -8,0,0 RADIUS 100 SYMMETRY
-SCULPT "Sphere 1" GRAB AT 0,95,335 MOVE 0,10,2 RADIUS 100
-SCULPT "Sphere 1" GRAB AT 0,-55,265 MOVE 0,-4,-30 RADIUS 90
-SCULPT "Sphere 1" GRAB AT 0,-50,240 MOVE 0,-4,-22 RADIUS 70
-SCULPT "Sphere 1" GRAB AT 40,-35,245 MOVE -3,-2,-18 RADIUS 55 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 0,-60,210 30,-45,215 50,-15,230 RADIUS 30 STRENGTH 0.5 SYMMETRY
 
-# The face. The profile: forehead and chin forward
-SCULPT "Sphere 1" GRAB AT 0,-60,375 MOVE 0,-8,0 RADIUS 55
-SCULPT "Sphere 1" GRAB AT 0,-62,228 MOVE 0,-8,2 RADIUS 32
-# jaw corners
-SCULPT "Sphere 1" GRAB AT 55,0,245 MOVE 5,0,-8 RADIUS 30 SYMMETRY
-# brow ridge, eye sockets, temples
-SCULPT "Sphere 1" DRAW AT 8,-77,338 28,-73,341 48,-63,338 RADIUS 13 STRENGTH 0.7 SYMMETRY
-SCULPT "Sphere 1" GRAB AT 30,-68,319 MOVE 0,9,0 RADIUS 22 SYMMETRY
-SCULPT "Sphere 1" DRAW INVERT AT 66,-30,338 RADIUS 18 STRENGTH 0.15 SYMMETRY
-# nose: the ridge, the tip pulled out, the bridge narrowed; wings, tip, nostrils, the crease round the wings
-SCULPT "Sphere 1" DRAW AT 0,-78,334 0,-82,318 0,-88,305 RADIUS 12 STRENGTH 1
-SCULPT "Sphere 1" GRAB AT 0,-79,292 MOVE 0,-24,-2 RADIUS 26
-SCULPT "Sphere 1" SMOOTH AT 0,-95,304 0,-102,292 RADIUS 12 STRENGTH 0.3
-SCULPT "Sphere 1" PINCH AT 0,-84,328 0,-100,300 RADIUS 10 STRENGTH 0.3
-SCULPT "Sphere 1" GRAB AT 12,-86,282 MOVE 5,-5,0 RADIUS 11 SYMMETRY
-SCULPT "Sphere 1" DRAW AT 0,-101,290 RADIUS 9 STRENGTH 0.8
-SCULPT "Sphere 1" DRAW INVERT AT 4,-96,281 8,-92,280 RADIUS 3 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" CREASE AT 18,-82,293 21,-81,283 16,-85,276 RADIUS 4 STRENGTH 0.5 SYMMETRY
-# mouth: muzzle, lips, the line between them, under the lip, chin
-SCULPT "Sphere 1" GRAB AT 0,-74,255 MOVE 0,-6,0 RADIUS 30
-SCULPT "Sphere 1" DRAW AT 0,-82,261 12,-80,259 22,-75,256 RADIUS 7 STRENGTH 0.6 SYMMETRY
-SCULPT "Sphere 1" DRAW AT 0,-81,247 10,-80,247 18,-76,249 RADIUS 8 STRENGTH 0.7 SYMMETRY
-SCULPT "Sphere 1" CREASE AT 0,-83,254 12,-81,254 24,-75,255 RADIUS 3 STRENGTH 0.4 SYMMETRY
-SCULPT "Sphere 1" DRAW INVERT AT 0,-76,238 12,-73,239 RADIUS 8 STRENGTH 0.5 SYMMETRY
-SCULPT "Sphere 1" DRAW AT -8,-72,224 8,-72,224 RADIUS 13 STRENGTH 0.8
-# cheekbones, and the cheeks filled out below them
-SCULPT "Sphere 1" DRAW AT 38,-60,300 52,-48,302 62,-35,300 RADIUS 15 STRENGTH 0.5 SYMMETRY
-SCULPT "Sphere 1" INFLATE AT 42,-58,290 52,-50,270 RADIUS 24 STRENGTH 0.6 SYMMETRY
-# soften the face before the fine detail
-SCULPT "Sphere 1" SMOOTH AT 0,-78,362 30,-72,360 55,-52,355 RADIUS 25 STRENGTH 0.3 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 45,-55,290 55,-40,270 45,-50,240 RADIUS 20 STRENGTH 0.3 SYMMETRY
-# eyes: the ball, the upper lid and its fold, the lower lid
-SCULPT "Sphere 1" GRAB AT 30,-60,318 MOVE 0,-6,0 RADIUS 11 SYMMETRY
-SCULPT "Sphere 1" DRAW AT 19,-62,324 30,-65,327 41,-60,324 RADIUS 5 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" CREASE AT 19,-62,330 30,-64,333 42,-58,329 RADIUS 3 STRENGTH 0.3 SYMMETRY
-SCULPT "Sphere 1" DRAW AT 21,-62,312 31,-63,310 40,-59,312 RADIUS 4 STRENGTH 0.7 SYMMETRY
-# ears: the flap pulled out and back, the lobe, the bowl pressed in, the rim
-SCULPT "Sphere 1" GRAB AT 75,25,312 MOVE 9,7,0 RADIUS 24 SYMMETRY
-SCULPT "Sphere 1" GRAB AT 78,22,286 MOVE 3,2,-4 RADIUS 12 SYMMETRY
-SCULPT "Sphere 1" GRAB AT 84,14,306 MOVE -7,0,0 RADIUS 10 SYMMETRY
-SCULPT "Sphere 1" DRAW AT 80,8,330 84,20,336 88,32,326 89,36,310 86,32,294 RADIUS 5 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" DRAW AT 80,8,330 84,20,336 88,32,326 89,36,310 86,32,294 RADIUS 5 STRENGTH 1 SYMMETRY
+# The head's big forms
+# the cranium: 144 wide, 174 deep
+SPHERE 20 @0,12,250
+SCALE "Sphere 1" 3.6,4.35,4.25
+# the face, from the brow to the mouth
+SPHERE 20 @0,-30,240
+SCALE "Sphere 2" 2.4,2.25,2.5
+# the mouth over the teeth
+SPHERE 20 @0,-40,232
+SCALE "Sphere 3" 1.7,1.9,1.1
+# the forehead, broad and nearly upright
+SPHERE 20 @0,-18,313
+SCALE "Sphere 4" 2.9,2.5,2.1
+# the lower jaw, and its sides up to the ears
+SPHERE 20 @0,-25,214
+SCALE "Sphere 5" 2.05,2.3,1.3
+SPHERE 20 @47,0,236
+SCALE "Sphere 6" 0.45,0.75,1.4
+SPHERE 20 @-47,0,236
+SCALE "Sphere 7" 0.45,0.75,1.4
+# the chin
+SPHERE 20 @0,-60,214
+SCALE "Sphere 8" 0.75,0.6,0.6
+# cheekbones, and the cheeks below them
+SPHERE 20 @44,-50,292
+SCALE "Sphere 9" 0.7,0.5,0.4
+SPHERE 20 @-44,-50,292
+SCALE "Sphere 10" 0.7,0.5,0.4
+SPHERE 20 @35,-52,251
+SCALE "Sphere 11" 0.95,0.75,0.95
+SPHERE 20 @-35,-52,251
+SCALE "Sphere 12" 0.95,0.75,0.95
+# fused into one smooth solid: 24 mm fillets where they meet
+REMESH "Sphere 1" "Sphere 2" "Sphere 3" "Sphere 4" "Sphere 5" "Sphere 6" "Sphere 7" "Sphere 8" "Sphere 9" "Sphere 10" "Sphere 11" "Sphere 12" VOXEL 2 BLEND 24 SMOOTH 3
 
-# The neck and shoulders: a dome for the shoulder slope, two large balls round the
-# chest and the back, cut flat underneath
-CYLINDER 54 200 @0,25,100
-SCULPT "Cylinder 2" REFINE 8
-BOX 440 260 260 @0,10,30
-SPHERE 220 @0,15,-295
-SPHERE 400 @0,325,-310
-SPHERE 400 @0,-305,-310
-BOOLEAN "Block 3" INTERSECT "Sphere 4"
-BOOLEAN "Block 3" INTERSECT "Sphere 5"
-BOOLEAN "Block 3" INTERSECT "Sphere 6"
-BOOLEAN "Sphere 1" UNION "Cylinder 2"
-BOOLEAN "Sphere 1" UNION "Block 3"
-# blend the joins: neck into head, neck into shoulders, the shoulder tips
-SCULPT "Sphere 1" SMOOTH AT 0,-25,226 38,-5,235 50,30,255 34,66,268 0,75,270 RADIUS 16 STRENGTH 0.6 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 0,-25,150 45,-10,140 50,40,140 0,75,148 RADIUS 30 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 0,-25,150 45,-10,140 50,40,140 0,75,148 RADIUS 30 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 150,-20,75 175,10,45 150,45,75 RADIUS 40 STRENGTH 1 SYMMETRY
-# round over the ridges where the shoulder dome meets the chest and the back
-SCULPT "Sphere 1" SMOOTH AT 0,-73,127 100,-61,105 160,-41,65 185,-10,35 RADIUS 45 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 0,94,129 100,81,109 160,58,68 185,30,35 RADIUS 45 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 0,-73,127 100,-61,105 160,-41,65 185,-10,35 RADIUS 45 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 0,94,129 100,81,109 160,58,68 185,30,35 RADIUS 45 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 0,-73,127 100,-61,105 160,-41,65 185,-10,35 RADIUS 35 STRENGTH 1 SYMMETRY
-SCULPT "Sphere 1" SMOOTH AT 0,94,129 100,81,109 160,58,68 185,30,35 RADIUS 35 STRENGTH 1 SYMMETRY
-# neck muscles from behind the ears to the notch, the notch, the collarbones
-SCULPT "Sphere 1" DRAW AT 52,30,262 38,5,210 12,-34,155 RADIUS 11 STRENGTH 0.6 SYMMETRY
-SCULPT "Sphere 1" DRAW INVERT AT 0,-48,148 RADIUS 11 STRENGTH 0.8
-SCULPT "Sphere 1" DRAW AT 12,-58,140 60,-62,128 120,-52,104 RADIUS 8 STRENGTH 0.7 SYMMETRY
+# Eye sockets, then the eyeballs set in them; the nose (bridge, body, tip and
+# wings, fused together first); the ears. All fused on with 3 mm fillets.
+SCULPT "Sphere 1" GRAB AT 31,-70,318 MOVE 0,7,1 RADIUS 26 SYMMETRY
+SPHERE 20 @31,-52.5,304.5
+SCALE "Sphere 13" 0.625,0.625,0.625
+SPHERE 20 @-31,-52.5,304.5
+SCALE "Sphere 14" 0.625,0.625,0.625
+SPHERE 20 @0,-88.9,289.5
+SCALE "Sphere 15" 0.325,0.55,1.05
+ROTATE "Sphere 15" -28,0,0
+SPHERE 20 @0,-85.4,278.8
+SCALE "Sphere 16" 0.425,0.55,0.65
+ROTATE "Sphere 16" -20,0,0
+SPHERE 20 @0,-91,282
+SCALE "Sphere 17" 0.375,0.4,0.35
+SPHERE 20 @10.5,-80,278
+SCALE "Sphere 18" 0.3,0.35,0.25
+SPHERE 20 @-10.5,-80,278
+SCALE "Sphere 19" 0.3,0.35,0.25
+REMESH "Sphere 15" "Sphere 16" "Sphere 17" "Sphere 18" "Sphere 19" VOXEL 0.8 BLEND 7 SMOOTH 0.8
+SPHERE 20 @69.6,13.4,271.9
+SCALE "Sphere 20" 0.25,0.75,1.35
+ROTATE "Sphere 20" -15,0,-20
+SPHERE 20 @-69.6,13.4,271.9
+SCALE "Sphere 21" 0.25,0.75,1.35
+ROTATE "Sphere 21" -15,0,20
+REMESH "Sphere 1" "Sphere 13" "Sphere 14" "Sphere 15" "Sphere 20" "Sphere 21" VOXEL 1.4 BLEND 3 SMOOTH 0.6
+
+# The neck (leaning forward, deeper than wide) and the shoulders: the upper back
+# and the slope of the shoulders, their caps, the chest. Fused, cut flat underneath,
+# and joined to the head; the join under the jaw is smoothed.
+CYLINDER 50 160 @0,22,115
+SCALE "Cylinder 22" 0.95,1.12,1
+ROTATE "Cylinder 22" 12,0,0
+SPHERE 20 @0,22,30
+SCALE "Sphere 23" 8.5,3.1,3.5
+SPHERE 20 @150,20,66
+SCALE "Sphere 24" 1.5,1.8,1.7
+SPHERE 20 @-150,20,66
+SCALE "Sphere 25" 1.5,1.8,1.7
+SPHERE 20 @0,0,36
+SCALE "Sphere 26" 6.25,2.3,2.6
+REMESH "Cylinder 22" "Sphere 23" "Sphere 24" "Sphere 25" "Sphere 26" VOXEL 2.5 BLEND 30 SMOOTH 4
+TRIM "Cylinder 22" PLANE 0,0,40 NORMAL 0,0,-1
+BOOLEAN "Sphere 1" UNION "Cylinder 22"
+SCULPT "Sphere 1" SMOOTH AT 0,-56,213 25,-45,218 44,-15,232 46,15,240 35,45,258 0,62,268 RADIUS 12 STRENGTH 0.6 SYMMETRY
+SCULPT "Sphere 1" SMOOTH AT 0,-56,213 25,-45,218 44,-15,232 46,15,240 35,45,258 0,62,268 RADIUS 12 STRENGTH 0.6 SYMMETRY
+
+# The detail
+# brows
+SCULPT "Sphere 1" DRAW AT 12,-78,334 25,-73,336 38,-66,336 48,-60,333 RADIUS 9 STRENGTH 0.4 SYMMETRY
+# eyes: the upper lid over the ball, its fold, the lower lid, the inner corner, softened
+SCULPT "Sphere 1" DRAW AT 18.5,-60,317.5 24,-62.5,322.5 31,-64,324 38,-63,322.5 43.5,-59,317.5 RADIUS 6 STRENGTH 0.8 SYMMETRY
+SCULPT "Sphere 1" DRAW AT 21,-61,319.5 26,-63.5,323.5 31,-64.5,324.5 37,-63.5,323.5 42,-60,319.5 RADIUS 4 STRENGTH 0.6 SYMMETRY
+SCULPT "Sphere 1" CREASE AT 19,-63,326.5 25,-65.5,329 31,-66.5,330 38,-64.5,328.5 43,-60,323.5 RADIUS 3 STRENGTH 0.2 SYMMETRY
+SCULPT "Sphere 1" DRAW AT 21,-60,311.5 26,-62.5,309.5 31,-63,309 37,-62,309.5 42,-59,312 RADIUS 4 STRENGTH 0.5 SYMMETRY
+SCULPT "Sphere 1" DRAW INVERT AT 19,-62,316 RADIUS 2.5 STRENGTH 0.6 SYMMETRY
+SCULPT "Sphere 1" SMOOTH AT 14,-66,322 22,-67,331 31,-68,334 41,-64,331 48,-58,322 44,-60,309 31,-65,302 18,-67,308 RADIUS 7 STRENGTH 0.35 SYMMETRY
+SCULPT "Sphere 1" SMOOTH AT 19,-61,318 25,-63,323 31,-64.5,324.5 38,-63,323 43,-59,318 37,-62,310 31,-63,309 25,-62,310 RADIUS 5 STRENGTH 0.25 SYMMETRY
+# mouth: the upper lip with its bow, the fuller lower lip, softened; the line between, the corners, under the lip, the philtrum
+SCULPT "Sphere 1" DRAW AT 0,-81,259 6,-81,260 12,-79.5,259 19,-77,257 25,-72,255 RADIUS 5 STRENGTH 1 SYMMETRY
+SCULPT "Sphere 1" DRAW AT 0,-81,259 6,-81,260 12,-79.5,259 19,-77,257 RADIUS 4 STRENGTH 0.6 SYMMETRY
+SCULPT "Sphere 1" DRAW AT 0,-81,249 7,-80,248.5 15,-78,249.5 21,-74.5,251.5 RADIUS 7 STRENGTH 1 SYMMETRY
+SCULPT "Sphere 1" DRAW AT 0,-81,249 7,-80,248.5 15,-78,249.5 RADIUS 6 STRENGTH 0.6 SYMMETRY
+SCULPT "Sphere 1" SMOOTH AT 0,-82,256 8,-81,256 16,-78,255 24,-73,254 16,-78,250 8,-81,249 0,-82,249 RADIUS 6 STRENGTH 0.3 SYMMETRY
+SCULPT "Sphere 1" CREASE AT 0,-83,254 8,-82,254 17,-79,254 27,-71,255 RADIUS 2.5 STRENGTH 0.4 SYMMETRY
+SCULPT "Sphere 1" DRAW INVERT AT 27,-70,255 RADIUS 4 STRENGTH 0.8 SYMMETRY
+SCULPT "Sphere 1" DRAW INVERT AT 0,-80,240 9,-78,240.5 RADIUS 6 STRENGTH 0.6 SYMMETRY
+SCULPT "Sphere 1" DRAW INVERT AT 0,-81,268 0,-81,263 RADIUS 3 STRENGTH 0.4
+# ears: the bowl, the rim, the inner ridge
+SCULPT "Sphere 1" DRAW INVERT AT 78,16,300 78,20,294 78,17,290 RADIUS 6 STRENGTH 1 SYMMETRY
+SCULPT "Sphere 1" DRAW INVERT AT 78,16,300 78,20,294 78,17,290 RADIUS 6 STRENGTH 1 SYMMETRY
+SCULPT "Sphere 1" DRAW AT 75,10,318 77,20,322 79,29,316 79,32,305 78,31,292 76,26,281 RADIUS 2.5 STRENGTH 1 SYMMETRY
+SCULPT "Sphere 1" DRAW AT 75,10,318 77,20,322 79,29,316 79,32,305 78,31,292 76,26,281 RADIUS 2.5 STRENGTH 1 SYMMETRY
+SCULPT "Sphere 1" DRAW AT 78,15,312 79,24,310 79,26,300 RADIUS 2 STRENGTH 0.6 SYMMETRY
+# neck: the muscles from behind the ears to the notch, the notch, the collarbones
+SCULPT "Sphere 1" DRAW AT 46,15,245 42,-5,215 30,-27,185 10,-44,162 RADIUS 10 STRENGTH 0.45 SYMMETRY
+SCULPT "Sphere 1" DRAW INVERT AT 0,-45,160 RADIUS 9 STRENGTH 0.8
+SCULPT "Sphere 1" DRAW AT 14,-46,155 40,-40,152 75,-28,146 110,-12,138 RADIUS 9 STRENGTH 0.45 SYMMETRY

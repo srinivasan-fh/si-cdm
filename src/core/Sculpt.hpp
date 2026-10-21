@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace sicdm {
@@ -75,6 +76,10 @@ public:
     void beginGrab(const Vec3& centre, const SculptSettings& s);
     void grabTo(const Vec3& delta);
 
+    // A stroke (dabs along the points, snapped to the surface) or a grab from
+    // points[0] by `grabDelta`, run on the part of the surface it can reach.
+    void stroke(const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta = {});
+
     // Splits every edge longer than `detail` (whole mesh), up to `maxTriangles`.
     void refineAll(float detail, std::size_t maxTriangles = 600000);
     // Collapses edges shorter than `minEdge` (within `radius` of `centre`, or
@@ -92,6 +97,13 @@ private:
     void flipCaps();
     std::size_t collapseLocal(std::vector<std::uint32_t> local, float minEdge, const Vec3& centre, float radius, bool keepShape);
     std::vector<std::uint32_t> trianglesNear(const Vec3& centre, float reach) const;
+    void runStroke(const std::vector<Vec3>& path, const SculptSettings& s, const Vec3& grabDelta);
+    void dropUnused();
+    // The triangles that meet any of the boxes, as a mesh of their own whose cut
+    // border is pinned; stitch() puts the edited window back.
+    SculptMesh window(const std::vector<AABB>& boxes, std::vector<std::uint32_t>& taken, float* longestCut) const;
+    void stitch(const SculptMesh& w, const std::vector<std::uint32_t>& taken);
+    bool pinned(std::uint32_t v) const noexcept { return !m_pinned.empty() && m_pinned[v]; }
     bool splitEdges(const std::vector<std::uint64_t>& edges, std::size_t maxTriangles);
 
     std::vector<Vec3> m_p;                         // positions
@@ -99,6 +111,11 @@ private:
     std::vector<std::array<std::uint32_t, 3>> m_t; // triangles
     float m_mirrorX = 0.0f;
     float m_size = 1.0f; // bounding diagonal
+    // A window on a larger mesh: where each vertex came from there (kFresh: made
+    // here), and the vertices on the cut border, which nothing may move or split.
+    std::vector<std::uint32_t> m_from;
+    std::vector<char> m_pinned;
+    std::unordered_set<std::uint64_t> m_cut; // edges shared with triangles outside the window
     // Grab in progress.
     struct GrabVert {
         std::uint32_t v;
@@ -112,6 +129,8 @@ private:
 // Dabs every radius / 4 along the polyline through the points snapped to the surface,
 // or a grab from points[0] moved by `grabDelta`. Writes the body back.
 void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta = {});
+// The same on a welded copy of the body already made (it is changed too).
+void sculptStroke(Body& body, SculptMesh& surface, const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta = {});
 
 // Refines the whole body until no edge is longer than `detail` (for sculpting a coarse CAD mesh).
 void sculptRefine(Body& body, float detail);

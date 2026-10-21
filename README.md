@@ -173,10 +173,12 @@ POCKET AT 60,30,20 BOX WIDTH 18 LENGTH 28 DEPTH 5                 CHANNEL PATH -
 TRIM PLANE 0,0,5 NORMAL 0,0,-1      BOSS AT -60,30,20 DIAMETER 14 HEIGHT 9      BOOLEAN A SUBTRACT B     UNDO
 ```
 
-A whole head-and-shoulders bust, sculpted from a ball by a 68-command script
-([docs/examples/head-bust.txt](docs/examples/head-bust.txt)): `RUN docs/examples/head-bust.txt`.
+`REMESH` fuses bodies into one evenly meshed solid with filleted joins (like a DynaMesh), so forms
+can be blocked out from stretched primitives and then sculpted. A whole head-and-shoulders bust is
+sculpted this way by a 92-command script ([docs/examples/head-bust.txt](docs/examples/head-bust.txt)):
+`RUN docs/examples/head-bust.txt`.
 
-![A head bust sculpted from a ball with the brushes](docs/head-bust.png)
+![A head-and-shoulders bust: blocked out from stretched balls, fused with REMESH, detailed with the brushes](docs/head-bust.png)
 
 Details: [docs/sculpting.md](docs/sculpting.md).
 

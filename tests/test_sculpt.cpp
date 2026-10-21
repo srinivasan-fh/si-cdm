@@ -298,8 +298,8 @@ TEST_CASE("RUN sculpts the head bust example from a ball") {
     const Body& bust = d.scene.bodies()[0];
     CHECK(openEdgeCount(bust.mesh) == 0);
     const AABB box = bust.bounds();
-    CHECK_NEAR(box.min.z, 30.0, 1e-3); // cut flat underneath
-    CHECK_NEAR(box.max.z, 415.0, 5.0); // the crown
+    CHECK_NEAR(box.min.z, 40.0, 1e-3); // cut flat underneath
+    CHECK_NEAR(box.max.z, 420.0, 5.0); // the crown
     CHECK(box.max.x - box.min.x > 350.0f); // shoulders
 
     const SculptMesh sm(bust);
@@ -313,7 +313,7 @@ TEST_CASE("RUN sculpts the head bust example from a ball") {
         const auto h = sm.raycast({{dir * 500.0f, y, z}, {-dir, 0, 0}});
         return h ? h->x : 1e9f;
     };
-    CHECK(front(0, 290) < front(0, 260) - 15.0f); // the nose stands out over the lip
+    CHECK(front(0, 290) < front(0, 260) - 12.0f); // the nose stands out over the lip
     CHECK(front(0, 254) > front(0, 260) + 0.8f);   // the mouth is a line between the lips
     CHECK(front(0, 254) > front(0, 247) + 0.8f);
     CHECK(front(30, 318) > front(30, 340) + 3.0f); // the eyes sit under the brow
@@ -326,7 +326,87 @@ TEST_CASE("RUN sculpts the head bust example from a ball") {
             const float a = front(static_cast<float>(x), static_cast<float>(z)), b = front(static_cast<float>(-x), static_cast<float>(z));
             if (a < 1e8f && b < 1e8f) worst = std::max(worst, std::fabs(a - b));
         }
-    CHECK(worst < 1.5f);
+    CHECK(worst < 1.0f);
 
     CHECK(!run(d, "RUN /no/such/script.txt").ok);
+}
+
+TEST_CASE("REMESH fuses overlapping parts into one closed solid, filleted where they meet") {
+    Document d;
+    REQUIRE(run(d, "SPHERE 30 @0,0,0").ok);
+    REQUIRE(run(d, "SPHERE 30 @45,0,0").ok); // overlapping: centres 45 apart
+    const double v1 = meshVolume(worldMesh(d.scene.bodies()[0]));
+    auto r = run(d, "REMESH \"Sphere 1\" \"Sphere 2\" VOXEL 1 BLEND 12");
+    REQUIRE(r.ok);
+    CHECK(r.lines[0].find(", closed") != std::string::npos);
+    REQUIRE(d.scene.bodies().size() == 1); // the other ball is used up
+    const Body& b = d.scene.bodies()[0];
+    CHECK(openEdgeCount(b.mesh) == 0);
+    const double v = meshVolume(worldMesh(b));
+    CHECK(v > v1 * 1.5);
+    CHECK(v < v1 * 2.0);
+    // At the waist between the balls (x = 22.5) the plain union is 18.5 wide; the
+    // fillet fills it out.
+    const SculptMesh sm(b);
+    const auto top = sm.raycast({{22.5f, 0.0f, 200.0f}, {0, 0, -1}});
+    REQUIRE(top.has_value());
+    CHECK(top->z > 30.0f + 19.8f + 1.0f);
+    // Far from the join, each surface stays where it was.
+    const auto left = sm.raycast({{-200.0f, 0.0f, 30.0f}, {1, 0, 0}});
+    REQUIRE(left.has_value());
+    CHECK_NEAR(left->x, -30.0, 0.6);
+
+    // One faceted body: the facets round off, its size stays.
+    REQUIRE(run(d, "BOX 40 40 40 @100,0,0").ok);
+    const std::string block = d.scene.bodies().back().name;
+    REQUIRE(run(d, "REMESH \"" + block + "\" VOXEL 1 SMOOTH 1").ok);
+    const Body& k = d.scene.bodies().back();
+    CHECK(openEdgeCount(k.mesh) == 0);
+    CHECK_NEAR(meshVolume(worldMesh(k)), 64000.0, 64000.0 * 0.04);
+    CHECK(!run(d, "REMESH \"" + block + "\" VOXEL 0.001").ok); // far too many voxels
+    CHECK(!run(d, "REMESH \"" + block + "\" \"Nobody\"").ok);
+}
+
+TEST_CASE("SCALE stretches along x, y, z and ROTATE orients a body") {
+    Document d;
+    REQUIRE(run(d, "SPHERE 10 @0,0,0").ok);
+    REQUIRE(run(d, "SCALE \"Sphere 1\" 2,1,0.5").ok);
+    AABB box = d.scene.bodies()[0].bounds();
+    CHECK_NEAR(box.max.x - box.min.x, 40.0, 0.1);
+    CHECK_NEAR(box.max.y - box.min.y, 20.0, 0.1);
+    CHECK_NEAR(box.max.z - box.min.z, 10.0, 0.1);
+    CHECK_NEAR(box.min.z, 0.0, 1e-3); // about its base point
+    REQUIRE(run(d, "UNDO").ok);
+    box = d.scene.bodies()[0].bounds();
+    CHECK_NEAR(box.max.x - box.min.x, 20.0, 0.1);
+    REQUIRE(run(d, "SCALE \"Sphere 1\" 2,1,0.5").ok);
+    REQUIRE(run(d, "ROTATE \"Sphere 1\" 0,0,90").ok);
+    box = d.scene.bodies()[0].bounds();
+    CHECK_NEAR(box.max.x - box.min.x, 20.0, 0.1);
+    CHECK_NEAR(box.max.y - box.min.y, 40.0, 0.1);
+    CHECK(!run(d, "SCALE \"Sphere 1\" 1,0,1").ok);
+}
+
+TEST_CASE("a stroke on a dense mesh only touches the surface it reaches") {
+    Body b = makeBody("Ball", "sphere", {40});
+    sculptRefine(b, 1.5f);
+    const SculptMesh before(b);
+    SculptSettings s;
+    s.brush = SculptBrush::Draw;
+    s.radius = 4;
+    s.strength = 1;
+    sculptStroke(b, {{0, -40, 40}, {0, -38, 55}}, s);
+    CHECK(openEdgeCount(b.mesh) == 0);
+    const SculptMesh after(b);
+    CHECK(after.openEdges() == 0);
+    // Raised under the stroke, untouched beyond twice its radius from it.
+    const auto hit = after.raycast({{0, -200, 47}, {0, 1, 0}});
+    REQUIRE(hit.has_value());
+    CHECK(hit->y < -40.1f);
+    float moved = 0.0f;
+    for (const Vec3& p : before.positions()) {
+        if (std::fabs(p.z - 47.5f) < 20.0f && p.y < -20.0f) continue; // near the stroke
+        moved = std::max(moved, std::fabs(length(after.closestPoint(p) - p)));
+    }
+    CHECK(moved < 1e-3f);
 }
