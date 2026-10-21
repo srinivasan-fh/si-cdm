@@ -208,6 +208,30 @@ JOINT "Visor" TO "Helmet" AT 0,-120,1700 AXIS X RANGE 0 80      LIGHTEN "Back Pl
 
 Details: [docs/armour.md](docs/armour.md).
 
+## 3D printing
+
+*Manufacture → 3D Print* (or the command line) gets a part ready for a printer.
+
+- **Check Printability:** reports:
+  - holes, non-manifold edges and inside-out faces;
+  - overhangs that need support;
+  - walls thinner than the nozzle can print;
+  - whether the part fits the build volume;
+  - grams, filament and time.
+- **Repair Mesh:** welds seams, removes degenerate and duplicate faces, fixes the winding, turns
+  inside-out shells the right way out, removes specks and fills holes.
+- **Orient for Least Support:** turns the part so the least area needs support, then sets it on the bed.
+- **Slice to G-code:** an FDM slicer with layers, walls, ±45° infill, solid top and bottom layers and
+  retraction. It writes Marlin G-code with filament and time estimates.
+- **Export 3MF:** the package that Fusion, Shapr3D, PrusaSlicer, Bambu Studio and Cura read.
+
+```text
+PRINTCHECK "Bracket" OVERHANG 45 WALL 0.8      REPAIR      ORIENT      EXPORT bracket.3mf
+SLICE "Bracket" TO bracket.gcode LAYER 0.2 INFILL 20 WALLS 2 NOZZLE 210 BED 60
+```
+
+Details: [docs/printing.md](docs/printing.md).
+
 ## Library: motors and gears
 
 ![Library](docs/library.png)
@@ -372,7 +396,7 @@ With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,d
 | --- | --- |
 | **New / Open / Save / Save As** (Ctrl/⌘ N, O, S, Shift+S) | `.sicdm` project (JSON): parametric solids, meshes, sketches, reference images |
 | **Import** (Ctrl/⌘ I) | `.stl` `.obj` → body · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
-| **Export** (Ctrl/⌘ E) | `.stl` `.obj` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
+| **Export** (Ctrl/⌘ E) | `.stl` `.obj` `.3mf` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
 
 Unsaved changes are tracked (`*` in the tab and title); closing a tab or quitting asks before discarding them.
 
@@ -388,6 +412,7 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 `insert_part`, `list_parts` (library motors, gears and gear trains; `modify` takes a `scale`),
 `set_pose`, `play_gesture` (robot postures and gestures), `set_physics`, `physics_report` (physics environment),
 `sculpt` (brushes, cuts, booleans), `armor` (shell, armour, joints, lattice, interference),
+`print` (printability check, repair, orient, slice to G-code, 3MF),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

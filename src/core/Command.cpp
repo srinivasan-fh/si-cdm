@@ -48,7 +48,7 @@ constexpr CommandSpec kCommands[] = {
      "Cut a rectangular, round or ball-end pocket into the surface"},
     {"CHANNEL", "GROOVE SLOT", "CHANNEL [body] [PATH] x,y,z x,y,z ... WIDTH w [DEPTH d]",
      "Carve a round-bottomed channel following points on the surface (cable runs, vents)"},
-    {"TRIM", "KNIFE SLICE", "TRIM [body] [PLANE] x,y,z NORMAL x,y,z | TRIM [body] [PLANE] x,y,z NORMAL x,y,z SMALLER",
+    {"TRIM", "KNIFE", "TRIM [body] [PLANE] x,y,z NORMAL x,y,z | TRIM [body] [PLANE] x,y,z NORMAL x,y,z SMALLER",
      "Slice with a plane: removes the side the normal points to (SMALLER: whichever side is smaller); the cut is capped"},
     {"BOSS", "ADDVOLUME", "BOSS [body] [AT] x,y,z [DIR x,y,z] [CYLINDER|BOX|BALL] DIAMETER d HEIGHT h",
      "Add material: a boss, pad or dome fused onto the surface"},
@@ -78,8 +78,15 @@ constexpr CommandSpec kCommands[] = {
     {"CLOSE", "", "CLOSE [DISCARD]", "Close the active file tab (DISCARD drops unsaved changes)"},
     {"IMPORT", "IMP", "IMPORT path [@x,y] [WIDTH mm]",
      "STL/OBJ as a body, DXF onto the sketch plane, PNG/JPG/... as a reference image"},
-    {"EXPORT", "EXP", "EXPORT path.stl|.obj|.dxf|.svg", "STL/OBJ of visible bodies; DXF/SVG of the sketch plane"},
+    {"EXPORT", "EXP", "EXPORT path.stl|.obj|.3mf|.dxf|.svg", "STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane"},
     {"RUN", "SCRIPT", "RUN path.txt", "Run the commands in a text file, one a line (# starts a comment)"},
+    // 3D printing
+    {"PRINTCHECK", "PRINTABILITY", "PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]",
+     "Check a part for printing: holes, non-manifold edges, inside out, overhangs, thin walls, size, material, time"},
+    {"REPAIR", "FIX", "REPAIR [body]", "Make a mesh printable: weld, drop bad faces, fix the winding, fill holes, drop specks"},
+    {"ORIENT", "", "ORIENT [body] [OVERHANG deg]", "Turn a part for the least support and set it on the bed"},
+    {"SLICE", "", "SLICE [body] TO path.gcode [LAYER h] [WIDTH w] [INFILL %] [WALLS n] [TOP n] [BOTTOM n] [NOZZLE t] [BED t] "
+     "[SPEED v] [FILAMENT d] [RETRACT mm]", "Slice a part for an FDM printer to G-code (walls, infill, solid top and bottom)"},
     // Motion & simulation
     {"MOTION", "MOT MOTIONS", "MOTION CIRCLE|LINEAR [name] [AXIS X|Y|Z|x,y,z] [AT x,y,z] [SPEED v] [RANGE r] "
      "[MODE CONT|LOOP|OSC|ONCE] [START s] [EACH] [FOLLOW circular|NONE] [RATIO r] [RADIUS r] [STEP s] [PATH] "
@@ -110,7 +117,7 @@ constexpr CommandSpec kCommands[] = {
      "Insert a library component: motors, gears, racks, gear trains (PART alone lists them)"},
     {"PARAM", "PARAMS PARAMETERS", "PARAM [name] [key value]...",
      "Edit a placed library part: motor shafts (SHAFTS NONE|SINGLE|DUAL, SHAFT_LENGTH...), gear teeth...; no values lists them"},
-    {"ROTATE", "ROT ORIENT", "ROTATE [name] rx,ry,rz", "Orient a body: degrees about X, then Y, then Z, about its origin"},
+    {"ROTATE", "ROT", "ROTATE [name] rx,ry,rz", "Orient a body: degrees about X, then Y, then Z, about its origin"},
     {"SCALE", "SC RESIZE", "SCALE [name] factor | SCALE [name] TO size | SCALE [name] sx,sy,sz",
      "Resize a body, or a whole library component with its motions; three factors stretch a body along x, y, z"},
     // Editing

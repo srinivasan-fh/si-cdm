@@ -2825,6 +2825,28 @@ namespace {
 
 // meshBoolean, retried with the tool nudged by a hundred-thousandth of its size when
 // a coincidence (faces or edges exactly on each other) leaves the result unclosed.
+// Separate pieces of a mesh (welded as a sculpt copy is: seams of round primitives join).
+std::size_t shellCount(const MeshData& m) {
+    Body b;
+    b.mesh = m;
+    const SculptMesh sm(b);
+    const auto& tris = sm.triangles();
+    std::vector<std::uint32_t> parent(sm.vertexCount());
+    for (std::size_t i = 0; i < parent.size(); ++i) parent[i] = static_cast<std::uint32_t>(i);
+    auto find = [&](std::uint32_t v) {
+        while (parent[v] != v) v = parent[v] = parent[parent[v]];
+        return v;
+    };
+    for (const auto& t : tris) {
+        const std::uint32_t r = find(t[0]);
+        parent[find(t[1])] = r;
+        parent[find(t[2])] = r;
+    }
+    std::unordered_set<std::uint32_t> roots;
+    for (const auto& t : tris) roots.insert(find(t[0]));
+    return roots.size();
+}
+
 bool robustBoolean(MeshData& a, const MeshData& tool, BooleanOp op) {
     // Closed once welded (round primitives have seams of nearly equal points); the
     // cutters close up within the boolean.
@@ -2852,6 +2874,22 @@ bool robustBoolean(MeshData& a, const MeshData& tool, BooleanOp op) {
         if (bestOpen == 0) break;
     }
     if (bestOpen == static_cast<std::size_t>(-1)) return false;
+    // Solids that only touch face to face (a block stood on another) can come back
+    // as two shells with a wall inside them: their faces meet without crossing. Grown
+    // by a hair, the tool overlaps the face it touches, and the union merges.
+    if (op == BooleanOp::Union && bestOpen == 0) {
+        const AABB ab = a.bounds();
+        const bool touching = ab.min.x <= tb.max.x + nudge && tb.min.x <= ab.max.x + nudge && ab.min.y <= tb.max.y + nudge &&
+                              tb.min.y <= ab.max.y + nudge && ab.min.z <= tb.max.z + nudge && tb.min.z <= ab.max.z + nudge;
+        const std::size_t apart = shellCount(a) + shellCount(tool);
+        if (touching && shellCount(best) >= apart) {
+            MeshData r = a, t = tool;
+            const Vec3 c = tb.center();
+            const float grow = 1.0f + 2.0f * nudge / std::max(length(tb.max - tb.min), 1e-3f);
+            t.transform(translate(c) * scale({grow, grow, grow}) * translate(-c));
+            if (meshBoolean(r, t, op) && (!closedInput || openEdgeCount(r) == 0) && shellCount(r) < apart) best = std::move(r);
+        }
+    }
     a = std::move(best);
     return true;
 }

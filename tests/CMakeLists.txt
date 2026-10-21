@@ -17,6 +17,7 @@ add_executable(sicdm_tests
     test_physics.cpp
     test_sculpt.cpp
     test_wearable.cpp
+    test_print.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 sicdm_set_compile_options(sicdm_tests)

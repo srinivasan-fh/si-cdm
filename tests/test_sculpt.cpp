@@ -641,3 +641,29 @@ TEST_CASE("REDO puts back what UNDO took, until something else changes") {
     REQUIRE(run(d, "BOX 10 10 10 @100,0,0").ok);
     CHECK(!run(d, "REDO").ok);
 }
+
+TEST_CASE("a union of solids that only touch face to face is one shell, with no wall inside") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 30 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 50 10 6 @0,0,30").ok); // stood on top: its underside partly on the post's top
+    REQUIRE(run(d, "BOOLEAN \"Block 1\" UNION \"Block 2\"").ok);
+    const Body& t = d.scene.bodies()[0];
+    CHECK(openEdgeCount(t.mesh) == 0);
+    CHECK_NEAR(meshVolume(worldMesh(t)), 10.0 * 10 * 30 + 50.0 * 10 * 6, 0.5);
+    // No upward face left at the join (the post's top), and only the arms' undersides face down there.
+    const MeshData w = worldMesh(t);
+    double up = 0, down = 0;
+    for (std::size_t k = 0; k + 2 < w.indices.size(); k += 3) {
+        const Vec3 a = w.vertices[w.indices[k]].position, b = w.vertices[w.indices[k + 1]].position, c = w.vertices[w.indices[k + 2]].position;
+        if (std::fabs(a.z - 30) > 0.01f || std::fabs(b.z - 30) > 0.01f || std::fabs(c.z - 30) > 0.01f) continue;
+        const Vec3 n = cross(b - a, c - a);
+        (n.z > 0 ? up : down) += 0.5 * length(n);
+    }
+    CHECK(up < 0.5);
+    CHECK_NEAR(down, 50.0 * 10 - 10.0 * 10, 0.5);
+    // Apart, they stay two.
+    REQUIRE(run(d, "BOX 10 10 10 @100,0,0").ok);
+    REQUIRE(run(d, "BOX 10 10 10 @100,0,20").ok);
+    REQUIRE(run(d, "BOOLEAN \"Block 3\" UNION \"Block 4\"").ok);
+    CHECK_NEAR(meshVolume(worldMesh(d.scene.bodies().back())), 2000.0, 1e-3);
+}

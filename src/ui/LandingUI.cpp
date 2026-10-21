@@ -430,6 +430,16 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Manufacture")) {
+        if (ImGui::BeginMenu("3D Print")) {
+            const bool body = st.selectedBody >= 0;
+            if (ImGui::MenuItem("Check Printability", nullptr, false, body)) cmd.commands.push_back("PRINTCHECK");
+            if (ImGui::MenuItem("Repair Mesh", nullptr, false, body)) cmd.commands.push_back("REPAIR");
+            if (ImGui::MenuItem("Orient for Least Support", nullptr, false, body)) cmd.commands.push_back("ORIENT");
+            if (ImGui::MenuItem("Slice to G-code...", nullptr, false, body)) requestFile(FileSlice, st);
+            if (ImGui::MenuItem("Export 3MF...")) requestFile(File3mf, st);
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
         ImGui::MenuItem("New CAM Setup", nullptr, false, false);
         ImGui::MenuItem("2D Contour", nullptr, false, false);
         ImGui::MenuItem("3D Adaptive Clearing", nullptr, false, false);
@@ -1541,8 +1551,12 @@ void LandingUI::requestFile(int action, const UiState& st) {
         break;
     case FileExport:
         m_fileDialog.open(FileDialog::Mode::Save, "Export (STL / OBJ model, DXF / SVG sketch plane)",
-                          {".stl", ".obj", ".dxf", ".svg"}, dir, projectStem(st) + ".stl");
+                          {".stl", ".obj", ".3mf", ".dxf", ".svg"}, dir, projectStem(st) + ".stl");
         break;
+    case FileSlice:
+        m_fileDialog.open(FileDialog::Mode::Save, "Slice to G-code (FDM)", {".gcode"}, dir, projectStem(st) + ".gcode");
+        break;
+    case File3mf: m_fileDialog.open(FileDialog::Mode::Save, "Export 3MF", {".3mf"}, dir, projectStem(st) + ".3mf"); break;
     default: m_fileAction = FileNone;
     }
 }
@@ -1562,7 +1576,9 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
             break;
         case FileImport:
         case FileImportImage: cmd.commands.push_back("IMPORT " + quoted(*path)); break;
-        case FileExport: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
+        case FileExport:
+        case File3mf: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
+        case FileSlice: cmd.commands.push_back("SLICE TO " + quoted(*path)); break;
         default: break;
         }
         m_fileAction = FileNone;

@@ -419,6 +419,25 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("operation", prop("string", "check | repair | orient | slice | export_3mf"));
+        p.set("body", prop("string", "Body (default: the selection)"));
+        p.set("path", prop("string", "slice: the .gcode file; export_3mf: the .3mf file"));
+        p.set("overhang", prop("number", "Degrees from vertical a face may lean out before it needs support (default 45)"));
+        p.set("min_wall", prop("number", "check: thinnest printable wall, mm (default 0.8)"));
+        p.set("layer", prop("number", "slice: layer height, mm (default 0.2)"));
+        p.set("width", prop("number", "slice: line width, mm (default 0.45)"));
+        p.set("infill", prop("number", "slice: infill percent (default 20)"));
+        p.set("walls", prop("number", "slice: wall lines (default 2)"));
+        p.set("nozzle", prop("number", "slice: nozzle temperature, deg C (default 210)"));
+        p.set("bed", prop("number", "slice: bed temperature, deg C (default 60)"));
+        tools.push(tool("print",
+                        "3D-print preparation: a printability check (holes, non-manifold edges, inside-out faces, "
+                        "overhangs needing support, thin walls, size, material and time), mesh repair, orientation for "
+                        "the least support, 3MF export, and an FDM slicer writing G-code.",
+                        p, {"operation"}));
+    }
+    {
+        Json p = Json::object();
         p.set("path", prop("string", "File path (.sicdm). Optional for save when the project already has a path"));
         tools.push(tool("save_project", "Save the project.", p, {}));
         Json o = Json::object();
@@ -732,6 +751,26 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["mirror"].asBool()) line += " MIRROR";
         }
         return runLine(line);
+    }
+    if (name == "print") {
+        const std::string op = a["operation"].asString();
+        const std::string body = a["body"].isString() ? quote(a["body"].asString()) : "";
+        auto opt = [&](const char* key, const char* word) {
+            return a[key].isNumber() ? std::string(" ") + word + " " + num(a[key].asNumber()) : std::string();
+        };
+        if (op == "check") return runLine("PRINTCHECK " + body + opt("overhang", "OVERHANG") + opt("min_wall", "WALL"));
+        if (op == "repair") return runLine("REPAIR " + body);
+        if (op == "orient") return runLine("ORIENT " + body + opt("overhang", "OVERHANG"));
+        if (op == "slice") {
+            if (!a["path"].isString()) return textResult("slice needs 'path' (a .gcode file)", true);
+            return runLine("SLICE " + body + " TO " + quote(a["path"].asString()) + opt("layer", "LAYER") + opt("width", "WIDTH") +
+                           opt("infill", "INFILL") + opt("walls", "WALLS") + opt("nozzle", "NOZZLE") + opt("bed", "BED"));
+        }
+        if (op == "export_3mf") {
+            if (!a["path"].isString()) return textResult("export_3mf needs 'path' (a .3mf file)", true);
+            return runLine("EXPORT " + quote(a["path"].asString()));
+        }
+        return textResult("operation is one of check, repair, orient, slice, export_3mf", true);
     }
     if (name == "armor") {
         const std::string op = a["operation"].asString();

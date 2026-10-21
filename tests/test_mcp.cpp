@@ -231,3 +231,20 @@ TEST_CASE("MCP set_physics and physics_report run an experiment") {
     CHECK(d.scene.physics().gravity == GravityMode::Newton);
     CHECK(tool(s, "set_physics", R"({"body":{"mode":"fixed"}})")["isError"].asBool());
 }
+
+TEST_CASE("MCP print checks, slices and exports a part") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "create_solid", R"({"kind":"box","width":20,"depth":20,"height":10,"name":"Part"})")["isError"].asBool());
+    Json r = tool(s, "print", R"({"operation":"check","body":"Part"})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("ready to print") != std::string::npos);
+    const std::string gcode = (std::filesystem::temp_directory_path() / "sicdm mcp slice.gcode").string();
+    r = tool(s, "print", R"({"operation":"slice","body":"Part","path":")" + gcode + R"(","layer":0.25,"infill":15})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("40 layers") != std::string::npos);
+    CHECK(std::filesystem::exists(gcode));
+    std::filesystem::remove(gcode);
+    CHECK(tool(s, "print", R"({"operation":"slice","body":"Part"})")["isError"].asBool()); // no path
+    CHECK(tool(s, "print", R"({"operation":"melt"})")["isError"].asBool());
+}

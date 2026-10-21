@@ -4,6 +4,7 @@
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
+#include "core/Print.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
 #include "core/Units.hpp"
@@ -1299,6 +1300,120 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         out.say("Redid " + what);
         return out;
     }
+    if (cmd == "PRINTCHECK" || cmd == "REPAIR" || cmd == "ORIENT" || cmd == "SLICE") {
+        // PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]      REPAIR [body]      ORIENT [body] [OVERHANG deg]
+        // SLICE [body] TO path.gcode [LAYER h] [WIDTH w] [INFILL %] [WALLS n] [TOP n] [BOTTOM n] [NOZZLE t] [BED t]
+        //       [SPEED v] [FILAMENT d] [RETRACT mm]
+        static const char* const kKeys[] = {"overhang", "wall", "build", "to", "layer", "width", "infill", "walls", "top",
+                                            "bottom", "nozzle", "bed", "speed", "filament", "retract"};
+        auto isKey = [&](std::size_t k) {
+            if (quotedArg(k)) return false;
+            const std::string w = lower(a[k]);
+            for (const char* q : kKeys)
+                if (w == q) return true;
+            return false;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        if (quotedArg(0)) nameWords.push_back(a[i++]);
+        else
+            while (i < a.size() && !isKey(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        PrintSettings ps;
+        std::string path;
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (k == "to") {
+                if (i + 1 >= a.size()) return usage();
+                path = a[++i];
+                continue;
+            }
+            if (k == "build") {
+                const auto v = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt;
+                if (!v || !(v->x > 0) || !(v->y > 0) || !(v->z > 0)) return out.fail("BUILD needs x,y,z");
+                ps.buildVolume = *v;
+                continue;
+            }
+            const bool isLength = k == "wall" || k == "layer" || k == "width" || k == "filament" || k == "retract";
+            std::optional<double> v;
+            if (i + 1 < a.size()) {
+                ++i;
+                if (isLength) v = parseLength(a[i]);
+                else if (const auto n = parseNumber(a[i])) v = *n;
+            }
+            if (!v || !std::isfinite(*v) || *v < 0) return out.fail(toUpper(k) + " needs a value");
+            const auto f = static_cast<float>(*v);
+            if (k == "overhang") ps.overhangAngle = std::clamp(f, 0.0f, 90.0f);
+            else if (k == "wall") ps.minWall = f;
+            else if (k == "layer") ps.layerHeight = f;
+            else if (k == "width") ps.lineWidth = f;
+            else if (k == "infill") ps.infill = std::clamp(f / 100.0f, 0.0f, 1.0f); // percent
+            else if (k == "walls") ps.walls = std::clamp(static_cast<int>(f), 0, 20);
+            else if (k == "top") ps.topLayers = std::clamp(static_cast<int>(f), 0, 100);
+            else if (k == "bottom") ps.bottomLayers = std::clamp(static_cast<int>(f), 0, 100);
+            else if (k == "nozzle") ps.nozzleTemp = f;
+            else if (k == "bed") ps.bedTemp = f;
+            else if (k == "speed") ps.speed = std::max(f, 1.0f);
+            else if (k == "filament") ps.filament = f;
+            else if (k == "retract") ps.retract = f;
+            else return usage();
+        }
+        if (body.mesh.indices.empty()) return out.fail(body.name + " has no surface");
+        if (cmd == "PRINTCHECK") {
+            const PrintReport r = analyzePrint(body, ps);
+            const Vec3 size = r.box.max - r.box.min;
+            out.say(body.name + (r.printable() ? ": ready to print" : ": needs work before printing"));
+            out.say(fmt("  %g triangles, ", static_cast<double>(r.triangles)) + fmt("%g shell(s), ", static_cast<double>(r.shells)) +
+                    (r.openEdges == 0 ? "closed" : fmt("%g open edges (holes)", static_cast<double>(r.openEdges))) +
+                    (r.nonManifoldEdges ? fmt(", %g non-manifold edges", static_cast<double>(r.nonManifoldEdges)) : "") +
+                    (r.insideOut ? ", inside out" : ""));
+            out.say("  size " + lengthsText({size.x, size.y, size.z}, " x ", "", "") + (r.fits ? ", fits the build volume" : ", too big for the build volume") +
+                    fmt(", volume %.1f cm3", r.volume / 1000.0) + fmt(", area %.1f cm2", r.area / 100.0));
+            out.say(fmt("  overhangs past %g deg: ", static_cast<double>(ps.overhangAngle)) +
+                    (r.overhangArea < 1.0 ? std::string("none, no support needed") : fmt("%.1f cm2 need support (try ORIENT)", r.overhangArea / 100.0)));
+            if (r.wallSamples > 0)
+                out.say(fmt("  walls: thinnest %.2f mm", static_cast<double>(r.thinnest)) +
+                        (r.thinSamples ? fmt(", %g of the sampled points", static_cast<double>(r.thinSamples)) +
+                                             fmt(" are under %g mm", static_cast<double>(ps.minWall))
+                                       : fmt(", none under %g mm", static_cast<double>(ps.minWall))));
+            out.say(fmt("  about %.0f g, ", r.grams) + fmt("%.1f m of filament, ", r.filamentMetres) + fmt("%.0f min at ", r.minutes) +
+                    fmt("%.0f%% infill", static_cast<double>(ps.infill) * 100.0));
+            return out;
+        }
+        if (cmd == "SLICE") {
+            if (path.empty()) return out.fail("SLICE needs TO path.gcode");
+            SliceReport sr;
+            std::string err;
+            if (!sliceToGcode(body, ps, path, &sr, &err)) return out.fail(err);
+            out.say(body.name + fmt(": %g layers", static_cast<double>(sr.layers)) + fmt(" of %g mm", static_cast<double>(ps.layerHeight)) +
+                    fmt(", %.2f m of filament", sr.filamentMm / 1000.0) + fmt(", about %.0f min", sr.seconds / 60.0) + ", G-code in " + path);
+            return out;
+        }
+        doc.scene.pushUndo(cmd + " " + body.name);
+        if (cmd == "REPAIR") {
+            RepairReport rr;
+            std::string err;
+            if (!repairMesh(body, &rr, &err)) {
+                doc.scene.undo();
+                return out.fail(err);
+            }
+            const std::size_t open = openEdgeCount(body.mesh);
+            out.say(body.name + fmt(": repaired: %g degenerate and ", static_cast<double>(rr.degenerate)) +
+                    fmt("%g duplicate faces dropped, ", static_cast<double>(rr.duplicates)) + fmt("%g turned, ", static_cast<double>(rr.flipped)) +
+                    fmt("%g holes filled, ", static_cast<double>(rr.holesFilled)) + fmt("%g specks removed", static_cast<double>(rr.specks)) +
+                    (open == 0 ? ", closed" : fmt(", %g open edges left", static_cast<double>(open))));
+        } else { // ORIENT
+            double before = 0;
+            const double after = orientForPrint(body, ps, &before);
+            out.say(body.name + fmt(": oriented for printing, support %.1f cm2", after / 100.0) + fmt(" (was %.1f cm2), on the bed", before / 100.0));
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        return out;
+    }
     if (cmd == "MASK" || cmd == "SUBDIVIDE" || cmd == "SYMMETRIZE" || cmd == "DECIMATE") {
         // MASK [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]   SUBDIVIDE [body] [LEVELS n]
         // SYMMETRIZE [body] [X|Y|Z] [-]                          DECIMATE [body] TO n | RATIO r
@@ -2173,6 +2288,11 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         if (a.empty()) return usage();
         const std::string path = joinArgs(a);
         std::string err;
+        if (path.size() > 4 && lower(path.substr(path.size() - 4)) == ".3mf") {
+            if (!export3mf(doc.scene, path, &err)) return out.fail(err);
+            out.say("Exported visible bodies to " + path + " (3MF)");
+            return out;
+        }
         switch (fileKindOf(path)) {
         case FileKind::Stl:
             if (!exportStl(doc.scene, path, &err)) return out.fail(err);
@@ -2190,7 +2310,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             out.say("Exported " + std::to_string(n) + " curves on " + planeName(doc.state.plane) + " to " + path);
             return out;
         }
-        default: return out.fail("Export supports .stl .obj .dxf .svg");
+        default: return out.fail("Export supports .stl .obj .3mf .dxf .svg");
         }
     }
     if (cmd == "IMPORT") {
