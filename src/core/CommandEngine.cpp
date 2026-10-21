@@ -327,7 +327,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (!historyCommand(cmd)) return;
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
     if (st.history.empty() && st.plane != SketchPlane::Top && cmd != "PLANE") // the plane the history starts on
-        st.history.push_back({std::string("PLANE ") + planeName(st.plane), false, false, st.units.unit});
+        st.history.push_back({"PLANE " + toUpper(planeKey(st.plane)), false, false, st.units.unit});
     HistoryStep step;
     step.line = std::string(line);
     step.undoable = cmd != "SELECT" && cmd != "PLANE";
