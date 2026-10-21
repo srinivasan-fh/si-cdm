@@ -232,6 +232,36 @@ SLICE "Bracket" TO bracket.gcode LAYER 0.2 INFILL 20 WALLS 2 NOZZLE 210 BED 60
 
 Details: [docs/printing.md](docs/printing.md).
 
+## CNC milling (CAM)
+
+*Manufacture* (or the `CAM` command) turns a part into G-code for a mill.
+
+- **Setup and tools:** the stock, the work zero and the material. A tool library: flat, ball and
+  bull-nose end mills, face mills, drills, spot drills and taps. Spindle speeds and feeds come
+  from the material, with chip thinning at light stepovers.
+- **Operations:**
+  - facing;
+  - 2D contour with lead arcs and tabs;
+  - pocket, and 3D roughing (offset or zig-zag, ramped entries, stock to leave);
+  - parallel and waterline finishing;
+  - spot, peck, chip-break, tap and bore cycles at the holes found on the part;
+  - helical boring.
+- **Exact paths:** each path comes from an exact drop-cutter on the mesh. Walls sit at the tool
+  radius and rounded corners come out as true arcs.
+- **Simulation:** cuts the stock with each tool's shape. It reports stock left, gouges, rapid
+  moves through stock and cycle time, and shows the cut stock.
+- **Post processors:** Fanuc, Haas, LinuxCNC and GRBL, with fitted arcs and canned cycles.
+
+```text
+CAM SETUP "Bracket" STOCK 3 MATERIAL aluminium      CAM TOOL 1 FLAT 6      CAM TOOL 2 DRILL 6
+CAM ROUGH LEAVE 0.3      CAM CONTOUR TABS 4      CAM DRILL CYCLE PECK      CAM SIMULATE SHOW
+CAM POST bracket.nc HAAS
+```
+
+![CAM toolpaths: facing, roughing, finishing, drilling and a profile](docs/cam-toolpaths.png)
+
+Details: [docs/cam.md](docs/cam.md).
+
 ## Library: motors and gears
 
 ![Library](docs/library.png)
@@ -413,6 +443,7 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 `set_pose`, `play_gesture` (robot postures and gestures), `set_physics`, `physics_report` (physics environment),
 `sculpt` (brushes, cuts, booleans), `armor` (shell, armour, joints, lattice, interference),
 `print` (printability check, repair, orient, slice to G-code, 3MF),
+`cam` (CNC milling: setup, tools, operations, simulation, G-code post),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

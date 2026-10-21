@@ -1262,6 +1262,7 @@ void Application::frame(float dt) {
         }
     }
     if (m_extrudeCurve >= 0) drawExtrudePreview();
+    if (m_uiState.mode == ViewMode::Model3D && m_doc.state.cam.showPaths) drawToolpathOverlay();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active())))
         drawSculptOverlay();
@@ -1990,6 +1991,40 @@ void Application::updateLoopShapes() {
         any = true;
     }
     if (!any) m_loopOverrides.clear();
+}
+
+// CAM toolpaths over the 3D view: cuts in each operation's colour, plunges yellow,
+// rapids thin red.
+void Application::drawToolpathOverlay() const {
+    const CamJob& job = m_doc.state.cam;
+    std::size_t total = 0;
+    for (const CamOperation& op : job.ops)
+        if (op.generated) total += op.moves.size();
+    if (total == 0) return;
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    dl->PushClipRect(m_ui.canvasMin(), m_ui.canvasMax(), true);
+    static const ImU32 kColours[] = {IM_COL32(80, 200, 255, 220), IM_COL32(120, 230, 140, 220), IM_COL32(255, 170, 70, 220),
+                                     IM_COL32(200, 140, 255, 220), IM_COL32(255, 110, 170, 220), IM_COL32(90, 230, 220, 220)};
+    // Very long programs are thinned to keep the view responsive.
+    const std::size_t stride = std::max<std::size_t>(1, total / 150000);
+    const ImU32 rapid = IM_COL32(235, 80, 70, 130), plunge = IM_COL32(250, 220, 80, 220);
+    std::size_t k = 0;
+    for (std::size_t o = 0; o < job.ops.size(); ++o) {
+        const CamOperation& op = job.ops[o];
+        if (!op.generated || op.moves.empty()) continue;
+        const ImU32 cut = kColours[o % std::size(kColours)];
+        std::optional<ImVec2> prev = projectToScreen(m_cam3D, op.moves[0].to, io.DisplaySize);
+        for (std::size_t i = 1; i < op.moves.size(); ++i) {
+            const CamMove& m = op.moves[i];
+            if (++k % stride != 0 && m.kind == CamMove::Feed && i + 1 < op.moves.size() && op.moves[i + 1].kind == CamMove::Feed) continue;
+            const auto q = projectToScreen(m_cam3D, m.to, io.DisplaySize);
+            if (q && prev) dl->AddLine(*prev, *q, m.kind == CamMove::Rapid ? rapid : m.kind == CamMove::Plunge ? plunge : cut,
+                                       m.kind == CamMove::Rapid ? 1.0f : 1.4f);
+            prev = q;
+        }
+    }
+    dl->PopClipRect();
 }
 
 void Application::drawSimulationOverlay() const {

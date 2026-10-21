@@ -81,6 +81,10 @@ constexpr CommandSpec kCommands[] = {
     {"EXPORT", "EXP", "EXPORT path.stl|.obj|.3mf|.dxf|.svg", "STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane"},
     {"RUN", "SCRIPT", "RUN path.txt", "Run the commands in a text file, one a line (# starts a comment)"},
     // 3D printing
+    {"CAM", "MILL MACHINE", "CAM SETUP|TOOL|FACE|ROUGH|POCKET|CONTOUR|PARALLEL|WATERLINE|DRILL|BORE|HOLES|TOOLS|LIST|SIMULATE|POST ...",
+     "CNC milling: CAM SETUP [body] [STOCK margin|x,y,z] [MATERIAL m] [ORIGIN CORNER|CENTRE|MODEL]; CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|"
+     "CHAMFER|TAP d; operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d]...; CAM SIMULATE [SHOW]; "
+     "CAM POST file.nc [FANUC|HAAS|GRBL|LINUXCNC]"},
     {"PRINTCHECK", "PRINTABILITY", "PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]",
      "Check a part for printing: holes, non-manifold edges, inside out, overhangs, thin walls, size, material, time"},
     {"REPAIR", "FIX", "REPAIR [body]", "Make a mesh printable: weld, drop bad faces, fix the winding, fill holes, drop specks"},

@@ -4,6 +4,7 @@
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
+#include "core/CamCommand.hpp"
 #include "core/Print.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
@@ -1300,6 +1301,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         out.say("Redid " + what);
         return out;
     }
+    if (cmd == "CAM") return runCamCommand(doc, a, pc.quoted);
     if (cmd == "PRINTCHECK" || cmd == "REPAIR" || cmd == "ORIENT" || cmd == "SLICE") {
         // PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]      REPAIR [body]      ORIENT [body] [OVERHANG deg]
         // SLICE [body] TO path.gcode [LAYER h] [WIDTH w] [INFILL %] [WALLS n] [TOP n] [BOTTOM n] [NOZZLE t] [BED t]

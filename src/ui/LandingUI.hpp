@@ -203,7 +203,7 @@ private:
     int m_recallPos = -1;
 
     // File menu.
-    enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf };
+    enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"

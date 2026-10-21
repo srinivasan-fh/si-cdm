@@ -367,6 +367,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         doc.set("physics", ph);
     }
     if (state.simDuration > 0.0f) doc.set("simulation_duration", state.simDuration);
+    if (!state.cam.empty()) doc.set("cam", camToJson(state.cam));
 
     return writeFile(path, doc.dump() + "\n", error);
 }
@@ -544,6 +545,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         p.duration = std::clamp(ph["duration"].asFloat(p.duration), 0.01f, 600.0f);
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);
+    if (const Json& cj = (*doc)["cam"]; cj.isObject()) camFromJson(cj, st.cam);
     const Json& du = (*doc)["display_units"];
     st.units = UnitSettings{};
     if (const auto u = parseUnitName(du["unit"].asString("mm"))) st.units.unit = *u;

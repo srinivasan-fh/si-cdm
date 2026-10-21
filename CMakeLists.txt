@@ -45,6 +45,9 @@ add_library(sicdm_core STATIC
     src/core/Sculpt.cpp
     src/core/Wearable.cpp
     src/core/Print.cpp
+    src/core/Section.cpp
+    src/core/Cam.cpp
+    src/core/CamCommand.cpp
     src/core/Library.cpp
     src/core/CommandEngine.cpp
     src/core/FileIO.cpp

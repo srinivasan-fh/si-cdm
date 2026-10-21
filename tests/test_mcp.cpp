@@ -248,3 +248,24 @@ TEST_CASE("MCP print checks, slices and exports a part") {
     CHECK(tool(s, "print", R"({"operation":"slice","body":"Part"})")["isError"].asBool()); // no path
     CHECK(tool(s, "print", R"({"operation":"melt"})")["isError"].asBool());
 }
+
+TEST_CASE("MCP cam sets up, adds tools and operations, simulates and posts") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "create_solid", R"({"kind":"box","width":40,"depth":30,"height":10,"name":"Plate"})")["isError"].asBool());
+    CHECK(!tool(s, "cam", R"({"operation":"setup","body":"Plate","stock_margin":3,"material":"aluminium","post":"grbl"})")["isError"].asBool());
+    CHECK(!tool(s, "cam", R"({"operation":"tool","number":1,"type":"flat","diameter":6})")["isError"].asBool());
+    Json r = tool(s, "cam", R"({"operation":"contour","tabs":2,"stepdown":2.5})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("Added 1. Contour") != std::string::npos);
+    r = tool(s, "cam", R"({"operation":"simulate"})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("no gouges") != std::string::npos);
+    const std::string nc = (std::filesystem::temp_directory_path() / "sicdm mcp cam.nc").string();
+    r = tool(s, "cam", R"({"operation":"post","path":")" + nc + R"("})");
+    CHECK(!r["isError"].asBool());
+    CHECK(std::filesystem::exists(nc));
+    std::filesystem::remove(nc);
+    CHECK(tool(s, "cam", R"({"operation":"juggle"})")["isError"].asBool());
+    CHECK(tool(s, "cam", R"({"operation":"tool","number":2})")["isError"].asBool());
+}

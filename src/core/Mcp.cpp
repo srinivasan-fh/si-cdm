@@ -438,6 +438,49 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("operation", prop("string", "setup | tool | face | rough | pocket | contour | parallel | waterline | drill | bore | holes | "
+                                          "list | generate | simulate | post | delete | clear"));
+        p.set("body", prop("string", "setup: the part (default: the selection)"));
+        p.set("stock_margin", prop("number", "setup: stock around the part, mm (default 2; 1 on top)"));
+        p.set("stock_size", prop("array", "setup: stock size [x, y, z], mm, centred on the part, from its bottom"));
+        p.set("material", prop("string", "setup: aluminium, steel, stainless, brass, castiron, titanium, plastic, wood"));
+        p.set("origin", prop("string", "setup: work zero at the stock's top 'corner' (default), 'centre', or the 'model' origin"));
+        p.set("post", prop("string", "setup / post: fanuc, haas, grbl, linuxcnc"));
+        p.set("number", prop("number", "tool: T number"));
+        p.set("type", prop("string", "tool: flat, ball, bull, face, drill, spot, chamfer, tap"));
+        p.set("diameter", prop("number", "tool: diameter, mm; drill/bore with points: the hole size"));
+        p.set("corner", prop("number", "tool: bull-nose corner radius, mm"));
+        p.set("flutes", prop("number", "tool: flutes"));
+        p.set("length", prop("number", "tool: flute length, mm"));
+        p.set("tool", prop("number", "operations: the T number (default: the first that suits)"));
+        p.set("stepdown", prop("number", "operations: depth of cut, mm"));
+        p.set("stepover", prop("number", "operations: width of cut, mm"));
+        p.set("stepover_percent", prop("number", "operations: width of cut, percent of the tool's diameter"));
+        p.set("leave", prop("number", "operations: stock to leave, mm"));
+        p.set("top", prop("number", "operations: top z, mm"));
+        p.set("bottom", prop("number", "operations: bottom z, mm"));
+        p.set("depth", prop("number", "operations: depth below the stock top (drill: below the hole's top), mm"));
+        p.set("side", prop("string", "contour: outside (default), inside, both"));
+        p.set("tabs", prop("number", "contour: holding tabs on the outside profile"));
+        p.set("scallop", prop("number", "parallel / waterline: cusp height, mm"));
+        p.set("slope", prop("array", "parallel / waterline: [from, to] degrees of surface slope to cut"));
+        p.set("raster", prop("boolean", "rough / pocket: zig-zag instead of offset rings"));
+        p.set("cycle", prop("string", "drill: spot, drill, peck, chipbreak, tap, bore"));
+        p.set("peck", prop("number", "drill: peck depth, mm"));
+        p.set("points", prop("array", "drill / bore: hole centres [[x, y], ...] (default: the part's holes that fit the tool)"));
+        p.set("path", prop("string", "post: the G-code file"));
+        p.set("show", prop("boolean", "simulate: add the cut stock as a body"));
+        p.set("index", prop("number", "delete: the operation's number (1-based)"));
+        p.set("name", prop("string", "tool / operations: a name"));
+        tools.push(tool("cam",
+                        "CNC milling CAM: set up the part and stock, build a tool library with feeds and speeds, add operations "
+                        "(facing, 2D contour with tabs, pocket, 3D roughing, parallel and waterline finishing, drilling cycles, "
+                        "helical boring), simulate the cut (stock left, gouges, rapid crashes, cycle time) and post G-code for "
+                        "Fanuc, Haas, GRBL or LinuxCNC.",
+                        p, {"operation"}));
+    }
+    {
+        Json p = Json::object();
         p.set("path", prop("string", "File path (.sicdm). Optional for save when the project already has a path"));
         tools.push(tool("save_project", "Save the project.", p, {}));
         Json o = Json::object();
@@ -771,6 +814,59 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine("EXPORT " + quote(a["path"].asString()));
         }
         return textResult("operation is one of check, repair, orient, slice, export_3mf", true);
+    }
+    if (name == "cam") {
+        const std::string op = a["operation"].asString();
+        auto opt = [&](const char* key, const char* word) {
+            return a[key].isNumber() ? std::string(" ") + word + " " + num(a[key].asNumber()) : std::string();
+        };
+        auto text = [&](const char* key, const char* word) {
+            return a[key].isString() ? std::string(" ") + word + " " + quote(a[key].asString()) : std::string();
+        };
+        if (op == "setup") {
+            std::string line = "CAM SETUP" + (a["body"].isString() ? " " + quote(a["body"].asString()) : std::string());
+            if (a["stock_size"].isArray() && a["stock_size"].size() == 3)
+                line += " STOCK " + num(a["stock_size"][0].asNumber()) + "," + num(a["stock_size"][1].asNumber()) + "," + num(a["stock_size"][2].asNumber());
+            line += opt("stock_margin", "STOCK");
+            if (a["material"].isString()) line += " MATERIAL " + a["material"].asString();
+            if (a["origin"].isString()) line += " ORIGIN " + a["origin"].asString();
+            if (a["post"].isString()) line += " POST " + a["post"].asString();
+            return runLine(line);
+        }
+        if (op == "tool") {
+            if (!a["number"].isNumber() || !a["type"].isString() || !a["diameter"].isNumber())
+                return textResult("tool needs number, type and diameter", true);
+            return runLine("CAM TOOL " + num(a["number"].asNumber()) + " " + a["type"].asString() + " " + num(a["diameter"].asNumber()) +
+                           opt("corner", "CORNER") + opt("flutes", "FLUTES") + opt("length", "LENGTH") + text("name", "NAME"));
+        }
+        if (op == "holes" || op == "list" || op == "generate" || op == "clear") return runLine("CAM " + toUpper(op));
+        if (op == "simulate") return runLine(std::string("CAM SIMULATE") + (a["show"].asBool() ? " SHOW" : ""));
+        if (op == "post") {
+            if (!a["path"].isString()) return textResult("post needs 'path'", true);
+            return runLine("CAM POST " + quote(a["path"].asString()) + (a["post"].isString() ? " " + a["post"].asString() : std::string()));
+        }
+        if (op == "delete") {
+            if (!a["index"].isNumber()) return textResult("delete needs 'index'", true);
+            return runLine("CAM DELETE " + num(a["index"].asNumber()));
+        }
+        static const char* const kOps[] = {"face", "rough", "pocket", "contour", "parallel", "waterline", "drill", "bore"};
+        if (std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
+            return textResult("operation is one of setup, tool, face, rough, pocket, contour, parallel, waterline, drill, bore, holes, "
+                              "list, generate, simulate, post, delete, clear",
+                              true);
+        std::string line = "CAM " + toUpper(op) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("stepover", "STEPOVER") +
+                           opt("leave", "LEAVE") + opt("top", "TOP") + opt("bottom", "BOTTOM") + opt("depth", "DEPTH") + opt("tabs", "TABS") +
+                           opt("scallop", "SCALLOP") + opt("peck", "PECK") + opt("diameter", "DIAMETER") + text("name", "NAME");
+        if (a["stepover_percent"].isNumber()) line += " STEPOVER " + num(a["stepover_percent"].asNumber()) + "%";
+        if (a["side"].isString()) line += " " + toUpper(a["side"].asString());
+        if (a["raster"].asBool()) line += " RASTER";
+        if (a["cycle"].isString()) line += " CYCLE " + a["cycle"].asString();
+        if (a["slope"].isArray() && a["slope"].size() == 2) line += " SLOPE " + num(a["slope"][0].asNumber()) + " " + num(a["slope"][1].asNumber());
+        if (a["points"].isArray() && a["points"].size() > 0) {
+            line += " AT";
+            for (const Json& q : a["points"].items()) line += " " + num(q[0].asNumber()) + "," + num(q[1].asNumber());
+        }
+        return runLine(line);
     }
     if (name == "armor") {
         const std::string op = a["operation"].asString();

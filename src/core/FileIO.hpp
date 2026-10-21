@@ -8,6 +8,7 @@
 //   .svg        2D drawing export of the active sketch plane
 //   images      .png .jpg .jpeg .bmp .tga .gif .psd .hdr .pnm: reference images
 
+#include "core/Cam.hpp"
 #include "core/Scene.hpp"
 #include "core/Units.hpp"
 
@@ -26,6 +27,7 @@ struct ProjectState {
     SketchPlane plane = SketchPlane::Top;
     UnitSettings units{};     // display / input units (geometry is always stored in mm)
     float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
+    CamJob cam;               // CAM: setup, tools and operations (toolpaths are remade)
 };
 
 bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error);

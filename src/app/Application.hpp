@@ -88,6 +88,7 @@ private:
     bool simulating() const noexcept { return m_uiState.mode == ViewMode::Simulation; }
     void advanceSimulation(float dt);
     void drawSimulationOverlay() const;
+    void drawToolpathOverlay() const;
     // What Fit / Home frame: the model, and in the Simulation where physics bodies go.
     AABB viewBounds() const;
     std::string simStatus() const;

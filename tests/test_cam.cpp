@@ -1,0 +1,386 @@
+#include "TestFramework.hpp"
+
+#include "core/Cam.hpp"
+#include "core/Command.hpp"
+#include "core/Document.hpp"
+#include "core/Scene.hpp"
+
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+using namespace sicdm;
+
+#define REQUIRE(c)                  \
+    do {                            \
+        const bool required_ = (c); \
+        CHECK(required_);           \
+        if (!required_) return;     \
+    } while (0)
+
+namespace {
+
+CommandOutput run(Document& d, const std::string& line) { return executeCommand(d, line, nullptr); }
+
+std::string text(const CommandOutput& r) {
+    std::string s;
+    for (const std::string& l : r.lines) s += l + "\n";
+    return s;
+}
+
+bool has(const std::string& s, const std::string& what) { return s.find(what) != std::string::npos; }
+
+std::string slurp(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::ostringstream s;
+    s << f.rdbuf();
+    return s.str();
+}
+
+std::string tempPath(const char* name) { return (std::filesystem::temp_directory_path() / name).string(); }
+
+// A 60 x 40 x 15 plate with two 6 mm through holes and a 16 x 24 x 6 pocket.
+void bracket(Document& d) {
+    REQUIRE(run(d, "BOX 60 40 15 @0,0,0").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT -20,0,15 DIAMETER 6 THROUGH").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 20,0,15 DIAMETER 6 THROUGH").ok);
+    REQUIRE(run(d, "POCKET \"Block 1\" AT 0,0,15 BOX WIDTH 16 LENGTH 24 DEPTH 6").ok);
+}
+
+// Every G2 / G3 in the program ends on its circle (start and end the same distance from the centre).
+int badArcs(const std::string& g, int* arcs) {
+    std::istringstream in(g);
+    std::string l;
+    double x = 0, y = 0;
+    int bad = 0;
+    *arcs = 0;
+    while (std::getline(in, l)) {
+        if (l.empty() || l[0] == '(' || l[0] == '%' || l[0] == 'O' || l[0] == 'N') continue;
+        auto word = [&](char w, double* v) {
+            for (std::size_t i = 0; i < l.size(); ++i)
+                if (l[i] == w && (i == 0 || l[i - 1] == ' ')) {
+                    *v = std::atof(l.c_str() + i + 1);
+                    return true;
+                }
+            return false;
+        };
+        double nx = x, ny = y, i = 0, j = 0;
+        word('X', &nx);
+        word('Y', &ny);
+        const bool arc = l.rfind("G02", 0) == 0 || l.rfind("G03", 0) == 0 || l.rfind("G2 ", 0) == 0 || l.rfind("G3 ", 0) == 0;
+        if (arc && word('I', &i) && word('J', &j)) {
+            ++*arcs;
+            const double cx = x + i, cy = y + j;
+            if (std::fabs(std::hypot(i, j) - std::hypot(nx - cx, ny - cy)) > 0.01) ++bad;
+        }
+        x = nx, y = ny;
+    }
+    return bad;
+}
+
+} // namespace
+
+TEST_CASE("CAM feeds and speeds: cutting speed, chip load, chip thinning, machine limit, taps") {
+    const CamMaterial* al = camMaterial("aluminum");
+    REQUIRE(al != nullptr);
+    CHECK(al->key == "aluminium");
+    CamTool t;
+    t.diameter = 6;
+    t.flutes = 3;
+    CamMachine m;
+    CamFeeds f = camFeeds(t, *al, m);
+    CHECK_NEAR(f.rpm, 12000, 1e-6);              // 300 m/min wants 15 900 rpm: the machine's limit
+    CHECK_NEAR(f.chipLoad, 0.048, 1e-9);         // 0.008 mm per mm of diameter
+    CHECK_NEAR(f.feed, 12000 * 3 * 0.048, 1.0);  // rpm x flutes x chip load
+    const CamFeeds thin = camFeeds(t, *al, m, 0.6); // 10% stepover: the chip thins, the feed rises
+    CHECK_NEAR(thin.chipLoad, 0.048 * 6.0 / (2.0 * std::sqrt(0.6 * 5.4)), 1e-6);
+    CHECK(thin.feed > f.feed * 1.6);
+    m.maxRpm = 30000;
+    CHECK_NEAR(camFeeds(t, *al, m).rpm, 15910, 10.0);
+    const CamMaterial* steel = camMaterial("steel");
+    REQUIRE(steel != nullptr);
+    CHECK(camFeeds(t, *steel, m).rpm < 7000);
+    CamTool tap;
+    tap.type = CamToolType::Tap;
+    tap.diameter = 6;
+    tap.pitch = 1.0;
+    const CamFeeds tf = camFeeds(tap, *al, m);
+    CHECK_NEAR(tf.feed, tf.rpm * 1.0, 1e-6);     // one pitch a turn
+    CHECK(camMaterial("unobtainium") == nullptr);
+}
+
+TEST_CASE("CAM drop-cutter: flat, ball and bull-nose tips sit exactly on a block's edge") {
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 15 @0,0,0").ok);
+    const Body& b = d.scene.bodies()[0];
+    CamTool flat;
+    flat.diameter = 6;
+    CHECK_NEAR(cutterHeight(b, flat, 0, 0, -10), 15.0, 1e-9);
+    CHECK_NEAR(cutterHeight(b, flat, 0, 22.9, -10), 15.0, 1e-9); // the rim still over the edge
+    CHECK_NEAR(cutterHeight(b, flat, 0, 23.1, -10), -10.0, 1e-9);
+    CHECK_NEAR(cutterHeight(b, flat, 32.9, 0, -10), 15.0, 1e-9);
+    CamTool ball;
+    ball.type = CamToolType::Ball;
+    ball.diameter = 6;
+    for (double x : {31.0, 32.0, 32.9}) CHECK_NEAR(cutterHeight(b, ball, x, 0, -10), 12.0 + std::sqrt(9.0 - (x - 30) * (x - 30)), 1e-6);
+    CamTool bull;
+    bull.type = CamToolType::BullNose;
+    bull.diameter = 8;
+    bull.cornerRadius = 1;
+    CHECK_NEAR(cutterHeight(b, bull, 33.0, 0, -10), 15.0, 1e-6);                        // the flat of its tip
+    CHECK_NEAR(cutterHeight(b, bull, 33.5, 0, -10), 15.0 - (1.0 - std::sqrt(0.75)), 1e-6); // on its corner
+    CHECK_NEAR(cutterHeight(b, bull, 34.1, 0, -10), -10.0, 1e-9);
+}
+
+TEST_CASE("CAM finds a part's round holes: size, place, depth, through or blind") {
+    Document d;
+    bracket(d);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 0,15,15 DIAMETER 4 DEPTH 5").ok);
+    const auto holes = findHoles(d.scene.bodies()[0]);
+    REQUIRE(holes.size() == 3);
+    int through = 0;
+    for (const CamHole& h : holes) {
+        if (h.through) {
+            ++through;
+            CHECK_NEAR(h.diameter, 6.0, 0.01);
+            CHECK_NEAR(std::fabs(h.x), 20.0, 1e-3);
+            CHECK_NEAR(h.y, 0.0, 1e-3);
+            CHECK_NEAR(h.top, 15.0, 1e-3);
+            CHECK_NEAR(h.bottom, 0.0, 1e-3);
+        } else {
+            CHECK_NEAR(h.diameter, 4.0, 0.01);
+            CHECK_NEAR(h.top, 15.0, 1e-3);
+            CHECK(h.bottom > 9.5); // about 5 deep (the drill point below that)
+        }
+    }
+    CHECK(through == 2);
+}
+
+TEST_CASE("CAM job: face, pocket, contour with tabs and peck drilling cut the part without gouges") {
+    Document d;
+    bracket(d);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 3 TOP 1 MATERIAL aluminium").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 6").ok);
+    REQUIRE(run(d, "CAM TOOL 2 DRILL 6").ok);
+    REQUIRE(run(d, "CAM TOOL 3 FACE 40").ok);
+    auto r = run(d, "CAM FACE");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "with T3"));
+    REQUIRE(run(d, "CAM POCKET").ok);
+    REQUIRE(run(d, "CAM CONTOUR TABS 4 TABHEIGHT 1.5").ok);
+    r = run(d, "CAM DRILL CYCLE PECK");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "2 holes"));
+    const CamJob& job = d.state.cam;
+    REQUIRE(job.ops.size() == 4);
+    for (const CamOperation& op : job.ops) CHECK(op.generated);
+    // The contour's last depths rise over four tabs 1.5 mm high.
+    int tabMoves = 0;
+    for (const CamMove& m : job.ops[2].moves)
+        if (m.kind == CamMove::Feed && std::fabs(m.to.z - 1.5f) < 1e-3f) ++tabMoves;
+    CHECK(tabMoves >= 8);
+    // No cut inside the part's outline below its top, except in the pocket and the holes.
+    for (const CamOperation& op : job.ops)
+        for (const CamMove& m : op.moves)
+            if (op.kind != CamOpKind::Drill && m.kind != CamMove::Rapid && m.to.z < 14.999f) {
+                const bool inPocket = std::fabs(m.to.x) <= 8.0f - 3.0f + 1e-3f && std::fabs(m.to.y) <= 12.0f - 3.0f + 1e-3f;
+                // The tool's centre at least its radius from the plate's outline.
+                const double ox = std::max(std::fabs(m.to.x) - 30.0, 0.0), oy = std::max(std::fabs(m.to.y) - 20.0, 0.0);
+                const bool overPart = std::hypot(ox, oy) < 3.0 - 1e-3;
+                CHECK(inPocket || !overPart);
+            }
+    r = run(d, "CAM SIMULATE");
+    REQUIRE(r.ok);
+    const std::string s = text(r);
+    CHECK(has(s, "no gouges"));
+    CHECK(has(s, "no rapid moves through stock"));
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    // Stock 66 x 46 x 16 less the part (plate, two holes, the pocket) less what a round
+    // tool can't reach (the pocket's corners) and the tabs.
+    const double part = 60.0 * 40 * 15 - 2 * 3.14159265 * 9 * 15 - 16.0 * 24 * 6;
+    const double cut = 66.0 * 46 * 16 - part;
+    CHECK(sim.removed < cut + 60);
+    CHECK(sim.removed > cut - 700);
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK(sim.seconds > 30);
+    REQUIRE(run(d, "CAM SIMULATE SHOW").ok);
+    CHECK(d.scene.bodies().back().name == "Stock (simulated)");
+    CHECK(!d.scene.bodies()[0].visible);
+}
+
+TEST_CASE("CAM post: Fanuc, Haas, LinuxCNC and GRBL programs with arcs, cycles and safe tool changes") {
+    Document d;
+    bracket(d);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 3").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 6").ok);
+    REQUIRE(run(d, "CAM TOOL 2 DRILL 6").ok);
+    REQUIRE(run(d, "CAM CONTOUR").ok);
+    REQUIRE(run(d, "CAM DRILL PECK 3").ok);
+    const std::string path = tempPath("sicdm_cam_test.nc");
+    for (const char* post : {"fanuc", "haas", "linuxcnc", "grbl"}) {
+        const auto r = run(d, std::string("CAM POST ") + path + " " + post);
+        REQUIRE(r.ok);
+        const std::string g = slurp(path);
+        int arcs = 0;
+        CHECK(badArcs(g, &arcs) == 0);
+        CHECK(arcs >= 4); // the profile's rounded corners
+        const bool grbl = std::string(post) == "grbl";
+        CHECK(has(g, "G21"));
+        CHECK(has(g, "G54"));
+        CHECK(has(g, " M3") || has(g, " M03"));
+        if (grbl) {
+            CHECK(!has(g, "G83"));
+            CHECK(!has(g, "M6"));
+            CHECK(!has(g, "G43"));
+            CHECK(has(g, "M0 (Change to T2"));
+            CHECK(has(g, "M30"));
+        } else {
+            CHECK(has(g, "G83"));
+            CHECK(has(g, " Q3"));
+            CHECK(has(g, "G80"));
+            CHECK(has(g, "G43 H"));
+            CHECK(has(g, std::string(post) == "linuxcnc" ? "T2 M6" : "T2 M06"));
+            // After each tool change, no Z move before the length offset is on.
+            std::istringstream in(g);
+            std::string l;
+            bool changed = false, bad = false;
+            while (std::getline(in, l)) {
+                if (has(l, " M06") || has(l, " M6")) changed = true;
+                else if (changed && has(l, "G43")) changed = false;
+                else if (changed && l[0] != '(' && has(l, "Z")) bad = true;
+            }
+            CHECK(!bad);
+        }
+        if (std::string(post) == "fanuc") {
+            CHECK(g.rfind("%\nO1000", 0) == 0);
+            CHECK(has(g, "G91 G28 Z0."));
+            CHECK(has(g, "M30\n%"));
+        }
+        if (std::string(post) == "haas") CHECK(has(g, "G53"));
+        if (std::string(post) == "linuxcnc") CHECK(has(g, "G64 P"));
+    }
+    std::filesystem::remove(path);
+    REQUIRE(run(d, "CAM TOOL 3 TAP 6").ok);
+    REQUIRE(run(d, "CAM TAP TOOL 3 AT -20,0 DEPTH 8").ok);
+    CHECK(!run(d, "CAM POST " + path + " grbl").ok); // GRBL can't tap
+    const auto fanuc = run(d, "CAM POST " + path + " fanuc");
+    REQUIRE(fanuc.ok);
+    const std::string g = slurp(path);
+    CHECK(has(g, "M29 S"));
+    CHECK(has(g, "G84"));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("CAM 3D: roughing, parallel and waterline finishing over a dome leave little and gouge nothing") {
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 10 @0,0,0").ok);
+    REQUIRE(run(d, "SPHERE 15 @0,0,-5").ok); // a dome over the plate's top
+    REQUIRE(run(d, "BOOLEAN \"Block 1\" UNION \"Sphere 2\"").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 2").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 6 LENGTH 30").ok);
+    REQUIRE(run(d, "CAM TOOL 3 BALL 6 LENGTH 30").ok);
+    REQUIRE(run(d, "CAM ROUGH TOOL 1 LEAVE 0.3 BOTTOM 0").ok);
+    REQUIRE(run(d, "CAM PARALLEL TOOL 3 SCALLOP 0.01 SLOPE 0 60").ok);
+    REQUIRE(run(d, "CAM WATERLINE TOOL 3 STEEP STEPDOWN 0.25").ok);
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK(sim.meanLeft < 0.1);
+    // The roughing alone leaves at least its 0.3 mm on the dome.
+    CamJob rough = d.state.cam;
+    rough.ops.resize(1);
+    CamSimulation rs;
+    REQUIRE(simulateJob(rough, d.scene.bodies()[0], rs));
+    CHECK(rs.gouges == 0);
+    CHECK(rs.meanLeft > 0.3);
+}
+
+TEST_CASE("CAM bore: helical interpolation opens a hole wider than the end mill") {
+    Document d;
+    REQUIRE(run(d, "BOX 50 50 12 @0,0,0").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 0,0,12 DIAMETER 20 THROUGH").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 0 TOP 0").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 8").ok);
+    const auto r = run(d, "CAM BORE");
+    REQUIRE(r.ok);
+    const CamOperation& op = d.state.cam.ops.back();
+    double rmax = 0, zmin = 1e9;
+    for (const CamMove& m : op.moves)
+        if (m.kind == CamMove::Feed) rmax = std::max(rmax, std::hypot(static_cast<double>(m.to.x), static_cast<double>(m.to.y))), zmin = std::min(zmin, static_cast<double>(m.to.z));
+    CHECK(rmax > 10.0 - 4.0 - 0.06); // the tool's edge on the hole's wall (inside its facets)
+    CHECK(rmax <= 10.0 - 4.0 + 1e-6);
+    CHECK(zmin < 0.0);                  // through
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK_NEAR(sim.removed, 3.14159265 * 100 * 12, 3.14159265 * 100 * 12 * 0.03);
+}
+
+TEST_CASE("CAM job saves with the project, and stale paths are remade after the part moves") {
+    Document d;
+    bracket(d);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 3 MATERIAL steel ORIGIN CENTRE POST haas").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 6 FLUTES 4 NAME \"Rougher\"").ok);
+    REQUIRE(run(d, "CAM ROUGH STEPOVER 30% LEAVE 0.2 NAME \"Rough it\"").ok);
+    const std::string path = tempPath("sicdm_cam_test.sicdm");
+    REQUIRE(run(d, "SAVE " + path).ok);
+    Document e;
+    REQUIRE(run(e, "OPEN " + path).ok);
+    const CamJob& j = e.state.cam;
+    CHECK(j.setup.body == "Block 1");
+    CHECK(j.setup.material == "steel");
+    CHECK(j.setup.post == "haas");
+    CHECK(j.setup.origin == CamSetup::Origin::StockTopCentre);
+    REQUIRE(j.tools.size() == 1);
+    CHECK(j.tools[0].flutes == 4);
+    CHECK(j.tools[0].name == "Rougher");
+    REQUIRE(j.ops.size() == 1);
+    CHECK(j.ops[0].name == "Rough it");
+    CHECK_NEAR(j.ops[0].stepover, 1.8, 1e-9);
+    CHECK_NEAR(j.ops[0].leave, 0.2, 1e-9);
+    CHECK(!j.ops[0].generated);
+    REQUIRE(run(e, "CAM GENERATE").ok);
+    CHECK(e.state.cam.ops[0].generated);
+    std::filesystem::remove(path);
+    // Moving the part makes its paths stale: the next command remakes them where it is.
+    auto lowestX = [&] {
+        float x = 1e9f;
+        for (const CamMove& m : d.state.cam.ops[0].moves)
+            if (m.kind != CamMove::Rapid) x = std::min(x, m.to.x);
+        return x;
+    };
+    const float x0 = lowestX();
+    REQUIRE(run(d, "MOVE 10,0,0 \"Block 1\"").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 3").ok);
+    REQUIRE(run(d, "CAM GENERATE").ok);
+    CHECK_NEAR(lowestX(), x0 + 10.0f, 0.01);
+}
+
+TEST_CASE("CAM commands refuse what they can't do") {
+    Document d;
+    REQUIRE(run(d, "BOX 20 20 10 @0,0,0").ok);
+    CHECK(!run(d, "CAM ROUGH").ok);                  // no setup
+    CHECK(!run(d, "CAM SETUP \"Nothing\"").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\"").ok);
+    CHECK(!run(d, "CAM ROUGH").ok);                  // no tool
+    CHECK(!run(d, "CAM TOOL 1 SPOON 6").ok);
+    CHECK(!run(d, "CAM TOOL 1 FLAT -2").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 6").ok);
+    CHECK(!run(d, "CAM DRILL").ok);                  // no drill
+    CHECK(!run(d, "CAM ROUGH TOOL 9").ok);
+    CHECK(!run(d, "CAM ROUGH WOBBLE").ok);
+    CHECK(!run(d, "CAM SETUP \"Block 1\" MATERIAL cheese").ok);
+    CHECK(!run(d, "CAM POST").ok);
+    CHECK(!run(d, "CAM DELETE 4").ok);
+    REQUIRE(run(d, "CAM ROUGH").ok);
+    CHECK(has(text(run(d, "CAM LIST")), "1. Rough"));
+    REQUIRE(run(d, "CAM DELETE 1").ok);
+    CHECK(d.state.cam.ops.empty());
+    REQUIRE(run(d, "CAM CLEAR").ok);
+    CHECK(d.state.cam.empty());
+}

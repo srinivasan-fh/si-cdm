@@ -88,7 +88,9 @@ TEST_CASE("project save and load round-trips bodies, sketches and images") {
     }
 
     const std::string path = tmp("demo.sicdm");
-    CHECK(saveProject(s, {SketchPlane::Front}, path, &err));
+    ProjectState front;
+    front.plane = SketchPlane::Front;
+    CHECK(saveProject(s, front, path, &err));
 
     Scene loaded;
     ProjectState st;

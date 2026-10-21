@@ -1,5 +1,7 @@
 #include "ui/LandingUI.hpp"
 
+#include "core/Cam.hpp"
+
 #include "core/Command.hpp"
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
@@ -440,11 +442,40 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        ImGui::MenuItem("New CAM Setup", nullptr, false, false);
-        ImGui::MenuItem("2D Contour", nullptr, false, false);
-        ImGui::MenuItem("3D Adaptive Clearing", nullptr, false, false);
-        ImGui::MenuItem("Simulate Toolpath", nullptr, false, false);
-        ImGui::MenuItem("Post Process (G-code)", nullptr, false, false);
+        ImGui::TextDisabled("CNC milling (CAM)");
+        if (ImGui::MenuItem("Setup: Part and Stock", nullptr, false, st.selectedBody >= 0)) cmd.commands.push_back("CAM SETUP");
+        if (ImGui::BeginMenu("Material")) {
+            for (const CamMaterial& m : camMaterials())
+                if (ImGui::MenuItem(m.name.c_str())) cmd.commands.push_back("CAM SETUP MATERIAL " + m.key);
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Add a Starter Tool Library")) {
+            for (const char* t : {"CAM TOOL 1 FLAT 6", "CAM TOOL 2 FLAT 3", "CAM TOOL 3 BALL 6", "CAM TOOL 4 BALL 3", "CAM TOOL 5 BULL 10 CORNER 1",
+                                  "CAM TOOL 6 FACE 50", "CAM TOOL 7 SPOT 10", "CAM TOOL 8 DRILL 5", "CAM TOOL 9 DRILL 6", "CAM TOOL 10 TAP 6"})
+                cmd.commands.push_back(t);
+            cmd.commands.push_back("CAM TOOLS");
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Face")) cmd.commands.push_back("CAM FACE");
+        if (ImGui::MenuItem("3D Rough (offset clearing)")) cmd.commands.push_back("CAM ROUGH LEAVE 0.3");
+        if (ImGui::MenuItem("Pocket")) cmd.commands.push_back("CAM POCKET");
+        if (ImGui::MenuItem("2D Contour (with tabs)")) cmd.commands.push_back("CAM CONTOUR TABS 4");
+        if (ImGui::MenuItem("Parallel Finish")) cmd.commands.push_back("CAM PARALLEL SHALLOW");
+        if (ImGui::MenuItem("Waterline Finish")) cmd.commands.push_back("CAM WATERLINE STEEP");
+        if (ImGui::MenuItem("Spot Drill Holes")) cmd.commands.push_back("CAM SPOT");
+        if (ImGui::MenuItem("Drill Holes (peck)")) cmd.commands.push_back("CAM DRILL CYCLE PECK");
+        if (ImGui::MenuItem("Helical Bore Big Holes")) cmd.commands.push_back("CAM BORE");
+        ImGui::Separator();
+        if (ImGui::MenuItem("List the Job")) cmd.commands.push_back("CAM LIST");
+        if (ImGui::MenuItem("Simulate (show cut stock)")) cmd.commands.push_back("CAM SIMULATE SHOW");
+        if (ImGui::BeginMenu("Post Processor")) {
+            for (const std::string& p : camPosts())
+                if (ImGui::MenuItem(p.c_str())) cmd.commands.push_back("CAM SETUP POST " + p);
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Post Process (G-code)...")) requestFile(FilePost, st);
+        if (ImGui::MenuItem("Show Toolpaths")) cmd.commands.push_back("CAM SHOW");
+        if (ImGui::MenuItem("Hide Toolpaths")) cmd.commands.push_back("CAM HIDE");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("AI")) {
@@ -1557,6 +1588,7 @@ void LandingUI::requestFile(int action, const UiState& st) {
         m_fileDialog.open(FileDialog::Mode::Save, "Slice to G-code (FDM)", {".gcode"}, dir, projectStem(st) + ".gcode");
         break;
     case File3mf: m_fileDialog.open(FileDialog::Mode::Save, "Export 3MF", {".3mf"}, dir, projectStem(st) + ".3mf"); break;
+    case FilePost: m_fileDialog.open(FileDialog::Mode::Save, "Post Process to G-code", {".nc", ".tap", ".gcode"}, dir, projectStem(st) + ".nc"); break;
     default: m_fileAction = FileNone;
     }
 }
@@ -1579,6 +1611,7 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case FileExport:
         case File3mf: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
         case FileSlice: cmd.commands.push_back("SLICE TO " + quoted(*path)); break;
+        case FilePost: cmd.commands.push_back("CAM POST " + quoted(*path)); break;
         default: break;
         }
         m_fileAction = FileNone;
