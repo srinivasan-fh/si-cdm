@@ -62,6 +62,7 @@ const char* opLabel(CamOpKind k) {
     case CamOpKind::Waterline: return "Waterline finish";
     case CamOpKind::Drill: return "Drill";
     case CamOpKind::Bore: return "Helical bore";
+    case CamOpKind::Rotary: return "Rotary (4-axis)";
     }
     return "Op";
 }
@@ -88,7 +89,8 @@ int defaultTool(const CamJob& job, CamOpKind k, DrillCycle cycle) {
     case CamOpKind::Contour:
     case CamOpKind::Bore: return first({CamToolType::Flat, CamToolType::BullNose});
     case CamOpKind::Parallel:
-    case CamOpKind::Waterline: return first({CamToolType::Ball, CamToolType::BullNose, CamToolType::Flat});
+    case CamOpKind::Waterline:
+    case CamOpKind::Rotary: return first({CamToolType::Ball, CamToolType::BullNose, CamToolType::Flat});
     case CamOpKind::Drill:
         if (cycle == DrillCycle::Spot) return first({CamToolType::Spot, CamToolType::Chamfer, CamToolType::Drill});
         if (cycle == DrillCycle::Tap) return first({CamToolType::Tap});
@@ -103,7 +105,8 @@ std::string setupText(const CamJob& job) {
     const Vec3 s = su.stockMax - su.stockMin;
     std::string t = "Setup: " + su.body + " in " + (m ? m->name : su.material) + " stock " + lengthsText({s.x, s.y, s.z}, " x ", "", "");
     t += ", work zero G54 at the ";
-    t += su.origin == CamSetup::Origin::Model ? "model origin" : su.origin == CamSetup::Origin::StockTopCentre ? "stock top centre" : "stock top front left corner";
+    t += job.multiAxis() ? "rotary centre (the stock's centre; the job turns the part)"
+         : su.origin == CamSetup::Origin::Model ? "model origin" : su.origin == CamSetup::Origin::StockTopCentre ? "stock top centre" : "stock top front left corner";
     t += ", post " + su.post;
     return t;
 }
@@ -123,6 +126,8 @@ std::string opText(const CamJob& job, std::size_t i) {
     const CamTool* t = job.tool(op.tool);
     std::string s = std::to_string(i + 1) + ". " + (op.name.empty() ? std::string(opLabel(op.kind)) : op.name) + " with " +
                     (t ? t->describe().substr(0, t->describe().find(',')) : "T" + std::to_string(op.tool) + " (missing)");
+    if (op.indexA != 0 || op.indexC != 0) s += ", table at A" + num(op.indexA) + " C" + num(op.indexC);
+    if (op.kind == CamOpKind::Rotary) s += op.along ? ", along the axis" : ", helical";
     if (op.adaptive) s += ", adaptive";
     if (op.rest) s += ", rest";
     if (op.kind == CamOpKind::Drill) s += std::string(", ") + drillCycleKey(op.cycle) + ", " + std::to_string(op.holes.size()) + " holes";
@@ -470,8 +475,9 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
     else if (sub == "waterline" || sub == "zlevel") kind = CamOpKind::Waterline;
     else if (sub == "drill" || sub == "spot" || sub == "tap" || sub == "peck") kind = CamOpKind::Drill;
     else if (sub == "bore" || sub == "helix") kind = CamOpKind::Bore;
+    else if (sub == "rotary" || sub == "wrap" || sub == "4axis") kind = CamOpKind::Rotary;
     else
-        return out.fail("CAM SETUP | TOOL | TOOLS | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | HOLES | LIST | "
+        return out.fail("CAM SETUP | TOOL | TOOLS | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | ROTARY | HOLES | LIST | "
                         "GENERATE | SIMULATE [SHOW] | POST path [post] | DELETE n | CLEAR | SHOW | HIDE");
     Body* p = needPart();
     if (!p) return out;
@@ -551,6 +557,17 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         else if (k == "raster" || k == "zigzag") op.raster = true;
         else if (k == "adaptive" || k == "hsm" || k == "trochoidal") op.adaptive = true;
         else if (k == "rest") op.rest = true;
+        else if (k == "along") op.along = true;
+        else if (k == "around" || k == "helical") op.along = false;
+        else if (k == "a" || k == "c" || k == "index" || k == "tilt") {
+            // INDEX a [c] | A deg | C deg: the table's turn for a 3+2 operation.
+            const auto v = number(k == "c" ? "C" : "A");
+            if (!v || std::fabs(*v) > 360) return out.fail(toUpper(k) + " needs an angle, -360 to 360 degrees");
+            if (k == "c") op.indexC = *v;
+            else op.indexA = *v;
+            if (k == "index" && i + 1 < a.size())
+                if (const auto c2 = parseNumber(a[i + 1]); c2 && std::fabs(*c2) <= 360) op.indexC = *c2, ++i;
+        }
         else if (k == "offset" || k == "spiral") op.raster = false;
         else if (k == "outside") op.side = 0;
         else if (k == "inside") op.side = 1;

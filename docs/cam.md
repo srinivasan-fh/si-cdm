@@ -224,6 +224,52 @@ stock top), `ANGLE`, `NAME "x"`, `RPM`, `FEED`, `PLUNGE`.
 **Holes:** `CAM HOLES` lists the part's round vertical holes. For each it gives the size
 (fitted to a circle), the centre, the top and bottom, and whether it goes through.
 
+## Multi-axis
+
+**3+2 indexed.** Any operation takes `INDEX a c` (or `A deg`, `C deg`). The table turns to
+those angles first, then the operation runs as a 3-axis operation on the part and stock as
+turned. The angles follow a trunnion table: C turns the part about Z, then A tilts it about
+X, both through the rotary centre (the stock's centre). So a face pointing −Y comes up with
+`A -90`, and a face pointing +X with `INDEX -90 -90`.
+
+```text
+CAM POCKET TOOL 1 A -90            (the pocket on the front face)
+CAM DRILL TOOL 2 INDEX -90 -90     (holes in the right face, found on the turned part)
+```
+
+**4-axis rotary.** The part turns on A about X while the tool, kept over the axis, follows it:
+
+```text
+CAM ROTARY [TOOL n] [STEPOVER s] [STEPDOWN d] [LEAVE l] [ALONG] [TOP x] [BOTTOM x]
+```
+
+- **Exact surface:** at each angle the part is turned and the tool dropped onto it, so the
+  paths follow the true surface, flats and pockets included.
+- **Patterns:** by default a helix advances a stepover along X each turn (A keeps turning).
+  `ALONG` gives passes along the axis instead, a stepover apart at the largest radius.
+- **Roughing:** `STEPDOWN` adds roughing levels from the stock's swing radius down before the
+  finish. Each level rapids only to just above what the level before left.
+- **X range:** `TOP` and `BOTTOM` limit it (it is the part's length by default).
+
+**Posts:**
+
+- The work zero is the rotary centre for the whole program.
+- The table turns (`G0 A.. C..`) at the clearance height, the short way round.
+- Rotary moves use inverse-time feed (`G93`): each move's F is the feed over its length along
+  the part. Then the post returns to `G94`.
+- GRBL posts 3 axes, so it refuses multi-axis jobs.
+
+**Simulation:** a job that turns the part is simulated in voxels instead of a height field:
+
+- **Grid:** a fifth of the smallest tool's radius, up to about 6 million voxels.
+- **Cutting:** each move cuts with the tool's tip shape and flutes along its own axis, in the
+  part's frame. Turning moves are followed in steps under a voxel.
+- **Gouges:** voxels of the part's inside that get cut (at least a voxel deep).
+- **Stock left:** measured through the remaining stock to the part's skin.
+- **Collisions:** the shank and holder are checked as for 3 axes.
+
+`SIMULATE SHOW` gives the voxel stock as a body.
+
 ## The job
 
 ```text
@@ -298,7 +344,7 @@ CAM POST file.nc [FANUC | HAAS | GRBL | LINUXCNC]
 The `cam` tool has these operations:
 
 - `setup`, `tool`;
-- `face`, `rough`, `pocket`, `contour`, `parallel`, `waterline`, `drill`, `bore`;
+- `face`, `rough`, `pocket`, `contour`, `parallel`, `waterline`, `drill`, `bore`, `rotary`;
 - `holes`, `list`, `generate`, `simulate`, `post`, `delete`, `clear`.
 
 Its parameters are listed in the tool's schema.
@@ -310,6 +356,8 @@ Its parameters are listed in the tool's schema.
 {"operation": "pocket", "adaptive": true}
 {"operation": "tool", "number": 2, "type": "flat", "diameter": 4, "stickout": 20, "holder": 25}
 {"operation": "pocket", "tool": 2, "rest": true}
+{"operation": "pocket", "tool": 1, "index_a": -90}
+{"operation": "rotary", "tool": 3, "stepover": 0.5, "stepdown": 3}
 {"operation": "simulate", "show": true}
 {"operation": "post", "path": "bracket.nc"}
 ```
@@ -318,4 +366,4 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Machines:** 4- and 5-axis; lathes.
+- **Machines:** simultaneous 5-axis (tool-axis tilting along a surface); lathes.

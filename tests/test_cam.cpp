@@ -535,3 +535,114 @@ TEST_CASE("CAM simulation finds the holder hitting the stock, and the stickout t
     CHECK(e.state.cam.ops[1].rest);
     std::filesystem::remove(path);
 }
+
+TEST_CASE("CAM 3+2: a side pocket and a side hole, cut with the table turned, land on their faces") {
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 30 @0,0,0").ok);
+    REQUIRE(run(d, "POCKET \"Block 1\" AT 0,-20,15 DIR 0,1,0 ROUND WIDTH 16 DEPTH 8").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 30,0,15 DIR -1,0,0 DIAMETER 6 DEPTH 10").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 0 TOP 0 MATERIAL aluminium").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 6 LENGTH 20").ok);
+    REQUIRE(run(d, "CAM TOOL 2 DRILL 6").ok);
+    CHECK(!run(d, "CAM POCKET TOOL 1").ok); // from the top there is no pocket
+    auto r = run(d, "CAM POCKET TOOL 1 A -90");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "table at A-90 C0"));
+    REQUIRE(run(d, "CAM DRILL TOOL 2 INDEX -90 -90").ok);
+    const CamJob& job = d.state.cam;
+    CHECK(job.multiAxis());
+    // The pocket's cuts, back on the part: inside the round pocket on the -Y face, down to its floor.
+    double ymin = 1e9, ymax = -1e9, rmax = 0;
+    for (const CamMove& m : job.ops[0].moves) {
+        CHECK_NEAR(m.a, -90.0, 1e-6);
+        if (m.kind == CamMove::Rapid) continue;
+        const Vec3 p = camToPart(job, m.to, m.a, m.c);
+        ymin = std::min(ymin, static_cast<double>(p.y)), ymax = std::max(ymax, static_cast<double>(p.y));
+        rmax = std::max(rmax, std::hypot(p.x, p.z - 15.0));
+    }
+    CHECK_NEAR(ymax, -12.0, 1e-3); // the floor, 8 deep
+    CHECK(ymin < -20.0);           // from outside the face
+    CHECK(rmax < 5.0 + 1e-3);      // the tool's centre stays a radius inside the 16 mm pocket
+    const Vec3 axis = camToolAxis(-90, 0);
+    CHECK_NEAR(axis.y, -1.0, 1e-6); // the tool comes in from -Y
+    const Vec3 drillAxis = camToolAxis(-90, -90);
+    CHECK_NEAR(drillAxis.x, 1.0, 1e-6); // and the drill from +X
+    REQUIRE(job.ops[1].holes.size() == 1);
+    // The voxel simulation: both features cut, nothing gouged.
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.voxels);
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK_NEAR(sim.removed, kPi * 64 * 8 + kPi * 9 * 10 + kPi * 9 * 3 / std::tan(59.0 * kPi / 180) / 3, 250.0);
+    // The post turns the table at clearance before each operation; GRBL refuses.
+    const std::string g = postToString(d.state.cam, d.scene.bodies()[0], "fanuc");
+    CHECK(has(g, "G00 A-90. C0."));
+    CHECK(has(g, "G00 A-90. C-90."));
+    CHECK(has(g, "ROTARY CENTRE"));
+    std::string e;
+    CHECK(postToString(d.state.cam, d.scene.bodies()[0], "grbl", nullptr, &e).empty());
+    CHECK(has(e, "3 axes"));
+}
+
+TEST_CASE("CAM rotary: 4-axis wrapping turns a bar under the tool, roughing in levels, finishing on the surface") {
+    Document d;
+    REQUIRE(run(d, "CYLINDER 15 60 @0,0,0").ok);
+    REQUIRE(run(d, "ROTATE \"Cylinder 1\" 0,90,0").ok);
+    REQUIRE(run(d, "POCKET \"Cylinder 1\" AT 0,0,15 DIR 0,0,-1 BOX WIDTH 20 LENGTH 30 DEPTH 3").ok);
+    REQUIRE(run(d, "CAM SETUP \"Cylinder 1\" STOCK 2 MATERIAL aluminium").ok);
+    REQUIRE(run(d, "CAM TOOL 1 BALL 6 LENGTH 30").ok);
+    auto r = run(d, "CAM ROTARY TOOL 1 STEPOVER 1 STEPDOWN 4");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "helical"));
+    const CamJob& job = d.state.cam;
+    const Vec3 c = job.rotaryCentre();
+    // Every move sits over the axis (Y at the centre); A turns many times; the finish is at
+    // the part's radius plus the ball's (the ball's centre is a radius above its tip).
+    double maxA = 0;
+    std::size_t onBar = 0, feeds = 0;
+    for (const CamMove& m : job.ops[0].moves) {
+        CHECK_NEAR(m.to.y, c.y, 1e-4);
+        maxA = std::max(maxA, static_cast<double>(m.a));
+        if (m.kind == CamMove::Feed) {
+            ++feeds;
+            if (std::fabs(m.to.z - c.z - 15.0) < 0.05) ++onBar;
+        }
+    }
+    CHECK(maxA > 360.0 * 50);
+    CHECK(onBar > feeds / 6); // two roughing levels, then the finish
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    // Stock left on the turned length: almost all within a voxel of the round.
+    std::size_t near = 0, far = 0;
+    for (int k = 0; k < sim.vz; ++k)
+        for (int j = 0; j < sim.ny; ++j)
+            for (int i = 0; i < sim.nx; ++i) {
+                if (sim.voxel[(static_cast<std::size_t>(k) * static_cast<std::size_t>(sim.ny) + static_cast<std::size_t>(j)) * static_cast<std::size_t>(sim.nx) +
+                              static_cast<std::size_t>(i)] != 1)
+                    continue;
+                const double x = sim.voxelMin.x + (i + 0.5) * sim.cell, y = sim.voxelMin.y + (j + 0.5) * sim.cell, z = sim.voxelMin.z + (k + 0.5) * sim.cell;
+                if (std::fabs(x - c.x) > 26 || (std::fabs(x - c.x) < 17 && std::fabs(y - c.y) < 12 && z > c.z)) continue; // the ends and the flat
+                (std::hypot(y - c.y, z - c.z) - 15.0 < sim.cell ? near : far)++;
+            }
+    CHECK(near < 2000); // a skin of voxels whose centres sit just off the faceted round
+    CHECK(far < 10);
+    // Posted with A words and inverse-time feed.
+    const std::string g = postToString(d.state.cam, d.scene.bodies()[0], "linuxcnc");
+    CHECK(has(g, "G93"));
+    CHECK(has(g, "G94"));
+    CHECK(has(g, " A360"));
+    // Along the axis instead, and the job saved and opened again.
+    REQUIRE(run(d, "CAM ROTARY TOOL 1 ALONG STEPOVER 1.5").ok);
+    CHECK(d.state.cam.ops[1].along);
+    const std::string path = tempPath("sicdm_cam_rotary.sicdm");
+    REQUIRE(run(d, "SAVE " + path).ok);
+    Document e;
+    REQUIRE(run(e, "OPEN " + path).ok);
+    REQUIRE(e.state.cam.ops.size() == 2);
+    CHECK(e.state.cam.ops[0].kind == CamOpKind::Rotary);
+    CHECK(e.state.cam.ops[1].along);
+    std::filesystem::remove(path);
+}

@@ -15,12 +15,17 @@
 //               waterline 3D finishing; drilling
 //               (spot, drill, peck, chip-break, tap, bore) with holes found on the
 //               part; helical boring of holes bigger than the end mill
-//   Simulation  the stock as a height field cut by each tool's shape along the moves:
+//   Simulation  the stock as a height field (or, with multi-axis operations, voxels) cut
+//               by each tool's shape along the moves:
 //               removed volume, stock left, gouges, rapid moves through stock, shank
 //               and holder collisions (and the stickout that would clear them) and cycle
 //               time; the cut stock as a body
+//   Multi-axis  3+2 indexed operations (the table turned to A and C, then any 3-axis
+//               operation), and 4-axis rotary wrapping (the part turning on A about X
+//               under the tool: helical or along-the-axis passes, roughing in levels)
 //   Post        Fanuc, Haas, GRBL and LinuxCNC G-code, with arcs (G2 / G3) fitted to
-//               the cuts and canned drilling cycles where the control has them
+//               the cuts and canned drilling cycles where the control has them; A and C
+//               words, and inverse-time feed (G93) for moves that turn the part
 //
 // All coordinates are millimetres in the model's frame; the post moves them to the
 // setup's work origin (G54).
@@ -97,17 +102,20 @@ struct CamFeeds {
 // cut in mm (0: full width), which thins the chip and lets the feed rise.
 CamFeeds camFeeds(const CamTool& tool, const CamMaterial& material, const CamMachine& machine, double stepover = 0.0);
 
-enum class CamOpKind { Face, Contour, Pocket, Rough, Parallel, Waterline, Drill, Bore };
+enum class CamOpKind { Face, Contour, Pocket, Rough, Parallel, Waterline, Drill, Bore, Rotary };
 const char* camOpKey(CamOpKind k);
 
 enum class DrillCycle { Spot, Drill, Peck, ChipBreak, Tap, Bore };
 const char* drillCycleKey(DrillCycle c);
 bool drillCycleFromKey(const std::string& key, DrillCycle* out);
 
+// A move in the machine's frame. With the table turned (A about X, then C about Z, both
+// through the job's rotary centre) the part is turned with it: camToPart maps back.
 struct CamMove {
     enum Kind : unsigned char { Rapid, Feed, Plunge } kind = Feed;
     Vec3 to;
-    double feed = 0.0; // mm/min (Rapid: unused)
+    double feed = 0.0; // mm/min along the part (Rapid: unused)
+    float a = 0.0f, c = 0.0f; // degrees
 };
 
 struct CamHole {
@@ -132,6 +140,9 @@ struct CamOperation {
     bool raster = false;           // zig-zag clearing instead of offsets
     bool adaptive = false;         // rough / pocket: light stepover, deep stepdown, trochoids where the engagement would rise
     bool rest = false;             // rough / pocket: only where the operations before left material
+    // Multi-axis.
+    double indexA = 0.0, indexC = 0.0; // 3+2: the table turned to these (degrees) for the whole operation
+    bool along = false;            // rotary: passes along the axis instead of a helix round it
     // Contour: 0 the outside profile, 1 the inside walls (pockets, holes), 2 both.
     int side = 0;
     int tabs = 0;
@@ -175,11 +186,21 @@ struct CamJob {
     double partKey = 0.0;   // the part's fingerprint when the paths were made (not saved)
     bool empty() const noexcept { return setup.body.empty() && tools.empty() && ops.empty(); }
     const CamTool* tool(int number) const;
-    Vec3 origin() const; // the work zero in model coordinates
+    Vec3 origin() const; // the work zero in model coordinates (the rotary centre for multi-axis jobs)
+    bool multiAxis() const;     // any operation turns the part
+    Vec3 rotaryCentre() const;  // the stock's centre: A and C turn about it
+    double swingRadius() const; // the stock's farthest corner from the A axis
+    double clearZ() const;      // the clearance height in the machine frame, whatever the table's turn
 };
 
 Json camToJson(const CamJob& job);
 bool camFromJson(const Json& j, CamJob& job);
+
+// Machine frame <-> part frame for a table turned to (a, c) degrees; the tool's axis
+// (machine +Z) as a direction on the part.
+Vec3 camToPart(const CamJob& job, const Vec3& machine, float a, float c);
+Vec3 camToMachine(const CamJob& job, const Vec3& part, float a, float c);
+Vec3 camToolAxis(float a, float c);
 
 // Fills `op.moves` for the part. False (and `error`) when it can't, e.g. no stock.
 bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, std::string* error = nullptr);
@@ -208,6 +229,11 @@ struct CamSimulation {
     int nx = 0, ny = 0;
     std::vector<float> height;     // nx * ny, the cut stock's top
     std::vector<float> partTop;    // nx * ny, the part's top (-inf off the part)
+    // Multi-axis jobs: voxels instead (0 cut, 1 stock, 2 part's skin, 3 part's inside).
+    bool voxels = false;
+    int vz = 0;
+    Vec3 voxelMin;
+    std::vector<unsigned char> voxel; // nx * ny * vz
 };
 // Cuts the stock with every operation in order (generating any not yet generated).
 bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string* error = nullptr);
@@ -229,6 +255,7 @@ const std::vector<std::string>& camPosts();
 double camPartKey(const Body& part);
 
 // Seconds the moves take at their feeds (rapids at the machine's rapid rate).
-double movesSeconds(const std::vector<CamMove>& moves, const CamMachine& machine, const Vec3& from);
+// Moves that turn the table count their length along the part, about `centre` (A only).
+double movesSeconds(const std::vector<CamMove>& moves, const CamMachine& machine, const Vec3& from, const Vec3* centre = nullptr);
 
 } // namespace sicdm

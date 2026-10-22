@@ -2085,11 +2085,14 @@ void Application::drawToolpathOverlay() const {
         const CamOperation& op = job.ops[o];
         if (!op.generated || op.moves.empty()) continue;
         const ImU32 cut = kColours[o % std::size(kColours)];
-        std::optional<ImVec2> prev = projectToScreen(m_cam3D, op.moves[0].to, io.DisplaySize);
+        // Multi-axis moves are in the turned machine frame: drawn where they fall on the part.
+        const bool turned = job.multiAxis();
+        auto onPart = [&](const CamMove& m) { return turned ? camToPart(job, m.to, m.a, m.c) : m.to; };
+        std::optional<ImVec2> prev = projectToScreen(m_cam3D, onPart(op.moves[0]), io.DisplaySize);
         for (std::size_t i = 1; i < op.moves.size(); ++i) {
             const CamMove& m = op.moves[i];
             if (++k % stride != 0 && m.kind == CamMove::Feed && i + 1 < op.moves.size() && op.moves[i + 1].kind == CamMove::Feed) continue;
-            const auto q = projectToScreen(m_cam3D, m.to, io.DisplaySize);
+            const auto q = projectToScreen(m_cam3D, onPart(m), io.DisplaySize);
             if (q && prev) dl->AddLine(*prev, *q, m.kind == CamMove::Rapid ? rapid : m.kind == CamMove::Plunge ? plunge : cut,
                                        m.kind == CamMove::Rapid ? 1.0f : 1.4f);
             prev = q;

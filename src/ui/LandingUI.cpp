@@ -536,6 +536,13 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem("Adaptive Rough (trochoidal, deep cuts)")) cmd.commands.push_back("CAM ROUGH ADAPTIVE LEAVE 0.3");
         if (ImGui::MenuItem("Adaptive Pocket")) cmd.commands.push_back("CAM POCKET ADAPTIVE");
         if (ImGui::MenuItem("Rest Rough (what the tools before left)")) cmd.commands.push_back("CAM ROUGH REST LEAVE 0.3");
+        ImGui::Separator();
+        ImGui::TextDisabled("Multi-axis");
+        if (ImGui::MenuItem("Rotary Wrap Finish (4-axis, helical)")) cmd.commands.push_back("CAM ROTARY");
+        if (ImGui::MenuItem("Rotary Rough (4-axis, 3 mm levels)")) cmd.commands.push_back("CAM ROTARY STEPDOWN 3 LEAVE 0.3");
+        if (ImGui::MenuItem("Pocket the Front Face (3+2, A -90)")) cmd.commands.push_back("CAM POCKET INDEX -90 0");
+        if (ImGui::MenuItem("Drill the Right Face (3+2, A -90 C -90)")) cmd.commands.push_back("CAM DRILL INDEX -90 -90");
+        ImGui::TextDisabled("Any operation: INDEX a c turns the table first");
         if (ImGui::MenuItem("2D Contour (with tabs)")) cmd.commands.push_back("CAM CONTOUR TABS 4");
         if (ImGui::MenuItem("Parallel Finish")) cmd.commands.push_back("CAM PARALLEL SHALLOW");
         if (ImGui::MenuItem("Waterline Finish")) cmd.commands.push_back("CAM WATERLINE STEEP");

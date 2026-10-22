@@ -276,6 +276,8 @@ Details: [docs/printing.md](docs/printing.md).
   - adaptive clearing: a light stepover, deep cuts, and trochoidal loops wherever the tool
     would be overloaded;
   - rest machining: a smaller tool clears only what the tools before it left;
+  - 3+2 indexed versions of any operation (the table turned to A and C first);
+  - 4-axis rotary wrapping (helical or along the axis, roughing in levels);
   - parallel and waterline finishing;
   - spot, peck, chip-break, tap and bore cycles at the holes found on the part;
   - helical boring.
@@ -284,7 +286,9 @@ Details: [docs/printing.md](docs/printing.md).
 - **Simulation:** cuts the stock with each tool's shape. It reports stock left, gouges, rapid
   moves through stock, shank and holder collisions (with the stickout that would clear them)
   and cycle time, and shows the cut stock.
-- **Post processors:** Fanuc, Haas, LinuxCNC and GRBL, with fitted arcs and canned cycles.
+- **Post processors:** Fanuc, Haas, LinuxCNC and GRBL, with fitted arcs and canned cycles. For
+  multi-axis jobs the posts add A and C words and inverse-time feed. Multi-axis jobs are
+  simulated in voxels.
 
 ```text
 CAM SETUP "Bracket" STOCK 3 MATERIAL aluminium      CAM TOOL 1 FLAT 6      CAM TOOL 2 DRILL 6

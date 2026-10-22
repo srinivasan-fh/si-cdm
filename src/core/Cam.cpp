@@ -134,6 +134,17 @@ public:
         return best;
     }
 
+    // Every height where the vertical line through (x, y) crosses the surface, sorted.
+    void crossings(double x, double y, std::vector<double>& zs) const {
+        zs.clear();
+        if (tris.empty() || x < x0 || x > x1 || y < y0 || y > y1) return;
+        for (const std::uint32_t ti : bins[static_cast<std::size_t>(binY(y) * bnx + binX(x))]) {
+            double z;
+            if (insideXY(ti, x, y, &z)) zs.push_back(z);
+        }
+        std::sort(zs.begin(), zs.end());
+    }
+
     // The highest point of the part's surface straight above or below (x, y); -inf off the part.
     double top(double x, double y) const {
         double best = -kInf;
@@ -623,6 +634,7 @@ const char* camOpKey(CamOpKind k) {
     case CamOpKind::Waterline: return "waterline";
     case CamOpKind::Drill: return "drill";
     case CamOpKind::Bore: return "bore";
+    case CamOpKind::Rotary: return "rotary";
     }
     return "rough";
 }
@@ -654,11 +666,52 @@ const CamTool* CamJob::tool(int number) const {
 }
 
 Vec3 CamJob::origin() const {
+    if (setup.hasStock && multiAxis()) return rotaryCentre();
     if (!setup.hasStock || setup.origin == CamSetup::Origin::Model) return {};
     if (setup.origin == CamSetup::Origin::StockTopCentre)
         return {(setup.stockMin.x + setup.stockMax.x) * 0.5f, (setup.stockMin.y + setup.stockMax.y) * 0.5f, setup.stockMax.z};
     return {setup.stockMin.x, setup.stockMin.y, setup.stockMax.z};
 }
+
+bool CamJob::multiAxis() const {
+    return std::any_of(ops.begin(), ops.end(), [](const CamOperation& o) { return o.kind == CamOpKind::Rotary || o.indexA != 0 || o.indexC != 0; });
+}
+
+Vec3 CamJob::rotaryCentre() const { return (setup.stockMin + setup.stockMax) * 0.5f; }
+
+double CamJob::swingRadius() const {
+    const Vec3 c = rotaryCentre();
+    return std::hypot(std::max(std::fabs(setup.stockMin.y - c.y), std::fabs(setup.stockMax.y - c.y)),
+                      std::max(std::fabs(setup.stockMin.z - c.z), std::fabs(setup.stockMax.z - c.z)));
+}
+
+double CamJob::clearZ() const {
+    if (!multiAxis()) return setup.stockMax.z + setup.clearance;
+    return rotaryCentre().z + length(setup.stockMax - setup.stockMin) * 0.5 + setup.clearance; // any turn of the table
+}
+
+namespace {
+Vec3 turnA(const Vec3& v, double deg) {
+    const double r = deg * kPiD / 180.0, cs = std::cos(r), sn = std::sin(r);
+    return vec(v.x, v.y * cs - v.z * sn, v.y * sn + v.z * cs);
+}
+Vec3 turnC(const Vec3& v, double deg) {
+    const double r = deg * kPiD / 180.0, cs = std::cos(r), sn = std::sin(r);
+    return vec(v.x * cs - v.y * sn, v.x * sn + v.y * cs, v.z);
+}
+} // namespace
+
+Vec3 camToMachine(const CamJob& job, const Vec3& part, float a, float c) {
+    const Vec3 o = job.rotaryCentre();
+    return o + turnA(turnC(part - o, c), a);
+}
+
+Vec3 camToPart(const CamJob& job, const Vec3& machine, float a, float c) {
+    const Vec3 o = job.rotaryCentre();
+    return o + turnC(turnA(machine - o, -a), -c);
+}
+
+Vec3 camToolAxis(float a, float c) { return turnC(turnA({0, 0, 1}, -a), -c); }
 
 double cutterHeight(const Body& part, const CamTool& tool, double x, double y, double floor) {
     const PartModel pm(part, std::max(tool.radius(), 1.0));
@@ -677,11 +730,17 @@ double camPartKey(const Body& part) {
     return k;
 }
 
-double movesSeconds(const std::vector<CamMove>& moves, const CamMachine& machine, const Vec3& from) {
+double movesSeconds(const std::vector<CamMove>& moves, const CamMachine& machine, const Vec3& from, const Vec3* centre) {
     double s = 0;
     Vec3 at = from;
+    float atA = moves.empty() ? 0.0f : moves[0].a;
     for (const CamMove& m : moves) {
-        const double len = length(m.to - at);
+        double len = length(m.to - at);
+        if (centre && m.a != atA) { // the turn, along the part
+            const double r = 0.5 * (std::hypot(at.y - centre->y, at.z - centre->z) + std::hypot(m.to.y - centre->y, m.to.z - centre->z));
+            len = std::hypot(len, r * (m.a - atA) * kPiD / 180.0);
+        }
+        atA = m.a;
         const double rate = m.kind == CamMove::Rapid ? machine.rapid : std::max(m.feed, 1.0);
         s += len / rate * 60.0;
         at = m.to;
@@ -1824,6 +1883,128 @@ bool genBore(Ctx& c, std::string* err) {
     return true;
 }
 
+// 4-axis rotary wrapping: the part turns on A about X (through the rotary centre) under
+// the tool, which stays over the axis. At each angle the part is turned and the tool
+// dropped onto it, so the paths are exact drop-cutter paths in every turned position.
+// A helix round the axis (a stepover along X each turn), or passes along the axis a
+// stepover apart round the largest radius; with a stepdown, roughing levels from the
+// stock's swing radius down first.
+bool genRotary(Ctx& c, const Body& part, std::string* err) {
+    const CamOperation& op = c.op;
+    const Vec3 ctr = c.job.rotaryCentre();
+    const double cy = ctr.y, cz = ctr.z, R = c.R();
+    const MeshData world = worldMesh(part);
+    double x0 = kInf, x1 = -kInf, rmax = 0;
+    for (const Vertex& v : world.vertices) {
+        x0 = std::min(x0, static_cast<double>(v.position.x));
+        x1 = std::max(x1, static_cast<double>(v.position.x));
+        rmax = std::max(rmax, std::hypot(v.position.y - cy, v.position.z - cz));
+    }
+    if (!(x1 > x0) || !(rmax > 0)) {
+        if (err) *err = "The part has no length along X to turn";
+        return false;
+    }
+    if (!std::isnan(op.top)) x1 = std::min(x1, op.top);       // TOP / BOTTOM limit the X range here
+    if (!std::isnan(op.bottom)) x0 = std::max(x0, op.bottom);
+    if (!(x1 > x0)) {
+        if (err) *err = "Nothing between the X limits";
+        return false;
+    }
+    const double s = std::max(op.stepover > 0 ? op.stepover : scallopStep(c.tool, op.scallop), 0.01);
+    const double swing = std::max(c.job.swingRadius(), rmax);
+    const double chord = std::clamp(c.tol * 50.0, 0.2, 1.0);
+    const double floor = cz - 1.0; // never below the axis
+    // The angles and X positions to drop the tool at.
+    struct Pass {
+        double deg;              // A, continuous
+        std::vector<double> xs;  // along X
+        std::vector<double> zs;  // the tool's tip there
+    };
+    std::vector<Pass> passes;
+    if (op.along) {
+        const int m = std::clamp(static_cast<int>(std::ceil(2 * kPiD * rmax / s)), 4, 7200);
+        const double dx = std::clamp(R * 0.5, 0.05, 0.5);
+        const int nx = std::max(2, static_cast<int>(std::ceil((x1 - x0) / dx)) + 1);
+        for (int k = 0; k < m; ++k) {
+            Pass p{360.0 * k / m, {}, {}};
+            for (int i = 0; i < nx; ++i) p.xs.push_back(x0 + (x1 - x0) * i / (nx - 1));
+            if (k % 2) std::reverse(p.xs.begin(), p.xs.end());
+            passes.push_back(std::move(p));
+        }
+    } else {
+        // One pass per angle of a turn, holding that angle's points of every turn of the helix.
+        const int n = std::clamp(static_cast<int>(std::ceil(2 * kPiD * (rmax + R) / chord)), 72, 1440);
+        const int turns = std::max(1, static_cast<int>(std::ceil((x1 - x0) / s)));
+        for (int j = 0; j < n; ++j) {
+            Pass p{360.0 * j / n, {}, {}};
+            for (int k = 0; k <= turns; ++k) p.xs.push_back(std::min(x1, x0 + s * (k + static_cast<double>(j) / n)));
+            passes.push_back(std::move(p));
+        }
+    }
+    // Drop the tool at each angle onto the part turned to it.
+    parallelFor(static_cast<int>(passes.size()), [&](int k) {
+        Pass& p = passes[static_cast<std::size_t>(k)];
+        MeshData m = world;
+        for (Vertex& v : m.vertices) v.position = ctr + turnA(v.position - ctr, p.deg);
+        const PartModel pm(meshBody("turned", std::move(m)), std::max(R, 1.0));
+        p.zs.resize(p.xs.size());
+        for (std::size_t i = 0; i < p.xs.size(); ++i) p.zs[i] = pm.drop(c.cut, p.xs[i], cy, floor - op.leave) + op.leave;
+    });
+    double lowest = kInf;
+    for (const Pass& p : passes)
+        for (double z : p.zs) lowest = std::min(lowest, z - cz);
+    // Radial levels: roughing from the swing radius down, then the finish on the part.
+    std::vector<double> levels;
+    if (op.stepdown > 0)
+        for (double r = swing - op.stepdown; r > lowest + 1e-6; r -= op.stepdown) levels.push_back(r);
+    levels.push_back(-kInf);
+    auto push = [&](CamMove::Kind k, double x, double z, double f, double a) {
+        const CamMove m{k, vec(x, cy, z), f, static_cast<float>(a), 0.0f};
+        if (!c.op.moves.empty()) {
+            const CamMove& b = c.op.moves.back();
+            if (length(b.to - m.to) < 1e-6f && std::fabs(b.a - m.a) < 1e-6f) return; // nowhere new
+        }
+        c.op.moves.push_back(m);
+    };
+    const double clear = c.clearZ, retract = cz + swing + c.job.setup.retract;
+    push(CamMove::Rapid, op.along ? passes[0].xs[0] : x0, clear, 0, 0);
+    for (std::size_t L = 0; L < levels.size(); ++L) {
+        const double lv = levels[L];
+        auto zAt = [&](double z) { return std::max(z, cz + lv); };
+        // Rapid down only to just above what the level before left; feed in from there.
+        const double above = cz + (L == 0 ? swing : levels[L - 1]) + 1.0;
+        auto approach = [&](double z) { return std::max(z + 2.0, above); };
+        if (op.along) {
+            for (const Pass& p : passes) {
+                push(CamMove::Rapid, p.xs[0], retract, 0, p.deg);
+                push(CamMove::Rapid, p.xs[0], approach(zAt(p.zs[0])), 0, p.deg);
+                push(CamMove::Plunge, p.xs[0], zAt(p.zs[0]), c.feeds.plunge, p.deg);
+                for (std::size_t i = 1; i < p.xs.size(); ++i) push(CamMove::Feed, p.xs[i], zAt(p.zs[i]), c.feeds.feed, p.deg);
+                push(CamMove::Rapid, p.xs.back(), retract, 0, p.deg);
+            }
+        } else {
+            // The helix, forwards on even levels and back on odd ones (A keeps turning one way per level).
+            const std::size_t n = passes.size(), turns = passes[0].xs.size();
+            std::vector<std::pair<std::size_t, std::size_t>> order; // (turn, angle index)
+            for (std::size_t k = 0; k < turns; ++k)
+                for (std::size_t j = 0; j < n; ++j) {
+                    if (k > 0 && passes[j].xs[k] <= passes[j].xs[k - 1] + 1e-12 && passes[j].xs[k] >= x1 - 1e-12 && j > 0) continue;
+                    order.push_back({k, j});
+                }
+            if (L % 2) std::reverse(order.begin(), order.end());
+            auto deg = [&](std::size_t k, std::size_t j) { return 360.0 * static_cast<double>(k) + passes[j].deg; };
+            const auto [k0, j0] = order.front();
+            push(CamMove::Rapid, passes[j0].xs[k0], retract, 0, deg(k0, j0));
+            push(CamMove::Rapid, passes[j0].xs[k0], approach(zAt(passes[j0].zs[k0])), 0, deg(k0, j0));
+            push(CamMove::Plunge, passes[j0].xs[k0], zAt(passes[j0].zs[k0]), c.feeds.plunge, deg(k0, j0));
+            for (const auto& [k, j] : order) push(CamMove::Feed, passes[j].xs[k], zAt(passes[j].zs[k]), c.feeds.feed, deg(k, j));
+            push(CamMove::Rapid, c.op.moves.back().to.x, retract, 0, c.op.moves.back().a);
+        }
+    }
+    push(CamMove::Rapid, c.op.moves.back().to.x, clear, 0, c.op.moves.back().a);
+    return true;
+}
+
 } // namespace
 
 std::vector<CamHole> findHoles(const Body& body) {
@@ -1912,6 +2093,54 @@ std::vector<CamHole> findHoles(const Body& body) {
 bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, std::string* error) {
     op.moves.clear();
     op.generated = false;
+    // 3+2: turn the part and the stock with the table, make the 3-axis operation there.
+    if ((op.indexA != 0 || op.indexC != 0) && op.kind != CamOpKind::Rotary) {
+        if (!job.setup.hasStock) {
+            if (error) *error = "Set up the stock first (CAM SETUP)";
+            return false;
+        }
+        if (op.rest) {
+            if (error) *error = "REST works on 3-axis operations only";
+            return false;
+        }
+        const float a = static_cast<float>(op.indexA), cc = static_cast<float>(op.indexC);
+        MeshData m = worldMesh(part);
+        for (Vertex& v : m.vertices) {
+            v.position = camToMachine(job, v.position, a, cc);
+            v.normal = turnA(turnC(v.normal, cc), a);
+        }
+        const Body turned = meshBody(part.name, std::move(m));
+        CamJob tj = job;
+        AABB box;
+        for (int k = 0; k < 8; ++k)
+            box.expand(camToMachine(job, {k & 1 ? job.setup.stockMax.x : job.setup.stockMin.x, k & 2 ? job.setup.stockMax.y : job.setup.stockMin.y,
+                                          k & 4 ? job.setup.stockMax.z : job.setup.stockMin.z},
+                                    a, cc));
+        tj.setup.stockMin = box.min;
+        tj.setup.stockMax = box.max;
+        std::size_t k = 0;
+        while (k < job.ops.size() && &job.ops[k] != &op) ++k;
+        if (k == tj.ops.size()) tj.ops.push_back(op);
+        for (CamOperation& o : tj.ops) o.indexA = o.indexC = 0, o.kind = o.kind == CamOpKind::Rotary ? CamOpKind::Rough : o.kind;
+        CamOperation& t = tj.ops[k];
+        if (!generateOperation(tj, turned, t, error)) return false;
+        op = [&] {
+            CamOperation r = t;
+            r.indexA = op.indexA;
+            r.indexC = op.indexC;
+            r.kind = op.kind;
+            return r;
+        }();
+        // Clear the turn: rise to the job's clearance before the first move and after the last.
+        const double clear = job.clearZ();
+        if (!op.moves.empty()) {
+            const Vec3 f = op.moves.front().to, b = op.moves.back().to;
+            op.moves.insert(op.moves.begin(), CamMove{CamMove::Rapid, Vec3{f.x, f.y, static_cast<float>(clear)}, 0.0});
+            op.moves.push_back({CamMove::Rapid, Vec3{b.x, b.y, static_cast<float>(clear)}, 0.0});
+        }
+        for (CamMove& mv : op.moves) mv.a = a, mv.c = cc;
+        return true;
+    }
     const CamTool* tool = job.tool(op.tool);
     if (!tool) {
         if (error) *error = "No tool T" + std::to_string(op.tool) + " in the tool library (CAM TOOL)";
@@ -1941,7 +2170,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
     if (stepover <= 0) {
         if (op.kind == CamOpKind::Face) stepover = tool->diameter * 0.7;
         else if (op.kind == CamOpKind::Rough || op.kind == CamOpKind::Pocket) stepover = tool->diameter * (op.adaptive ? 0.12 : 0.4);
-        else if (op.kind == CamOpKind::Parallel || op.kind == CamOpKind::Waterline) stepover = scallopStep(*tool, op.scallop);
+        else if (op.kind == CamOpKind::Parallel || op.kind == CamOpKind::Waterline || op.kind == CamOpKind::Rotary) stepover = scallopStep(*tool, op.scallop);
     }
     Ctx c{job, *tool, pm, op, cutterOf(*tool, op.leave), su.stockMin.x, su.stockMin.y, su.stockMax.x, su.stockMax.y, su.stockMax.z,
           su.stockMin.z, su.stockMax.z + su.retract, su.stockMax.z + su.clearance, std::max(su.tolerance, 1e-4),
@@ -1973,6 +2202,10 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
         }
         c.rest = &restSim;
     }
+    if (op.kind == CamOpKind::Rotary) {
+        c.clearZ = job.clearZ();
+        c.retractZ = job.rotaryCentre().z + job.swingRadius() + su.retract;
+    }
     if (op.setFeed > 0) c.feeds.feed = op.setFeed;
     if (op.setPlunge > 0) c.feeds.plunge = op.setPlunge;
     if (op.setRpm > 0) c.feeds.rpm = std::min(op.setRpm, su.machine.maxRpm);
@@ -2000,6 +2233,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
     case CamOpKind::Waterline: ok = genWaterline(c, error); break;
     case CamOpKind::Drill: ok = genDrill(c, error); break;
     case CamOpKind::Bore: ok = genBore(c, error); break;
+    case CamOpKind::Rotary: ok = genRotary(c, part, error); break;
     }
     if (!ok) {
         op.moves.clear();
@@ -2014,11 +2248,18 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
     op.plunge = c.feeds.plunge;
     double cut = 0;
     Vec3 at = op.moves.empty() ? Vec3{} : op.moves[0].to;
+    float atA = op.moves.empty() ? 0.0f : op.moves[0].a;
+    const Vec3 rc = job.rotaryCentre();
     for (const CamMove& m : op.moves) {
-        if (m.kind != CamMove::Rapid) cut += length(m.to - at);
+        double len = length(m.to - at);
+        if (m.a != atA)
+            len = std::hypot(len, 0.5 * (std::hypot(at.y - rc.y, at.z - rc.z) + std::hypot(m.to.y - rc.y, m.to.z - rc.z)) * (m.a - atA) * kPiD / 180.0);
+        if (m.kind != CamMove::Rapid) cut += len;
         at = m.to;
+        atA = m.a;
     }
-    const double secs = movesSeconds(op.moves, su.machine, op.moves.empty() ? Vec3{} : op.moves[0].to);
+    const Vec3 centre = job.rotaryCentre();
+    const double secs = movesSeconds(op.moves, su.machine, op.moves.empty() ? Vec3{} : op.moves[0].to, &centre);
     char b[160];
     std::snprintf(b, sizeof(b), "%zu moves, %.2f m cutting, %d min %02d s", op.moves.size(), cut / 1000.0, static_cast<int>(secs) / 60,
                   static_cast<int>(secs) % 60);
@@ -2043,6 +2284,231 @@ bool generateAll(CamJob& job, const Body& part, std::string* error) {
     return true;
 }
 
+// Multi-axis jobs: the stock as voxels, cut by each tool (its tip shape, then a straight
+// flute up to the flute length) along each move in the part's frame. The tool's axis
+// turns with the table, and moves that turn the part are followed in small steps.
+bool simulateVoxels(CamJob& job, const Body& part, CamSimulation& out, std::string* error) {
+    const CamSetup& su = job.setup;
+    const Vec3 lo = su.stockMin, size = su.stockMax - su.stockMin;
+    double minR = 1e9;
+    for (const CamOperation& op : job.ops)
+        if (const CamTool* t = job.tool(op.tool)) minR = std::min(minR, t->radius());
+    const double vol = static_cast<double>(size.x) * size.y * size.z;
+    const double cell = std::clamp(std::max(minR / 5.0, std::cbrt(vol / 6.0e6)), 0.05, 2.0);
+    const int nx = std::max(1, static_cast<int>(std::ceil(size.x / cell))), ny = std::max(1, static_cast<int>(std::ceil(size.y / cell))),
+              nz = std::max(1, static_cast<int>(std::ceil(size.z / cell)));
+    auto idx = [&](int i, int j, int k) { return (static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) + static_cast<std::size_t>(j)) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i); };
+    auto centre = [&](int i, int j, int k) { return D3{lo.x + (i + 0.5) * cell, lo.y + (j + 0.5) * cell, lo.z + (k + 0.5) * cell}; };
+    std::vector<unsigned char> v(static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz), 1);
+    // Inside the part: the crossings of a vertical line through each column.
+    const PartModel pm(part, std::max(cell * 4.0, 1.0));
+    parallelFor(ny, [&](int j) {
+        std::vector<double> zs;
+        for (int i = 0; i < nx; ++i) {
+            const double x = lo.x + (i + 0.5) * cell + 1.3e-7, y = lo.y + (j + 0.5) * cell + 0.7e-7; // off the edges
+            pm.crossings(x, y, zs);
+            for (std::size_t q = 0; q + 1 < zs.size(); q += 2)
+                for (int k = 0; k < nz; ++k) {
+                    const double z = lo.z + (k + 0.5) * cell;
+                    if (z > zs[q] && z < zs[q + 1]) v[idx(i, j, k)] = 2;
+                }
+        }
+    });
+    // The part's inside: every neighbour part too (cutting these is a gouge of a voxel or more).
+    std::vector<unsigned char> init = v;
+    for (int k = 1; k + 1 < nz; ++k)
+        for (int j = 1; j + 1 < ny; ++j)
+            for (int i = 1; i + 1 < nx; ++i)
+                if (init[idx(i, j, k)] == 2 && init[idx(i - 1, j, k)] == 2 && init[idx(i + 1, j, k)] == 2 && init[idx(i, j - 1, k)] == 2 &&
+                    init[idx(i, j + 1, k)] == 2 && init[idx(i, j, k - 1)] == 2 && init[idx(i, j, k + 1)] == 2)
+                    v[idx(i, j, k)] = 3;
+    std::size_t removed = 0;
+    const Vec3 rc = job.rotaryCentre();
+    Vec3 at = camToMachine(job, {static_cast<float>((lo.x + su.stockMax.x) * 0.5), static_cast<float>((lo.y + su.stockMax.y) * 0.5),
+                                 static_cast<float>(job.clearZ())},
+                           0, 0);
+    float atA = 0, atC = 0;
+    int lastTool = -1;
+    const double hi[3] = {su.stockMax.x, su.stockMax.y, su.stockMax.z};
+    for (const CamOperation& op : job.ops) {
+        const CamTool* tool = job.tool(op.tool);
+        if (!tool) continue;
+        if (op.tool != lastTool && lastTool >= 0) out.seconds += su.machine.toolChange;
+        lastTool = op.tool;
+        const Cutter cut = cutterOf(*tool);
+        const double R = cut.R, flute = tool->fluteLength, gauge = tool->gauge(), HR = tool->holderRadius();
+        out.seconds += movesSeconds(op.moves, su.machine, at, &rc);
+        if (op.kind == CamOpKind::Drill && op.dwell > 0) out.seconds += op.dwell * static_cast<double>(op.holes.size());
+        for (const CamMove& m : op.moves) {
+            const Vec3 a = at, b = m.to;
+            const float a0 = atA, a1 = m.a, c0 = atC, c1 = m.c;
+            at = b, atA = m.a, atC = m.c;
+            double len = length(b - a);
+            if (a0 != a1) len = std::hypot(len, 0.5 * (std::hypot(a.y - rc.y, a.z - rc.z) + std::hypot(b.y - rc.y, b.z - rc.z)) * (a1 - a0) * kPiD / 180.0);
+            if (m.kind == CamMove::Rapid) out.rapidLength += len;
+            else out.cutLength += len;
+            if (m.kind == CamMove::Rapid && std::min(a.z, b.z) >= job.clearZ() - 1e-3) continue; // turning up above everything
+            // Steps of under a voxel along the part (a turn moves points far from the axis most).
+            const Vec3 pa = camToPart(job, a, a0, c0), pb = camToPart(job, b, a1, c1);
+            const double turn = (std::fabs(a1 - a0) + std::fabs(c1 - c0)) * kPiD / 180.0 * (length(a - rc) + gauge);
+            const int steps = std::max(1, static_cast<int>(std::ceil((length(pb - pa) + turn) / (cell * 0.7))));
+            if (steps > 200000) continue; // a wild turn far from anything; rapids above the stock
+            bool crashed = false, shank = false, holder = false, gouged = false;
+            for (int st = (len < 1e-9 && a0 == a1 && c0 == c1) ? steps : 0; st <= steps; ++st) {
+                const double t = static_cast<double>(st) / steps;
+                const Vec3 pm2 = a + (b - a) * static_cast<float>(t);
+                const float aa = a0 + (a1 - a0) * static_cast<float>(t), ca = c0 + (c1 - c0) * static_cast<float>(t);
+                const Vec3 P = camToPart(job, pm2, aa, ca), u = camToolAxis(aa, ca);
+                // The voxels the flute and the shank could reach.
+                const double reach = gauge;
+                double bl[3], bh[3];
+                for (int d = 0; d < 3; ++d) {
+                    const double p0 = d == 0 ? P.x : d == 1 ? P.y : P.z, ud = d == 0 ? u.x : d == 1 ? u.y : u.z;
+                    const double rad = R * std::sqrt(std::max(0.0, 1.0 - ud * ud)) + cell;
+                    bl[d] = std::min(p0, p0 + ud * reach) - rad;
+                    bh[d] = std::max(p0, p0 + ud * reach) + rad;
+                }
+                if (bh[0] < lo.x || bh[1] < lo.y || bh[2] < lo.z || bl[0] > hi[0] || bl[1] > hi[1] || bl[2] > hi[2]) continue;
+                const int i0 = std::max(0, static_cast<int>((bl[0] - lo.x) / cell)), i1 = std::min(nx - 1, static_cast<int>((bh[0] - lo.x) / cell));
+                const int j0 = std::max(0, static_cast<int>((bl[1] - lo.y) / cell)), j1 = std::min(ny - 1, static_cast<int>((bh[1] - lo.y) / cell));
+                const int k0 = std::max(0, static_cast<int>((bl[2] - lo.z) / cell)), k1 = std::min(nz - 1, static_cast<int>((bh[2] - lo.z) / cell));
+                for (int k = k0; k <= k1; ++k)
+                    for (int j = j0; j <= j1; ++j)
+                        for (int i = i0; i <= i1; ++i) {
+                            unsigned char& s = v[idx(i, j, k)];
+                            if (s == 0) continue;
+                            const D3 q = centre(i, j, k);
+                            const double dx = q.x - P.x, dy = q.y - P.y, dz = q.z - P.z;
+                            const double h = dx * u.x + dy * u.y + dz * u.z;
+                            if (h < -cell) continue;
+                            const double r2 = dx * dx + dy * dy + dz * dz - h * h;
+                            if (r2 > R * R) continue;
+                            if (h > flute) { // above the flutes: the shank rubs
+                                if (h <= reach && s == 1) shank = true;
+                                continue;
+                            }
+                            if (h < cut.h(std::sqrt(std::max(0.0, r2)))) continue;
+                            if (s == 1) {
+                                ++removed;
+                                if (m.kind == CamMove::Rapid) crashed = true;
+                                s = 0;
+                            } else if (s == 3) {
+                                ++out.gouges; // a voxel of the part's inside
+                                gouged = true;
+                                s = 0;
+                            }
+                        }
+            }
+            // The holder's face at the end of the move: anything within its radius just above it.
+            {
+                const Vec3 P = camToPart(job, b, m.a, m.c), u = camToolAxis(m.a, m.c);
+                const Vec3 F = P + u * static_cast<float>(gauge);
+                if (F.x > lo.x - HR && F.y > lo.y - HR && F.z > lo.z - HR && F.x < hi[0] + HR && F.y < hi[1] + HR && F.z < hi[2] + HR) {
+                    const int stride = std::max(1, static_cast<int>(HR / (8 * cell)));
+                    const int i0 = std::max(0, static_cast<int>((F.x - HR - lo.x) / cell)), i1 = std::min(nx - 1, static_cast<int>((F.x + HR - lo.x) / cell));
+                    const int j0 = std::max(0, static_cast<int>((F.y - HR - lo.y) / cell)), j1 = std::min(ny - 1, static_cast<int>((F.y + HR - lo.y) / cell));
+                    const int k0 = std::max(0, static_cast<int>((F.z - HR - lo.z) / cell)), k1 = std::min(nz - 1, static_cast<int>((F.z + HR - lo.z) / cell));
+                    double worst = -kInf;
+                    for (int k = k0; k <= k1; k += stride)
+                        for (int j = j0; j <= j1; j += stride)
+                            for (int i = i0; i <= i1; i += stride) {
+                                if (v[idx(i, j, k)] == 0) continue;
+                                const D3 q = centre(i, j, k);
+                                const double dx = q.x - P.x, dy = q.y - P.y, dz = q.z - P.z;
+                                const double h = dx * u.x + dy * u.y + dz * u.z;
+                                if (h < gauge || h > gauge + 3 * cell * stride) continue;
+                                if (dx * dx + dy * dy + dz * dz - h * h > HR * HR) continue;
+                                holder = true;
+                                worst = std::max(worst, h);
+                            }
+                    if (holder) {
+                        // The stickout that would clear it: the farthest material up the axis within the holder's radius.
+                        double far = worst;
+                        for (int k = 0; k < nz; k += stride)
+                            for (int j = j0; j <= j1; j += stride)
+                                for (int i = i0; i <= i1; i += stride) {
+                                    if (v[idx(i, j, k)] == 0) continue;
+                                    const D3 q = centre(i, j, k);
+                                    const double dx = q.x - P.x, dy = q.y - P.y, dz = q.z - P.z;
+                                    const double h = dx * u.x + dy * u.y + dz * u.z;
+                                    if (h > far && dx * dx + dy * dy + dz * dz - h * h <= HR * HR) far = h;
+                                }
+                        out.neededStickout = std::max(out.neededStickout, far + 1.0);
+                        if (out.holderTool.empty()) out.holderTool = "T" + std::to_string(tool->number);
+                    }
+                }
+            }
+            out.rapidCrashes += crashed ? 1 : 0;
+            out.shankHits += shank ? 1 : 0;
+            out.holderHits += holder ? 1 : 0;
+            if (gouged) out.deepestGouge = std::max(out.deepestGouge, cell); // at least a voxel
+        }
+    }
+    const double cv = cell * cell * cell;
+    out.removed = static_cast<double>(removed) * cv;
+    // Stock left on the part: through the stock from the cut (or open) side to each skin voxel.
+    std::vector<int> dist(v.size(), -1);
+    std::vector<std::size_t> queue;
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const std::size_t q = idx(i, j, k);
+                if (v[q] == 0 || (v[q] == 1 && (i == 0 || j == 0 || k == 0 || i == nx - 1 || j == ny - 1 || k == nz - 1))) {
+                    dist[q] = v[q] == 0 ? 0 : 1;
+                    queue.push_back(q);
+                }
+            }
+    for (std::size_t h = 0; h < queue.size(); ++h) {
+        const std::size_t q = queue[h];
+        const int i = static_cast<int>(q % static_cast<std::size_t>(nx)), j = static_cast<int>((q / static_cast<std::size_t>(nx)) % static_cast<std::size_t>(ny)),
+                  k = static_cast<int>(q / (static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny)));
+        for (int dk = -1; dk <= 1; ++dk)
+            for (int dj = -1; dj <= 1; ++dj)
+                for (int di = -1; di <= 1; ++di) {
+                    const int ii = i + di, jj = j + dj, kk = k + dk;
+                    if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+                    const std::size_t w = idx(ii, jj, kk);
+                    if (v[w] != 1 || dist[w] >= 0) continue;
+                    dist[w] = dist[q] + 1;
+                    queue.push_back(w);
+                }
+    }
+    double sumLeft = 0;
+    std::size_t skin = 0;
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                if (v[idx(i, j, k)] != 2) continue;
+                int best = -1;
+                bool open = false;
+                for (const auto& [di, dj, dk] : {std::array{1, 0, 0}, std::array{-1, 0, 0}, std::array{0, 1, 0}, std::array{0, -1, 0}, std::array{0, 0, 1}, std::array{0, 0, -1}}) {
+                    const int ii = i + di, jj = j + dj, kk = k + dk;
+                    if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) {
+                        open = true;
+                        continue;
+                    }
+                    const std::size_t w = idx(ii, jj, kk);
+                    if (v[w] == 0) open = true;
+                    else if (v[w] == 1 && dist[w] > 0) best = best < 0 ? dist[w] : std::min(best, dist[w]);
+                }
+                if (!open && best < 0) continue; // not on the surface
+                const double left = open ? 0.0 : best * cell;
+                out.maxLeft = std::max(out.maxLeft, left);
+                sumLeft += left;
+                ++skin;
+            }
+    out.meanLeft = skin ? sumLeft / static_cast<double>(skin) : 0.0;
+    out.cell = cell;
+    out.nx = nx;
+    out.ny = ny;
+    out.vz = nz;
+    out.voxels = true;
+    out.voxelMin = lo;
+    out.voxel = std::move(v);
+    (void)error;
+    return true;
+}
+
 } // namespace
 
 bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string* error) {
@@ -2056,6 +2522,7 @@ bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string*
         return false;
     }
     if (!generateAll(job, part, error)) return false;
+    if (job.multiAxis()) return simulateVoxels(job, part, out, error);
     const CamSetup& su = job.setup;
     const double w = su.stockMax.x - su.stockMin.x, hgt = su.stockMax.y - su.stockMin.y;
     double minR = 1e9, maxR = 0;
@@ -2227,6 +2694,40 @@ bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string*
 Body simulatedStock(const CamJob& job, const CamSimulation& sim) {
     MeshData m;
     const CamSetup& su = job.setup;
+    if (sim.voxels) { // a face wherever material meets a cut (or the outside)
+        const int nx = sim.nx, ny = sim.ny, nz = sim.vz;
+        const float c = static_cast<float>(sim.cell);
+        auto solid = [&](int i, int j, int k) {
+            if (i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz) return false;
+            return sim.voxel[(static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) + static_cast<std::size_t>(j)) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)] != 0;
+        };
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i) {
+                    if (!solid(i, j, k)) continue;
+                    const Vec3 p = sim.voxelMin + Vec3{static_cast<float>(i) * c, static_cast<float>(j) * c, static_cast<float>(k) * c};
+                    for (int d = 0; d < 6; ++d) {
+                        const int ax = d / 2, sg = d % 2 ? 1 : -1;
+                        if (solid(i + (ax == 0 ? sg : 0), j + (ax == 1 ? sg : 0), k + (ax == 2 ? sg : 0))) continue;
+                        Vec3 n{};
+                        (ax == 0 ? n.x : ax == 1 ? n.y : n.z) = static_cast<float>(sg);
+                        // The face's corners, counter-clockwise seen from outside.
+                        const int u = (ax + 1) % 3, w = (ax + 2) % 3;
+                        auto corner = [&](int du, int dw) {
+                            float q[3] = {0, 0, 0};
+                            q[ax] = sg > 0 ? c : 0;
+                            q[u] = static_cast<float>(du) * c;
+                            q[w] = static_cast<float>(dw) * c;
+                            return p + Vec3{q[0], q[1], q[2]};
+                        };
+                        const auto base = static_cast<std::uint32_t>(m.vertices.size());
+                        for (const auto& [du, dw] : {std::pair{0, 0}, std::pair{1, 0}, std::pair{1, 1}, std::pair{0, 1}}) m.vertices.push_back({corner(du, dw), n});
+                        if (sg > 0) m.indices.insert(m.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+                        else m.indices.insert(m.indices.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
+                    }
+                }
+        return meshBody("Stock (simulated)", std::move(m), {0.55f, 0.70f, 0.86f});
+    }
     if (sim.nx <= 0 || sim.ny <= 0) return meshBody("Stock (simulated)", m);
     const int k = std::max(1, static_cast<int>(std::ceil(std::max(sim.nx, sim.ny) / 260.0)));
     const int nx = (sim.nx + k - 1) / k, ny = (sim.ny + k - 1) / k;
@@ -2432,6 +2933,11 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
         return {};
     }
     if (!generateAll(job, part, error)) return {};
+    const bool multi = job.multiAxis();
+    if (multi && st.grbl) {
+        if (error) *error = "GRBL posts 3 axes: the job turns the part (rotary or indexed operations)";
+        return {};
+    }
     for (const CamOperation& op : job.ops)
         if (st.grbl && op.kind == CamOpKind::Drill && op.cycle == DrillCycle::Tap) {
             if (error) *error = "GRBL can't tap (no spindle-synchronised feed): remove " + (op.name.empty() ? std::string("the tapping operation") : op.name);
@@ -2440,7 +2946,7 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
     const CamSetup& su = job.setup;
     const Vec3 o = job.origin();
     auto work = [&](const Vec3& p) { return D3{p.x - o.x, p.y - o.y, p.z - o.z}; };
-    const double clearW = su.stockMax.z + su.clearance - o.z;
+    const double clearW = job.clearZ() - o.z;
     Writer w(st);
     std::string title;
     for (char ch : (part.name.empty() ? std::string("PART") : part.name)) title += ch == '(' || ch == ')' ? ' ' : ch;
@@ -2452,7 +2958,8 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
                          }() + ")");
     else w.comment(title);
     w.comment("SI-CDM CAM, " + st.key + " post, work zero G54 at " +
-              (su.origin == CamSetup::Origin::Model ? std::string("the model origin")
+              (multi ? std::string("the rotary centre (A turns about X, C about Z, through it)")
+               : su.origin == CamSetup::Origin::Model ? std::string("the model origin")
                : su.origin == CamSetup::Origin::StockTopCentre ? std::string("the stock top centre")
                                                                : std::string("the stock top front left corner")));
     {
@@ -2476,7 +2983,8 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
     const CamMaterial* mat = camMaterial(su.material);
     const bool wantCoolant = !(mat && (mat->key == "wood" || mat->key == "plastic"));
     double seconds = 0;
-    Vec3 at{o.x, o.y, static_cast<float>(su.stockMax.z + su.clearance)};
+    Vec3 at{o.x, o.y, static_cast<float>(job.clearZ())};
+    double curA = 0, curC = 0; // the table's turn as posted
     for (const CamOperation& op : job.ops) {
         const CamTool* tool = job.tool(op.tool);
         if (!tool || op.moves.empty()) continue;
@@ -2522,6 +3030,19 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
             if (st.grbl) w.line("G4 P2");
         }
         w.comment((op.name.empty() ? std::string(camOpKey(op.kind)) : op.name) + " - " + op.summary);
+        // Turn the table for this operation, up at the clearance height, the short way round.
+        double offA = 0, offC = 0;
+        if (multi) {
+            const double a0 = op.moves[0].a, c0 = op.moves[0].c;
+            offA = 360.0 * std::round((curA - a0) / 360.0);
+            offC = 360.0 * std::round((curC - c0) / 360.0);
+            if (std::fabs(a0 + offA - curA) > 1e-4 || std::fabs(c0 + offC - curC) > 1e-4) {
+                if (!std::isnan(w.z) && w.z < clearW - 1e-6) w.move(0, {w.x, w.y, clearW}, 0);
+                w.line((st.fanuc ? "G00 A" : "G0 A") + w.num(a0 + offA) + " C" + w.num(c0 + offC));
+                w.modalG = 0;
+                curA = a0 + offA, curC = c0 + offC;
+            }
+        }
         const D3 first = work(op.moves[0].to);
         // To the start: a fresh tool goes over in X and Y first and only then down to the
         // clearance height, with its length offset on (G43), so no Z move runs without it.
@@ -2546,7 +3067,10 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
             w.line(st.fanuc ? "M08" : "M8");
             coolant = true;
         }
-        seconds += movesSeconds(op.moves, su.machine, at);
+        {
+            const Vec3 rc = job.rotaryCentre();
+            seconds += movesSeconds(op.moves, su.machine, at, &rc);
+        }
         if (op.kind == CamOpKind::Drill && op.dwell > 0) seconds += op.dwell * static_cast<double>(op.holes.size());
         const bool cycle = op.kind == CamOpKind::Drill && st.cycles && !op.holes.empty();
         if (cycle) {
@@ -2604,6 +3128,34 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
             if (started) w.line("G80");
             w.modalG = 0;
             w.z = clear;
+        } else if (op.kind == CamOpKind::Rotary) {
+            // The part turns as the tool moves: inverse-time feed (G93), each move taking
+            // its length along the part at the feed.
+            const Vec3 rc = job.rotaryCentre();
+            w.line("G93");
+            Vec3 prev = at;
+            double prevA = op.moves[0].a;
+            for (const CamMove& m : op.moves) {
+                const D3 p = work(m.to);
+                const double A = m.a + offA;
+                std::string l = std::string(m.kind == CamMove::Rapid ? (st.fanuc ? "G00" : "G0") : (st.fanuc ? "G01" : "G1")) + " X" + w.num(p.x) + " Y" +
+                                w.num(p.y) + " Z" + w.num(p.z) + " A" + w.num(A);
+                if (m.kind != CamMove::Rapid) {
+                    double len = length(m.to - prev);
+                    const double r = 0.5 * (std::hypot(prev.y - rc.y, prev.z - rc.z) + std::hypot(m.to.y - rc.y, m.to.z - rc.z));
+                    len = std::hypot(len, r * (m.a - prevA) * kPiD / 180.0);
+                    l += " F" + w.num(std::min(99999.0, std::max(m.feed, 1.0) / std::max(len, 1e-4)));
+                }
+                w.line(l);
+                prev = m.to;
+                prevA = m.a;
+                curA = A;
+            }
+            w.line("G94");
+            const D3 last = work(op.moves.back().to);
+            w.x = last.x, w.y = last.y, w.z = last.z;
+            w.modalG = -1;
+            w.feed = std::numeric_limits<double>::quiet_NaN();
         } else {
             // Moves, with runs of feed moves fitted with arcs.
             std::size_t k = 0;
@@ -2741,6 +3293,9 @@ Json camToJson(const CamJob& job) {
         o.set("climb", op.climb);
         o.set("raster", op.raster);
         if (op.adaptive) o.set("adaptive", true);
+        if (op.indexA != 0) o.set("index_a", op.indexA);
+        if (op.indexC != 0) o.set("index_c", op.indexC);
+        if (op.along) o.set("along", true);
         if (op.rest) o.set("rest", true);
         o.set("side", op.side);
         o.set("tabs", op.tabs);
@@ -2816,7 +3371,7 @@ bool camFromJson(const Json& j, CamJob& job) {
         CamOperation op;
         const std::string kind = o["kind"].asString("rough");
         for (CamOpKind k : {CamOpKind::Face, CamOpKind::Contour, CamOpKind::Pocket, CamOpKind::Rough, CamOpKind::Parallel, CamOpKind::Waterline,
-                            CamOpKind::Drill, CamOpKind::Bore})
+                            CamOpKind::Drill, CamOpKind::Bore, CamOpKind::Rotary})
             if (kind == camOpKey(k)) op.kind = k;
         op.name = o["name"].asString("");
         op.tool = o["tool"].asInt(1);
@@ -2829,6 +3384,9 @@ bool camFromJson(const Json& j, CamJob& job) {
         op.climb = o["climb"].asBool(true);
         op.raster = o["raster"].asBool(false);
         op.adaptive = o["adaptive"].asBool(false);
+        op.indexA = o["index_a"].asNumber(0);
+        op.indexC = o["index_c"].asNumber(0);
+        op.along = o["along"].asBool(false);
         op.rest = o["rest"].asBool(false);
         op.side = o["side"].asInt(0);
         op.tabs = o["tabs"].asInt(0);

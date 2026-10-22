@@ -438,7 +438,7 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
-        p.set("operation", prop("string", "setup | tool | face | rough | pocket | contour | parallel | waterline | drill | bore | holes | "
+        p.set("operation", prop("string", "setup | tool | face | rough | pocket | contour | parallel | waterline | drill | bore | rotary | holes | "
                                           "list | generate | simulate | post | delete | clear"));
         p.set("body", prop("string", "setup: the part (default: the selection)"));
         p.set("stock_margin", prop("number", "setup: stock around the part, mm (default 2; 1 on top)"));
@@ -468,6 +468,9 @@ Json McpServer::toolDefinitions() {
         p.set("slope", prop("array", "parallel / waterline: [from, to] degrees of surface slope to cut"));
         p.set("raster", prop("boolean", "rough / pocket: zig-zag instead of offset rings"));
         p.set("adaptive", prop("boolean", "rough / pocket: adaptive clearing - light stepover, deep cuts, trochoidal loops where the tool would be overloaded"));
+        p.set("index_a", prop("number", "any 3-axis operation: 3+2, the table turned to A degrees (about X) first"));
+        p.set("index_c", prop("number", "any 3-axis operation: 3+2, the table turned to C degrees (about Z, before A) first"));
+        p.set("along", prop("boolean", "rotary: passes along the axis instead of a helix round it"));
         p.set("rest", prop("boolean", "rough / pocket: only the material the operations before left (rest machining)"));
         p.set("cycle", prop("string", "drill: spot, drill, peck, chipbreak, tap, bore"));
         p.set("peck", prop("number", "drill: peck depth, mm"));
@@ -478,8 +481,9 @@ Json McpServer::toolDefinitions() {
         p.set("name", prop("string", "tool / operations: a name"));
         tools.push(tool("cam",
                         "CNC milling CAM: set up the part and stock, build a tool library with feeds and speeds, add operations "
-                        "(facing, 2D contour with tabs, pocket, 3D roughing, parallel and waterline finishing, drilling cycles, "
-                        "helical boring), simulate the cut (stock left, gouges, rapid crashes, cycle time) and post G-code for "
+                        "(facing, 2D contour with tabs, pocket, 3D roughing - adaptive or rest - parallel and waterline finishing, drilling "
+                        "cycles, helical boring, 3+2 indexed versions of any of them, and 4-axis rotary wrapping), simulate the cut "
+                        "(stock left, gouges, rapid crashes, holder collisions, cycle time; voxels when the part turns) and post G-code for "
                         "Fanuc, Haas, GRBL or LinuxCNC.",
                         p, {"operation"}));
     }
@@ -1014,9 +1018,9 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!a["index"].isNumber()) return textResult("delete needs 'index'", true);
             return runLine("CAM DELETE " + num(a["index"].asNumber()));
         }
-        static const char* const kOps[] = {"face", "rough", "pocket", "contour", "parallel", "waterline", "drill", "bore"};
+        static const char* const kOps[] = {"face", "rough", "pocket", "contour", "parallel", "waterline", "drill", "bore", "rotary"};
         if (std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
-            return textResult("operation is one of setup, tool, face, rough, pocket, contour, parallel, waterline, drill, bore, holes, "
+            return textResult("operation is one of setup, tool, face, rough, pocket, contour, parallel, waterline, drill, bore, rotary, holes, "
                               "list, generate, simulate, post, delete, clear",
                               true);
         std::string line = "CAM " + toUpper(op) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("stepover", "STEPOVER") +
@@ -1027,6 +1031,9 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["raster"].asBool()) line += " RASTER";
         if (a["adaptive"].asBool()) line += " ADAPTIVE";
         if (a["rest"].asBool()) line += " REST";
+        if (a["along"].asBool()) line += " ALONG";
+        if (a["index_a"].isNumber() || a["index_c"].isNumber())
+            line += " INDEX " + num(a["index_a"].asNumber(0)) + " " + num(a["index_c"].asNumber(0));
         if (a["cycle"].isString()) line += " CYCLE " + a["cycle"].asString();
         if (a["slope"].isArray() && a["slope"].size() == 2) line += " SLOPE " + num(a["slope"][0].asNumber()) + " " + num(a["slope"][1].asNumber());
         if (a["points"].isArray() && a["points"].size() > 0) {
