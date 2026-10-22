@@ -1,5 +1,7 @@
 #include "core/Step.hpp"
 
+#include "core/Extrude.hpp"
+
 #include "core/Scene.hpp"
 
 #include <algorithm>
@@ -1096,7 +1098,10 @@ bool writeStepFile(const std::vector<StepPart>& parts, const std::string& path, 
     return static_cast<bool>(f);
 }
 
-std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<float>& p) {
+std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<float>& pf) {
+    // The dimensions as typed (see decimal()), in double.
+    std::vector<double> p;
+    for (float v : pf) p.push_back(decimal(v));
     auto need = [&](std::size_t n) { return p.size() >= n; };
     if (k == "box" && need(6)) {
         const DVec3 lo{std::min(p[0], p[3]), std::min(p[1], p[4]), std::min(p[2], p[5])};
@@ -1108,9 +1113,19 @@ std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<floa
     if (k == "cone" && need(3) && p[0] > 0 && p[1] >= 0 && p[2] > 0) return brepCone({0, 0, 0}, p[0], p[1], p[2]);
     if (k == "sphere" && need(1) && p[0] > 0) return brepSphere({0, 0, p[0]}, p[0]);
     if (k == "torus" && need(2) && p[0] > 0 && p[1] > 0 && p[1] < p[0]) return brepTorus({0, 0, p[1]}, p[0], p[1]);
+    if (k == "extrude" && need(7)) {
+        const MeshData m = buildExtrusion(pf);
+        if (m.indices.empty()) return nullptr;
+        if (p[3] != 1.0) return meshToBrep(m); // a polygon's prism: flat faces
+        const PlaneFrame f = planeFrame(static_cast<SketchPlane>(static_cast<int>(p[0])));
+        const DVec3 u(f.u), v(f.v), n(f.normal), o(f.origin);
+        auto b = brepCylinder({0, 0, 0}, p[6], p[2] - p[1]);
+        b->transform(Placement::fromFrames(Frame{}, Frame::make(o + u * p[4] + v * p[5] + n * p[1], n, u)));
+        return b;
+    }
     // Flat-faced shapes: their facets are exact.
     if (k == "wedge" || k == "pyramid" || k == "prism") {
-        const MeshData m = buildPrimitive(k, p);
+        const MeshData m = buildPrimitive(k, pf);
         if (m.indices.empty()) return nullptr;
         return meshToBrep(m);
     }
@@ -1123,11 +1138,10 @@ void attachPrimitiveBrep(Body& b) {
     if (b.kind == "mesh" || b.mesh.indices.empty()) return;
     std::shared_ptr<Brep> br = primitiveBrep(b.kind, b.params);
     if (!br) return;
-    // The mesh is rotated, then scaled (see Body::rebuild): the same for the B-rep.
-    Mat4 m = Mat4::identity();
-    if (b.rotation.x != 0.0f || b.rotation.y != 0.0f || b.rotation.z != 0.0f) m = eulerRotation(b.rotation);
-    if (b.scale != 1.0f) m = sicdm::scale(Vec3{b.scale, b.scale, b.scale}) * m;
-    br->transform(placementOf(m));
+    // The mesh is rotated, then scaled (see Body::rebuild): the same for the B-rep, in double.
+    Placement t = eulerPlacement(decimal(b.rotation));
+    t.s = decimal(b.scale);
+    br->transform(t);
     br->name = b.name;
     b.brep = std::move(br);
     b.brepKey = meshKey(b.mesh);

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -51,6 +52,42 @@ Placement Placement::then(const Placement& outer) const {
     out.s = s * outer.s;
     out.t = outer.point(t);
     return out;
+}
+
+Placement Placement::inverse() const {
+    Placement p;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) p.r[i * 3 + j] = r[j * 3 + i];
+    p.s = 1.0 / s;
+    p.t = -p.dir(t) * p.s;
+    return p;
+}
+
+double decimal(float f) {
+    if (!std::isfinite(f)) return static_cast<double>(f);
+    char buf[32];
+    const auto res = std::to_chars(buf, buf + sizeof(buf) - 1, f); // the shortest that reads back as f
+    if (res.ec != std::errc()) return static_cast<double>(f);
+    *res.ptr = '\0';
+    return std::strtod(buf, nullptr);
+}
+
+Placement eulerPlacement(const DVec3& degrees) {
+    auto turn = [](double deg, int axis) {
+        double c = std::cos(deg * kPi2 / 360.0), s = std::sin(deg * kPi2 / 360.0);
+        const double q = deg / 90.0;
+        if (q == std::round(q)) { // a quarter turn: exactly 0 and +-1
+            const long k = ((static_cast<long>(std::round(q)) % 4) + 4) % 4;
+            c = k == 0 ? 1 : k == 2 ? -1 : 0;
+            s = k == 1 ? 1 : k == 3 ? -1 : 0;
+        }
+        Placement p;
+        const int a = (axis + 1) % 3, b = (axis + 2) % 3; // rotates a towards b
+        p.r[a * 3 + a] = c, p.r[a * 3 + b] = -s;
+        p.r[b * 3 + a] = s, p.r[b * 3 + b] = c;
+        return p;
+    };
+    return turn(degrees.x, 0).then(turn(degrees.y, 1)).then(turn(degrees.z, 2));
 }
 
 Placement Placement::fromFrames(const Frame& from, const Frame& to) {
@@ -1857,6 +1894,230 @@ std::shared_ptr<Brep> brepTorus(const DVec3& c, double R, double r) {
     BShell sh;
     sh.faces.push_back(std::move(f));
     sh.name = "torus";
+    b->shells.push_back(std::move(sh));
+    return b;
+}
+
+// --- revolves -----------------------------------------------------------------------------
+
+namespace {
+
+// The common frame of a revolve: points are A + D a + dir(t) r, with dir(t) turning from
+// X (the start of the sweep) towards D x X as t grows.
+struct RevolveFrame {
+    DVec3 A, D, X, Y;
+    DVec3 dir(double t) const { return X * std::cos(t) + Y * std::sin(t); }
+    DVec3 at(double a, double r, double t) const { return A + D * a + dir(t) * r; }
+};
+
+bool revolveFrame(const DVec3& axisPoint, const DVec3& axis, const DVec3& ref, double sweep, RevolveFrame& rf, double& len) {
+    rf.A = axisPoint;
+    rf.D = dnormalize(axis);
+    const DVec3 P = dnormalize(ref - rf.D * ddot(ref, rf.D));
+    if (dlength(rf.D) == 0 || dlength(P) == 0 || !(std::fabs(sweep) > 1e-9) || !std::isfinite(sweep)) return false;
+    const DVec3 B = dcross(rf.D, P);
+    const bool full = std::fabs(sweep) >= kPi2 - 1e-9;
+    len = full ? kPi2 : std::fabs(sweep);
+    const double start = !full && sweep < 0 ? sweep : 0.0; // a negative sweep runs from `sweep` up to 0
+    rf.X = P * std::cos(start) + B * std::sin(start);
+    rf.Y = dcross(rf.D, rf.X);
+    return true;
+}
+
+} // namespace
+
+std::shared_ptr<Brep> brepRevolve(const std::vector<std::array<double, 2>>& profile, const DVec3& axisPoint, const DVec3& axis, const DVec3& ref,
+                                  double sweep) {
+    RevolveFrame rf;
+    double len = 0;
+    if (!revolveFrame(axisPoint, axis, ref, sweep, rf, len)) return nullptr;
+    const bool full = len >= kPi2;
+    double size = 1;
+    for (const auto& q : profile) size = std::max({size, std::fabs(q[0]), std::fabs(q[1])});
+    const double tol = 1e-9 * size;
+    // Drop repeated and collinear points, and run counter-clockwise in (a, r).
+    std::vector<std::array<double, 2>> pr;
+    for (const auto& q : profile) {
+        if (!(q[1] >= 0) || !std::isfinite(q[0])) return nullptr; // crosses the axis
+        if (pr.empty() || std::hypot(q[0] - pr.back()[0], q[1] - pr.back()[1]) > tol) pr.push_back(q);
+    }
+    while (pr.size() > 1 && std::hypot(pr[0][0] - pr.back()[0], pr[0][1] - pr.back()[1]) <= tol) pr.pop_back();
+    for (bool removed = true; removed && pr.size() >= 3;) {
+        removed = false;
+        for (std::size_t i = 0; i < pr.size() && pr.size() >= 3; ++i) {
+            const auto& p0 = pr[(i + pr.size() - 1) % pr.size()];
+            const auto& p1 = pr[i];
+            const auto& p2 = pr[(i + 1) % pr.size()];
+            const double ux = p1[0] - p0[0], uy = p1[1] - p0[1], vx = p2[0] - p1[0], vy = p2[1] - p1[1];
+            if (std::fabs(ux * vy - uy * vx) <= tol * (std::hypot(ux, uy) + std::hypot(vx, vy)) && ux * vx + uy * vy > 0) {
+                pr.erase(pr.begin() + static_cast<std::ptrdiff_t>(i));
+                removed = true;
+            }
+        }
+    }
+    if (pr.size() < 3) return nullptr;
+    double area = 0;
+    for (std::size_t i = 0; i < pr.size(); ++i) {
+        const auto& p = pr[i];
+        const auto& q = pr[(i + 1) % pr.size()];
+        area += p[0] * q[1] - q[0] * p[1];
+    }
+    if (std::fabs(area) <= tol * size) return nullptr;
+    if (area < 0) std::reverse(pr.begin(), pr.end());
+    const std::size_t n = pr.size();
+
+    auto b = std::make_shared<Brep>();
+    // Vertices at the start and the end of the sweep (one where they coincide).
+    std::vector<int> vs(n), ve(n), circle(n, -1);
+    for (std::size_t i = 0; i < n; ++i) {
+        vs[i] = addVertex(*b, rf.at(pr[i][0], pr[i][1], 0));
+        ve[i] = full || pr[i][1] == 0 ? vs[i] : addVertex(*b, rf.at(pr[i][0], pr[i][1], len));
+        if (pr[i][1] > 0) { // the circle (or arc) each point turns along, from start to end
+            BCurve c;
+            c.kind = BCurveKind::Circle;
+            c.f = Frame::make(rf.A + rf.D * pr[i][0], rf.D, rf.X);
+            c.r1 = pr[i][1];
+            b->edges.push_back({vs[i], ve[i], addCurve(*b, c), true});
+            circle[i] = static_cast<int>(b->edges.size()) - 1;
+        }
+    }
+    // The profile's segments at the start and the end (one edge where they coincide: on
+    // the axis, or the seam of a full turn), made when a face needs them.
+    std::vector<int> ls(n, -1), le(n, -1);
+    auto startLine = [&](std::size_t i) {
+        if (ls[i] < 0) ls[i] = addLineEdge(*b, vs[i], vs[(i + 1) % n]);
+        return ls[i];
+    };
+    auto endLine = [&](std::size_t i) {
+        if (full || (pr[i][1] == 0 && pr[(i + 1) % n][1] == 0)) return startLine(i);
+        if (le[i] < 0) le[i] = addLineEdge(*b, ve[i], ve[(i + 1) % n]);
+        return le[i];
+    };
+    BShell sh;
+    sh.name = "revolve";
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t j = (i + 1) % n;
+        const double a0 = pr[i][0], r0 = pr[i][1], a1 = pr[j][0], r1 = pr[j][1];
+        if (r0 == 0 && r1 == 0) continue; // on the axis: no face
+        const double da = a1 - a0, dr = r1 - r0;
+        BSurface s;
+        BFace f;
+        // The face's outward normal at the start is D dr - X da (the profile runs
+        // counter-clockwise), so its sense against each surface's own normal follows.
+        const bool flat = std::fabs(da) <= tol;
+        if (flat) {
+            s.kind = BSurfaceKind::Plane;
+            s.f = Frame::make(rf.A + rf.D * a0, rf.D, rf.X);
+            f.sameSense = dr > 0;
+        } else if (std::fabs(dr) <= tol) {
+            s.kind = BSurfaceKind::Cylinder;
+            s.f = Frame::make(rf.A + rf.D * a0, rf.D, rf.X);
+            s.r1 = r0;
+            f.sameSense = da < 0;
+        } else { // a cone opening along its axis, from the radius at a0
+            const double k = dr / da;
+            s.kind = BSurfaceKind::Cone;
+            s.f = Frame::make(rf.A + rf.D * a0, k > 0 ? rf.D : -rf.D, rf.X);
+            s.r1 = r0;
+            s.r2 = std::atan(std::fabs(k));
+            f.sameSense = da < 0;
+        }
+        f.surface = addSurface(*b, s);
+        if (flat && full) { // a disc or a ring: just its circles
+            if (r1 > 0) {
+                BLoop l;
+                l.edges.push_back({circle[j], true});
+                l.outer = r1 > r0;
+                f.loops.push_back(std::move(l));
+            }
+            if (r0 > 0) {
+                BLoop l;
+                l.edges.push_back({circle[i], false});
+                l.outer = r0 > r1;
+                f.loops.push_back(std::move(l));
+            }
+        } else { // along the start segment, up the far circle, back along the end segment, down
+            BLoop l;
+            l.outer = true;
+            l.edges.push_back({startLine(i), true});
+            if (r1 > 0) l.edges.push_back({circle[j], true});
+            l.edges.push_back({endLine(i), false});
+            if (r0 > 0) l.edges.push_back({circle[i], false});
+            f.loops.push_back(std::move(l));
+        }
+        sh.faces.push_back(std::move(f));
+    }
+    if (!full) { // the profile itself closes both ends
+        for (int end = 0; end < 2; ++end) {
+            const double t = end ? len : 0.0;
+            const DVec3 out = dcross(rf.D, rf.dir(t)) * (end ? 1.0 : -1.0);
+            BSurface s;
+            s.kind = BSurfaceKind::Plane;
+            s.f = Frame::make(rf.A, out, rf.D);
+            BFace f;
+            f.surface = addSurface(*b, s);
+            BLoop l;
+            l.outer = true;
+            for (std::size_t k = 0; k < n; ++k) {
+                if (end) l.edges.push_back({endLine(k), true});
+                else l.edges.push_back({startLine(n - 1 - k), false});
+            }
+            f.loops.push_back(std::move(l));
+            sh.faces.push_back(std::move(f));
+        }
+    }
+    b->shells.push_back(std::move(sh));
+    return b;
+}
+
+std::shared_ptr<Brep> brepRevolveCircle(double a, double r, double rho, const DVec3& axisPoint, const DVec3& axis, const DVec3& ref, double sweep) {
+    RevolveFrame rf;
+    double len = 0;
+    if (!revolveFrame(axisPoint, axis, ref, sweep, rf, len) || !(rho > 0) || !(r - rho > 1e-9 * std::max(1.0, r))) return nullptr;
+    const Frame centre = Frame::make(rf.A + rf.D * a, rf.D, rf.X);
+    if (len >= kPi2) {
+        auto b = brepTorus({0, 0, 0}, r, rho);
+        b->transform(Placement::fromFrames(Frame{}, centre));
+        b->shells[0].name = "revolve";
+        return b;
+    }
+    auto b = std::make_shared<Brep>();
+    BSurface s;
+    s.kind = BSurfaceKind::Torus;
+    s.f = centre;
+    s.r1 = r;
+    s.r2 = rho;
+    BShell sh;
+    sh.name = "revolve";
+    // The profile circle at both ends (counter-clockwise in (a, r)), each closed on its
+    // point furthest along the axis, and the arc those points turn along: the seam.
+    int ends[2], verts[2];
+    for (int e = 0; e < 2; ++e) {
+        const double t = e ? len : 0.0;
+        ends[e] = circleEdge(*b, Frame::make(rf.at(a, r, t), dcross(rf.D, rf.dir(t)), rf.D), rho, verts[e]);
+    }
+    BCurve arc;
+    arc.kind = BCurveKind::Circle;
+    arc.f = Frame::make(rf.A + rf.D * (a + rho), rf.D, rf.X);
+    arc.r1 = r;
+    b->edges.push_back({verts[0], verts[1], addCurve(*b, arc), true});
+    const int seam = static_cast<int>(b->edges.size()) - 1;
+    {
+        BFace f;
+        f.surface = addSurface(*b, s);
+        f.loops.push_back(loopOf({{ends[0], true}, {seam, true}, {ends[1], false}, {seam, false}}));
+        sh.faces.push_back(std::move(f));
+    }
+    for (int e = 0; e < 2; ++e) {
+        const double t = e ? len : 0.0;
+        BSurface cap;
+        cap.kind = BSurfaceKind::Plane;
+        cap.f = Frame::make(rf.at(a, r, t), dcross(rf.D, rf.dir(t)) * (e ? 1.0 : -1.0), rf.D);
+        BFace f;
+        f.surface = addSurface(*b, cap);
+        f.loops.push_back(loopOf({{ends[e], e == 1}}));
+        sh.faces.push_back(std::move(f));
+    }
     b->shells.push_back(std::move(sh));
     return b;
 }

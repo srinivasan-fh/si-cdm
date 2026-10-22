@@ -17,20 +17,23 @@
 #include "core/Sketch.hpp"
 
 #include <optional>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace sicdm {
 
 struct Body;
+struct Brep;
 
 // The profile as a counter-clockwise polygon in its plane (circles as 96-gons).
 std::vector<Vec2> profilePolygon(const Profile& p, int circleSegments = 96);
 
 // Turns a closed profile about the axis through `axisPoint` along `axisDir` (sketch-plane
 // coordinates) by `degrees`; 360 closes it. The profile must stay on one side of the axis.
+// `exact`, if given, receives the exact B-rep of the same solid.
 std::optional<MeshData> revolveProfile(const Profile& profile, SketchPlane plane, Vec2 axisPoint, Vec2 axisDir, float degrees,
-                                       std::string* error = nullptr);
+                                       std::string* error = nullptr, std::shared_ptr<Brep>* exact = nullptr);
 
 // Carries a closed profile (centred on its centroid, its plane turned square to the path)
 // along a path of world points; a closed path closes the tube.

@@ -54,6 +54,10 @@ one product per body.
 
 - STEP imports keep their exact geometry, as do the box, cylinder, cone, sphere, torus,
   wedge, pyramid and prism primitives.
+- `EXTRUDE` bodies are exact: a circle makes a true cylinder, a polygon a prism.
+- `REVOLVE` bodies are exact, whole turns and partial ones. Each straight side of the
+  profile turns into a plane, a cylinder or a cone; a circle profile turns into a torus.
+  Partial turns are closed by flat ends.
 - Turned (`ROTATE`) and scaled (`SCALE`) bodies stay exact.
 
 **Planar facets:** every other mesh goes out as a B-rep of planar faces, with coplanar
@@ -68,8 +72,21 @@ exact and how many as facets:
 Exported 8 bodies to model.step (STEP AP214, mm): 6 exact, 2 as planar facets
 ```
 
-Projects keep the exact geometry of imported bodies (saved with each one), so it survives
-`SAVE` and `OPEN`.
+Projects keep the exact geometry of imported and revolved bodies (saved with each one), so
+it survives `SAVE` and `OPEN`. Primitives and extrusions rebuild theirs from their
+parameters.
+
+## Precision
+
+- **Exact geometry is double precision:** points, axes, radii and placements, about 15
+  significant digits.
+- **Dimensions as typed:** sizes, sketch points and angles are kept as single-precision
+  numbers. Exact geometry takes each one as the decimal that was typed, so a 0.1 mm wall
+  is 0.1 in the STEP file, not 0.100000001490116.
+- **Turns:** `ROTATE` turns exact geometry in double precision, and quarter turns are
+  exact. Turning a body away and back returns it to within 10^-12 mm.
+- **Display meshes and toolpaths** use single precision. That is 0.06 µm at 1 m from the
+  origin, far below a machine's resolution.
 
 ## How it is checked
 
@@ -88,7 +105,8 @@ only to make the files): `tests/data/step`.
   - matches the exact volume to 0.1% at a 0.002 mm tolerance, and to 0.7% at 0.02 mm;
   - reads back identical after SI-CDM writes it.
 - **Independently checked:** OpenCascade reads every file SI-CDM writes as a valid solid with
-  the exact volume.
+  the exact volume. That includes the native shapes: primitives, extrusions, and revolves
+  (whole and partial turns, profiles touching the axis, circle profiles).
 
 ## Not yet
 

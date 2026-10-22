@@ -44,13 +44,13 @@ void Body::setRotation(const Vec3& degrees) {
         const Mat4 turn = eulerRotation(degrees) * inverse(eulerRotation(rotation));
         const bool wasExact = exact();
         mesh.transform(turn);
-        rotation = degrees;
-        if (wasExact) { // the exact geometry turns with it
+        if (wasExact) { // the exact geometry turns with it (in double: back from the old angles, on to the new)
             auto b = std::make_shared<Brep>(*brep);
-            b->transform(placementOf(turn));
+            b->transform(eulerPlacement(decimal(rotation)).inverse().then(eulerPlacement(decimal(degrees))));
             brep = std::move(b);
             brepKey = meshKey(mesh);
         }
+        rotation = degrees;
         return;
     }
     rotation = degrees;
@@ -63,13 +63,15 @@ void Body::setScale(float s) {
         const float k = s / scale;
         const bool wasExact = exact();
         mesh.transform(sicdm::scale(Vec3{k, k, k}));
-        scale = s;
         if (wasExact) {
             auto b = std::make_shared<Brep>(*brep);
-            b->transform(placementOf(sicdm::scale(Vec3{k, k, k})));
+            Placement t;
+            t.s = decimal(s) / decimal(scale);
+            b->transform(t);
             brep = std::move(b);
             brepKey = meshKey(mesh);
         }
+        scale = s;
     } else {
         scale = s;
         rebuild();

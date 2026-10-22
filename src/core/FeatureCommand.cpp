@@ -5,6 +5,7 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/Extrude.hpp"
+#include "core/Brep.hpp"
 #include "core/Features.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Units.hpp"
@@ -175,17 +176,23 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         const auto profile = profileFromCurve(curve, &why);
         if (!profile) return out.fail("Cannot revolve " + curve.name + ": " + why);
         std::optional<MeshData> mesh;
-        if (axis) mesh = revolveProfile(*profile, curve.plane, axis->first, axis->second, angle, &why);
+        std::shared_ptr<Brep> exact;
+        if (axis) mesh = revolveProfile(*profile, curve.plane, axis->first, axis->second, angle, &why, &exact);
         else { // the vertical axis, else the horizontal one, through the plane's origin
-            mesh = revolveProfile(*profile, curve.plane, {0, 0}, {0, 1}, angle, &why);
+            mesh = revolveProfile(*profile, curve.plane, {0, 0}, {0, 1}, angle, &why, &exact);
             if (!mesh) {
-                mesh = revolveProfile(*profile, curve.plane, {0, 0}, {1, 0}, angle, &why);
+                mesh = revolveProfile(*profile, curve.plane, {0, 0}, {1, 0}, angle, &why, &exact);
                 axisName = "the plane's horizontal axis";
             }
         }
         if (!mesh) return out.fail("Cannot revolve " + curve.name + ": " + why);
         const int serial = ++doc.primitiveSerial;
         Body b = featureBody("Revolve " + std::to_string(serial), std::move(*mesh), bodyColor(serial));
+        if (exact) { // the exact solid goes with this mesh
+            exact->name = b.name;
+            b.brep = std::move(exact);
+            b.brepKey = meshKey(b.mesh);
+        }
         if (!keep) hideCurve(doc, ci);
         doc.scene.pushUndo("REVOLVE " + curve.name);
         out.say("Revolved " + curve.name + " " + fmt3("%g", angle) + " deg about " + axisName + " -> " + b.name + ": " + closedText(b.mesh));

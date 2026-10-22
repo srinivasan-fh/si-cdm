@@ -14,6 +14,7 @@
 
 #include "core/Geometry.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -60,7 +61,17 @@ struct Placement {
     DVec3 dir(const DVec3& d) const; // rotation only
     Placement then(const Placement& outer) const; // this, then outer
     static Placement fromFrames(const Frame& from, const Frame& to); // maps `from` onto `to`
+    Placement inverse() const;
 };
+
+// The value a float dimension was typed as: the shortest decimal that reads back as `f`,
+// in double (0.1f holds 0.100000001490116; this gives 0.1). Dimensions kept in floats go
+// into exact geometry through this, so a STEP file says 0.1.
+double decimal(float f);
+inline DVec3 decimal(const Vec3& v) { return {decimal(v.x), decimal(v.y), decimal(v.z)}; }
+// The rotation eulerRotation() makes (degrees about x, then y, then z), in double; quarter
+// turns are exact.
+Placement eulerPlacement(const DVec3& degrees);
 
 struct BSplineCurve {
     int degree = 1;
@@ -198,5 +209,13 @@ std::shared_ptr<Brep> brepCylinder(const DVec3& base, double r, double h);
 std::shared_ptr<Brep> brepCone(const DVec3& base, double r0, double r1, double h);
 std::shared_ptr<Brep> brepSphere(const DVec3& c, double r);
 std::shared_ptr<Brep> brepTorus(const DVec3& c, double R, double r);
+// A closed profile of (a, r) points (a along the axis, r >= 0 out from it, in the direction
+// `ref` at the start) turned about the axis through `axisPoint` along `axis` by `sweep`
+// radians, from `ref` towards axis x ref; a whole turn or more closes it. Null when the
+// profile is degenerate or crosses the axis.
+std::shared_ptr<Brep> brepRevolve(const std::vector<std::array<double, 2>>& profile, const DVec3& axisPoint, const DVec3& axis, const DVec3& ref,
+                                  double sweep);
+// A circle profile (centre (a, r), radius rho < r) turned the same way: a torus, or part.
+std::shared_ptr<Brep> brepRevolveCircle(double a, double r, double rho, const DVec3& axisPoint, const DVec3& axis, const DVec3& ref, double sweep);
 
 } // namespace sicdm

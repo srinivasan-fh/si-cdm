@@ -1,5 +1,7 @@
 #include "core/Features.hpp"
 
+#include "core/Brep.hpp"
+
 #include "core/Print.hpp"
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
@@ -108,7 +110,8 @@ Body featureBody(std::string name, MeshData world, Vec3 color) {
     return b;
 }
 
-std::optional<MeshData> revolveProfile(const Profile& profile, SketchPlane plane, Vec2 axisPoint, Vec2 axisDir, float degrees, std::string* error) {
+std::optional<MeshData> revolveProfile(const Profile& profile, SketchPlane plane, Vec2 axisPoint, Vec2 axisDir, float degrees, std::string* error,
+                                       std::shared_ptr<Brep>* exact) {
     auto fail = [&](const char* why) -> std::optional<MeshData> {
         if (error) *error = why;
         return std::nullopt;
@@ -174,6 +177,31 @@ std::optional<MeshData> revolveProfile(const Profile& profile, SketchPlane plane
         for (std::size_t q = 0; q + 2 < t.size(); q += 3) {
             m.tri(at(0, t[q]), at(0, t[q + 2]), at(0, t[q + 1]));
             m.tri(at(segments, t[q]), at(segments, t[q + 1]), at(segments, t[q + 2]));
+        }
+    }
+    if (exact) { // the same turn on the exact profile, in double from the values as typed
+        const double ax = decimal(axisPoint.x), ay = decimal(axisPoint.y), dx0 = decimal(axisDir.x), dy0 = decimal(axisDir.y);
+        const double dn = std::hypot(dx0, dy0), dx = dx0 / dn, dy = dy0 / dn;
+        const double side = hi <= eps ? -1.0 : 1.0; // the profile's side of the axis
+        const DVec3 fo(f.origin), fu(f.u), fv(f.v);
+        const DVec3 Ad = fo + fu * ax + fv * ay, Dd = fu * dx + fv * dy, Pd = (fu * -dy + fv * dx) * side;
+        const double sweepD = std::clamp(decimal(degrees), -360.0, 360.0) * kTau / 360.0;
+        auto toAR = [&](Vec2 q, double& a, double& r) {
+            const double qx = decimal(q.x) - ax, qy = decimal(q.y) - ay;
+            a = qx * dx + qy * dy;
+            r = (qx * -dy + qy * dx) * side;
+        };
+        if (profile.kind == Profile::Kind::Circle) {
+            double a = 0, r = 0;
+            toAR(profile.center, a, r);
+            *exact = brepRevolveCircle(a, r, decimal(profile.radius), Ad, Dd, Pd, sweepD);
+        } else {
+            std::vector<std::array<double, 2>> ar(n);
+            for (std::size_t i = 0; i < n; ++i) {
+                toAR(pts[i], ar[i][0], ar[i][1]);
+                if (radius[i] < eps) ar[i][1] = 0.0; // on the axis, as the mesh has it
+            }
+            *exact = brepRevolve(ar, Ad, Dd, Pd, sweepD);
         }
     }
     return m.data();

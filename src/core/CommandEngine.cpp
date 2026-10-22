@@ -533,6 +533,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         b.mesh = buildExtrusion(b.params);
         if (b.mesh.indices.empty()) return out.fail("Extrusion failed for " + c.name);
         b.offset = {};
+        attachPrimitiveBrep(b);
         const std::string profileName = c.name;
         if (!keep) { // the sketch is consumed, as in most CAD tools (show it again in the Model panel)
             c.visible = false;
@@ -2431,7 +2432,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                 if (const auto ex = exactBrep(b)) {
                     auto br = std::make_shared<Brep>(*ex);
                     Placement t;
-                    t.t = DVec3(b.offset);
+                    t.t = decimal(b.offset);
                     br->transform(t);
                     p.brep = std::move(br);
                     ++exact;

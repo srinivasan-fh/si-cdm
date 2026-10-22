@@ -7,7 +7,9 @@
 #include "core/Sculpt.hpp"
 #include "core/Step.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -160,6 +162,81 @@ TEST_CASE("STEP from the model: primitives exactly (turned and scaled too), othe
     CHECK(e.scene.bodies().size() == 6);
     for (const Body& b : e.scene.bodies()) CHECK(b.exact());
     std::filesystem::remove(path);
+}
+
+TEST_CASE("REVOLVE and EXTRUDE bodies carry exact B-reps: planes, cylinders, cones, tori, partial turns") {
+    Document d;
+    for (const char* l : {"PLANE FRONT", "RECT 10,0 @10,30", "REVOLVE", "RECT 10,40 @10,10", "REVOLVE ANGLE 90",
+                          "PLINE 0,60 15,60 25,75 25,90 0,100 CLOSE", "REVOLVE", "PLINE 0,110 15,110 25,125 0,140 CLOSE", "REVOLVE ANGLE -120",
+                          "LINE 50,0 50,10", "CIRCLE 60,20 3", "REVOLVE AXIS \"Line 5\"", "CIRCLE 60,40 3", "REVOLVE AXIS \"Line 5\" ANGLE 200",
+                          "PLINE 5,150 30,150 20,170 10,165 CLOSE", "REVOLVE ANGLE 270", "CIRCLE 0,-30 6", "EXTRUDE 12",
+                          "PLINE 40,-40 60,-40 50,-25 CLOSE", "EXTRUDE 7", "PLANE RIGHT", "CIRCLE 5,5 4", "EXTRUDE -9"})
+        REQUIRE(run(d, l).ok);
+    REQUIRE(d.scene.bodies().size() == 10);
+    // The exact volumes (Pappus for the turned polygons), as OpenCascade measures the
+    // exported solids too.
+    const double expect[] = {kPiT * 300 * 30, kPiT * 300 * 10 / 4, 55239.670825620524, 9686.577348568528, 2 * kPiT * kPiT * 10 * 9,
+                             2 * kPiT * kPiT * 10 * 9 * 200 / 360, 25034.566458293662, kPiT * 36 * 12, 1050.0, kPiT * 16 * 9};
+    for (std::size_t i = 0; i < 10; ++i) {
+        const Body& b = d.scene.bodies()[i];
+        REQUIRE(b.exact());
+        const MeshData m = tessellate(*b.brep, TessellateOptions{0.002, 0.26, 0});
+        CHECK(openEdgeCount(m) == 0);
+        CHECK_NEAR(meshVolume(m), expect[i], 1e-3 * expect[i]);
+        // Where the mesh is.
+        const AABB eb = m.bounds(), mb = worldMesh(b).bounds();
+        CHECK(length(eb.min - mb.min) < 0.05f && length(eb.max - mb.max) < 0.05f);
+    }
+    const std::string path = tempPath("sicdm_revolve.step");
+    const auto r = run(d, "EXPORT " + path);
+    REQUIRE(r.ok);
+    CHECK(text(r).find("10 exact, 0 as planar facets") != std::string::npos);
+    const std::vector<StepPart> parts = readStepFile(path);
+    REQUIRE(parts.size() == 10);
+    for (std::size_t i = 0; i < 10; ++i) CHECK_NEAR(volumeOf({parts[i]}, 0.002), expect[i], 1e-3 * expect[i]);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Exact geometry keeps typed dimensions and turns in double precision") {
+    CHECK(decimal(0.1f) == 0.1);
+    CHECK(decimal(12.7f) == 12.7);
+    CHECK(decimal(-3.0e-5f) == -3.0e-5);
+    CHECK(static_cast<float>(decimal(1.0f / 3.0f)) == 1.0f / 3.0f); // always reads back as the float
+    // Quarter turns are exact; a turn and its inverse come back to the bit.
+    const Placement q = eulerPlacement({90, 0, 0});
+    CHECK(q.r[0] == 1 && q.r[4] == 0 && q.r[5] == -1 && q.r[7] == 1 && q.r[8] == 0);
+    const Placement t = eulerPlacement({30, 20, 10});
+    const DVec3 p{12.5, -7.25, 3.0};
+    const DVec3 back = t.inverse().point(t.point(p));
+    CHECK(dlength(back - p) < 1e-13);
+    Document d;
+    REQUIRE(run(d, "BOX 0.1 0.2 0.3 @0,0,0").ok);
+    REQUIRE(run(d, "PLANE FRONT").ok);
+    REQUIRE(run(d, "RECT 0.1,0 @0.7,1.3").ok);
+    REQUIRE(run(d, "REVOLVE").ok);
+    // A STEP file carries the dimensions as typed: 0.1, not 0.100000001490116.
+    const std::string path = tempPath("sicdm_decimal.step");
+    REQUIRE(run(d, "EXPORT " + path).ok);
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    REQUIRE(f != nullptr);
+    std::string whole;
+    char buf[4096];
+    for (std::size_t k; (k = std::fread(buf, 1, sizeof buf, f)) > 0;) whole.append(buf, k);
+    std::fclose(f);
+    std::filesystem::remove(path);
+    CHECK(whole.find("00000001") == std::string::npos);
+    CHECK(whole.find("9999999") == std::string::npos);
+    CHECK(whole.find("0.8") != std::string::npos); // the revolve's outer radius
+    // Turning a revolved (mesh) body away and back leaves its exact geometry where it was.
+    Body& r = d.scene.bodies()[1];
+    REQUIRE(r.exact());
+    const Brep before = *r.brep;
+    r.setRotation({30, 20, 10});
+    r.setRotation({0, 0, 0});
+    REQUIRE(r.exact());
+    double worst = 0;
+    for (std::size_t i = 0; i < before.vertices.size(); ++i) worst = std::max(worst, dlength(r.brep->vertices[i].p - before.vertices[i].p));
+    CHECK(worst < 1e-12);
 }
 
 TEST_CASE("Imported exact geometry survives save and open, and is dropped when the mesh is edited") {
