@@ -193,10 +193,18 @@ struct TessellateOptions {
 struct TessellateReport {
     std::size_t faces = 0, failedFaces = 0;
     std::string firstError;
+    std::vector<std::size_t> faceTriangles; // triangles each face made, faces in shell order
 };
 
 // A closed (where the B-rep is) triangle mesh of every shell, in the B-rep's units.
 MeshData tessellate(const Brep& brep, const TessellateOptions& o = {}, TessellateReport* report = nullptr);
+
+// The surface's own normal (du x dv) where it is nearest p.
+DVec3 surfaceNormalNear(const Brep& b, const BSurface& s, const DVec3& p);
+// Turns loops to run counter-clockwise round each face seen from outside (holes
+// clockwise), as other CAD systems read them. Loops that wrap round a periodic surface
+// are left as they are.
+void orientLoops(Brep& b);
 
 // A fingerprint of a mesh's triangles (exact geometry belongs with one mesh).
 std::uint64_t meshKey(const MeshData& m);

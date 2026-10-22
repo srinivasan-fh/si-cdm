@@ -236,6 +236,7 @@ FileKind fileKindOf(const std::string& path) {
     if (e == ".dxf") return FileKind::Dxf;
     if (e == ".svg") return FileKind::Svg;
     if (e == ".step" || e == ".stp" || e == ".p21") return FileKind::Step;
+    if (e == ".igs" || e == ".iges") return FileKind::Iges;
     if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".bmp" || e == ".tga" || e == ".gif" || e == ".psd" ||
         e == ".hdr" || e == ".pnm" || e == ".ppm" || e == ".pgm")
         return FileKind::Image;
@@ -250,6 +251,7 @@ const char* fileKindName(FileKind k) {
     case FileKind::Dxf: return "DXF drawing";
     case FileKind::Svg: return "SVG drawing";
     case FileKind::Step: return "STEP model";
+    case FileKind::Iges: return "IGES model";
     case FileKind::Image: return "image";
     case FileKind::Unknown: return "unknown";
     }

@@ -7,6 +7,7 @@
 #include "core/CamCommand.hpp"
 #include "core/FeatureCommand.hpp"
 #include "core/SketchCommand.hpp"
+#include "core/Iges.hpp"
 #include "core/Recovery.hpp"
 #include "core/Step.hpp"
 #include "core/Brep.hpp"
@@ -2491,7 +2492,8 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             out.say("Exported " + std::to_string(n) + " curves on " + planeName(doc.state.plane) + " to " + path);
             return out;
         }
-        case FileKind::Step: {
+        case FileKind::Step:
+        case FileKind::Iges: {
             // Exact B-reps where bodies have them; other meshes as planar-faced B-reps.
             std::vector<StepPart> parts;
             std::size_t exact = 0, faceted = 0;
@@ -2513,12 +2515,13 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                 parts.push_back(std::move(p));
             }
             if (parts.empty()) return out.fail("No visible bodies to export");
-            if (!writeStepFile(parts, path, &err)) return out.fail(err);
-            out.say("Exported " + std::to_string(parts.size()) + " bodies to " + path + " (STEP AP214, mm): " + std::to_string(exact) + " exact, " +
-                    std::to_string(faceted) + " as planar facets");
+            const bool iges = fileKindOf(path) == FileKind::Iges;
+            if (!(iges ? writeIgesFile(parts, path, &err) : writeStepFile(parts, path, &err))) return out.fail(err);
+            out.say("Exported " + std::to_string(parts.size()) + " bodies to " + path + (iges ? " (IGES 5.3 trimmed surfaces, mm): " : " (STEP AP214, mm): ") +
+                    std::to_string(exact) + " exact, " + std::to_string(faceted) + " as planar facets");
             return out;
         }
-        default: return out.fail("Export supports .stl .obj .3mf .step .dxf .svg");
+        default: return out.fail("Export supports .stl .obj .3mf .step .igs .dxf .svg");
         }
     }
     if (cmd == "IMPORT") {
@@ -2573,10 +2576,18 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             out.say("Imported image " + name + " on " + planeName(doc.state.plane) + "  " + lengthsText({w, h}, " x "));
             return out;
         }
-        case FileKind::Step: {
+        case FileKind::Step:
+        case FileKind::Iges: {
             StepReadReport rep;
-            std::vector<StepPart> parts = readStepFile(path, &rep, &err);
+            const bool iges = fileKindOf(path) == FileKind::Iges;
+            std::vector<StepPart> parts = iges ? readIgesFile(path, &rep, &err) : readStepFile(path, &rep, &err);
             if (parts.empty()) return out.fail(err.empty() ? "Nothing imported" : err);
+            if (iges) { // IGES has no part names: the file's, numbered
+                const std::string stem = fs::path(path).stem().string();
+                for (std::size_t k = 0; k < parts.size(); ++k)
+                    if (parts[k].name.rfind("Body ", 0) == 0 || parts[k].name.rfind("Solid ", 0) == 0 || parts[k].name == "Surfaces")
+                        parts[k].name = parts[k].name == "Surfaces" ? stem + " surfaces" : parts.size() == 1 ? stem : stem + " " + std::to_string(k + 1);
+            }
             std::size_t faces = 0, failed = 0, tris = 0;
             std::string names;
             for (StepPart& p : parts) {
@@ -2618,7 +2629,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             return out;
         }
         case FileKind::Project: return out.fail("Use OPEN for project files");
-        default: return out.fail("Import supports .stl .obj .step .stp .dxf and images (.png .jpg .bmp .tga .gif ...)");
+        default: return out.fail("Import supports .stl .obj .step .stp .igs .iges .dxf and images (.png .jpg .bmp .tga .gif ...)");
         }
     }
 

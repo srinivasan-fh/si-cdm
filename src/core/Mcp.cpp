@@ -552,10 +552,10 @@ Json McpServer::toolDefinitions() {
         p.set("path", prop("string", ".step/.stp exact solids (assemblies placed, units converted), .stl/.obj mesh, .dxf drawing, or image (.png .jpg .bmp .tga .gif ...)"));
         p.set("position", numberArray(2, "Image centre [u,v] on the sketch plane (mm)"));
         p.set("width", prop("number", "Image width (mm)"));
-        tools.push(tool("import_file", "Import STEP solids (exact B-reps) or a mesh as bodies, a DXF onto the sketch plane, or a reference image.",
+        tools.push(tool("import_file", "Import STEP or IGES solids (exact B-reps) or a mesh as bodies, a DXF onto the sketch plane, or a reference image.",
                         p, {"path"}));
         Json e = Json::object();
-        e.set("path", prop("string", ".step (visible bodies: exact where they have exact geometry, else planar facets), .stl/.obj/.3mf (visible bodies) or .dxf/.svg (curves on the sketch plane)"));
+        e.set("path", prop("string", ".step or .igs (visible bodies: exact where they have exact geometry, else planar facets), .stl/.obj/.3mf (visible bodies) or .dxf/.svg (curves on the sketch plane)"));
         tools.push(tool("export_file", "Export the model or the active sketch plane.", e, {"path"}));
     }
     return tools;

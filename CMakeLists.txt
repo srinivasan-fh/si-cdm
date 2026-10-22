@@ -54,6 +54,7 @@ add_library(sicdm_core STATIC
     src/core/Step.cpp
     src/core/Recovery.cpp
     src/core/CamVerify.cpp
+    src/core/Iges.cpp
     src/core/SketchCommand.cpp
     src/core/Features.cpp
     src/core/Library.cpp

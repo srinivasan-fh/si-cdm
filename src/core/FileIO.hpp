@@ -19,7 +19,7 @@
 
 namespace sicdm {
 
-enum class FileKind { Project, Stl, Obj, Dxf, Svg, Step, Image, Unknown };
+enum class FileKind { Project, Stl, Obj, Dxf, Svg, Step, Iges, Image, Unknown };
 
 FileKind fileKindOf(const std::string& path);
 const char* fileKindName(FileKind k);

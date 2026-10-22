@@ -927,7 +927,9 @@ private:
             if (v < best) best = v, bt = t;
         }
         double lo = bt - (b - a) / n, hi = bt + (b - a) / n;
-        if (!c.periodic() && c.kind != BCurveKind::Line) lo = std::max(lo, a), hi = std::min(hi, b);
+        // A closed curve goes on past its ends (its start is its end): no clamping there.
+        const bool wraps = c.periodic() || (c.kind == BCurveKind::BSpline && c.bs.closed());
+        if (!wraps && c.kind != BCurveKind::Line) lo = std::max(lo, a), hi = std::min(hi, b);
         constexpr double g = 0.6180339887498949;
         double x1 = hi - g * (hi - lo), x2 = lo + g * (hi - lo), f1 = f(x1), f2 = f(x2);
         for (int i = 0; i < 80; ++i) {
@@ -954,6 +956,11 @@ private:
         const double reach = c->kind == BCurveKind::Line ? dlength(p - c->f.o) * 4 + 1 : 1.0;
         double u = minimise(*c, around, reach, off);
         if (hint && c->periodic()) u = wrapNear(u, hint->x, kPi2);
+        else if (c->kind == BCurveKind::BSpline && c->bs.closed()) {
+            const double P = c->bs.t1() - c->bs.t0();
+            u = c->bs.t0() + std::fmod(std::fmod(u - c->bs.t0(), P) + P, P); // back into the range
+            if (hint) u = wrapNear(u, hint->x, P);
+        }
         return {u, ddot(p - c->eval(u), m_s.dir) / std::max(L2, 1e-300)};
     }
     // Revolution: the curve point at p's distance from the axis and height along it, then
@@ -978,6 +985,11 @@ private:
         const double reach = c->kind == BCurveKind::Line ? dlength(p - c->f.o) * 4 + 1 : 1.0;
         double t = minimise(*c, around, reach, off);
         if (hint && c->periodic()) t = wrapNear(t, hint->y, kPi2);
+        else if (c->kind == BCurveKind::BSpline && c->bs.closed()) {
+            const double P = c->bs.t1() - c->bs.t0();
+            t = c->bs.t0() + std::fmod(std::fmod(t - c->bs.t0(), P) + P, P);
+            if (hint) t = wrapNear(t, hint->y, P);
+        }
         // The angle from the curve point to p about the axis.
         const DVec3 a = c->eval(t) - o, b2 = p - o;
         const DVec3 ra = a - z * ddot(a, z), rb = b2 - z * ddot(b2, z);
@@ -1066,12 +1078,15 @@ bool tessellateFace(TessContext& tc, const BFace& face, FaceMesh& out, std::stri
                 const std::vector<DVec3>& s = edgeSamples(tc, oe.edge);
                 std::vector<DVec3> seg = s;
                 if (!oe.forward) std::reverse(seg.begin(), seg.end());
+                // Edges meet where one ends and the next starts: points a hair apart (two
+                // vertices written to nine digits) are one.
                 for (std::size_t i = 0; i < seg.size(); ++i) {
-                    if (!l.p.empty() && i == 0 && dlength(seg[0] - l.p.back()) < 1e-9) continue;
+                    if (!l.p.empty() && dlength(seg[i] - l.p.back()) < 1e-9 * (1 + dlength(seg[i]))) continue;
+                    if (!l.p.empty() && i == 0 && dlength(seg[0] - l.p.back()) < 1e-7 * (1 + dlength(seg[0]))) continue;
                     l.p.push_back(seg[i]);
                 }
             }
-            if (l.p.size() > 1 && dlength(l.p.front() - l.p.back()) < 1e-9) l.p.pop_back();
+            if (l.p.size() > 1 && dlength(l.p.front() - l.p.back()) < 1e-7 * (1 + dlength(l.p.back()))) l.p.pop_back();
         } else if (!lp.poly.empty()) {
             l.p = lp.poly;
         } else if (lp.vertex >= 0) {
@@ -1649,9 +1664,11 @@ MeshData tessellate(const Brep& brep, const TessellateOptions& o, TessellateRepo
             ++rep.faces;
             FaceMesh fm;
             std::string err;
+            const std::size_t before = m.indices.size();
             if (!tessellateFace(tc, f, fm, err)) {
                 ++rep.failedFaces;
                 if (rep.firstError.empty()) rep.firstError = err;
+                rep.faceTriangles.push_back(0);
                 continue;
             }
             if (std::getenv("SICDM_TESS_DEBUG")) {
@@ -1695,11 +1712,86 @@ MeshData tessellate(const Brep& brep, const TessellateOptions& o, TessellateRepo
                 if (a == b || b == c || c == a) continue;
                 m.indices.insert(m.indices.end(), {a, b, c});
             }
+            rep.faceTriangles.push_back((m.indices.size() - before) / 3);
         }
     tCurves = saved;
     if (report) *report = rep;
     m.computeFeatureEdges();
     return m;
+}
+
+DVec3 surfaceNormalNear(const Brep& b, const BSurface& s, const DVec3& p) {
+    const std::vector<BCurve>* saved = tCurves;
+    tCurves = &b.curves;
+    Inverse inv(s);
+    const P2 uv = inv(p, nullptr);
+    const DVec3 n = s.normal(uv.x, uv.y);
+    tCurves = saved;
+    return n;
+}
+
+void orientLoops(Brep& b) {
+    const std::vector<BCurve>* saved = tCurves;
+    tCurves = &b.curves;
+    TessellateOptions o;
+    o.chord = 0.05;
+    TessContext tc{b, o, {}, {}};
+    tc.edgePts.resize(b.edges.size());
+    tc.edgeDone.assign(b.edges.size(), 0);
+    for (BShell& sh : b.shells)
+        for (BFace& face : sh.faces) {
+            if (face.surface < 0 || face.surface >= static_cast<int>(b.surfaces.size())) continue;
+            const BSurface& S = b.surfaces[static_cast<std::size_t>(face.surface)];
+            const double Pu = S.periodU(), Pv = S.periodV();
+            Inverse inv(S);
+            // Each loop's area in the parameters (du x dv is the surface's normal), as it runs.
+            std::vector<double> area(face.loops.size(), 0.0);
+            std::vector<char> usable(face.loops.size(), 0);
+            for (std::size_t li = 0; li < face.loops.size(); ++li) {
+                const BLoop& lp = face.loops[li];
+                if (lp.edges.empty()) continue;
+                std::vector<DVec3> pts;
+                for (const OrientedEdge& oe : lp.edges) {
+                    if (oe.edge < 0 || oe.edge >= static_cast<int>(b.edges.size())) continue;
+                    std::vector<DVec3> seg = edgeSamples(tc, oe.edge);
+                    if (!oe.forward) std::reverse(seg.begin(), seg.end());
+                    for (std::size_t i = pts.empty() ? 0 : 1; i < seg.size(); ++i) pts.push_back(seg[i]);
+                }
+                if (!lp.sense) std::reverse(pts.begin(), pts.end());
+                if (pts.size() < 3) continue;
+                std::vector<P2> uv;
+                P2 prev{0, 0};
+                for (std::size_t i = 0; i < pts.size(); ++i) {
+                    P2 q = inv(pts[i], i ? &prev : nullptr);
+                    if (i) q.x = wrapNear(q.x, prev.x, Pu), q.y = wrapNear(q.y, prev.y, Pv);
+                    uv.push_back(q);
+                    prev = q;
+                }
+                const double du = uv.back().x - uv.front().x, dv = uv.back().y - uv.front().y;
+                if ((Pu > 0 && std::fabs(du) > Pu / 2) || (Pv > 0 && std::fabs(dv) > Pv / 2)) continue; // wraps round: no area
+                double a = 0;
+                for (std::size_t i = 0; i < uv.size(); ++i) {
+                    const P2 &p0 = uv[i], &p1 = uv[(i + 1) % uv.size()];
+                    a += p0.x * p1.y - p1.x * p0.y;
+                }
+                area[li] = 0.5 * a;
+                usable[li] = std::fabs(area[li]) > 0;
+            }
+            int outer = -1;
+            for (std::size_t li = 0; li < face.loops.size(); ++li)
+                if (face.loops[li].outer && usable[li]) outer = static_cast<int>(li);
+            if (outer < 0)
+                for (std::size_t li = 0; li < face.loops.size(); ++li)
+                    if (usable[li] && (outer < 0 || std::fabs(area[li]) > std::fabs(area[static_cast<std::size_t>(outer)]))) outer = static_cast<int>(li);
+            // The outer loop counter-clockwise seen from outside, holes the other way.
+            const double out = face.sameSense ? 1.0 : -1.0;
+            for (std::size_t li = 0; li < face.loops.size(); ++li) {
+                if (!usable[li]) continue;
+                const double want = static_cast<int>(li) == outer ? out : -out;
+                if (area[li] * want < 0) face.loops[li].sense = !face.loops[li].sense;
+            }
+        }
+    tCurves = saved;
 }
 
 std::uint64_t meshKey(const MeshData& m) {
