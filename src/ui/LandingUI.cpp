@@ -375,9 +375,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem("Import Image...")) requestFile(FileImportImage, st);
         if (ImGui::MenuItem("Export...", "Ctrl+E")) requestFile(FileExport, st);
         ImGui::Separator();
-        ImGui::BeginDisabled();
-        ImGui::MenuItem("Import STEP / IGES (planned)");
-        ImGui::EndDisabled();
+        if (ImGui::MenuItem("Import STEP...")) requestFile(FileImportStep, st);
+        if (ImGui::MenuItem("Export STEP...")) requestFile(FileExportStep, st);
         ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) cmd.quit = true;
         ImGui::EndMenu();
@@ -1656,17 +1655,21 @@ void LandingUI::requestFile(int action, const UiState& st) {
         m_fileDialog.open(FileDialog::Mode::Save, "Save Project As", {".sicdm"}, dir, projectStem(st) + ".sicdm");
         break;
     case FileImport: {
-        std::vector<std::string> ext = {".stl", ".obj", ".dxf"};
+        std::vector<std::string> ext = {".step", ".stp", ".stl", ".obj", ".dxf"};
         ext.insert(ext.end(), std::begin(kImageExts), std::end(kImageExts));
-        m_fileDialog.open(FileDialog::Mode::Open, "Import (STL, OBJ, DXF, images)", ext, dir);
+        m_fileDialog.open(FileDialog::Mode::Open, "Import (STEP, STL, OBJ, DXF, images)", ext, dir);
         break;
     }
+    case FileImportStep: m_fileDialog.open(FileDialog::Mode::Open, "Import STEP (exact solids)", {".step", ".stp"}, dir); break;
+    case FileExportStep:
+        m_fileDialog.open(FileDialog::Mode::Save, "Export STEP (AP214)", {".step", ".stp"}, dir, projectStem(st) + ".step");
+        break;
     case FileImportImage:
         m_fileDialog.open(FileDialog::Mode::Open, "Import Image", {std::begin(kImageExts), std::end(kImageExts)}, dir);
         break;
     case FileExport:
-        m_fileDialog.open(FileDialog::Mode::Save, "Export (STL / OBJ model, DXF / SVG sketch plane)",
-                          {".stl", ".obj", ".3mf", ".dxf", ".svg"}, dir, projectStem(st) + ".stl");
+        m_fileDialog.open(FileDialog::Mode::Save, "Export (STEP / STL / OBJ / 3MF model, DXF / SVG sketch plane)",
+                          {".step", ".stl", ".obj", ".3mf", ".dxf", ".svg"}, dir, projectStem(st) + ".step");
         break;
     case FileSlice:
         m_fileDialog.open(FileDialog::Mode::Save, "Slice to G-code (FDM)", {".gcode"}, dir, projectStem(st) + ".gcode");
@@ -1691,7 +1694,9 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
             m_closeAfterSave = -1;
             break;
         case FileImport:
-        case FileImportImage: cmd.commands.push_back("IMPORT " + quoted(*path)); break;
+        case FileImportImage:
+        case FileImportStep: cmd.commands.push_back("IMPORT " + quoted(*path)); break;
+        case FileExportStep:
         case FileExport:
         case File3mf: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
         case FileSlice: cmd.commands.push_back("SLICE TO " + quoted(*path)); break;

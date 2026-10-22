@@ -8,10 +8,14 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace sicdm {
+
+struct Brep;
 
 struct Body {
     std::string name;
@@ -26,6 +30,12 @@ struct Body {
     std::string component;  // library component this body belongs to ("" = none)
     std::string attachedTo; // moves rigidly with this body (armour on its part, a hinge pin on its parent)
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
+    // Exact geometry (STEP imports and the primitives), in the mesh's own frame: good
+    // while the mesh is still the one made with it (a sculpt, boolean or remesh leaves it
+    // behind, and exports fall back to the mesh's facets).
+    std::shared_ptr<const Brep> brep;
+    std::uint64_t brepKey = 0; // meshKey() of that mesh
+    bool exact() const;
 
     AABB bounds() const noexcept;
     // Rebuilds a parametric body's mesh from kind, params and scale.

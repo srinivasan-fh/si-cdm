@@ -77,8 +77,8 @@ constexpr CommandSpec kCommands[] = {
     {"FILES", "FILE TABS", "FILES [number | name]", "List the open file tabs, or switch to one"},
     {"CLOSE", "", "CLOSE [DISCARD]", "Close the active file tab (DISCARD drops unsaved changes)"},
     {"IMPORT", "IMP", "IMPORT path [@x,y] [WIDTH mm]",
-     "STL/OBJ as a body, DXF onto the sketch plane, PNG/JPG/... as a reference image"},
-    {"EXPORT", "EXP", "EXPORT path.stl|.obj|.3mf|.dxf|.svg", "STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane"},
+     "STEP solids (exact, assemblies placed) or STL/OBJ as bodies, DXF onto the sketch plane, PNG/JPG/... as a reference image"},
+    {"EXPORT", "EXP", "EXPORT path.step|.stl|.obj|.3mf|.dxf|.svg", "STEP (exact B-reps)/STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane"},
     {"RUN", "SCRIPT", "RUN path.txt", "Run the commands in a text file, one a line (# starts a comment)"},
     // 3D printing
     {"REVOLVE", "REV", "REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [KEEP]",

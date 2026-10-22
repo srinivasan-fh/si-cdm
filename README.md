@@ -463,8 +463,12 @@ With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,d
 | Menu (shortcut) | Formats |
 | --- | --- |
 | **New / Open / Save / Save As** (Ctrl/⌘ N, O, S, Shift+S) | `.sicdm` project (JSON): parametric solids, meshes, sketches, reference images |
-| **Import** (Ctrl/⌘ I) | `.stl` `.obj` → body · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
-| **Export** (Ctrl/⌘ E) | `.stl` `.obj` `.3mf` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
+| **Import** (Ctrl/⌘ I) | `.step` `.stp` → exact solids (assemblies placed, units converted) · `.stl` `.obj` → body · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
+| **Export** (Ctrl/⌘ E) | `.step` (AP214: exact B-reps, other meshes as planar faces) · `.stl` `.obj` `.3mf` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
+
+**STEP:** imports keep their exact geometry (planes, cylinders, cones, spheres, tori, NURBS),
+tessellated watertight for display and written back unchanged. The primitives export exactly too.
+Details: [docs/step.md](docs/step.md).
 
 Unsaved changes are tracked (`*` in the tab and title); closing a tab or quitting asks before discarding them.
 

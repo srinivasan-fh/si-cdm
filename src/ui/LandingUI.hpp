@@ -203,7 +203,7 @@ private:
     int m_recallPos = -1;
 
     // File menu.
-    enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost };
+    enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
     // Design menu inputs.

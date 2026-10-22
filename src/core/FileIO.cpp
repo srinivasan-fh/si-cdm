@@ -1,5 +1,8 @@
 #include "core/FileIO.hpp"
 
+#include "core/Brep.hpp"
+#include "core/Step.hpp"
+
 #include "core/Json.hpp"
 
 #include <stb_image.h>
@@ -206,6 +209,7 @@ FileKind fileKindOf(const std::string& path) {
     if (e == ".obj") return FileKind::Obj;
     if (e == ".dxf") return FileKind::Dxf;
     if (e == ".svg") return FileKind::Svg;
+    if (e == ".step" || e == ".stp" || e == ".p21") return FileKind::Step;
     if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".bmp" || e == ".tga" || e == ".gif" || e == ".psd" ||
         e == ".hdr" || e == ".pnm" || e == ".ppm" || e == ".pgm")
         return FileKind::Image;
@@ -219,6 +223,7 @@ const char* fileKindName(FileKind k) {
     case FileKind::Obj: return "OBJ mesh";
     case FileKind::Dxf: return "DXF drawing";
     case FileKind::Svg: return "SVG drawing";
+    case FileKind::Step: return "STEP model";
     case FileKind::Image: return "image";
     case FileKind::Unknown: return "unknown";
     }
@@ -293,6 +298,8 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 mesh.set("mask", mask);
             }
             jb.set("mesh", mesh);
+            // Exact geometry kept with the mesh it belongs to (as a STEP record).
+            if (b.exact()) jb.set("brep_step", writeStep({StepPart{b.name, std::const_pointer_cast<Brep>(b.brep)}}, b.name + ".step"));
         }
         bodies.push(jb);
     }
@@ -443,6 +450,13 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
                 b.mesh.edgeVertices.push_back({e[i].asFloat(), e[i + 1].asFloat(), e[i + 2].asFloat()});
             b.name = jb["name"].asString("Mesh");
             b.kind = "mesh";
+            if (jb["brep_step"].isString()) {
+                const std::vector<StepPart> parts = readStep(jb["brep_step"].asString());
+                if (parts.size() == 1 && parts[0].brep) {
+                    b.brep = parts[0].brep;
+                    b.brepKey = meshKey(b.mesh);
+                }
+            }
         }
         const Vec3 rotation = jsonVec3(jb["rotation"]);
         if (isPrimitiveKind(kind)) { // meshes are stored already rotated and scaled

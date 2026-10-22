@@ -1,5 +1,8 @@
 #include "core/Scene.hpp"
 
+#include "core/Brep.hpp"
+#include "core/Step.hpp"
+
 namespace sicdm {
 
 Body meshBody(std::string name, MeshData mesh, Vec3 color) {
@@ -18,8 +21,11 @@ Body makeBody(std::string name, std::string kind, std::vector<float> params, Vec
     b.params = std::move(params);
     b.offset = offset;
     b.color = color;
+    attachPrimitiveBrep(b);
     return b;
 }
+
+bool Body::exact() const { return brep && !brep->empty() && brepKey == meshKey(mesh); }
 
 Mat4 eulerRotation(const Vec3& d) noexcept {
     return rotateAxis({0, 0, 1}, radians(d.z)) * rotateAxis({0, 1, 0}, radians(d.y)) * rotateAxis({1, 0, 0}, radians(d.x));
@@ -30,12 +36,21 @@ void Body::rebuild() {
     mesh = buildPrimitive(kind, params);
     if (rotation.x != 0.0f || rotation.y != 0.0f || rotation.z != 0.0f) mesh.transform(eulerRotation(rotation));
     if (scale != 1.0f) mesh.transform(sicdm::scale(Vec3{scale, scale, scale}));
+    attachPrimitiveBrep(*this);
 }
 
 void Body::setRotation(const Vec3& degrees) {
     if (kind == "mesh") { // undo the old orientation, apply the new one
-        mesh.transform(eulerRotation(degrees) * inverse(eulerRotation(rotation)));
+        const Mat4 turn = eulerRotation(degrees) * inverse(eulerRotation(rotation));
+        const bool wasExact = exact();
+        mesh.transform(turn);
         rotation = degrees;
+        if (wasExact) { // the exact geometry turns with it
+            auto b = std::make_shared<Brep>(*brep);
+            b->transform(placementOf(turn));
+            brep = std::move(b);
+            brepKey = meshKey(mesh);
+        }
         return;
     }
     rotation = degrees;
@@ -46,8 +61,15 @@ void Body::setScale(float s) {
     if (!(s > 0.0f) || s == scale) return;
     if (kind == "mesh") {
         const float k = s / scale;
+        const bool wasExact = exact();
         mesh.transform(sicdm::scale(Vec3{k, k, k}));
         scale = s;
+        if (wasExact) {
+            auto b = std::make_shared<Brep>(*brep);
+            b->transform(placementOf(sicdm::scale(Vec3{k, k, k})));
+            brep = std::move(b);
+            brepKey = meshKey(mesh);
+        }
     } else {
         scale = s;
         rebuild();

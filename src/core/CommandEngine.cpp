@@ -7,6 +7,8 @@
 #include "core/CamCommand.hpp"
 #include "core/FeatureCommand.hpp"
 #include "core/SketchCommand.hpp"
+#include "core/Step.hpp"
+#include "core/Brep.hpp"
 #include "core/Print.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
@@ -481,6 +483,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         b.mesh = buildPrimitive(k, params);
         if (b.mesh.indices.empty()) return out.fail("Invalid dimensions for " + std::string(name));
         b.params = params;
+        attachPrimitiveBrep(b);
         b.offset = at.value_or(Vec3{});
         const Vec3 o = b.offset;
         doc.scene.add(std::move(b));
@@ -2417,7 +2420,34 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             out.say("Exported " + std::to_string(n) + " curves on " + planeName(doc.state.plane) + " to " + path);
             return out;
         }
-        default: return out.fail("Export supports .stl .obj .3mf .dxf .svg");
+        case FileKind::Step: {
+            // Exact B-reps where bodies have them; other meshes as planar-faced B-reps.
+            std::vector<StepPart> parts;
+            std::size_t exact = 0, faceted = 0;
+            for (const Body& b : doc.scene.bodies()) {
+                if (!b.visible || b.mesh.indices.empty()) continue;
+                StepPart p;
+                p.name = b.name;
+                if (const auto ex = exactBrep(b)) {
+                    auto br = std::make_shared<Brep>(*ex);
+                    Placement t;
+                    t.t = DVec3(b.offset);
+                    br->transform(t);
+                    p.brep = std::move(br);
+                    ++exact;
+                } else {
+                    p.brep = meshToBrep(worldMesh(b));
+                    ++faceted;
+                }
+                parts.push_back(std::move(p));
+            }
+            if (parts.empty()) return out.fail("No visible bodies to export");
+            if (!writeStepFile(parts, path, &err)) return out.fail(err);
+            out.say("Exported " + std::to_string(parts.size()) + " bodies to " + path + " (STEP AP214, mm): " + std::to_string(exact) + " exact, " +
+                    std::to_string(faceted) + " as planar facets");
+            return out;
+        }
+        default: return out.fail("Export supports .stl .obj .3mf .step .dxf .svg");
         }
     }
     if (cmd == "IMPORT") {
@@ -2472,8 +2502,52 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             out.say("Imported image " + name + " on " + planeName(doc.state.plane) + "  " + lengthsText({w, h}, " x "));
             return out;
         }
+        case FileKind::Step: {
+            StepReadReport rep;
+            std::vector<StepPart> parts = readStepFile(path, &rep, &err);
+            if (parts.empty()) return out.fail(err.empty() ? "Nothing imported" : err);
+            std::size_t faces = 0, failed = 0, tris = 0;
+            std::string names;
+            for (StepPart& p : parts) {
+                // Tessellated to a tolerance that suits the part's size.
+                TessellateOptions o;
+                MeshData probe = tessellate(*p.brep, TessellateOptions{1.0, 0.6, 0.0});
+                const AABB box = probe.bounds();
+                const double diag = box.valid() ? static_cast<double>(length(box.max - box.min)) : 100.0;
+                o.chord = std::clamp(diag * 2e-4, 0.002, 0.25);
+                TessellateReport tr;
+                MeshData m = tessellate(*p.brep, o, &tr);
+                faces += tr.faces;
+                failed += tr.failedFaces;
+                tris += m.indices.size() / 3;
+                auto taken = [&](const std::string& n) {
+                    for (const Body& other : doc.scene.bodies())
+                        if (other.name == n) return true;
+                    return false;
+                };
+                std::string name = p.name;
+                for (int k = 2; taken(name); ++k) name = p.name + " " + std::to_string(k);
+                Body b = meshBody(name, std::move(m), kPalette[static_cast<std::size_t>(++doc.primitiveSerial) % std::size(kPalette)]);
+                p.brep->name = name;
+                b.brep = p.brep;
+                b.brepKey = meshKey(b.mesh);
+                doc.scene.add(std::move(b));
+                if (names.size() < 120) names += (names.empty() ? "" : ", ") + name;
+            }
+            doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+            doc.selectedCurve = doc.selectedImage = -1;
+            markChanged(doc);
+            char unit[64];
+            std::snprintf(unit, sizeof(unit), "%g mm", rep.unitToMm);
+            out.say("Imported " + std::to_string(parts.size()) + (parts.size() == 1 ? " part" : " parts") + " from " + path + " (" +
+                    (rep.schema.empty() ? std::string("STEP") : rep.schema) + ", 1 file unit = " + unit + "): " + names);
+            out.say("  " + std::to_string(faces) + " exact faces, " + std::to_string(tris) + " display triangles" +
+                    (failed ? ", " + std::to_string(failed) + " faces could not be shown" : std::string()));
+            for (std::size_t k = 0; k < rep.warnings.size() && k < 5; ++k) out.say("  warning: " + rep.warnings[k]);
+            return out;
+        }
         case FileKind::Project: return out.fail("Use OPEN for project files");
-        default: return out.fail("Import supports .stl .obj .dxf and images (.png .jpg .bmp .tga .gif ...)");
+        default: return out.fail("Import supports .stl .obj .step .stp .dxf and images (.png .jpg .bmp .tga .gif ...)");
         }
     }
 

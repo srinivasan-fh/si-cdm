@@ -50,6 +50,8 @@ add_library(sicdm_core STATIC
     src/core/CamCommand.cpp
     src/core/FeatureCommand.cpp
     src/core/Constraints.cpp
+    src/core/Brep.cpp
+    src/core/Step.cpp
     src/core/SketchCommand.cpp
     src/core/Features.cpp
     src/core/Library.cpp
