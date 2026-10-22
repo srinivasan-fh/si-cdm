@@ -289,6 +289,11 @@ Details: [docs/printing.md](docs/printing.md).
 - **Post processors:** Fanuc, Haas, LinuxCNC and GRBL, with fitted arcs and canned cycles. For
   multi-axis jobs the posts add A and C words and inverse-time feed. Multi-axis jobs are
   simulated in voxels.
+- **Machines and checked programs:** a machine definition (travel, work zero, A/C limits,
+  tool pockets, spindle and feed limits, with presets). Every posted program is read back the
+  way the control would run it and checked against the dialect, the machine and the toolpath
+  before it is written. `CAM CHECK` does the same for any program. See
+  [docs/cam.md](docs/cam.md#machines-and-program-checks).
 
 ```text
 CAM SETUP "Bracket" STOCK 3 MATERIAL aluminium      CAM TOOL 1 FLAT 6      CAM TOOL 2 DRILL 6

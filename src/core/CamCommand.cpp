@@ -3,11 +3,16 @@
 #include "core/CamCommand.hpp"
 
 #include "core/Cam.hpp"
+#include "core/CamVerify.hpp"
+#include "core/FileIO.hpp"
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
+#include <sstream>
+#include <optional>
+#include <fstream>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -446,22 +451,164 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         return out;
     }
 
+    // A check's findings, the worst first, at most `limit` of them.
+    auto sayIssues = [&](const CamPostCheck& c, std::size_t limit) {
+        std::vector<GcodeIssue> list = c.issues;
+        std::stable_sort(list.begin(), list.end(), [](const GcodeIssue& x, const GcodeIssue& y) { return x.error && !y.error; });
+        for (std::size_t k = 0; k < list.size() && k < limit; ++k)
+            out.say(std::string("  ") + (list[k].error ? "ERROR" : "warning") + (list[k].line > 0 ? " line " + std::to_string(list[k].line) : std::string()) +
+                    ": " + list[k].text);
+        if (list.size() > limit) out.say("  ... " + std::to_string(list.size() - limit) + " more");
+    };
+
     if (sub == "post") {
+        // CAM POST path [post] [FORCE]: posted, read back and checked; not written while
+        // the check finds errors, unless forced.
+        Body* p = needPart();
+        if (!p) return out;
+        std::string path, post = job.setup.post;
+        bool force = false;
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            const std::string w = lower(a[i]);
+            if (!quotedArg(i) && std::find(camPosts().begin(), camPosts().end(), w) != camPosts().end()) post = w;
+            else if (!quotedArg(i) && w == "to") continue;
+            else if (!quotedArg(i) && w == "force") force = true;
+            else path += (path.empty() ? "" : " ") + a[i];
+        }
+        if (path.empty()) return out.fail("Usage: CAM POST path.nc [FANUC|HAAS|GRBL|LINUXCNC] [FORCE]");
+        CamPostReport r;
+        std::string e;
+        const std::string g = postToString(job, *p, post, &r, &e);
+        if (g.empty()) return out.fail(e);
+        const CamPostCheck c = checkPost(job, post, g);
+        if (c.errors > 0 && !force) {
+            out.fail("Not written: reading the " + post + " program back found " + std::to_string(c.errors) + " error" + (c.errors == 1 ? "" : "s") +
+                     " (CAM POST ... FORCE writes it anyway)");
+            sayIssues(c, 8);
+            return out;
+        }
+        if (!writeFile(path, g, &e)) return out.fail(e);
+        out.say("Posted " + std::to_string(job.ops.size()) + " operations for " + post + " to " + path + ": " + std::to_string(r.lines) + " lines, " +
+                std::to_string(r.arcs) + " arcs, " + std::to_string(r.cycles) + " drilling cycles, about " + minutes(r.seconds));
+        out.say("  " + c.summary() + " on " + job.setup.machine.name);
+        sayIssues(c, 8);
+        return out;
+    }
+
+    if (sub == "check" || sub == "backplot") {
+        // CAM CHECK [post] | CAM CHECK file.nc [post]: the program read back as the control
+        // would run it, against the job and the machine.
         Body* p = needPart();
         if (!p) return out;
         std::string path, post = job.setup.post;
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string w = lower(a[i]);
             if (!quotedArg(i) && std::find(camPosts().begin(), camPosts().end(), w) != camPosts().end()) post = w;
-            else if (!quotedArg(i) && w == "to") continue;
             else path += (path.empty() ? "" : " ") + a[i];
         }
-        if (path.empty()) return out.fail("Usage: CAM POST path.nc [FANUC|HAAS|GRBL|LINUXCNC]");
-        CamPostReport r;
-        std::string e;
-        if (!postJob(job, *p, post, path, &r, &e)) return out.fail(e);
-        out.say("Posted " + std::to_string(job.ops.size()) + " operations for " + post + " to " + path + ": " + std::to_string(r.lines) + " lines, " +
-                std::to_string(r.arcs) + " arcs, " + std::to_string(r.cycles) + " drilling cycles, about " + minutes(r.seconds));
+        std::string g, e;
+        if (path.empty()) {
+            g = postToString(job, *p, post, nullptr, &e);
+            if (g.empty()) return out.fail(e);
+        } else {
+            std::ifstream f(path, std::ios::binary);
+            if (!f) return out.fail("Can't read " + path);
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            g = ss.str();
+            for (CamOperation& op : job.ops) // the toolpath to hold the program against
+                if (!op.generated && !generateOperation(job, *p, op, &e)) return out.fail(e);
+        }
+        const CamPostCheck c = checkPost(job, post, g);
+        out.say((path.empty() ? "The " + post + " program" : path + " (as " + post + ")") + ": " + std::to_string(c.plot.lines) + " lines, " +
+                std::to_string(c.plot.arcs) + " arcs, " + std::to_string(c.plot.cycles) + " cycles, " + minutes(c.plot.seconds) + " at the programmed feeds");
+        out.say("  " + c.summary() + " on " + job.setup.machine.name);
+        sayIssues(c, 20);
+        if (c.errors) out.ok = false;
+        return out;
+    }
+
+    if (sub == "machine") {
+        // CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z|OFF]
+        //   [A min max|OFF|CONTINUOUS] [C ...] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]
+        CamMachine m = job.setup.machine;
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
+            auto number = [&](const char* what) -> std::optional<double> {
+                const auto v = parseNumber(next());
+                if (!v) out.fail(std::string(what) + " needs a number");
+                return v;
+            };
+            if (k == "preset") {
+                const std::string v = next();
+                const CamMachine* pm = camMachinePreset(v);
+                if (!pm) {
+                    std::string list;
+                    for (const CamMachine& q : camMachinePresets()) list += (list.empty() ? "" : ", ") + q.name;
+                    return out.fail("Unknown machine '" + v + "' (" + list + ")");
+                }
+                m = *pm;
+            } else if (k == "name") {
+                m.name = next();
+            } else if (k == "travel") {
+                for (int ax = 0; ax < 3; ++ax) {
+                    const auto v = parseLength(next());
+                    if (!v || !(*v > 0)) return out.fail("TRAVEL needs three positive lengths: x y z");
+                    m.travelMin[ax] = ax == 2 ? -*v : 0.0;
+                    m.travelMax[ax] = ax == 2 ? 0.0 : *v;
+                }
+            } else if (k == "limits") {
+                const auto lo = parseVec3(next()), hi = parseVec3(next());
+                if (!lo || !hi) return out.fail("LIMITS needs x0,y0,z0 x1,y1,z1 in machine coordinates");
+                const double l[3] = {lo->x, lo->y, lo->z}, h[3] = {hi->x, hi->y, hi->z};
+                for (int ax = 0; ax < 3; ++ax) m.travelMin[ax] = std::min(l[ax], h[ax]), m.travelMax[ax] = std::max(l[ax], h[ax]);
+            } else if (k == "zero" || k == "g54") {
+                const std::string v = next();
+                if (lower(v) == "off") m.hasWorkOffset = false;
+                else {
+                    const auto z = parseVec3(v);
+                    if (!z) return out.fail("ZERO needs x,y,z: where G54 is in machine coordinates (or OFF)");
+                    m.hasWorkOffset = true;
+                    m.workOffset[0] = z->x, m.workOffset[1] = z->y, m.workOffset[2] = z->z;
+                }
+            } else if (k == "a" || k == "c") {
+                const std::string v = lower(next());
+                bool& fitted = k == "a" ? m.hasA : m.hasC;
+                double& lo = k == "a" ? m.aMin : m.cMin;
+                double& hi = k == "a" ? m.aMax : m.cMax;
+                if (v == "off" || v == "none") fitted = false;
+                else if (v == "continuous" || v == "on") fitted = true, lo = -99999, hi = 99999;
+                else {
+                    const auto l = parseNumber(v), h = parseNumber(next());
+                    if (!l || !h || !(*h > *l)) return out.fail(toUpper(k) + " needs min max (degrees), CONTINUOUS or OFF");
+                    fitted = true, lo = *l, hi = *h;
+                }
+            } else if (k == "pockets") {
+                const auto v = number("POCKETS");
+                if (!v) return out;
+                m.toolPockets = std::max(0, static_cast<int>(*v));
+            } else if (k == "maxrpm" || k == "maxfeed" || k == "rapid" || k == "toolchange") {
+                const auto v = number(toUpper(k).c_str());
+                if (!v) return out;
+                if (!(*v > 0)) return out.fail(toUpper(k) + " needs a positive value");
+                (k == "maxrpm" ? m.maxRpm : k == "maxfeed" ? m.maxFeed : k == "rapid" ? m.rapid : m.toolChange) = *v;
+            } else {
+                return out.fail("CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z|OFF] [A min max|CONTINUOUS|OFF] "
+                                "[C ...] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]");
+            }
+        }
+        if (a.size() > 1) {
+            job.setup.machine = m;
+            for (CamOperation& op : job.ops) op.generated = false; // feeds follow the machine's limits
+            changed();
+        }
+        out.say("Machine " + job.setup.machine.describe());
+        if (a.size() <= 1) {
+            std::string list;
+            for (const CamMachine& q : camMachinePresets()) list += (list.empty() ? "" : ", ") + q.name;
+            out.say("  presets: " + list + " (CAM MACHINE PRESET name)");
+        }
         return out;
     }
 

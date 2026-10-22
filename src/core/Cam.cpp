@@ -584,6 +584,94 @@ const std::vector<CamMaterial>& camMaterials() {
     return kMaterials;
 }
 
+const std::vector<CamMachine>& camMachinePresets() {
+    // Typical figures for each class of machine: set the real ones with CAM MACHINE.
+    static const std::vector<CamMachine> kPresets = [] {
+        std::vector<CamMachine> v;
+        CamMachine g; // no limits checked
+        v.push_back(g);
+        CamMachine vmc; // a 30 x 16 x 20 inch vertical machining centre
+        vmc.name = "vmc";
+        vmc.maxRpm = 8100, vmc.maxFeed = 16500, vmc.rapid = 25400, vmc.toolChange = 4.2;
+        vmc.travelMin[0] = 0, vmc.travelMax[0] = 762;
+        vmc.travelMin[1] = 0, vmc.travelMax[1] = 406;
+        vmc.travelMin[2] = -508, vmc.travelMax[2] = 0;
+        vmc.toolPockets = 20;
+        vmc.hasA = vmc.hasC = false;
+        v.push_back(vmc);
+        CamMachine four = vmc; // with a rotary table on A
+        four.name = "vmc-4th";
+        four.hasA = true;
+        v.push_back(four);
+        CamMachine tr; // a compact 5-axis trunnion: A tilts, C turns without end
+        tr.name = "trunnion";
+        tr.maxRpm = 12000, tr.maxFeed = 16500, tr.rapid = 30000, tr.toolChange = 3.5;
+        tr.travelMin[0] = 0, tr.travelMax[0] = 610;
+        tr.travelMin[1] = 0, tr.travelMax[1] = 406;
+        tr.travelMin[2] = -394, tr.travelMax[2] = 0;
+        tr.hasA = tr.hasC = true;
+        tr.aMin = -35, tr.aMax = 120;
+        tr.toolPockets = 30;
+        v.push_back(tr);
+        CamMachine bench; // a benchtop mill with a small changer
+        bench.name = "benchtop";
+        bench.maxRpm = 10000, bench.maxFeed = 2540, bench.rapid = 7620, bench.toolChange = 10;
+        bench.travelMin[0] = 0, bench.travelMax[0] = 457;
+        bench.travelMin[1] = 0, bench.travelMax[1] = 279;
+        bench.travelMin[2] = -413, bench.travelMax[2] = 0;
+        bench.toolPockets = 10;
+        bench.hasA = bench.hasC = false;
+        v.push_back(bench);
+        CamMachine router; // a hobby router (GRBL), tools changed by hand
+        router.name = "router";
+        router.maxRpm = 24000, router.maxFeed = 5000, router.rapid = 5000, router.toolChange = 60;
+        router.travelMin[0] = 0, router.travelMax[0] = 800;
+        router.travelMin[1] = 0, router.travelMax[1] = 800;
+        router.travelMin[2] = -100, router.travelMax[2] = 0;
+        router.hasA = router.hasC = false;
+        v.push_back(router);
+        return v;
+    }();
+    return kPresets;
+}
+
+const CamMachine* camMachinePreset(const std::string& name) {
+    std::string k;
+    for (char ch : name) k += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    for (const CamMachine& m : camMachinePresets())
+        if (m.name == k) return &m;
+    return nullptr;
+}
+
+std::string CamMachine::describe() const {
+    char b[160];
+    std::string s = name;
+    std::snprintf(b, sizeof b, ": %.0f rpm, feed %.0f, rapid %.0f mm/min", maxRpm, maxFeed, rapid);
+    s += b;
+    const char* axes = "XYZ";
+    std::string travel;
+    for (int i = 0; i < 3; ++i)
+        if (hasTravel(i)) {
+            std::snprintf(b, sizeof b, "%s%c %g..%g", travel.empty() ? "" : ", ", axes[i], travelMin[i], travelMax[i]);
+            travel += b;
+        }
+    s += travel.empty() ? "; travel not checked" : "; travel " + travel;
+    if (hasWorkOffset) {
+        std::snprintf(b, sizeof b, "; G54 at %g, %g, %g", workOffset[0], workOffset[1], workOffset[2]);
+        s += b;
+    }
+    auto rot = [&](char axis, double lo, double hi) {
+        if (lo <= -99999 && hi >= 99999) std::snprintf(b, sizeof b, "; %c continuous", axis);
+        else std::snprintf(b, sizeof b, "; %c %g..%g deg", axis, lo, hi);
+        s += b;
+    };
+    if (hasA) rot('A', aMin, aMax);
+    if (hasC) rot('C', cMin, cMax);
+    if (!hasA && !hasC) s += "; no rotary axes";
+    if (toolPockets > 0) s += "; " + std::to_string(toolPockets) + " tool pockets";
+    return s;
+}
+
 const CamMaterial* camMaterial(const std::string& key) {
     std::string k;
     for (char ch : key) k += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -3089,6 +3177,7 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
                     w.move(0, {p.x, p.y, r}, 0);
                     w.line("G33.1 Z" + w.num(depth) + " K" + w.num(tool->pitch));
                     w.z = r;
+                    w.modalG = -1; // G33.1 stays the motion mode: the next move names its G
                     w.move(0, {p.x, p.y, clear}, 0);
                     ++w.cycles;
                     continue;
@@ -3261,6 +3350,22 @@ Json camToJson(const CamJob& job) {
     s.set("max_rpm", su.machine.maxRpm);
     s.set("max_feed", su.machine.maxFeed);
     s.set("rapid", su.machine.rapid);
+    {
+        const CamMachine& m = su.machine;
+        Json mj = Json::object();
+        mj.set("name", m.name).set("tool_change", m.toolChange).set("tool_pockets", m.toolPockets);
+        Json lo = Json::array(), hi = Json::array();
+        for (int i = 0; i < 3; ++i) lo.push(m.travelMin[i]), hi.push(m.travelMax[i]);
+        mj.set("travel_min", lo).set("travel_max", hi);
+        if (m.hasWorkOffset) {
+            Json w = Json::array();
+            for (double v : m.workOffset) w.push(v);
+            mj.set("work_offset", w);
+        }
+        mj.set("a", m.hasA ? Json(Json::Array{Json(m.aMin), Json(m.aMax)}) : Json(false));
+        mj.set("c", m.hasC ? Json(Json::Array{Json(m.cMin), Json(m.cMax)}) : Json(false));
+        s.set("machine", mj);
+    }
     j.set("setup", s);
     j.set("show_paths", job.showPaths);
     Json tools = Json::array();
@@ -3353,6 +3458,24 @@ bool camFromJson(const Json& j, CamJob& job) {
     su.machine.maxRpm = s["max_rpm"].asNumber(12000);
     su.machine.maxFeed = s["max_feed"].asNumber(5000);
     su.machine.rapid = s["rapid"].asNumber(10000);
+    if (const Json& mj = s["machine"]; mj.isObject()) {
+        CamMachine& m = su.machine;
+        m.name = mj["name"].asString("generic");
+        m.toolChange = mj["tool_change"].asNumber(6);
+        m.toolPockets = mj["tool_pockets"].asInt(0);
+        const auto& lo = mj["travel_min"].items();
+        const auto& hi = mj["travel_max"].items();
+        for (std::size_t i = 0; i < 3 && i < lo.size() && i < hi.size(); ++i) m.travelMin[i] = lo[i].asNumber(0), m.travelMax[i] = hi[i].asNumber(0);
+        const auto& w = mj["work_offset"].items();
+        m.hasWorkOffset = w.size() == 3;
+        for (std::size_t i = 0; i < 3 && m.hasWorkOffset; ++i) m.workOffset[i] = w[i].asNumber(0);
+        const auto& a = mj["a"].items();
+        const auto& c = mj["c"].items();
+        m.hasA = a.size() == 2;
+        if (m.hasA) m.aMin = a[0].asNumber(-99999), m.aMax = a[1].asNumber(99999);
+        m.hasC = c.size() == 2;
+        if (m.hasC) m.cMin = c[0].asNumber(-99999), m.cMax = c[1].asNumber(99999);
+    }
     job.showPaths = j["show_paths"].asBool(true);
     for (const Json& o : j["tools"].items()) {
         CamTool t;

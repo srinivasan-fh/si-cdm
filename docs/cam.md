@@ -313,8 +313,11 @@ The report gives:
 ## Post processors
 
 ```text
-CAM POST file.nc [FANUC | HAAS | GRBL | LINUXCNC]
+CAM POST file.nc [FANUC | HAAS | GRBL | LINUXCNC] [FORCE]
 ```
+
+Each program is read back and checked before it is written (see
+[Machines and program checks](#machines-and-program-checks)).
 
 | | Fanuc | Haas | LinuxCNC | GRBL |
 | --- | --- | --- | --- | --- |
@@ -338,6 +341,90 @@ CAM POST file.nc [FANUC | HAAS | GRBL | LINUXCNC]
 
 **Tool length:** a fresh tool always moves over in X and Y first. It goes down in Z only after
 `G43` puts its length offset on, so no Z move happens without it.
+
+## Machines and program checks
+
+```text
+CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z | OFF]
+            [A min max | CONTINUOUS | OFF] [C ...] [POCKETS n]
+            [MAXRPM n] [MAXFEED mm/min] [RAPID mm/min] [TOOLCHANGE s] [NAME text]
+CAM CHECK [post]                 (or Manufacture > Check the Program)
+CAM CHECK file.nc [post]         a program on disk, against the job
+CAM POST file.nc [post] [FORCE]
+```
+
+**The machine** is saved with the job. Its parts:
+
+- **Travel:** the spindle nose's travel in machine coordinates. `TRAVEL 762 406 508` means
+  X 0..762, Y 0..406 and Z -508..0. `LIMITS` gives the ranges exactly as the control's
+  machine position shows them.
+- **Work zero:** `ZERO` is where G54 sits in machine coordinates. With it, every move is
+  checked against the travel. Without it, only each axis's span is checked.
+- **Z:** Z is checked at the spindle nose, which is the tool tip plus the tool's length
+  (holder and stickout).
+- **Rotary axes:** A turns about X and C about Z. Each has limits in degrees, or is
+  continuous, or absent.
+- **Tool changer:** `POCKETS` is the highest T number the changer takes.
+- **Spindle and feeds:** the spindle speed and feed limits. Feeds and speeds are worked
+  out within them.
+
+**Presets** are typical figures for each class of machine. Set your machine's real figures
+over them.
+
+| Preset | Travel X × Y × Z (mm) | Spindle | Rotary | Pockets |
+| --- | --- | --- | --- | --- |
+| `generic` | not checked | 12000 rpm | A, C unlimited | any |
+| `vmc` | 762 × 406 × 508 | 8100 rpm | none | 20 |
+| `vmc-4th` | the same | 8100 rpm | A unlimited | 20 |
+| `trunnion` | 610 × 406 × 394 | 12000 rpm | A -35..120, C unlimited | 30 |
+| `benchtop` | 457 × 279 × 413 | 10000 rpm | none | 10 |
+| `router` | 800 × 800 × 100 | 24000 rpm | none | manual |
+
+**The read-back.** Every `CAM POST` reads its program back the way the control would run
+it, then checks the result. Arcs, helices and canned cycles are expanded as the control
+moves: drill, dwell, peck, chip-break, tap, bore, and LinuxCNC's `G33.1`.
+
+- **Program:**
+  - Every word and code must be one the dialect has. For example, GRBL has no canned
+    cycles and no `M6`.
+  - Fanuc and Haas lengths must have a decimal point. `X10` without one is 10 µm on those
+    controls.
+  - Units (`G21`) and the work offset (`G54`) must be set.
+  - Before a fresh tool moves in Z, it needs `G43` with that tool's own `H`.
+  - The spindle must be on, and a feed set, before any cut. In `G93` (inverse time),
+    every cutting move needs its own `F`.
+  - Each arc must end the same distance from its centre as it starts. Controls stop
+    with an alarm otherwise.
+  - Canned cycles need R above the bottom, and a peck depth.
+  - `G28` must not go down to Z0 on its way home (as `G90 G28 Z0` does).
+  - The program must end with `M30` or `M2`.
+- **Machine:**
+  - travel, with each tool's length on Z;
+  - which rotary axes exist, and their limits;
+  - spindle speed, feed, and the tool pockets.
+- **Job:**
+  - The read-back cutting path is compared with the toolpath, both ways: nothing is cut
+    that the toolpath doesn't cut, and nothing in the toolpath is missed.
+  - The tolerance covers the arc fitting (5 times the setup's tolerance) and the rounding
+    of the numbers. A typical job reads back within 0.04 mm at the default 0.01 mm
+    tolerance.
+  - No rapid move the post adds may cross the stock below its top. The toolpath's own
+    rapids, inside material already cut, are checked by `CAM SIMULATE`.
+
+A program with errors is not written; `FORCE` writes it anyway. The report lists the
+findings with their line numbers:
+
+```text
+Not written: reading the fanuc program back found 1 error (CAM POST ... FORCE writes it anyway)
+  ERROR: X travel: the tool goes to 718..828 in machine coordinates, past the machine's 0..762
+```
+
+**What this does and doesn't prove.** The read-back proves that a program says what the
+toolpath says, in words its dialect has, within the machine's limits. It runs the
+program the way the published dialects behave. It doesn't know your control's parameters
+and options: the peck retract distance, macro tool changes, rotary direction settings,
+and similar. Before cutting, still prove a new post or machine on the real control:
+single block, with the feed override low, above the part.
 
 ## Over MCP
 

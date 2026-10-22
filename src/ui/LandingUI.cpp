@@ -556,6 +556,15 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                 if (ImGui::MenuItem(p.c_str())) cmd.commands.push_back("CAM SETUP POST " + p);
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Machine")) {
+            for (const CamMachine& m : camMachinePresets())
+                if (ImGui::MenuItem(m.name.c_str())) cmd.commands.push_back("CAM MACHINE PRESET " + m.name);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Show the Machine")) cmd.commands.push_back("CAM MACHINE");
+            ImGui::TextDisabled("CAM MACHINE TRAVEL x y z ZERO x,y,z A min max ...");
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Check the Program (read-back)")) cmd.commands.push_back("CAM CHECK");
         if (ImGui::MenuItem("Post Process (G-code)...")) requestFile(FilePost, st);
         if (ImGui::MenuItem("Show Toolpaths")) cmd.commands.push_back("CAM SHOW");
         if (ImGui::MenuItem("Hide Toolpaths")) cmd.commands.push_back("CAM HIDE");

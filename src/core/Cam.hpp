@@ -87,12 +87,31 @@ struct CamMaterial {
 const std::vector<CamMaterial>& camMaterials();
 const CamMaterial* camMaterial(const std::string& key);
 
+// The machine the program runs on: what posted programs are checked against.
 struct CamMachine {
+    std::string name = "generic";
     double maxRpm = 12000.0;
     double maxFeed = 5000.0;   // mm/min
     double rapid = 10000.0;    // mm/min
     double toolChange = 6.0;   // seconds
+    // Travel of the spindle nose in machine coordinates (mm), as the control's machine
+    // position shows it; an axis isn't checked while its min >= max.
+    double travelMin[3] = {0, 0, 0}, travelMax[3] = {0, 0, 0};
+    // Where G54 puts the work zero, in machine coordinates. Without it only the program's
+    // span on each axis is checked against the travel.
+    bool hasWorkOffset = false;
+    double workOffset[3] = {0, 0, 0};
+    // Rotary axes (degrees): A turns about X, C about Z. The generic machine has both,
+    // without limits; the presets say what theirs have.
+    bool hasA = true, hasC = true;
+    double aMin = -99999.0, aMax = 99999.0, cMin = -99999.0, cMax = 99999.0;
+    int toolPockets = 0;       // highest T number the changer takes (0: any)
+    bool hasTravel(int axis) const { return travelMax[axis] > travelMin[axis]; }
+    std::string describe() const;
 };
+// Typical machine classes to start from: generic, vmc, vmc-4th, trunnion, benchtop, router.
+const std::vector<CamMachine>& camMachinePresets();
+const CamMachine* camMachinePreset(const std::string& name);
 
 struct CamFeeds {
     double rpm = 0.0, feed = 0.0, plunge = 0.0; // mm/min

@@ -108,10 +108,11 @@ constexpr CommandSpec kCommands[] = {
     {"HISTORY", "HIST", "HISTORY [LIST] | HISTORY EDIT n command | HISTORY INSERT n command | HISTORY DELETE n | HISTORY CLEAR",
      "The feature history: the model commands in order; edit, insert or delete a step and the model is rebuilt"},
     {"REGEN", "REGENERATE", "REGEN [FORCE]", "Rebuild the model from its feature history"},
-    {"CAM", "MILL MACHINE", "CAM SETUP|TOOL|FACE|ROUGH|POCKET|CONTOUR|PARALLEL|WATERLINE|DRILL|BORE|ROTARY|HOLES|TOOLS|LIST|SIMULATE|POST ...",
+    {"CAM", "MILL MACHINE", "CAM SETUP|MACHINE|TOOL|FACE|ROUGH|POCKET|CONTOUR|PARALLEL|WATERLINE|DRILL|BORE|ROTARY|HOLES|TOOLS|LIST|SIMULATE|POST|CHECK ...",
      "CNC milling: CAM SETUP [body] [STOCK margin|x,y,z] [MATERIAL m] [ORIGIN CORNER|CENTRE|MODEL]; CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|"
      "CHAMFER|TAP d [STICKOUT l] [HOLDER d]; operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d] [ADAPTIVE] [REST] [INDEX a c]...; CAM ROTARY [ALONG] [STEPOVER s] [STEPDOWN d]; CAM SIMULATE [SHOW]; "
-     "CAM POST file.nc [FANUC|HAAS|GRBL|LINUXCNC]"},
+     "CAM POST file.nc [FANUC|HAAS|GRBL|LINUXCNC] [FORCE] (read back and checked first); CAM CHECK [post | file.nc [post]]; "
+     "CAM MACHINE [PRESET vmc|vmc-4th|trunnion|benchtop|router] [TRAVEL x y z] [ZERO x,y,z] [A min max] [C min max] [POCKETS n] [MAXRPM n]"},
     {"PRINTCHECK", "PRINTABILITY", "PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]",
      "Check a part for printing: holes, non-manifold edges, inside out, overhangs, thin walls, size, material, time"},
     {"REPAIR", "FIX", "REPAIR [body]", "Make a mesh printable: weld, drop bad faces, fix the winding, fill holes, drop specks"},
