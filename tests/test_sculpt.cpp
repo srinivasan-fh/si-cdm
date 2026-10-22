@@ -411,9 +411,10 @@ TEST_CASE("a stroke on a dense mesh only touches the surface it reaches") {
     REQUIRE(hit.has_value());
     CHECK(hit->y < -40.1f);
     float moved = 0.0f;
+    const SurfaceIndex nearest(after);
     for (const Vec3& p : before.positions()) {
         if (std::fabs(p.z - 47.5f) < 20.0f && p.y < -20.0f) continue; // near the stroke
-        moved = std::max(moved, std::fabs(length(after.closestPoint(p) - p)));
+        moved = std::max(moved, std::fabs(length(nearest.closestPoint(p) - p)));
     }
     CHECK(moved < 1e-3f);
 }

@@ -437,23 +437,148 @@ std::optional<Vec3> SculptMesh::raycast(const Ray& ray, Vec3* normal) const {
 }
 
 Vec3 SculptMesh::closestPoint(const Vec3& q, Vec3* normal) const {
+    // The nearest vertex bounds the answer (it is on the surface); a triangle whose box
+    // is farther than the best so far can't hold it, so only the near ones are tested.
     float best = 1e30f;
+    for (const Vec3& p : m_p) {
+        const Vec3 d = p - q;
+        best = std::min(best, dot(d, d));
+    }
+    best *= 1.0001f;
     Vec3 bestP = q;
     int hit = -1;
     for (std::size_t i = 0; i < m_t.size(); ++i) {
         const auto& t = m_t[i];
-        const Vec3 c = closestOnTriangle(q, m_p[t[0]], m_p[t[1]], m_p[t[2]]);
-        const Vec3 d = c - q;
+        const Vec3 &a = m_p[t[0]], &b = m_p[t[1]], &c = m_p[t[2]];
+        // Distance from q to the triangle's box, one axis at a time (most fail on the first).
+        auto gap = [](float u, float v, float w, float x) {
+            const float lo = u < v ? (u < w ? u : w) : (v < w ? v : w), hi = u > v ? (u > w ? u : w) : (v > w ? v : w);
+            return x < lo ? lo - x : x > hi ? x - hi : 0.0f;
+        };
+        const float gx = gap(a.x, b.x, c.x, q.x);
+        float g2 = gx * gx;
+        if (g2 >= best) continue;
+        const float gy = gap(a.y, b.y, c.y, q.y);
+        g2 += gy * gy;
+        if (g2 >= best) continue;
+        const float gz = gap(a.z, b.z, c.z, q.z);
+        if (g2 + gz * gz >= best) continue;
+        const Vec3 p = closestOnTriangle(q, a, b, c);
+        const Vec3 d = p - q;
         const float d2 = dot(d, d);
         if (d2 < best) {
             best = d2;
-            bestP = c;
+            bestP = p;
             hit = static_cast<int>(i);
         }
     }
     if (normal && hit >= 0) {
         const auto& t = m_t[static_cast<std::size_t>(hit)];
         *normal = normalize(cross(m_p[t[1]] - m_p[t[0]], m_p[t[2]] - m_p[t[0]]));
+    }
+    return bestP;
+}
+
+SurfaceIndex::SurfaceIndex(const SculptMesh& mesh) : m_mesh(mesh) {
+    const auto& P = mesh.positions();
+    const auto& T = mesh.triangles();
+    if (T.empty()) return;
+    AABB box;
+    for (const Vec3& p : P) box.expand(p);
+    const Vec3 size = box.max - box.min;
+    // About two triangles a cell, at most 2 million cells.
+    const double vol = std::max(static_cast<double>(size.x) * size.y * size.z, 1e-9);
+    const double cells = std::clamp(static_cast<double>(T.size()) / 2.0, 1.0, 2.0e6);
+    m_cell = static_cast<float>(std::max(std::cbrt(vol / cells), static_cast<double>(std::max({size.x, size.y, size.z})) / 256.0));
+    m_cell = std::max(m_cell, 1e-6f);
+    m_min = box.min;
+    for (int k = 0; k < 3; ++k) m_n[k] = std::max(1, static_cast<int>(std::ceil((k == 0 ? size.x : k == 1 ? size.y : size.z) / m_cell)) + 1);
+    auto cellRange = [&](const std::array<std::uint32_t, 3>& t, int lo[3], int hi[3]) {
+        for (int k = 0; k < 3; ++k) {
+            float mn = 1e30f, mx = -1e30f;
+            for (std::uint32_t v : t) {
+                const float c = k == 0 ? P[v].x : k == 1 ? P[v].y : P[v].z;
+                mn = std::min(mn, c), mx = std::max(mx, c);
+            }
+            const float o = k == 0 ? m_min.x : k == 1 ? m_min.y : m_min.z;
+            lo[k] = std::clamp(static_cast<int>((mn - o) / m_cell), 0, m_n[k] - 1);
+            hi[k] = std::clamp(static_cast<int>((mx - o) / m_cell), 0, m_n[k] - 1);
+        }
+    };
+    const std::size_t ncell = static_cast<std::size_t>(m_n[0]) * static_cast<std::size_t>(m_n[1]) * static_cast<std::size_t>(m_n[2]);
+    auto cellIndex = [&](int x, int y, int z) { return (static_cast<std::size_t>(z) * static_cast<std::size_t>(m_n[1]) + static_cast<std::size_t>(y)) * static_cast<std::size_t>(m_n[0]) + static_cast<std::size_t>(x); };
+    std::vector<std::uint32_t> count(ncell + 1, 0);
+    int lo[3], hi[3];
+    for (const auto& t : T) {
+        cellRange(t, lo, hi);
+        for (int z = lo[2]; z <= hi[2]; ++z)
+            for (int y = lo[1]; y <= hi[1]; ++y)
+                for (int x = lo[0]; x <= hi[0]; ++x) ++count[cellIndex(x, y, z) + 1];
+    }
+    for (std::size_t i = 1; i <= ncell; ++i) count[i] += count[i - 1];
+    m_start = count;
+    m_items.resize(count[ncell]);
+    for (std::size_t ti = 0; ti < T.size(); ++ti) {
+        cellRange(T[ti], lo, hi);
+        for (int z = lo[2]; z <= hi[2]; ++z)
+            for (int y = lo[1]; y <= hi[1]; ++y)
+                for (int x = lo[0]; x <= hi[0]; ++x) m_items[count[cellIndex(x, y, z)]++] = static_cast<std::uint32_t>(ti);
+    }
+    m_seen.assign(T.size(), 0);
+}
+
+Vec3 SurfaceIndex::closestPoint(const Vec3& q, Vec3* normal) const {
+    const auto& P = m_mesh.positions();
+    const auto& T = m_mesh.triangles();
+    if (m_items.empty()) return m_mesh.closestPoint(q, normal);
+    if (++m_query == 0) { // wrapped: start the marks again
+        std::fill(m_seen.begin(), m_seen.end(), 0);
+        m_query = 1;
+    }
+    int c[3];
+    for (int k = 0; k < 3; ++k) {
+        const float o = k == 0 ? m_min.x : k == 1 ? m_min.y : m_min.z, v = k == 0 ? q.x : k == 1 ? q.y : q.z;
+        c[k] = std::clamp(static_cast<int>(std::floor((v - o) / m_cell)), 0, m_n[k] - 1);
+    }
+    float best = 1e30f;
+    Vec3 bestP = q;
+    int hit = -1;
+    const int maxR = std::max({m_n[0], m_n[1], m_n[2]});
+    for (int r = 0; r <= maxR; ++r) {
+        // The shell of cells r away (Chebyshev) from q's cell.
+        for (int z = c[2] - r; z <= c[2] + r; ++z) {
+            if (z < 0 || z >= m_n[2]) continue;
+            for (int y = c[1] - r; y <= c[1] + r; ++y) {
+                if (y < 0 || y >= m_n[1]) continue;
+                const bool inner = std::abs(z - c[2]) < r && std::abs(y - c[1]) < r;
+                for (int x = c[0] - r; x <= c[0] + r; x += (inner && r > 0) ? 2 * r : 1) {
+                    if (x < 0 || x >= m_n[0]) continue;
+                    const std::size_t cell = (static_cast<std::size_t>(z) * static_cast<std::size_t>(m_n[1]) + static_cast<std::size_t>(y)) * static_cast<std::size_t>(m_n[0]) +
+                                             static_cast<std::size_t>(x);
+                    for (std::uint32_t i = m_start[cell]; i < m_start[cell + 1]; ++i) {
+                        const std::uint32_t ti = m_items[i];
+                        if (m_seen[ti] == m_query) continue;
+                        m_seen[ti] = m_query;
+                        const auto& t = T[ti];
+                        const Vec3 p = closestOnTriangle(q, P[t[0]], P[t[1]], P[t[2]]);
+                        const Vec3 d = p - q;
+                        const float d2 = dot(d, d);
+                        if (d2 < best) {
+                            best = d2;
+                            bestP = p;
+                            hit = static_cast<int>(ti);
+                        }
+                    }
+                }
+            }
+        }
+        // Every cell not yet searched is at least r cells from q's own.
+        const float reach = static_cast<float>(r) * m_cell;
+        if (hit >= 0 && best <= reach * reach) break;
+    }
+    if (normal && hit >= 0) {
+        const auto& t = T[static_cast<std::size_t>(hit)];
+        *normal = normalize(cross(P[t[1]] - P[t[0]], P[t[2]] - P[t[0]]));
     }
     return bestP;
 }
@@ -1222,7 +1347,12 @@ void SculptMesh::stroke(const std::vector<Vec3>& points, const SculptSettings& s
         path.front() = closestPoint(points.front());
     } else {
         path.reserve(points.size());
-        for (const Vec3& p : points) path.push_back(closestPoint(p));
+        if (points.size() > 8) { // many points: index the surface once
+            const SurfaceIndex nearest(*this);
+            for (const Vec3& p : points) path.push_back(nearest.closestPoint(p));
+        } else {
+            for (const Vec3& p : points) path.push_back(closestPoint(p));
+        }
     }
     // A dab reaches its radius, and refines up to an edge beyond it: everything else
     // can be left out while the stroke runs, a great saving on a dense mesh. Between
@@ -1784,19 +1914,28 @@ std::size_t openEdgeCount(const MeshData& m) {
         }
     };
     std::unordered_map<Key, std::uint32_t, KeyHash> id;
+    id.reserve(m.vertices.size());
     std::vector<std::uint32_t> r(m.vertices.size());
     for (std::size_t i = 0; i < m.vertices.size(); ++i) {
         const Vec3& p = m.vertices[i].position;
         r[i] = id.try_emplace(Key{p.x + 0.0f, p.y + 0.0f, p.z + 0.0f}, static_cast<std::uint32_t>(id.size())).first->second;
     }
-    std::unordered_map<std::uint64_t, int> count;
+    // Edges by sorting their keys: an edge used other than twice is open (or worse).
+    std::vector<std::uint64_t> keys;
+    keys.reserve(m.indices.size());
     for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3)
         for (std::size_t e = 0; e < 3; ++e) {
             const std::uint32_t a = r[m.indices[k + e]], b = r[m.indices[k + (e + 1) % 3]];
-            if (a != b) ++count[edgeKey(a, b)];
+            if (a != b) keys.push_back(edgeKey(a, b));
         }
+    std::sort(keys.begin(), keys.end());
     std::size_t open = 0;
-    for (const auto& [k, c] : count) open += c != 2;
+    for (std::size_t i = 0; i < keys.size();) {
+        std::size_t j = i + 1;
+        while (j < keys.size() && keys[j] == keys[i]) ++j;
+        open += j - i != 2;
+        i = j;
+    }
     return open;
 }
 

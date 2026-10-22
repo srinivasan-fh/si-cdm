@@ -171,6 +171,25 @@ private:
     std::vector<Image> m_grabImages;
 };
 
+// Closest-point queries against a mesh that doesn't change while they run: a uniform
+// grid of its triangles, searched outwards from the query until nothing nearer can
+// be left. The mesh must outlive the index and stay as it was; one query at a time.
+class SurfaceIndex {
+public:
+    explicit SurfaceIndex(const SculptMesh& mesh);
+    Vec3 closestPoint(const Vec3& q, Vec3* normal = nullptr) const;
+
+private:
+    const SculptMesh& m_mesh;
+    Vec3 m_min;
+    float m_cell = 1.0f;
+    int m_n[3] = {0, 0, 0};
+    std::vector<std::uint32_t> m_start; // per cell, into m_items (CSR)
+    std::vector<std::uint32_t> m_items; // triangle indices
+    mutable std::vector<std::uint32_t> m_seen; // per triangle: the query that last tested it
+    mutable std::uint32_t m_query = 0;
+};
+
 // Dabs every radius / 4 along the polyline through the points snapped to the surface,
 // or a grab from points[0] moved by `grabDelta`. Writes the body back.
 void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta = {});

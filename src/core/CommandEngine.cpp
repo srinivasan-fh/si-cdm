@@ -1727,11 +1727,13 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         std::string done;
         // Snap each point to the surface; the outward normal there (or -DIR).
         SculptMesh surface(body);
+        std::optional<SurfaceIndex> nearest; // built on first use; the points are snapped before anything changes
         const float reach = std::max({diameter, width, ss.radius, 0.05f * length(body.bounds().max - body.bounds().min)});
         std::string offBody;
         auto onSurface = [&](const Vec3& p, Vec3* n) {
             Vec3 fn;
-            const Vec3 q = surface.closestPoint(p, &fn);
+            if (!nearest) nearest.emplace(surface);
+            const Vec3 q = nearest->closestPoint(p, &fn);
             if (n) *n = dir ? -normalize(*dir) : fn;
             if (length(q - p) > reach && offBody.empty())
                 offBody = vecText(p) + fmt(" is %g mm away from ", length(q - p)) + body.name;
