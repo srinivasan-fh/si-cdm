@@ -1087,7 +1087,7 @@ MeshData edgeTool(const EdgeChain& c, float r, bool chamfer) {
     for (std::size_t i = 0; i < n; ++i) {
         Vec3 P = c.pts[i];
         const Vec3 nL = c.nL[i], nR = c.nR[i];
-        if (!c.closed && (i == 0 || i + 1 == n)) { // a hair past the ends, so the cut is clean
+        if (!c.closed && c.convex && (i == 0 || i + 1 == n)) { // a hair past the ends, so the cut is clean (a filler stays flush)
             const Vec3 t = normalize(i == 0 ? c.pts[0] - c.pts[1] : c.pts[n - 1] - c.pts[n - 2]);
             P += t * eps;
         }
@@ -1132,6 +1132,50 @@ MeshData edgeTool(const EdgeChain& c, float r, bool chamfer) {
     return mesh.data();
 }
 
+// x with M x = b, the columns of M given; false when M is (nearly) singular.
+bool solve3(const Vec3& c0, const Vec3& c1, const Vec3& c2, const Vec3& b, Vec3& x) {
+    const float det = dot(c0, cross(c1, c2));
+    if (std::fabs(det) < 1e-9f) return false;
+    x = {dot(b, cross(c1, c2)) / det, dot(c0, cross(b, c2)) / det, dot(c0, cross(c1, b)) / det};
+    return true;
+}
+
+// Where three rounded edges meet at a corner, the corner becomes a ball: the cutter is the
+// block between the corner and the ball's centre, less the ball.
+std::optional<MeshData> cornerTool(const Vec3& V, const Vec3 d[3], const std::vector<Vec3>& normals, float r) {
+    if (normals.size() != 3) return std::nullopt;
+    // Rows: the faces' normals; the centre lies r inside each face.
+    Vec3 rows;
+    const Vec3 a{normals[0].x, normals[1].x, normals[2].x}, b{normals[0].y, normals[1].y, normals[2].y}, c{normals[0].z, normals[1].z, normals[2].z};
+    if (!solve3(a, b, c, Vec3{-r, -r, -r}, rows)) return std::nullopt;
+    const Vec3 centre = V + rows;
+    Vec3 L;
+    if (!solve3(d[0], d[1], d[2], rows, L) || L.x <= 0 || L.y <= 0 || L.z <= 0) return std::nullopt;
+    const Vec3 e[3] = {d[0] * L.x, d[1] * L.y, d[2] * L.z};
+    RawMesh box;
+    for (int k = 0; k < 8; ++k) {
+        Vec3 q = V;
+        for (int i = 0; i < 3; ++i) q += e[i] * ((k >> i) & 1 ? 1.0f : -0.08f);
+        box.p.push_back(q);
+    }
+    const bool flip = dot(e[0], cross(e[1], e[2])) < 0;
+    auto quad = [&](std::uint32_t q0, std::uint32_t q1, std::uint32_t q2, std::uint32_t q3) {
+        if (flip) {
+            box.tri(q0, q2, q1);
+            box.tri(q0, q3, q2);
+        } else {
+            box.tri(q0, q1, q2);
+            box.tri(q0, q2, q3);
+        }
+    };
+    quad(0, 2, 3, 1); quad(4, 5, 7, 6); // bit 2 = 0 / 1
+    quad(0, 1, 5, 4); quad(2, 6, 7, 3); // bit 1 = 0 / 1
+    quad(0, 4, 6, 2); quad(1, 3, 7, 5); // bit 0 = 0 / 1
+    MeshData tool = box.data();
+    if (!meshBoolean(tool, cutterSphere(centre, r, 48, 24), BooleanOp::Subtract)) return std::nullopt;
+    return tool;
+}
+
 } // namespace
 
 bool roundEdges(Body& body, const std::vector<EdgeChain>& chains, const std::vector<int>& chosen, float size, bool chamfer, std::string* error) {
@@ -1161,6 +1205,40 @@ bool roundEdges(Body& body, const std::vector<EdgeChain>& chains, const std::vec
         if (!bodyBoolean(body, tool, c.convex ? BooleanOp::Subtract : BooleanOp::Union, &e))
             return fail("Edge " + std::to_string(k + 1) + ": " + e);
         if (wasClosed && openEdgeCount(body.mesh) > 0) return fail("Edge " + std::to_string(k + 1) + " came out with holes");
+    }
+    // Corners where three rounded outside edges meet become balls.
+    if (!chamfer) {
+        struct End { Vec3 p, d, nL, nR; };
+        std::vector<End> ends;
+        for (int k : chosen) {
+            if (k < 0 || k >= static_cast<int>(chains.size())) continue;
+            const EdgeChain& c = chains[static_cast<std::size_t>(k)];
+            if (c.closed || !c.convex || c.pts.size() < 2) continue;
+            const std::size_t n = c.pts.size();
+            ends.push_back({c.pts[0], normalize(c.pts[1] - c.pts[0]), c.nL[0], c.nR[0]});
+            ends.push_back({c.pts[n - 1], normalize(c.pts[n - 2] - c.pts[n - 1]), c.nL[n - 1], c.nR[n - 1]});
+        }
+        std::vector<bool> used(ends.size(), false);
+        const float tol = size * 0.02f;
+        for (std::size_t i = 0; i < ends.size(); ++i) {
+            if (used[i]) continue;
+            std::vector<std::size_t> group{i};
+            for (std::size_t j = i + 1; j < ends.size(); ++j)
+                if (!used[j] && length(ends[j].p - ends[i].p) < tol) group.push_back(j);
+            for (std::size_t g : group) used[g] = true;
+            if (group.size() != 3) continue;
+            std::vector<Vec3> normals;
+            for (std::size_t g : group)
+                for (const Vec3& nn : {ends[g].nL, ends[g].nR})
+                    if (std::none_of(normals.begin(), normals.end(), [&](const Vec3& o) { return dot(o, nn) > 0.99f; })) normals.push_back(nn);
+            const Vec3 d[3] = {ends[group[0]].d, ends[group[1]].d, ends[group[2]].d};
+            const std::optional<MeshData> tool = cornerTool(ends[i].p, d, normals, size);
+            if (!tool) continue;
+            Body before = body;
+            std::string e;
+            if (!bodyBoolean(body, featureBody("corner tool", *tool, {}), BooleanOp::Subtract, &e) || (wasClosed && openEdgeCount(body.mesh) > 0))
+                body = std::move(before); // keep the sharper corner rather than a broken one
+        }
     }
     SculptMesh(body).writeTo(body, true, 40.0f);
     return true;

@@ -442,15 +442,31 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::EndMenu();
         }
         ImGui::TextDisabled("Sweep and loft: SWEEP profile ALONG path, LOFT a b AT d");
+        if (ImGui::MenuItem("Sketch Constraints and Dimensions")) cmd.commands.push_back("CONSTRAINTS");
+        ImGui::TextDisabled("CONSTRAIN TANGENT a b, DIM curve SIDE 1 60, CONSTRAINT EDIT D1 80");
         ImGui::Separator();
         ImGui::TextDisabled("Body features (select a body)");
         if (ImGui::BeginMenu("Fillet (Round Edges)", body)) {
             ImGui::SetNextItemWidth(120);
-            ImGui::InputFloat("radius mm", &m_filletRadius, 0.5f, 1.0f, "%.2f");
+            ImGui::InputFloat("radius / chamfer mm", &m_filletRadius, 0.5f, 1.0f, "%.2f");
             m_filletRadius = std::max(m_filletRadius, 0.1f);
             if (ImGui::MenuItem("Round the Outside Edges")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius));
             if (ImGui::MenuItem("Fill the Inside Corners")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius) + " CONCAVE");
             if (ImGui::MenuItem("Both")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius) + " BOTH");
+            ImGui::Separator();
+            ImGui::TextDisabled("Exact, on chosen edges");
+            const std::string r = "FILLET RADIUS " + fmtNum(m_filletRadius) + " EDGES ";
+            if (ImGui::MenuItem("Top Edges")) cmd.commands.push_back(r + "TOP");
+            if (ImGui::MenuItem("Vertical Edges")) cmd.commands.push_back(r + "VERTICAL");
+            if (ImGui::MenuItem("Every Edge (Ball Corners)")) cmd.commands.push_back(r + "ALL");
+            if (ImGui::MenuItem("Inside Corners")) cmd.commands.push_back(r + "CONCAVE");
+            ImGui::Separator();
+            const std::string c = "CHAMFER DISTANCE " + fmtNum(m_filletRadius) + " EDGES ";
+            if (ImGui::MenuItem("Chamfer the Top Edges")) cmd.commands.push_back(c + "TOP");
+            if (ImGui::MenuItem("Chamfer the Vertical Edges")) cmd.commands.push_back(c + "VERTICAL");
+            if (ImGui::MenuItem("Chamfer the Outside Edges")) cmd.commands.push_back(c + "CONVEX");
+            if (ImGui::MenuItem("List the Edges")) cmd.commands.push_back("EDGES");
+            ImGui::TextDisabled("Others by number: FILLET RADIUS r EDGES 1 4");
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Pattern", body)) {

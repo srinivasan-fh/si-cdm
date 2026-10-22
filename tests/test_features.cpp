@@ -356,3 +356,63 @@ TEST_CASE("REGEN replays what was selected by a click (not a command) when each 
     CHECK_NEAR(volumeOf(*named(d, "Block 1")), rounded, 1.0); // the first block again, not the selected one
     CHECK_NEAR(volumeOf(*named(d, "Block 2")), 8000.0, 1e-3);
 }
+
+TEST_CASE("EDGES lists a body's sharp edges; FILLET and CHAMFER treat just the chosen ones, exactly") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 30 20 @0,0,0").ok);
+    auto r = run(d, "EDGES \"Block 1\"");
+    REQUIRE(r.ok);
+    CHECK(text(r).find("12 sharp edges") != std::string::npos);
+    // The four top edges, R3: each loses (1 - pi/4) r^2 of its length.
+    r = run(d, "FILLET \"Block 1\" RADIUS 3 EDGES TOP");
+    REQUIRE(r.ok);
+    CHECK(text(r).find("4 edges") != std::string::npos);
+    const Body* b = named(d, "Block 1");
+    REQUIRE(b != nullptr);
+    CHECK(openEdgeCount(b->mesh) == 0);
+    const double strip = (1 - kPiD / 4) * 9;
+    CHECK_NEAR(volumeOf(*b), 24000 - strip * 140, 12.0); // corners overlap a little
+    Vec3 size = b->bounds().max - b->bounds().min;
+    CHECK_NEAR(size.z, 20.0, 1e-3);
+    REQUIRE(run(d, "UNDO").ok);
+    // Chamfer the vertical edges by 2: four 2 x 2 / 2 prisms 20 long.
+    REQUIRE(run(d, "CHAMFER \"Block 1\" DISTANCE 2 EDGES VERTICAL").ok);
+    b = named(d, "Block 1");
+    CHECK_NEAR(volumeOf(*b), 24000 - 4 * 2.0 * 20, 1.0);
+    REQUIRE(run(d, "UNDO").ok);
+    // Every edge: the exact rounded box, corners and all.
+    REQUIRE(run(d, "FILLET \"Block 1\" RADIUS 3 EDGES ALL").ok);
+    b = named(d, "Block 1");
+    CHECK(openEdgeCount(b->mesh) == 0);
+    const double exact = 34.0 * 24 * 14 + 6.0 * (34 * 24 + 24 * 14 + 34 * 14) + kPiD * 9 * (34 + 24 + 14) + 4.0 / 3 * kPiD * 27;
+    CHECK_NEAR(volumeOf(*b), exact, 25.0);
+    // Edge by number, and refusals.
+    REQUIRE(run(d, "BOX 20 20 20 @50,0,0").ok);
+    REQUIRE(run(d, "FILLET \"Block 2\" RADIUS 2 EDGES 1").ok);
+    CHECK_NEAR(volumeOf(*named(d, "Block 2")), 8000 - (1 - kPiD / 4) * 4 * 20, 2.0);
+    CHECK(!run(d, "FILLET \"Block 2\" RADIUS 2 EDGES 99").ok);
+    CHECK(!run(d, "CHAMFER \"Block 2\" EDGES TOP").ok); // no size
+}
+
+TEST_CASE("FILLET and CHAMFER fill inside corners, and treat round edge loops") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 30 10 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 10 30 20 @-15,0,10").ok);
+    REQUIRE(run(d, "BOOLEAN \"Block 1\" UNION \"Block 2\"").ok);
+    REQUIRE(run(d, "FILLET \"Block 1\" RADIUS 4 EDGES CONCAVE").ok);
+    const Body* b = named(d, "Block 1");
+    CHECK(openEdgeCount(b->mesh) == 0);
+    CHECK_NEAR(volumeOf(*b), 18000 + (1 - kPiD / 4) * 16 * 30, 3.0);
+    const Vec3 size = b->bounds().max - b->bounds().min;
+    CHECK_NEAR(size.y, 30.0, 0.01); // the filler stays flush with the ends
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "CHAMFER \"Block 1\" DISTANCE 3 EDGES INSIDE").ok);
+    CHECK_NEAR(volumeOf(*named(d, "Block 1")), 18000 + 4.5 * 30, 1.0);
+    // A cylinder's rims are closed loops.
+    REQUIRE(run(d, "CYLINDER 10 20 @60,0,0").ok);
+    const double before = volumeOf(*named(d, "Cylinder 3"));
+    REQUIRE(run(d, "CHAMFER \"Cylinder 3\" DISTANCE 1.5 EDGES ALL").ok);
+    b = named(d, "Cylinder 3");
+    CHECK(openEdgeCount(b->mesh) == 0);
+    CHECK_NEAR(volumeOf(*b), before - 2 * 2 * kPiD * 9.5 * 1.125, 4.0);
+}

@@ -212,11 +212,14 @@ Details: [docs/armour.md](docs/armour.md).
 
 The *Design* menu (or the command line) adds part features to sketches and solids:
 
+- **Constraint sketcher:** coincident, horizontal, vertical, parallel, perpendicular, tangent,
+  equal, concentric, on, midpoint and fix, plus driving dimensions. It counts the degrees of
+  freedom left. Change a dimension and the part is rebuilt from the history.
 - **Revolve, sweep and loft:** from closed sketch curves.
 - **Pattern:** linear, in rows, or circular. The copies can be joined into a part or cut from it.
 - **Mirror.**
-- **Fillets:** rolling-ball rounds of convex and concave edges, accurate to hundredths of a
-  millimetre.
+- **Fillets and chamfers:** on chosen edges, by number, filter or point. They are exact,
+  including inside corners, round rims and ball corners. Or use rolling-ball rounds of every edge.
 - **Mass properties:** volume, mass, centre of mass and the inertia tensor.
 - **Measure:** distances between points and between bodies.
 
@@ -226,7 +229,8 @@ is rebuilt (`REGEN`), as in a parametric CAD system.
 ```text
 REVOLVE "Profile" AXIS V        SWEEP "Circle 3" ALONG "Path"        LOFT "Base" "Neck" AT 40 SMOOTH
 PATTERN "Boss" CIRCULAR 6 AXIS Z      PATTERN "Pin" LINEAR 3 SPACING 20 SUBTRACT "Plate"
-MIRROR "Half" PLANE YZ UNION    FILLET "Housing" RADIUS 2 BOTH       MASSPROPS "Housing" MATERIAL aluminium
+MIRROR "Half" PLANE YZ UNION    FILLET "Housing" RADIUS 2 EDGES TOP      CHAMFER "Housing" DISTANCE 1 EDGES VERTICAL
+CONSTRAIN TANGENT "Line 1" "Circle 2"      DIM "Polyline 1" SIDE 1 60      CONSTRAINT EDIT D1 80      MASSPROPS "Housing"
 HISTORY      HISTORY EDIT 2 HOLE "Block 1" AT -20,0,15 DIAMETER 10 THROUGH      REGEN
 ```
 
@@ -470,7 +474,7 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 `sculpt` (brushes, cuts, booleans), `armor` (shell, armour, joints, lattice, interference),
 `print` (printability check, repair, orient, slice to G-code, 3MF),
 `cam` (CNC milling: setup, tools, operations, simulation, G-code post),
-`cad` (revolve, sweep, loft, pattern, mirror, fillet, mass properties, measure, feature history),
+`cad` (sketch constraints and dimensions, revolve, sweep, loft, pattern, mirror, edge fillets and chamfers, mass properties, measure, feature history),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

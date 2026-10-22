@@ -481,7 +481,7 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
-        p.set("operation", prop("string", "revolve | sweep | loft | pattern | mirror | fillet | massprops | measure | history | regen | "
+        p.set("operation", prop("string", "revolve | sweep | loft | pattern | mirror | edges | fillet | chamfer | massprops | measure | history | regen | "
                                           "history_edit | history_insert | history_delete | constrain | dim | constraints | "
                                           "constraint_edit | constraint_delete"));
         p.set("kind", prop("string", "constrain: coincident, horizontal, vertical, parallel, perpendicular, tangent, equal, concentric, on, "
@@ -497,7 +497,7 @@ Json McpServer::toolDefinitions() {
         p.set("ruled", prop("boolean", "loft: straight between sections (default smooth)"));
         p.set("angle", prop("number", "revolve / circular pattern: degrees (default 360)"));
         p.set("axis", prop("string", "revolve: u, v or a sketch line's name; pattern: x, y or z"));
-        p.set("body", prop("string", "pattern / mirror / fillet / massprops / measure: the body (default: the selection)"));
+        p.set("body", prop("string", "pattern / mirror / edges / fillet / chamfer / massprops / measure: the body (default: the selection)"));
         p.set("type", prop("string", "pattern: linear or circular"));
         p.set("count", prop("number", "pattern: copies including the original"));
         p.set("spacing", prop("number", "linear pattern: mm between copies"));
@@ -513,7 +513,10 @@ Json McpServer::toolDefinitions() {
         p.set("move", prop("boolean", "mirror: flip the body itself instead of making a copy"));
         p.set("join", prop("boolean", "mirror: join the copy to the body"));
         p.set("radius", prop("number", "fillet: the ball's radius, mm"));
-        p.set("edges", prop("string", "fillet: convex (default), concave or both"));
+        p.set("edges", prop("string", "fillet without 'select': round every convex (default), concave or both edge with a rolling ball"));
+        p.set("select", prop("string", "fillet / chamfer: the edges to treat exactly - numbers from 'edges' (\"1 3 4\"), or all, convex, "
+                                       "concave, vertical, horizontal, top, bottom, or \"near x,y,z\""));
+        p.set("distance", prop("number", "chamfer: the setback along each face, mm"));
         p.set("material", prop("string", "massprops: steel, aluminium, brass, copper, titanium, abs, pla, wood, ..."));
         p.set("density", prop("number", "massprops: g/cm3"));
         p.set("other", prop("string", "measure: the second body"));
@@ -523,7 +526,7 @@ Json McpServer::toolDefinitions() {
         p.set("force", prop("boolean", "regen: rebuild even if the model was changed outside commands"));
         tools.push(tool("cad",
                         "Part features: revolve, sweep and loft sketch curves into solids; linear and circular patterns; mirror; "
-                        "rolling-ball fillets; mass properties (volume, mass, centre of mass, inertia); measure distances; and "
+                        "fillets and chamfers on chosen edges (or rolling-ball on all); mass properties (volume, mass, centre of mass, inertia); measure distances; and "
                         "the feature history (list, edit, insert, delete a step, regenerate).",
                         p, {"operation"}));
     }
@@ -918,8 +921,14 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         }
         if (op == "fillet") {
             if (!a["radius"].isNumber()) return textResult("fillet needs 'radius'", true);
+            if (a["select"].isString()) return runLine("FILLET" + named("body") + opt("radius", "RADIUS") + " EDGES " + a["select"].asString());
             return runLine("FILLET" + named("body") + opt("radius", "RADIUS") + (a["edges"].isString() ? " " + toUpper(a["edges"].asString()) : std::string()));
         }
+        if (op == "chamfer") {
+            if (!a["distance"].isNumber()) return textResult("chamfer needs 'distance'", true);
+            return runLine("CHAMFER" + named("body") + opt("distance", "DISTANCE") + (a["select"].isString() ? " EDGES " + a["select"].asString() : std::string()));
+        }
+        if (op == "edges") return runLine("EDGES" + named("body"));
         if (op == "massprops")
             return runLine("MASSPROPS" + named("body") + opt("density", "DENSITY") + (a["material"].isString() ? " MATERIAL " + a["material"].asString() : std::string()));
         if (op == "measure") {
@@ -962,8 +971,8 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (what != "delete" && !a["command"].isString()) return textResult(op + " needs 'command'", true);
             return runLine("HISTORY " + toUpper(what) + " " + num(a["step"].asNumber()) + (what != "delete" ? " " + a["command"].asString() : std::string()));
         }
-        return textResult("operation is one of revolve, sweep, loft, pattern, mirror, fillet, massprops, measure, history, regen, history_edit, "
-                          "history_insert, history_delete",
+        return textResult("operation is one of revolve, sweep, loft, pattern, mirror, edges, fillet, chamfer, massprops, measure, history, regen, "
+                          "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete",
                           true);
     }
     if (name == "cam") {

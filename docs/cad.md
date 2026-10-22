@@ -5,9 +5,10 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 
 | Kind | Features |
 | --- | --- |
+| Sketch constraints | `CONSTRAIN`, `DIM`, `CONSTRAINTS` and `CONSTRAINT EDIT` / `DELETE` |
 | Solids from sketch curves | `EXTRUDE`, `REVOLVE`, `SWEEP` and `LOFT` |
 | Copies of bodies | `PATTERN` and `MIRROR` |
-| Edge rounds | `FILLET` |
+| Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
 | Analysis | `MASSPROPS` and `MEASURE` |
 
 Every model command goes into a **feature history** that can be edited and regenerated.
@@ -15,6 +16,65 @@ Every model command goes into a **feature history** that can be edited and regen
 ![A revolved vase, a loft through three sections, a swept pipe, and a rounded block with a pattern of holes](cad-features.png)
 
 The picture comes from [examples/cad-demo.txt](examples/cad-demo.txt) (`RUN docs/examples/cad-demo.txt`).
+
+## Sketch constraints and dimensions
+
+```text
+CONSTRAIN kind curve [START|END|CENTRE|POINT n|SIDE n] [curve [...]]
+DIM [HORIZONTAL|VERTICAL|RADIUS|DIAMETER|ANGLE] curve [selector] [curve [selector]] [value]
+CONSTRAINTS
+CONSTRAINT EDIT D1 value      CONSTRAINT DELETE C2
+```
+
+Sketch curves can be tied together by constraints and sized by dimensions, as in a parametric
+CAD sketcher. Each new constraint is solved at once: the curves move as little as they must.
+
+| Constraint | Between |
+| --- | --- |
+| `COINCIDENT` | two points |
+| `HORIZONTAL`, `VERTICAL` | a line or side, or two points |
+| `PARALLEL`, `PERPENDICULAR` | two lines or sides |
+| `TANGENT` | a line and a circle, or two circles (outside or inside, from where they are) |
+| `EQUAL` | two lines' lengths, or two circles' radii |
+| `CONCENTRIC` | two circles |
+| `ON` | a point on a line or circle |
+| `MIDPOINT` | a point at the middle of a line or side |
+| `FIX` | a point, held where it is |
+
+`DIM` sizes a line's length, the distance of two points or of a point from a line, a circle's
+radius or diameter, or the angle between two lines. Without a value it keeps the size there is
+now. It picks its kind from what it is given: two lines make an angle, a circle a radius.
+
+**Selectors:**
+
+- `START` / `END`: a line's ends.
+- `CENTRE`: a circle's centre.
+- `POINT n` / `CORNER n`: a polyline vertex or rectangle corner.
+- `SIDE n`: a polyline segment or rectangle side.
+
+A closed polyline stays closed.
+
+**How it is solved:** damped least squares (Levenberg–Marquardt) on the constraints' errors. A
+constraint that can't be met with the others is refused, and nothing moves. Afterwards the rank
+of the constraints' Jacobian gives the **degrees of freedom** left. Every reply says either
+"fully constrained" or "free in N ways". `CONSTRAINTS` lists them all with their names (C1, D2...),
+values and whether each is met. In the 2D view they are labelled on the sketch, in red when not
+met.
+
+**Driving the model:** constraints and dimensions are history steps. `CONSTRAINT EDIT D5 80`
+rewrites that dimension's step and regenerates the history. So a part extruded from the sketch
+is rebuilt at the new size, and so is everything done to it afterwards.
+
+```text
+PLINE 0,0 48,2 50,31 -1,29 CLOSE
+CONSTRAIN HORIZONTAL "Polyline 1" SIDE 1      CONSTRAIN VERTICAL "Polyline 1" SIDE 2
+CONSTRAIN HORIZONTAL "Polyline 1" SIDE 3      CONSTRAIN VERTICAL "Polyline 1" SIDE 4
+DIM "Polyline 1" SIDE 1 60      DIM "Polyline 1" SIDE 2 40      CONSTRAIN FIX "Polyline 1" START
+EXTRUDE "Polyline 1" 10
+CONSTRAINT EDIT D5 80           (the block is rebuilt 80 long)
+```
+
+The constraints are saved with the project.
 
 ## Revolve
 
@@ -98,7 +158,32 @@ MIRROR [body] [PLANE XY|YZ|XZ] [AT x,y,z] [NORMAL x,y,z] [COPY | MOVE] [UNION]
 - **Copy:** a mirrored copy is the default. `MOVE` flips the body itself.
 - **UNION:** joins the copy to the body, which makes a half model whole.
 
-## Fillet (rounds)
+## Fillet and chamfer on chosen edges
+
+```text
+EDGES [body]
+FILLET [body] RADIUS r EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|TOP|BOTTOM|n...|NEAR x,y,z...
+CHAMFER [body] DISTANCE d [EDGES ...]
+```
+
+`EDGES` lists a solid's sharp edges, numbered. Faces meeting at more than 25° make an edge. Each
+edge is a chain followed along the mesh: straight, or round like a cylinder's rim. The list says
+whether each one is outside (convex) or an inside corner (concave), and gives its length and ends.
+
+`FILLET ... EDGES` and `CHAMFER` treat just the chosen edges:
+
+- by number, from the list;
+- by a filter;
+- or by the edge nearest each point (`NEAR`).
+
+They are exact. The section at each point of the edge comes from its two faces. A cutter (or, on
+an inside corner, a filler) is swept along it and cut from (or joined to) the solid. Where three
+rounded outside edges meet, the corner becomes a ball, as in a CAD system. A chamfer sets each
+face back by `d`. Without `EDGES`, CHAMFER takes the outside edges.
+
+On a 40 × 30 × 20 box with R3 on every edge, the volume is within 0.03% of the exact rounded box.
+
+## Fillet (rolling ball on every edge)
 
 ```text
 FILLET [body] RADIUS r [CONVEX | CONCAVE | BOTH] [VOXEL v]
@@ -127,8 +212,8 @@ rounded box on average and 0.06 mm at worst. The volume is within 0.3% of the St
 
 - Edges that aren't rounded stay sharp to within a voxel.
 - A part thinner than the ball can't hold it, so FILLET refuses rather than erase it.
-- It rounds all the edges of the kind chosen. Rounding chosen edges only would need the
-  boundary-representation edges that meshes don't have.
+- It rounds all the edges of the kind chosen. To round only some, use `FILLET ... EDGES`
+  (above).
 
 ## Mass properties
 
@@ -208,7 +293,8 @@ parts. In either case `HISTORY` says so, and `REGEN` refuses unless you write `R
 The `cad` tool has these operations:
 
 - `revolve`, `sweep`, `loft`;
-- `pattern`, `mirror`, `fillet`;
+- `constrain`, `dim`, `constraints`, `constraint_edit`, `constraint_delete`;
+- `pattern`, `mirror`, `edges`, `fillet`, `chamfer`;
 - `massprops`, `measure`;
 - `history`, `regen`, `history_edit`, `history_insert`, `history_delete`.
 
@@ -216,6 +302,10 @@ The `cad` tool has these operations:
 {"operation": "revolve", "curve": "Polyline 1", "axis": "v"}
 {"operation": "pattern", "body": "Boss", "type": "circular", "count": 6, "axis": "z"}
 {"operation": "fillet", "body": "Housing", "radius": 2, "edges": "both"}
+{"operation": "fillet", "body": "Block 1", "radius": 3, "select": "top"}
+{"operation": "chamfer", "body": "Block 1", "distance": 1, "select": "1 4 7"}
+{"operation": "dim", "refs": [{"curve": "Polyline 1", "at": "side 1"}], "value": 60}
+{"operation": "constraint_edit", "constraint": "D5", "value": 80}
 {"operation": "massprops", "body": "Housing", "material": "aluminium"}
 {"operation": "history_edit", "step": 2, "command": "HOLE \"Block 1\" AT -20,0,15 DIAMETER 10 THROUGH"}
 ```
