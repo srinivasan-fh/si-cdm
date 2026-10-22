@@ -89,10 +89,21 @@ constexpr CommandSpec kCommands[] = {
     {"PATTERN", "ARRAY", "PATTERN [body] LINEAR n SPACING d [DIR x,y,z] [ROWS m SPACING2 d DIR2 x,y,z] | CIRCULAR n [ANGLE a] [AXIS X|Y|Z] [AT x,y,z] "
      "[UNION|SUBTRACT \"target\"]", "Linear or circular copies of a body, or joined into / cut from a target"},
     {"MIRROR", "", "MIRROR [body] [PLANE XY|YZ|XZ] [AT x,y,z] [NORMAL x,y,z] [COPY|MOVE] [UNION]", "Mirror a body across a plane"},
-    {"FILLET", "ROUND", "FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v]", "Round a solid's edges with a rolling ball"},
+    {"FILLET", "ROUND", "FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v] [EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|TOP|BOTTOM|n...|"
+     "NEAR x,y,z...]", "Round a solid's edges with a rolling ball: all of a kind, or exactly on chosen EDGES"},
+    {"CHAMFER", "BEVEL", "CHAMFER [body] DISTANCE d [EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|TOP|BOTTOM|n...|NEAR x,y,z...]",
+     "Bevel chosen edges back d along each face (default: the outside edges)"},
+    {"EDGES", "", "EDGES [body]", "List a solid's sharp edges, numbered for FILLET / CHAMFER ... EDGES"},
     {"MASSPROPS", "MASS", "MASSPROPS [body] [DENSITY g/cm3 | MATERIAL name]",
      "Volume, area, mass, centre of mass, inertia tensor and principal moments"},
     {"MEASURE", "DIST", "MEASURE x,y,z x,y,z | MEASURE \"body\" \"body\"", "Distance between two points, or the closest distance between two bodies"},
+    {"CONSTRAIN", "CON", "CONSTRAIN COINCIDENT|HORIZONTAL|VERTICAL|PARALLEL|PERPENDICULAR|TANGENT|EQUAL|CONCENTRIC|ON|MIDPOINT|FIX curve "
+     "[START|END|CENTRE|POINT n|SIDE n] ...", "A geometric constraint between sketch curves; the sketch is solved to meet it"},
+    {"DIM", "DIMENSION", "DIM [HORIZONTAL|VERTICAL|DIAMETER|ANGLE] curve [START|END|...] [curve ...] [value]",
+     "A driving dimension: a line's length, two points' distance, a circle's radius, two lines' angle"},
+    {"CONSTRAINTS", "", "CONSTRAINTS", "The sketch's constraints and dimensions, and its degrees of freedom"},
+    {"CONSTRAINT", "", "CONSTRAINT EDIT D1 value | CONSTRAINT DELETE C2",
+     "Change a dimension (the model is rebuilt from the history) or remove a constraint"},
     {"HISTORY", "HIST", "HISTORY [LIST] | HISTORY EDIT n command | HISTORY INSERT n command | HISTORY DELETE n | HISTORY CLEAR",
      "The feature history: the model commands in order; edit, insert or delete a step and the model is rebuilt"},
     {"REGEN", "REGENERATE", "REGEN [FORCE]", "Rebuild the model from its feature history"},

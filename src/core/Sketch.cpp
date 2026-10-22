@@ -1,9 +1,9 @@
 #include "core/Sketch.hpp"
 #include "core/Units.hpp"
 
-#include <cstdio>
-
+#include <algorithm>
 #include <atomic>
+#include <cstdio>
 
 namespace sicdm {
 
@@ -112,7 +112,12 @@ SketchCurve& Sketch::add(SketchCurve c) {
 
 void Sketch::remove(std::size_t index) {
     if (index >= m_curves.size()) return;
+    const std::string gone = m_curves[index].name;
     m_curves.erase(m_curves.begin() + static_cast<std::ptrdiff_t>(index));
+    // Its constraints go with it.
+    std::erase_if(m_constraints, [&](const SketchConstraint& c) {
+        return std::any_of(c.refs.begin(), c.refs.end(), [&](const SketchRef& r) { return r.curve == gone; });
+    });
     m_revision = nextRevision();
 }
 

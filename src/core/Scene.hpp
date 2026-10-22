@@ -121,6 +121,8 @@ public:
     // the bodies and motions is kept before each one (the last few, within a memory
     // budget). Once the edit has succeeded, sealUndo() records the state it left.
     void pushUndo(std::string label);
+    // How many snapshots were ever taken (the stack itself is capped).
+    std::uint64_t undoPushes() const noexcept { return m_undoPushes; }
     void sealUndo();
     // Restores the last snapshot; returns its label, or "" when there is none. A sealed
     // snapshot is restored only while no body was added, removed or rebuilt since its
@@ -175,6 +177,7 @@ private:
         bool motionsChanged = false;
     };
     std::vector<Snapshot> m_undo;
+    std::uint64_t m_undoPushes = 0;
     struct Redo {
         std::string label;
         std::vector<Body> bodies;   // as the edit had left them

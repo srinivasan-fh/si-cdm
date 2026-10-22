@@ -29,6 +29,9 @@ struct Document {
     bool apiMillimeters = false;
     // Set while REGEN replays the history (the replayed commands aren't recorded again).
     bool replaying = false;
+    int replayStep = -1;            // the history step being replayed
+    std::string pendingConstraint;  // a constraint just made: it learns its history step
+    bool historyRewritten = false;  // the command changed the history itself: it isn't recorded
 
     bool snapGrid = true;
     bool snapPoints = true;

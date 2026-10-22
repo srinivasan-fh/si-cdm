@@ -52,6 +52,31 @@ struct RoundOptions {
 // Rounds the body's edges with a rolling ball of the radius. The body becomes a mesh.
 bool roundBody(Body& body, const RoundOptions& options, std::string* error = nullptr);
 
+// The sharp edges of a solid (faces meeting at more than `angleDeg`), joined into
+// chains: straight runs between corners, or loops (a cylinder's rim). Each point keeps
+// the normals of the faces on its left (nL) and right (nR) going along the chain.
+struct EdgeChain {
+    std::vector<Vec3> pts, nL, nR;
+    bool closed = false;
+    bool convex = true;  // an outside edge (else an inside corner)
+    float length() const;
+};
+std::vector<EdgeChain> edgeChains(const MeshData& world, float angleDeg = 25.0f);
+
+// Which chains: by number (from the listing), a point near them, or a filter.
+struct EdgeFilter {
+    bool convex = false, concave = false, vertical = false, horizontal = false, top = false, bottom = false;
+    std::vector<int> numbers;  // 1-based
+    std::vector<Vec3> near;    // the chain nearest each point
+};
+std::vector<int> selectEdges(const std::vector<EdgeChain>& chains, const MeshData& world, const EdgeFilter& f);
+
+// Rounds (or chamfers, the cut `size` back along each face) the chosen chains exactly:
+// a cutter swept along each chain is cut away (outside edges) or joined on (inside
+// corners). Where several rounded edges meet, the corner is mitred, not blended.
+bool roundEdges(Body& body, const std::vector<EdgeChain>& chains, const std::vector<int>& chosen, float size, bool chamfer,
+                std::string* error = nullptr);
+
 struct SolidMass {
     double volume = 0, area = 0, mass = 0; // mm^3, mm^2, g
     Vec3 centroid;

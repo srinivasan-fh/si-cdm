@@ -482,7 +482,14 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("operation", prop("string", "revolve | sweep | loft | pattern | mirror | fillet | massprops | measure | history | regen | "
-                                          "history_edit | history_insert | history_delete"));
+                                          "history_edit | history_insert | history_delete | constrain | dim | constraints | "
+                                          "constraint_edit | constraint_delete"));
+        p.set("kind", prop("string", "constrain: coincident, horizontal, vertical, parallel, perpendicular, tangent, equal, concentric, on, "
+                                     "midpoint, fix; dim: distance (default), horizontal, vertical, radius, diameter, angle"));
+        p.set("refs", prop("array", "constrain / dim: the curves, each {\"curve\": name, \"at\": \"start\" | \"end\" | \"centre\" | "
+                                    "\"point n\" | \"side n\"}"));
+        p.set("value", prop("number", "dim / constraint_edit: the size (mm, or degrees for an angle); dim without it keeps the size now"));
+        p.set("constraint", prop("string", "constraint_edit / delete: its name (D1, C2...)"));
         p.set("curve", prop("string", "revolve: the closed sketch curve; sweep: the profile"));
         p.set("path", prop("string", "sweep: the path curve"));
         p.set("sections", prop("array", "loft: the closed sketch curves, in order"));
@@ -922,6 +929,30 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             }
             if (!a["other"].isString()) return textResult("measure needs 'points', or 'body' and 'other'", true);
             return runLine("MEASURE" + named("body") + named("other"));
+        }
+        if (op == "constrain" || op == "dim") {
+            std::string line = op == "dim" ? "DIM" : "CONSTRAIN";
+            const std::string kind = a["kind"].asString(op == "dim" ? "distance" : "");
+            if (op == "constrain") {
+                if (kind.empty()) return textResult("constrain needs 'kind'", true);
+                line += " " + toUpper(kind);
+            } else if (kind != "distance")
+                line += " " + toUpper(kind);
+            if (!a["refs"].isArray() || a["refs"].size() == 0) return textResult(op + " needs 'refs'", true);
+            for (const Json& r : a["refs"].items()) {
+                if (!r["curve"].isString()) return textResult("each ref needs 'curve'", true);
+                line += " " + quote(r["curve"].asString());
+                if (r["at"].isString()) line += " " + toUpper(r["at"].asString());
+            }
+            if (a["value"].isNumber()) line += " " + num(a["value"].asNumber());
+            return runLine(line);
+        }
+        if (op == "constraints") return runLine("CONSTRAINTS");
+        if (op == "constraint_edit" || op == "constraint_delete") {
+            if (!a["constraint"].isString()) return textResult(op + " needs 'constraint'", true);
+            if (op == "constraint_edit" && !a["value"].isNumber()) return textResult("constraint_edit needs 'value'", true);
+            return runLine(std::string("CONSTRAINT ") + (op == "constraint_edit" ? "EDIT " : "DELETE ") + a["constraint"].asString() +
+                           (op == "constraint_edit" ? " " + num(a["value"].asNumber()) : std::string()));
         }
         if (op == "history") return runLine("HISTORY");
         if (op == "regen") return runLine(std::string("REGEN") + (a["force"].asBool() ? " FORCE" : ""));

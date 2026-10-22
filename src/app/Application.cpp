@@ -1263,6 +1263,7 @@ void Application::frame(float dt) {
     }
     if (m_extrudeCurve >= 0) drawExtrudePreview();
     if (m_uiState.mode == ViewMode::Model3D && m_doc.state.cam.showPaths) drawToolpathOverlay();
+    if (m_uiState.mode == ViewMode::Drawing2D && !m_doc.scene.sketch().constraints().empty()) drawConstraintOverlay();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active())))
         drawSculptOverlay();
@@ -1991,6 +1992,76 @@ void Application::updateLoopShapes() {
         any = true;
     }
     if (!any) m_loopOverrides.clear();
+}
+
+// Sketch constraints in the 2D view: each dimension's value by its geometry, and a
+// short tag (H, V, //, perpendicular, T, =, ...) for the geometric ones. Unmet ones red.
+void Application::drawConstraintOverlay() const {
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    dl->PushClipRect(m_ui.canvasMin(), m_ui.canvasMax(), true);
+    const Sketch& sk = m_doc.scene.sketch();
+    auto find = [&](const std::string& n) -> const SketchCurve* {
+        for (const SketchCurve& c : sk.curves())
+            if (c.name == n) return &c;
+        return nullptr;
+    };
+    // Where a reference sits on the plane: a point, a side's middle, a circle's rim.
+    auto anchor = [&](const SketchRef& r, Vec2* out) {
+        const SketchCurve* c = find(r.curve);
+        if (!c || c->pts.empty()) return false;
+        auto corner = [&](int k) {
+            if (c->kind != CurveKind::Rectangle) return c->pts[static_cast<std::size_t>(std::clamp(k, 0, static_cast<int>(c->pts.size()) - 1))];
+            const Vec2 a = c->pts[0], b = c->pts[1];
+            k = ((k % 4) + 4) % 4;
+            return k == 0 ? a : k == 1 ? Vec2{b.x, a.y} : k == 2 ? b : Vec2{a.x, b.y};
+        };
+        if (r.segment >= 0) {
+            const Vec2 a = corner(r.segment), b = corner(c->kind == CurveKind::Rectangle ? r.segment + 1 : r.segment + 1);
+            *out = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
+        } else if (r.point >= 0) *out = corner(r.point);
+        else if (c->kind == CurveKind::Circle) *out = {c->pts[0].x + c->radius * 0.707f, c->pts[0].y + c->radius * 0.707f};
+        else if (c->kind == CurveKind::Line) *out = {(c->pts[0].x + c->pts[1].x) * 0.5f, (c->pts[0].y + c->pts[1].y) * 0.5f};
+        else *out = c->pts[0];
+        return c->visible;
+    };
+    for (const SketchConstraint& k : sk.constraints()) {
+        if (k.refs.empty()) continue;
+        const SketchCurve* first = find(k.refs[0].curve);
+        if (!first || first->plane != m_uiState.plane) continue;
+        Vec2 a{}, b{};
+        if (!anchor(k.refs[0], &a)) continue;
+        if (k.refs.size() > 1 && anchor(k.refs[1], &b)) a = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
+        const auto s = projectToScreen(camera(), planeFrame(first->plane).toWorld(a), io.DisplaySize);
+        if (!s) continue;
+        std::string label;
+        switch (k.kind) {
+        case ConstraintKind::Horizontal: label = "H"; break;
+        case ConstraintKind::Vertical: label = "V"; break;
+        case ConstraintKind::Parallel: label = "//"; break;
+        case ConstraintKind::Perpendicular: label = "_|_"; break;
+        case ConstraintKind::Tangent: label = "T"; break;
+        case ConstraintKind::Equal: label = "="; break;
+        case ConstraintKind::Concentric: label = "(o)"; break;
+        case ConstraintKind::Coincident: label = "o"; break;
+        case ConstraintKind::PointOn: label = "on"; break;
+        case ConstraintKind::Midpoint: label = "mid"; break;
+        case ConstraintKind::Fix: label = "fix"; break;
+        default: {
+            char t[64];
+            std::snprintf(t, sizeof(t), k.kind == ConstraintKind::Angle ? "%s %g\xC2\xB0" : k.kind == ConstraintKind::Radius ? "%s R%g"
+                                         : k.kind == ConstraintKind::Diameter ? "%s \xC3\x98%g" : "%s %g",
+                          k.name.c_str(), k.value);
+            label = t;
+        }
+        }
+        const double err = constraintError(sk, k);
+        const ImU32 col = std::isnan(err) || err > 1e-4 ? IM_COL32(255, 110, 100, 255) : IM_COL32(120, 200, 255, 255);
+        const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+        dl->AddRectFilled({s->x + 4, s->y - 2}, {s->x + 10 + ts.x, s->y + ts.y + 2}, IM_COL32(16, 18, 24, 200), 3.0f);
+        dl->AddText({s->x + 7, s->y}, col, label.c_str());
+    }
+    dl->PopClipRect();
 }
 
 // CAM toolpaths over the 3D view: cuts in each operation's colour, plunges yellow,

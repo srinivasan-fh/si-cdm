@@ -308,6 +308,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         curves.push(jc);
     }
     doc.set("sketch", curves);
+    if (!scene.sketch().constraints().empty()) doc.set("constraints", constraintsToJson(scene.sketch()));
 
     Json images = Json::array();
     for (const ImageRef& img : scene.images()) {
@@ -492,6 +493,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         if (c.pts.empty()) continue;
         loaded.sketch().add(std::move(c));
     }
+    constraintsFromJson((*doc)["constraints"], loaded.sketch());
 
     std::string missing;
     const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();

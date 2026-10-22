@@ -460,19 +460,74 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         return out;
     }
 
-    if (cmd == "FILLET") {
-        // FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v]
-        auto isKey = [](const std::string& w) { return w == "radius" || w == "r" || w == "convex" || w == "concave" || w == "both" || w == "voxel"; };
+    if (cmd == "EDGES") {
+        // EDGES [body]: the sharp edges FILLET / CHAMFER ... EDGES can pick.
+        std::size_t i = 0;
+        const std::string name = leadingName(a, quoted, i, [](const std::string&) { return false; });
+        const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(name.empty() ? "Select a body, or name it" : "No body named " + name);
+        const Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const auto chains = edgeChains(worldMesh(b));
+        out.say(b.name + ": " + std::to_string(chains.size()) + " sharp edges");
+        for (std::size_t k = 0; k < chains.size(); ++k) {
+            const EdgeChain& c = chains[k];
+            const Vec3 d = c.pts.back() - c.pts.front();
+            const char* dir = c.closed ? "loop" : std::fabs(d.z) > 0.999f * length(d) ? "vertical" : std::fabs(d.z) < 1e-3f * length(d) ? "horizontal" : "slanted";
+            out.say("  " + std::to_string(k + 1) + ". " + (c.convex ? "outside " : "inside ") + dir + ", " + lengthText(c.length()) + " from " +
+                    lengthsText({c.pts.front().x, c.pts.front().y, c.pts.front().z}, ", ", "(", ")") +
+                    (c.closed ? std::string() : " to " + lengthsText({c.pts.back().x, c.pts.back().y, c.pts.back().z}, ", ", "(", ")")));
+        }
+        return out;
+    }
+
+    if (cmd == "FILLET" || cmd == "CHAMFER") {
+        // FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v] [EDGES ...]
+        // CHAMFER [body] DISTANCE d [EDGES ...]
+        //   EDGES ALL | CONVEX | CONCAVE | VERTICAL | HORIZONTAL | TOP | BOTTOM | n ... | NEAR x,y,z ...
+        const bool chamfer = cmd == "CHAMFER";
+        auto isKey = [](const std::string& w) {
+            return w == "radius" || w == "r" || w == "convex" || w == "concave" || w == "both" || w == "voxel" || w == "edges" || w == "edge" ||
+                   w == "distance" || w == "d" || w == "size";
+        };
         std::size_t i = 0;
         const std::string name = leadingName(a, quoted, i, isKey);
         const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
         if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
-            return out.fail(name.empty() ? "Select a body to round, or name it" : "No body named " + name);
+            return out.fail(name.empty() ? std::string("Select a body to ") + (chamfer ? "chamfer" : "round") + ", or name it" : "No body named " + name);
         RoundOptions o;
-        bool radiusGiven = false;
+        bool radiusGiven = false, edges = chamfer;
+        EdgeFilter ef;
         for (; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
-            if (k == "radius" || k == "r" || k == "voxel") {
+            if (k == "edges" || k == "edge") {
+                edges = true;
+                for (++i; i < a.size(); ++i) {
+                    const std::string w = lower(a[i]);
+                    if (w == "all") continue;
+                    if (w == "convex" || w == "outside") ef.convex = true;
+                    else if (w == "concave" || w == "inside") ef.concave = true;
+                    else if (w == "vertical") ef.vertical = true;
+                    else if (w == "horizontal") ef.horizontal = true;
+                    else if (w == "top") ef.top = true;
+                    else if (w == "bottom") ef.bottom = true;
+                    else if (w == "near") {
+                        while (i + 1 < a.size()) {
+                            const auto v = parseVec3(a[i + 1]);
+                            if (!v) break;
+                            ef.near.push_back(*v);
+                            ++i;
+                        }
+                        if (ef.near.empty()) return out.fail("NEAR needs x,y,z points by the edges");
+                    } else if (const auto n = parseNumber(a[i]); n && *n >= 1 && std::floor(*n) == *n) ef.numbers.push_back(static_cast<int>(*n));
+                    else {
+                        --i; // back to the options
+                        break;
+                    }
+                }
+                continue;
+            }
+            if (k == "radius" || k == "r" || k == "voxel" || k == "distance" || k == "d" || k == "size") {
                 const auto v = i + 1 < a.size() ? parseLength(a[++i]) : std::nullopt;
                 if (!v || !(*v > 0)) return out.fail(toUpper(k) + " needs a length");
                 (k == "voxel" ? o.voxel : o.radius) = static_cast<float>(*v);
@@ -483,7 +538,34 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             else if (const auto v = parseLength(a[i]); v && *v > 0 && !radiusGiven) {
                 o.radius = static_cast<float>(*v);
                 radiusGiven = true;
-            } else return out.fail("Usage: FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v]");
+            } else
+                return out.fail(chamfer ? "Usage: CHAMFER [body] DISTANCE d [EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|TOP|BOTTOM|n...|NEAR x,y,z...]"
+                                        : "Usage: FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v] [EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|"
+                                          "TOP|BOTTOM|n...|NEAR x,y,z...]");
+        }
+        if (!radiusGiven) return out.fail(chamfer ? "CHAMFER needs DISTANCE d" : "FILLET needs RADIUS r");
+        if (edges) { // exact, on the chosen edges
+            Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            const MeshData world = worldMesh(body);
+            const auto chains = edgeChains(world);
+            if (chamfer && ef.numbers.empty() && ef.near.empty() && !ef.concave) ef.convex = true; // a chamfer defaults to the outside edges
+            const auto chosen = selectEdges(chains, world, ef);
+            if (chosen.empty()) return out.fail("No edges match (EDGES lists " + body.name + "'s)");
+            const double before = meshVolume(world);
+            doc.scene.pushUndo(cmd + " " + body.name);
+            std::string e;
+            if (!roundEdges(body, chains, chosen, o.radius, chamfer, &e)) {
+                doc.scene.undo();
+                return out.fail(std::string("Cannot ") + (chamfer ? "chamfer " : "round ") + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + e);
+            }
+            doc.scene.touchBodies();
+            doc.dirty = true;
+            std::string list;
+            for (int k : chosen) list += (list.empty() ? "" : ", ") + std::to_string(k + 1);
+            out.say(std::string(chamfer ? "Chamfered " : "Rounded ") + std::to_string(chosen.size()) + (chosen.size() == 1 ? " edge" : " edges") + " (" + list +
+                    ") of " + body.name + (chamfer ? " by " : " with R") + lengthText(o.radius) + ": " + closedText(body.mesh) + ", volume " +
+                    fmt3("%.1f", before / 1000.0) + " -> " + fmt3("%.1f", meshVolume(body.mesh) / 1000.0) + " cm3");
+            return out;
         }
         if (!radiusGiven) return out.fail("FILLET needs RADIUS r");
         Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
@@ -584,10 +666,8 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
     return out.fail("Unknown feature command " + cmd);
 }
 
-namespace {
-
 // The arguments from `from` on as a command line again (quoted ones re-quoted).
-std::string rejoin(const std::vector<std::string>& a, const std::vector<bool>& quoted, std::size_t from) {
+std::string rejoinArgs(const std::vector<std::string>& a, const std::vector<bool>& quoted, std::size_t from) {
     std::string s;
     for (std::size_t i = from; i < a.size(); ++i) {
         std::string w = a[i];
@@ -603,7 +683,7 @@ std::string rejoin(const std::vector<std::string>& a, const std::vector<bool>& q
 
 // Rebuilds the model from `steps`. On a failure the model and history are left as
 // they were and the failing step is reported.
-bool regenerate(Document& doc, const std::vector<HistoryStep>& steps, CommandOutput& out) {
+bool regenerateHistory(Document& doc, const std::vector<HistoryStep>& steps, CommandOutput& out) {
     const Scene saved = doc.scene;
     const ProjectState savedState = doc.state;
     const int sb = doc.selectedBody, sc = doc.selectedCurve, si = doc.selectedImage, serial = doc.primitiveSerial;
@@ -616,12 +696,14 @@ bool regenerate(Document& doc, const std::vector<HistoryStep>& steps, CommandOut
     for (std::size_t k = 0; k < steps.size(); ++k) {
         doc.apiMillimeters = steps[k].millimetres;
         doc.state.units.unit = steps[k].unit;
+        doc.replayStep = static_cast<int>(k);
         // The selection the step ran with.
         doc.selectedBody = steps[k].selectedBody.empty() ? -1 : bodyNamed(doc, steps[k].selectedBody);
         doc.selectedCurve = steps[k].selectedCurve.empty() ? -1 : curveNamed(doc, steps[k].selectedCurve);
         const CommandOutput r = executeCommand(doc, steps[k].line, nullptr);
         if (!r.ok) {
             doc.replaying = false;
+            doc.replayStep = -1;
             doc.apiMillimeters = mm;
             doc.scene.restore(Scene(saved));
             doc.state = savedState;
@@ -633,6 +715,7 @@ bool regenerate(Document& doc, const std::vector<HistoryStep>& steps, CommandOut
         }
     }
     doc.replaying = false;
+    doc.replayStep = -1;
     doc.apiMillimeters = mm;
     doc.state.units = savedState.units;
     doc.state.history = steps;
@@ -644,7 +727,6 @@ bool regenerate(Document& doc, const std::vector<HistoryStep>& steps, CommandOut
     return true;
 }
 
-} // namespace
 
 CommandOutput runHistoryCommand(Document& doc, const std::string& cmd, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
     CommandOutput out;
@@ -675,7 +757,7 @@ CommandOutput runHistoryCommand(Document& doc, const std::string& cmd, const std
             return out.fail("The model was changed outside the command line since the history began (brush strokes, drags): REGEN FORCE rebuilds "
                             "from the history and loses those changes");
         const std::vector<HistoryStep> steps = st.history;
-        if (!regenerate(doc, steps, out)) return out;
+        if (!regenerateHistory(doc, steps, out)) return out;
         out.say("Regenerated " + std::to_string(steps.size()) + " steps: " + std::to_string(doc.scene.bodies().size()) + " bodies, " +
                 std::to_string(doc.scene.sketch().curves().size()) + " sketch curves");
         return out;
@@ -689,7 +771,7 @@ CommandOutput runHistoryCommand(Document& doc, const std::string& cmd, const std
         if (sub == "delete") {
             steps.erase(steps.begin() + static_cast<std::ptrdiff_t>(k));
         } else {
-            const std::string line = rejoin(a, quoted, 2);
+            const std::string line = rejoinArgs(a, quoted, 2);
             if (line.empty()) return out.fail("HISTORY " + toUpper(sub) + " n command...: the new command");
             HistoryStep step;
             step.line = line;
@@ -703,7 +785,7 @@ CommandOutput runHistoryCommand(Document& doc, const std::string& cmd, const std
             } else
                 steps.insert(steps.begin() + static_cast<std::ptrdiff_t>(k), step);
         }
-        if (!regenerate(doc, steps, out)) return out;
+        if (!regenerateHistory(doc, steps, out)) return out;
         out.say((sub == "delete" ? "Deleted step " : sub == "edit" ? "Changed step " : "Inserted step ") + std::to_string(k + 1) + " and regenerated " +
                 std::to_string(steps.size()) + " steps");
         return out;

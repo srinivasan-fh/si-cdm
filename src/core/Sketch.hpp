@@ -1,8 +1,11 @@
 #pragma once
 
+#include "core/Constraints.hpp"
 #include "core/Math.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -68,8 +71,19 @@ public:
 
     AABB bounds() const;
 
+    // Constraints and dimensions on the curves (see Constraints.hpp).
+    std::vector<SketchConstraint>& constraints() noexcept { return m_constraints; }
+    const std::vector<SketchConstraint>& constraints() const noexcept { return m_constraints; }
+    // The next constraint name: "D1", "D2" for dimensions, "C1"... for the others.
+    std::string nextConstraintName(bool dimension) { return (dimension ? "D" : "C") + std::to_string(++m_constraintSerial); }
+    void noteConstraintName(const std::string& name) {
+        if (name.size() > 1) m_constraintSerial = std::max(m_constraintSerial, std::atoi(name.c_str() + 1));
+    }
+
 private:
     std::vector<SketchCurve> m_curves;
+    std::vector<SketchConstraint> m_constraints;
+    int m_constraintSerial = 0;
     std::uint64_t m_revision = nextRevision();
     int m_serial = 0;
 };

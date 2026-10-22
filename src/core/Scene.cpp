@@ -87,6 +87,7 @@ std::string motionsKey(const std::vector<Motion>& motions) {
 } // namespace
 
 void Scene::pushUndo(std::string label) {
+    ++m_undoPushes;
     Snapshot s;
     s.label = std::move(label);
     s.bodies = m_bodies;

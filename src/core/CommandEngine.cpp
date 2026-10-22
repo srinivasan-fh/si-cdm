@@ -6,6 +6,7 @@
 #include "core/Pose.hpp"
 #include "core/CamCommand.hpp"
 #include "core/FeatureCommand.hpp"
+#include "core/SketchCommand.hpp"
 #include "core/Print.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
@@ -286,17 +287,18 @@ namespace {
 bool historyCommand(const std::string& cmd) {
     static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
                                          "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
-                                         "MIRROR",   "FILLET",  "SCULPT",  "REMESH",   "MASK",      "SUBDIVIDE", "SYMMETRIZE", "DECIMATE", "HOLE",
+                                         "MIRROR",   "FILLET",  "CHAMFER",  "SCULPT",  "REMESH",   "MASK",      "SUBDIVIDE", "SYMMETRIZE", "DECIMATE", "HOLE",
                                          "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
                                          "PART",     "PARAM",   "ROTATE",  "SCALE",    "ERASE",     "MOVE",    "SELECT",   "REPAIR",  "ORIENT",
-                                         "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS"};
+                                         "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
+                                         "CONSTRAINT"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
 }
 
 void recordHistory(Document& doc, std::string_view line, const CommandOutput& out, bool startedEmpty, const std::string& selBody,
-                   const std::string& selCurve) {
+                   const std::string& selCurve, bool pushedUndo) {
     ProjectState& st = doc.state;
     if (!out.ok) return;
     const ParsedCommand pc = tokenizeCommand(line);
@@ -336,7 +338,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     }
     HistoryStep step;
     step.line = std::string(line);
-    step.undoable = cmd != "SELECT" && cmd != "PLANE";
+    step.undoable = pushedUndo; // only an edit with an undo snapshot is taken back by UNDO
     step.millimetres = doc.apiMillimeters;
     step.unit = st.units.unit;
     step.selectedBody = selBody;
@@ -359,10 +361,19 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
                                     ? bodies[static_cast<std::size_t>(doc.selectedBody)].name : std::string();
     const std::string selCurve = doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(curves.size())
                                      ? curves[static_cast<std::size_t>(doc.selectedCurve)].name : std::string();
+    const std::uint64_t pushes = doc.scene.undoPushes();
+    doc.pendingConstraint.clear();
+    doc.historyRewritten = false;
     CommandOutput out = runCommand(doc, line, view);
     // An edit that kept an undo snapshot and succeeded: record the state it left.
     doc.scene.sealUndo();
-    if (!doc.replaying) recordHistory(doc, line, out, empty, selBody, selCurve);
+    if (!doc.replaying && !doc.historyRewritten) recordHistory(doc, line, out, empty, selBody, selCurve, doc.scene.undoPushes() != pushes);
+    doc.historyRewritten = false;
+    // A new constraint remembers the history step that made it (CONSTRAINT EDIT rewrites it).
+    if (out.ok && !doc.pendingConstraint.empty())
+        for (SketchConstraint& c : doc.scene.sketch().constraints())
+            if (c.name == doc.pendingConstraint) c.step = doc.replaying ? doc.replayStep : static_cast<int>(doc.state.history.size()) - 1;
+    doc.pendingConstraint.clear();
     doc.state.historyRevision = doc.scene.revision();
     return out;
 }
@@ -1390,9 +1401,10 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     }
     if (cmd == "CAM") return runCamCommand(doc, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
-        cmd == "MEASURE")
+        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES")
         return runFeatureCommand(doc, cmd, a, pc.quoted);
     if (cmd == "HISTORY" || cmd == "REGEN") return runHistoryCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "CONSTRAIN" || cmd == "DIM" || cmd == "CONSTRAINTS" || cmd == "CONSTRAINT") return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "PRINTCHECK" || cmd == "REPAIR" || cmd == "ORIENT" || cmd == "SLICE") {
         // PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]      REPAIR [body]      ORIENT [body] [OVERHANG deg]
         // SLICE [body] TO path.gcode [LAYER h] [WIDTH w] [INFILL %] [WALLS n] [TOP n] [BOTTOM n] [NOZZLE t] [BED t]

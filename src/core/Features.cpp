@@ -874,4 +874,296 @@ bool roundBody(Body& body, const RoundOptions& o, std::string* error) {
     return true;
 }
 
+// --- chosen edges: rounds and chamfers ---------------------------------------------------
+
+float EdgeChain::length() const {
+    float l = 0;
+    for (std::size_t i = 1; i < pts.size(); ++i) l += sicdm::length(pts[i] - pts[i - 1]);
+    if (closed && pts.size() > 1) l += sicdm::length(pts.front() - pts.back());
+    return l;
+}
+
+std::vector<EdgeChain> edgeChains(const MeshData& m, float angleDeg) {
+    std::vector<EdgeChain> out;
+    if (m.indices.empty()) return out;
+    // Weld corners that coincide.
+    const AABB box = m.bounds();
+    const float q = std::max(sicdm::length(box.max - box.min) * 1e-6f, 1e-7f);
+    std::unordered_map<std::uint64_t, std::uint32_t> weld;
+    std::vector<Vec3> p;
+    std::vector<std::uint32_t> id(m.vertices.size());
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+        const Vec3& v = m.vertices[i].position;
+        const auto k = [&](float x, float lo) { return static_cast<std::uint64_t>(std::llround((x - lo) / q)) & 0x1FFFFF; };
+        const std::uint64_t key = (k(v.x, box.min.x) << 42) | (k(v.y, box.min.y) << 21) | k(v.z, box.min.z);
+        const auto [it, fresh] = weld.try_emplace(key, static_cast<std::uint32_t>(p.size()));
+        if (fresh) p.push_back(v);
+        id[i] = it->second;
+    }
+    std::vector<std::array<std::uint32_t, 3>> t;
+    std::vector<Vec3> n;
+    for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) {
+        const std::array<std::uint32_t, 3> tri{id[m.indices[k]], id[m.indices[k + 1]], id[m.indices[k + 2]]};
+        if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2]) continue;
+        const Vec3 nn = cross(p[tri[1]] - p[tri[0]], p[tri[2]] - p[tri[0]]);
+        if (sicdm::length(nn) < 1e-12f) continue;
+        t.push_back(tri);
+        n.push_back(normalize(nn));
+    }
+    auto dkey = [](std::uint32_t a, std::uint32_t b) { return (static_cast<std::uint64_t>(a) << 32) | b; };
+    std::unordered_map<std::uint64_t, std::uint32_t> directed; // a->b -> the triangle with it
+    std::unordered_map<std::uint64_t, int> count;
+    for (std::uint32_t i = 0; i < t.size(); ++i)
+        for (int e = 0; e < 3; ++e) {
+            const std::uint32_t a = t[i][static_cast<std::size_t>(e)], b = t[i][static_cast<std::size_t>((e + 1) % 3)];
+            directed[dkey(a, b)] = i;
+            ++count[dkey(std::min(a, b), std::max(a, b))];
+        }
+    const float cosMax = std::cos(angleDeg * 3.14159265f / 180.0f);
+    struct Feature {
+        std::uint32_t a, b;
+        bool convex;
+    };
+    std::vector<Feature> feats;
+    std::unordered_map<std::uint32_t, std::vector<std::size_t>> at;
+    for (const auto& [key, c] : count) {
+        if (c != 2) continue;
+        const auto a = static_cast<std::uint32_t>(key >> 32), b = static_cast<std::uint32_t>(key & 0xFFFFFFFFu);
+        const auto ia = directed.find(dkey(a, b)), ib = directed.find(dkey(b, a));
+        if (ia == directed.end() || ib == directed.end()) continue;
+        const Vec3 nA = n[ia->second], nB = n[ib->second];
+        if (dot(nA, nB) > cosMax) continue;
+        std::uint32_t c3 = 0;
+        for (std::uint32_t v : t[ib->second])
+            if (v != a && v != b) c3 = v;
+        feats.push_back({a, b, dot(nA, p[c3] - p[a]) < 0});
+        at[a].push_back(feats.size() - 1);
+        at[b].push_back(feats.size() - 1);
+    }
+    std::vector<char> used(feats.size(), 0);
+    auto other = [&](const Feature& f, std::uint32_t v) { return f.a == v ? f.b : f.a; };
+    // The next edge on from vertex v (leaving `from`): only through a vertex where two
+    // edges meet, of the same kind, turning less than 50 degrees.
+    auto next = [&](std::size_t from, std::uint32_t v) -> long {
+        const auto& list = at[v];
+        if (list.size() != 2) return -1;
+        const std::size_t e = list[0] == from ? list[1] : list[0];
+        if (used[e] || feats[e].convex != feats[from].convex) return -1;
+        const Vec3 d1 = normalize(p[v] - p[other(feats[from], v)]), d2 = normalize(p[other(feats[e], v)] - p[v]);
+        if (dot(d1, d2) < std::cos(50.0f * 3.14159265f / 180.0f)) return -1;
+        return static_cast<long>(e);
+    };
+    for (std::size_t s0 = 0; s0 < feats.size(); ++s0) {
+        if (used[s0]) continue;
+        used[s0] = 1;
+        std::vector<std::uint32_t> verts{feats[s0].a, feats[s0].b};
+        bool closed = false;
+        // Forward from b, then backward from a.
+        for (int dir = 0; dir < 2 && !closed; ++dir) {
+            std::size_t cur = s0;
+            for (;;) {
+                const std::uint32_t v = dir == 0 ? verts.back() : verts.front();
+                const long e = next(cur, v);
+                if (e < 0) {
+                    // Back round to the start: a loop.
+                    if (dir == 0) {
+                        const auto& list = at[v];
+                        if (list.size() == 2 && verts.size() > 2) {
+                            const std::size_t e2 = list[0] == cur ? list[1] : list[0];
+                            if (e2 == s0) closed = true;
+                        }
+                    }
+                    break;
+                }
+                used[static_cast<std::size_t>(e)] = 1;
+                const std::uint32_t w = other(feats[static_cast<std::size_t>(e)], v);
+                cur = static_cast<std::size_t>(e);
+                if (dir == 0) {
+                    if (w == verts.front()) {
+                        closed = true;
+                        break;
+                    }
+                    verts.push_back(w);
+                } else
+                    verts.insert(verts.begin(), w);
+            }
+        }
+        EdgeChain c;
+        c.closed = closed;
+        c.convex = feats[s0].convex;
+        const std::size_t nv = verts.size();
+        const std::size_t segs = closed ? nv : nv - 1;
+        std::vector<Vec3> segL(segs), segR(segs);
+        bool ok = true;
+        for (std::size_t k = 0; k < segs; ++k) {
+            const std::uint32_t a = verts[k], b = verts[(k + 1) % nv];
+            const auto il = directed.find(dkey(a, b)), ir = directed.find(dkey(b, a));
+            if (il == directed.end() || ir == directed.end()) {
+                ok = false;
+                break;
+            }
+            segL[k] = n[il->second], segR[k] = n[ir->second];
+        }
+        if (!ok) continue;
+        for (std::size_t k = 0; k < nv; ++k) {
+            c.pts.push_back(p[verts[k]]);
+            Vec3 l{}, r{};
+            if (closed || k > 0) l += segL[(k + segs - 1) % segs], r += segR[(k + segs - 1) % segs];
+            if (closed || k < segs) l += segL[k % segs], r += segR[k % segs];
+            c.nL.push_back(normalize(l));
+            c.nR.push_back(normalize(r));
+        }
+        out.push_back(std::move(c));
+    }
+    // Longest first, so numbers are stable for a given part.
+    std::stable_sort(out.begin(), out.end(), [](const EdgeChain& a, const EdgeChain& b) {
+        const Vec3 ca = a.pts.front(), cb = b.pts.front();
+        if (std::fabs(ca.z - cb.z) > 1e-4f) return ca.z > cb.z;
+        if (std::fabs(ca.y - cb.y) > 1e-4f) return ca.y < cb.y;
+        return ca.x < cb.x;
+    });
+    return out;
+}
+
+std::vector<int> selectEdges(const std::vector<EdgeChain>& chains, const MeshData& world, const EdgeFilter& f) {
+    std::vector<int> pick;
+    const AABB box = world.bounds();
+    const float tol = std::max(sicdm::length(box.max - box.min) * 1e-4f, 1e-4f);
+    const bool filtered = f.convex || f.concave || f.vertical || f.horizontal || f.top || f.bottom;
+    for (std::size_t i = 0; i < chains.size(); ++i) {
+        const EdgeChain& c = chains[i];
+        bool keep = filtered || (f.numbers.empty() && f.near.empty());
+        if (f.convex && !c.convex) keep = false;
+        if (f.concave && c.convex) keep = false;
+        if (f.vertical || f.horizontal) {
+            const Vec3 d = c.pts.back() - c.pts.front();
+            const bool straight = !c.closed && sicdm::length(d) > 0;
+            const bool vertical = straight && std::fabs(d.z) > 0.999f * sicdm::length(d);
+            bool flat = true;
+            for (const Vec3& q : c.pts) flat = flat && std::fabs(q.z - c.pts.front().z) <= tol;
+            if (f.vertical && !vertical) keep = false;
+            if (f.horizontal && !flat) keep = false;
+        }
+        if (f.top || f.bottom) {
+            bool all = true;
+            for (const Vec3& q : c.pts) all = all && std::fabs(q.z - (f.top ? box.max.z : box.min.z)) <= tol;
+            if (!all) keep = false;
+        }
+        if (keep && filtered) pick.push_back(static_cast<int>(i));
+        else if (!filtered && f.numbers.empty() && f.near.empty()) pick.push_back(static_cast<int>(i));
+    }
+    for (int k : f.numbers)
+        if (k >= 1 && k <= static_cast<int>(chains.size())) pick.push_back(k - 1);
+    for (const Vec3& q : f.near) { // the chain passing nearest the point
+        int best = -1;
+        float bd = 1e30f;
+        for (std::size_t i = 0; i < chains.size(); ++i) {
+            const EdgeChain& c = chains[i];
+            const std::size_t segs = c.closed ? c.pts.size() : c.pts.size() - 1;
+            for (std::size_t k = 0; k < segs; ++k) {
+                const Vec3 a = c.pts[k], b = c.pts[(k + 1) % c.pts.size()];
+                const Vec3 ab = b - a;
+                const float tt = std::clamp(dot(q - a, ab) / std::max(dot(ab, ab), 1e-20f), 0.0f, 1.0f);
+                const float d = sicdm::length(a + ab * tt - q);
+                if (d < bd) bd = d, best = static_cast<int>(i);
+            }
+        }
+        if (best >= 0) pick.push_back(best);
+    }
+    std::sort(pick.begin(), pick.end());
+    pick.erase(std::unique(pick.begin(), pick.end()), pick.end());
+    return pick;
+}
+
+namespace {
+
+// The cutter (outside edges) or filler (inside corners) along one chain: the section at
+// each point comes from the two faces' normals there.
+MeshData edgeTool(const EdgeChain& c, float r, bool chamfer) {
+    const int arc = chamfer ? 0 : 12;
+    const float eps = r * 0.05f;
+    const std::size_t n = c.pts.size();
+    std::vector<std::vector<Vec3>> rings;
+    for (std::size_t i = 0; i < n; ++i) {
+        Vec3 P = c.pts[i];
+        const Vec3 nL = c.nL[i], nR = c.nR[i];
+        if (!c.closed && (i == 0 || i + 1 == n)) { // a hair past the ends, so the cut is clean
+            const Vec3 t = normalize(i == 0 ? c.pts[0] - c.pts[1] : c.pts[n - 1] - c.pts[n - 2]);
+            P += t * eps;
+        }
+        const float d = dot(nL, nR);
+        const Vec3 bis = normalize(nL + nR);
+        std::vector<Vec3> ring;
+        const float side = c.convex ? 1.0f : -1.0f; // outward for a cutter, inward for a filler
+        if (chamfer) {
+            const Vec3 wL = normalize(nR * -side + nL * (d * side)), wR = normalize(nL * -side + nR * (d * side));
+            const Vec3 aL = P + wL * r, aR = P + wR * r;
+            ring = {aL + nL * (eps * side), aL, aR, aR + nR * (eps * side), P + bis * (0.3f * r * side)};
+        } else {
+            const float k = 1.0f / std::max(1.0f + d, 1e-3f);
+            const Vec3 centre = P - (nL + nR) * (r * k * side);
+            const Vec3 tL = centre + nL * (r * side), tR = centre + nR * (r * side);
+            ring.push_back(tL + nL * (eps * side));
+            const float th = std::acos(std::clamp(d, -1.0f, 1.0f));
+            for (int s = 0; s <= arc; ++s) { // round from the left face to the right one
+                const float u = static_cast<float>(s) / static_cast<float>(arc);
+                Vec3 dir = th < 1e-4f ? nL : (nL * std::sin((1 - u) * th) + nR * std::sin(u * th)) / std::sin(th);
+                ring.push_back(centre + normalize(dir) * (r * side));
+            }
+            ring.push_back(tR + nR * (eps * side));
+            ring.push_back(P + bis * (0.3f * r * side));
+        }
+        rings.push_back(std::move(ring));
+    }
+    RawMesh mesh;
+    const std::size_t m = rings[0].size();
+    for (const auto& ring : rings) mesh.p.insert(mesh.p.end(), ring.begin(), ring.end());
+    auto at = [&](std::size_t r0, std::size_t j) { return static_cast<std::uint32_t>((r0 % n) * m + j % m); };
+    for (std::size_t r0 = 0; r0 < (c.closed ? n : n - 1); ++r0)
+        for (std::size_t j = 0; j < m; ++j) {
+            mesh.tri(at(r0, j), at(r0, j + 1), at(r0 + 1, j + 1));
+            mesh.tri(at(r0, j), at(r0 + 1, j + 1), at(r0 + 1, j));
+        }
+    if (!c.closed) {
+        const std::vector<std::uint32_t> t0 = capTriangles(rings.front()), t1 = capTriangles(rings.back());
+        for (std::size_t q = 0; q + 2 < t0.size(); q += 3) mesh.tri(at(0, t0[q]), at(0, t0[q + 2]), at(0, t0[q + 1]));
+        for (std::size_t q = 0; q + 2 < t1.size(); q += 3) mesh.tri(at(n - 1, t1[q]), at(n - 1, t1[q + 1]), at(n - 1, t1[q + 2]));
+    }
+    return mesh.data();
+}
+
+} // namespace
+
+bool roundEdges(Body& body, const std::vector<EdgeChain>& chains, const std::vector<int>& chosen, float size, bool chamfer, std::string* error) {
+    auto fail = [&](const std::string& why) {
+        if (error) *error = why;
+        return false;
+    };
+    if (!(size > 0)) return fail("The size must be positive");
+    if (chosen.empty()) return fail("No edges chosen (EDGES lists them)");
+    // Work in world space.
+    if (body.offset.x != 0 || body.offset.y != 0 || body.offset.z != 0 || body.kind != "mesh" || body.scale != 1.0f) {
+        MeshData w = worldMesh(body);
+        body.mesh = std::move(w);
+        body.offset = {};
+        body.scale = 1.0f;
+        body.rotation = {};
+        body.kind = "mesh";
+        body.params.clear();
+    }
+    const bool wasClosed = openEdgeCount(body.mesh) == 0;
+    for (int k : chosen) {
+        if (k < 0 || k >= static_cast<int>(chains.size())) continue;
+        const EdgeChain& c = chains[static_cast<std::size_t>(k)];
+        if (c.pts.size() < 2) continue;
+        const Body tool = featureBody("edge tool", edgeTool(c, size, chamfer), {});
+        std::string e;
+        if (!bodyBoolean(body, tool, c.convex ? BooleanOp::Subtract : BooleanOp::Union, &e))
+            return fail("Edge " + std::to_string(k + 1) + ": " + e);
+        if (wasClosed && openEdgeCount(body.mesh) > 0) return fail("Edge " + std::to_string(k + 1) + " came out with holes");
+    }
+    SculptMesh(body).writeTo(body, true, 40.0f);
+    return true;
+}
+
 } // namespace sicdm
