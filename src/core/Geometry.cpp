@@ -4,8 +4,8 @@
 #include "core/Library.hpp"
 
 #include <algorithm>
-#include <map>
-#include <tuple>
+#include <cstdint>
+#include <unordered_map>
 
 namespace sicdm {
 
@@ -42,30 +42,40 @@ void MeshData::append(const MeshData& o) {
 }
 
 void MeshData::computeFeatureEdges(float angleDeg) {
-    // Weld coincident positions so faces that share an edge find each other.
-    std::map<std::tuple<long, long, long>, std::uint32_t> weld;
-    std::vector<Vec3> welded;
-    auto key = [](const Vec3& p) {
-        constexpr float q = 1e4f; // 0.1 micron
-        return std::make_tuple(std::lround(p.x * q), std::lround(p.y * q), std::lround(p.z * q));
+    // Weld coincident positions so faces that share an edge find each other (ids in the
+    // order positions first appear, so the result doesn't depend on hashing).
+    struct Key {
+        long x, y, z;
+        bool operator==(const Key& o) const { return x == o.x && y == o.y && z == o.z; }
     };
+    struct KeyHash {
+        std::size_t operator()(const Key& k) const {
+            std::uint64_t h = static_cast<std::uint64_t>(k.x) * 0x9E3779B97F4A7C15ull;
+            h ^= static_cast<std::uint64_t>(k.y) + 0x7F4A7C159E3779B9ull + (h << 6) + (h >> 2);
+            h ^= static_cast<std::uint64_t>(k.z) + 0x94D049BB133111EBull + (h << 6) + (h >> 2);
+            return static_cast<std::size_t>(h);
+        }
+    };
+    std::unordered_map<Key, std::uint32_t, KeyHash> weld;
+    weld.reserve(vertices.size());
+    std::vector<Vec3> welded;
+    welded.reserve(vertices.size());
     std::vector<std::uint32_t> remap(vertices.size());
     for (std::size_t i = 0; i < vertices.size(); ++i) {
-        const auto k = key(vertices[i].position);
-        auto it = weld.find(k);
-        if (it == weld.end()) {
-            it = weld.emplace(k, static_cast<std::uint32_t>(welded.size())).first;
-            welded.push_back(vertices[i].position);
-        }
+        constexpr float q = 1e4f; // 0.1 micron
+        const Vec3& p = vertices[i].position;
+        const auto [it, added] = weld.try_emplace(Key{std::lround(p.x * q), std::lround(p.y * q), std::lround(p.z * q)}, static_cast<std::uint32_t>(welded.size()));
+        if (added) welded.push_back(p);
         remap[i] = it->second;
     }
-    struct EdgeFaces {
-        Vec3 n0{};
-        int count = 0;
-        bool sharp = false;
+    // Each triangle's edges with its normal, sorted by edge (stable: the first face of an
+    // edge is still the first in the mesh).
+    struct EdgeFace {
+        std::uint64_t key;
+        Vec3 n;
     };
-    std::map<std::pair<std::uint32_t, std::uint32_t>, EdgeFaces> edges;
-    const float cosLimit = std::cos(radians(angleDeg));
+    std::vector<EdgeFace> ef;
+    ef.reserve(indices.size());
     for (std::size_t t = 0; t + 2 < indices.size(); t += 3) {
         const std::uint32_t w[3] = {remap[indices[t]], remap[indices[t + 1]], remap[indices[t + 2]]};
         const Vec3 n = normalize(cross(welded[w[1]] - welded[w[0]], welded[w[2]] - welded[w[0]]));
@@ -73,18 +83,24 @@ void MeshData::computeFeatureEdges(float angleDeg) {
         for (int e = 0; e < 3; ++e) {
             auto a = w[e], b = w[(e + 1) % 3];
             if (a > b) std::swap(a, b);
-            EdgeFaces& ef = edges[{a, b}];
-            if (ef.count == 0) ef.n0 = n;
-            else if (dot(ef.n0, n) < cosLimit) ef.sharp = true;
-            ++ef.count;
+            ef.push_back({(static_cast<std::uint64_t>(a) << 32) | b, n});
         }
     }
+    std::stable_sort(ef.begin(), ef.end(), [](const EdgeFace& x, const EdgeFace& y) { return x.key < y.key; });
+    const float cosLimit = std::cos(radians(angleDeg));
     edgeVertices.clear();
-    for (const auto& [e, ef] : edges)
-        if (ef.count == 1 || ef.sharp || ef.count > 2) {
-            edgeVertices.push_back(welded[e.first]);
-            edgeVertices.push_back(welded[e.second]);
+    for (std::size_t i = 0; i < ef.size();) {
+        std::size_t j = i + 1;
+        bool sharp = false;
+        for (; j < ef.size() && ef[j].key == ef[i].key; ++j)
+            if (dot(ef[i].n, ef[j].n) < cosLimit) sharp = true;
+        const std::size_t count = j - i;
+        if (count == 1 || sharp || count > 2) {
+            edgeVertices.push_back(welded[static_cast<std::uint32_t>(ef[i].key >> 32)]);
+            edgeVertices.push_back(welded[static_cast<std::uint32_t>(ef[i].key & 0xFFFFFFFFu)]);
         }
+        i = j;
+    }
 }
 
 bool isPrimitiveKind(const std::string& k) {

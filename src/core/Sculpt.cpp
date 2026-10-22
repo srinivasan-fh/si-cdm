@@ -158,15 +158,26 @@ std::uint64_t edgeKey(std::uint32_t a, std::uint32_t b) {
     return (static_cast<std::uint64_t>(a) << 32) | b;
 }
 
-// Merges points closer than `tol` (hash grid, neighbouring cells checked).
+// Merges points closer than `tol` (hash grid). Cells are four tolerances wide, so a point
+// is within `tol` of at most one side of its cell on each axis: only those neighbours
+// are checked (usually just its own cell).
 class Welder {
 public:
-    explicit Welder(double tol) : m_tol(tol), m_cell(std::max(tol * 2.0, 1e-12)) {}
+    explicit Welder(double tol) : m_tol(tol), m_cell(std::max(tol * 4.0, 1e-12)) {}
     std::uint32_t add(const D3& p) {
         const long long ix = cellOf(p.x), iy = cellOf(p.y), iz = cellOf(p.z);
-        for (long long dx = -1; dx <= 1; ++dx)
-            for (long long dy = -1; dy <= 1; ++dy)
-                for (long long dz = -1; dz <= 1; ++dz) {
+        auto range = [&](double v, long long i, long long& lo, long long& hi) {
+            const double f = v - static_cast<double>(i) * m_cell; // 0..cell
+            lo = f <= m_tol ? -1 : 0;
+            hi = f >= m_cell - m_tol ? 1 : 0;
+        };
+        long long x0, x1, y0, y1, z0, z1;
+        range(p.x, ix, x0, x1);
+        range(p.y, iy, y0, y1);
+        range(p.z, iz, z0, z1);
+        for (long long dx = x0; dx <= x1; ++dx)
+            for (long long dy = y0; dy <= y1; ++dy)
+                for (long long dz = z0; dz <= z1; ++dz) {
                     const auto it = m_head.find(hash(ix + dx, iy + dy, iz + dz));
                     if (it == m_head.end()) continue;
                     for (std::uint32_t i = it->second; i != kNone; i = m_next[i]) {
@@ -204,18 +215,25 @@ std::vector<std::uint32_t> weldCorners(const std::vector<D3>& corners, double si
     std::vector<std::uint32_t> id(corners.size());
     for (std::size_t i = 0; i < corners.size(); ++i) id[i] = exact.add(corners[i]);
     out = std::move(exact.pts);
-    std::unordered_map<std::uint64_t, int> count;
+    // Edges used once (sorted keys: a run of one).
+    std::vector<std::uint64_t> keys;
+    keys.reserve(id.size());
     for (std::size_t k = 0; k + 2 < id.size(); k += 3)
         for (std::size_t e = 0; e < 3; ++e) {
             const std::uint32_t a = id[k + e], b = id[k + (e + 1) % 3];
-            if (a != b) ++count[edgeKey(a, b)];
+            if (a != b) keys.push_back(edgeKey(a, b));
         }
+    std::sort(keys.begin(), keys.end());
     std::vector<std::uint32_t> open;
-    for (const auto& [k, c] : count)
-        if (c == 1) {
-            open.push_back(static_cast<std::uint32_t>(k >> 32));
-            open.push_back(static_cast<std::uint32_t>(k & 0xFFFFFFFFu));
+    for (std::size_t i = 0; i < keys.size();) {
+        std::size_t j = i + 1;
+        while (j < keys.size() && keys[j] == keys[i]) ++j;
+        if (j - i == 1) {
+            open.push_back(static_cast<std::uint32_t>(keys[i] >> 32));
+            open.push_back(static_cast<std::uint32_t>(keys[i] & 0xFFFFFFFFu));
         }
+        i = j;
+    }
     if (open.empty()) return id;
     std::sort(open.begin(), open.end());
     open.erase(std::unique(open.begin(), open.end()), open.end());
