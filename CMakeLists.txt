@@ -52,6 +52,7 @@ add_library(sicdm_core STATIC
     src/core/Constraints.cpp
     src/core/Brep.cpp
     src/core/Step.cpp
+    src/core/Recovery.cpp
     src/core/SketchCommand.cpp
     src/core/Features.cpp
     src/core/Library.cpp
@@ -64,6 +65,7 @@ add_library(sicdm_core STATIC
     src/ui/Tools.cpp
 )
 target_include_directories(sicdm_core PUBLIC src)
+target_compile_definitions(sicdm_core PUBLIC SICDM_VERSION="${PROJECT_VERSION}")
 target_include_directories(sicdm_core SYSTEM PRIVATE third_party/stb)
 sicdm_set_compile_options(sicdm_core)
 
@@ -122,7 +124,6 @@ if(SICDM_BUILD_APP)
         add_executable(sicdm ${SICDM_APP_SOURCES} ${SICDM_FONT_SOURCE})
     endif()
 
-    target_compile_definitions(sicdm PRIVATE SICDM_VERSION="${PROJECT_VERSION}")
     find_package(Threads REQUIRED)
     target_link_libraries(sicdm PRIVATE sicdm_core sicdm_imgui glfw OpenGL::GL Threads::Threads)
     target_include_directories(sicdm SYSTEM PRIVATE third_party/stb) # window icon / splash logo decoding

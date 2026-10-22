@@ -4,6 +4,7 @@
 #include "core/Document.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Mcp.hpp"
+#include "core/Recovery.hpp"
 #include "core/Scene.hpp"
 #include "app/McpHttpServer.hpp"
 #include "app/SketchController.hpp"
@@ -132,6 +133,7 @@ private:
     bool anyFileDirty() const;
     void refreshFileTabs();
     void saveAll();
+    void autosave(); // keeps recovery copies of files with unsaved changes
 
     // Each window keeps its own camera and display settings.
     OrbitCamera& camera() noexcept { return m_uiState.mode == ViewMode::Drawing2D ? m_cam2D : m_cam3D; }
@@ -230,6 +232,11 @@ private:
     std::uint64_t m_savedSignature = 0;
     std::string m_shownTitle;
     bool m_closeRequested = false;
+    // Autosave of unsaved work, and what an earlier session that ended badly left.
+    Autosaver m_autosaver;
+    double m_autosaveCheck = 0.0;
+    std::vector<RecoveryFile> m_recoverable;
+    bool m_offerRecovery = false;
 
     double m_statusUntil = 0.0;
 

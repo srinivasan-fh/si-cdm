@@ -22,6 +22,7 @@ add_executable(sicdm_tests
     test_features.cpp
     test_constraints.cpp
     test_step.cpp
+    test_recovery.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 sicdm_set_compile_options(sicdm_tests)

@@ -72,6 +72,7 @@ constexpr CommandSpec kCommands[] = {
     // Files
     {"NEW", "", "NEW", "Start an empty project (in the app: a new file tab)"},
     {"OPEN", "", "OPEN path.sicdm", "Open a project (in the app: in its own file tab)"},
+    {"RECOVER", "", "RECOVER [n | DISCARD n|ALL]", "Unsaved work kept from a session that ended unexpectedly: list, reopen or discard it"},
     {"SAVE", "", "SAVE [path.sicdm]", "Save the project (to a new path if given)"},
     {"SAVEAS", "", "SAVEAS path.sicdm", "Save the project under a new name"},
     {"FILES", "FILE TABS", "FILES [number | name]", "List the open file tabs, or switch to one"},

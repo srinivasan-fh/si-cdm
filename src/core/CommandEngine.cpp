@@ -7,6 +7,7 @@
 #include "core/CamCommand.hpp"
 #include "core/FeatureCommand.hpp"
 #include "core/SketchCommand.hpp"
+#include "core/Recovery.hpp"
 #include "core/Step.hpp"
 #include "core/Brep.hpp"
 #include "core/Print.hpp"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 
@@ -614,6 +616,74 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.primitiveSerial = static_cast<int>(doc.scene.bodies().size());
         out.documentReplaced = true;
         out.say("Opened " + doc.path);
+        if (!warn.empty()) out.say(warn);
+        return out;
+    }
+    if (cmd == "RECOVER") {
+        // RECOVER [LIST] | RECOVER n | RECOVER DISCARD n|ALL
+        const std::vector<RecoveryFile> files = findRecoveryFiles();
+        auto when = [](std::int64_t t) {
+            const std::time_t tt = static_cast<std::time_t>(t);
+            std::tm tm{};
+#if defined(_WIN32)
+            localtime_s(&tm, &tt);
+#else
+            localtime_r(&tt, &tm);
+#endif
+            char b[32];
+            std::strftime(b, sizeof b, "%Y-%m-%d %H:%M", &tm);
+            return std::string(b);
+        };
+        auto pick = [&](const std::string& w) -> int {
+            char* end = nullptr;
+            const long n = std::strtol(w.c_str(), &end, 10);
+            return end && *end == '\0' && n >= 1 && n <= static_cast<long>(files.size()) ? static_cast<int>(n) - 1 : -1;
+        };
+        if (a.empty() || iequal(a[0], "list")) {
+            if (files.empty()) {
+                out.say("No unsaved work to recover");
+                return out;
+            }
+            out.say("Unsaved work from sessions that ended unexpectedly:");
+            for (std::size_t i = 0; i < files.size(); ++i)
+                out.say("  " + std::to_string(i + 1) + ". " + files[i].name + (files[i].original.empty() ? "" : "  (" + files[i].original + ")") +
+                        "  autosaved " + when(files[i].savedAt));
+            out.say("RECOVER n reopens one; RECOVER DISCARD n or ALL deletes them");
+            return out;
+        }
+        if (iequal(a[0], "discard")) {
+            if (a.size() < 2) return usage();
+            if (iequal(a[1], "all")) {
+                for (const RecoveryFile& f : files) discardRecoveryFile(f);
+                out.say("Discarded " + std::to_string(files.size()) + " recovered file" + (files.size() == 1 ? "" : "s"));
+                return out;
+            }
+            const int i = pick(a[1]);
+            if (i < 0) return out.fail("No recovered file " + a[1] + " (RECOVER lists them)");
+            discardRecoveryFile(files[static_cast<std::size_t>(i)]);
+            out.say("Discarded the unsaved work in " + files[static_cast<std::size_t>(i)].name);
+            return out;
+        }
+        const int i = pick(a[0]);
+        if (i < 0) return files.empty() ? out.fail("No unsaved work to recover") : out.fail("No recovered file " + a[0] + " (RECOVER lists them)");
+        const RecoveryFile& f = files[static_cast<std::size_t>(i)];
+        if (!view && doc.dirty) return out.fail("Save the open project first: the recovered one replaces it");
+        std::string err, warn;
+        Scene loaded;
+        ProjectState st;
+        if (!loadProject(loaded, st, f.project, &err, &warn)) return out.fail("Cannot recover " + f.name + ": " + err);
+        if (view) view->prepareDocument(""); // a file tab of its own
+        doc.scene.assign(std::move(loaded));
+        doc.state = st;
+        doc.path = f.original; // SAVE puts it back where it came from
+        doc.name = f.name;
+        doc.dirty = true; // still unsaved
+        doc.clearSelection();
+        doc.primitiveSerial = static_cast<int>(doc.scene.bodies().size());
+        adoptRecoveryFile(f);
+        out.documentReplaced = true;
+        out.say("Recovered " + f.name + " as autosaved " + when(f.savedAt) + ". It isn't saved yet: SAVE" +
+                (f.original.empty() ? "AS a path" : "") + " keeps it");
         if (!warn.empty()) out.say(warn);
         return out;
     }

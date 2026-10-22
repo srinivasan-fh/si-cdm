@@ -467,10 +467,30 @@ With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,d
 | **Export** (Ctrl/⌘ E) | `.step` (AP214: exact B-reps, other meshes as planar faces) · `.stl` `.obj` `.3mf` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
 
 **STEP:** imports keep their exact geometry (planes, cylinders, cones, spheres, tori, NURBS),
-tessellated watertight for display and written back unchanged. The primitives export exactly too.
-Details: [docs/step.md](docs/step.md).
+tessellated watertight for display and written back unchanged. Primitives, extrusions and revolves
+export exactly too. Details: [docs/step.md](docs/step.md).
 
 Unsaved changes are tracked (`*` in the tab and title); closing a tab or quitting asks before discarding them.
+
+**Safe saving and recovery:**
+
+- **Saves can't half-write.** Every file is written to a temporary file beside it, flushed to
+  the disk, then renamed over the old one. A crash or a full disk during a save leaves the
+  old file whole.
+- **Autosave.** While a file has unsaved changes, a copy of it is kept in the recovery
+  folder, written once the changes are a minute old. The copy goes when you save, close the
+  file, or quit normally.
+- **Recovery.** If SI CDM ends without closing (a crash, a power cut, a killed process), the
+  next start offers the kept work back. Restored files open in their own tabs, still
+  unsaved, and Save puts them back where they came from. Any time, `RECOVER` lists what is
+  kept, `RECOVER n` reopens one, and `RECOVER DISCARD n` (or `ALL`) deletes them.
+- **Recovery folder:** `~/.local/state/sicdm/recovery` on Linux,
+  `~/Library/Application Support/SI-CDM/Recovery` on macOS, and
+  `%LOCALAPPDATA%\SI-CDM\Recovery` on Windows. Set `SICDM_RECOVERY_DIR` to use another.
+- **File versions.** Projects record their format version and the oldest format a reader
+  needs. A project from a newer SI CDM opens when it only adds things, with a note on what
+  was left out. A project that needs a newer reader is refused, with a message saying to
+  update.
 
 **Reference images** (scanned drawings, photos, blueprints) lie on the active sketch plane and show in
 both windows: under the sketch in 2D for tracing, in place in 3D. Select one to set its width (mm),

@@ -17,6 +17,12 @@
 #include <fstream>
 #include <sstream>
 
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace sicdm {
 
 namespace fs = std::filesystem;
@@ -44,22 +50,42 @@ std::optional<std::string> readFile(const std::string& path, std::string* error)
     return ss.str();
 }
 
+} // namespace
+
 bool writeFile(const std::string& path, const std::string& data, std::string* error) {
+    // Written beside the target, flushed to the disk, then renamed over it: a crash or a
+    // full disk part way leaves the old file whole, never a half-written one.
     std::error_code ec;
-    const fs::path parent = fs::path(path).parent_path();
+    const fs::path target(path);
+    const fs::path parent = target.parent_path();
     if (!parent.empty()) fs::create_directories(parent, ec);
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
+    fs::path tmp = target;
+    tmp += ".saving";
+    std::FILE* f = std::fopen(tmp.string().c_str(), "wb");
+    if (!f) {
         setError(error, "Cannot write " + path);
         return false;
     }
-    out.write(data.data(), static_cast<std::streamsize>(data.size()));
-    if (!out) {
+    bool ok = std::fwrite(data.data(), 1, data.size(), f) == data.size() && std::fflush(f) == 0;
+#if defined(_WIN32)
+    ok = ok && _commit(_fileno(f)) == 0;
+#else
+    ok = ok && fsync(fileno(f)) == 0;
+#endif
+    ok = std::fclose(f) == 0 && ok;
+    if (ok) {
+        fs::rename(tmp, target, ec);
+        ok = !ec;
+    }
+    if (!ok) {
+        fs::remove(tmp, ec);
         setError(error, "Write failed for " + path);
         return false;
     }
     return true;
 }
+
+namespace {
 
 const char* curveKey(CurveKind k) {
     switch (k) {
@@ -237,7 +263,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
     Json doc = Json::object();
     doc.set("format", "sicdm-project");
-    doc.set("version", 1);
+    doc.set("version", kProjectVersion);
+    doc.set("reader_version", 1); // what 2 added is optional: a format-1 reader can open it
+#ifdef SICDM_VERSION
+    doc.set("saved_by", std::string("SI CDM ") + SICDM_VERSION);
+#endif
     doc.set("units", "mm"); // storage unit of every length in the file
     Json du = Json::object();
     du.set("unit", unitInfo(state.units.unit).symbol)
@@ -408,10 +438,20 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         setError(error, "Not an SI CDM project file");
         return false;
     }
-    if ((*doc)["version"].asInt() > 1) {
-        setError(error, "Project was saved by a newer version of SI CDM");
+    // Format versions: refuse a file that needs a newer reader; open a newer file that
+    // doesn't (and say its additions are left out).
+    const int version = (*doc)["version"].asInt(1);
+    const int reader = (*doc)["reader_version"].asInt(version);
+    const std::string savedBy = (*doc)["saved_by"].asString("a newer version of SI CDM");
+    if (reader > kProjectVersion) {
+        setError(error, "This project was saved by " + savedBy + " in format " + std::to_string(version) +
+                            ", which this version (format " + std::to_string(kProjectVersion) + ") can't read. Update SI CDM to open it");
         return false;
     }
+    std::string versionNote;
+    if (version > kProjectVersion)
+        versionNote = "Saved by " + savedBy + " (format " + std::to_string(version) + "): anything newer than format " +
+                      std::to_string(kProjectVersion) + " in it was left out, and saving writes format " + std::to_string(kProjectVersion);
 
     Scene loaded;
     ProjectState st;
@@ -525,7 +565,10 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         if (!loadImagePixels(img, &imgErr)) missing += (missing.empty() ? "" : ", ") + img.name;
         loaded.addImage(std::move(img));
     }
-    if (warning) *warning = missing.empty() ? "" : "Images not found: " + missing;
+    if (warning) {
+        *warning = missing.empty() ? "" : "Images not found: " + missing;
+        if (!versionNote.empty()) *warning += (warning->empty() ? "" : "\n") + versionNote;
+    }
 
     for (const Json& jm : (*doc)["motions"].items()) {
         Motion m;

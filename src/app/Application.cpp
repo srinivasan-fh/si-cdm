@@ -183,11 +183,15 @@ bool Application::init() {
     }
     refreshFileTabs();
     updateTitle();
+    // Unsaved work from a session that ended without closing: offered back in frame().
+    m_recoverable = findRecoveryFiles();
+    m_offerRecovery = !m_recoverable.empty() && m_options.screenshotPath.empty();
     progress(0.96f, "Restoring interface", "Workspace");
     return true;
 }
 
 void Application::shutdown() {
+    m_autosaver.clear(); // a clean exit: the recovery copies aren't needed
     m_splash.reset();
     m_mcpHttp.stop();
     m_renderer.reset();
@@ -1210,6 +1214,34 @@ void Application::frame(float dt) {
     m_uiState.dirty = m_doc.dirty;
     updateTitle();
     refreshFileTabs();
+    autosave();
+
+    if (m_offerRecovery) {
+        ImGui::OpenPopup("Recover Unsaved Work");
+        m_offerRecovery = false;
+    }
+    if (ImGui::BeginPopupModal("Recover Unsaved Work", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("SI CDM didn't close normally last time. This unsaved work was kept:");
+        for (const RecoveryFile& f : m_recoverable)
+            ImGui::BulletText("%s%s", f.name.c_str(), f.original.empty() ? "  (never saved)" : ("  (" + f.original + ")").c_str());
+        ImGui::Spacing();
+        if (ImGui::Button("Restore All", {120, 0})) {
+            // Each RECOVER 1 opens the newest left and takes it off the list.
+            for (std::size_t k = 0; k < m_recoverable.size(); ++k) runCommandLine("RECOVER 1");
+            m_recoverable.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard", {90, 0})) {
+            runCommandLine("RECOVER DISCARD ALL");
+            m_recoverable.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Later", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        ImGui::TextDisabled("Restored files open in their own tabs, still unsaved. Later: type RECOVER.");
+        ImGui::EndPopup();
+    }
 
     if (m_closeRequested) {
         ImGui::OpenPopup("Quit SI CDM?");
@@ -1811,6 +1843,7 @@ bool Application::closeFileTab(int index, bool discard) {
     const std::string name = fileDoc(index).displayName();
     if (m_files.size() == 1) newFileTab(); // never leave the canvas without a file
     if (index == m_activeFile) activateFile(index + 1 < static_cast<int>(m_files.size()) ? index + 1 : index - 1);
+    m_autosaver.forget(m_files[static_cast<std::size_t>(index)].id);
     m_files.erase(m_files.begin() + index);
     if (m_activeFile > index) --m_activeFile;
     updateTitle();
@@ -1818,6 +1851,19 @@ bool Application::closeFileTab(int index, bool discard) {
     setStatus("Closed " + name);
     m_framesToRender = std::max(m_framesToRender, 3);
     return true;
+}
+
+void Application::autosave() {
+    const double now = glfwGetTime();
+    if (now < m_autosaveCheck) return;
+    m_autosaveCheck = now + 1.0;
+    for (int i = 0; i < static_cast<int>(m_files.size()); ++i) {
+        const Document& d = fileDoc(i);
+        std::string err;
+        const std::uint64_t sig = i == m_activeFile ? contentSignature() : signatureOf(d);
+        if (!m_autosaver.update(d, m_files[static_cast<std::size_t>(i)].id, sig, now, &err) && !err.empty())
+            log("Autosave of " + d.displayName() + " failed: " + err, UiState::LogLine::Error);
+    }
 }
 
 int Application::fileIndex(int id) const {
@@ -2592,8 +2638,14 @@ int Application::run() {
 
     while (!glfwWindowShouldClose(m_window)) {
         if (m_framesToRender > 0 || !m_options.screenshotPath.empty()) glfwPollEvents();
-        else if (!m_uiState.statusMessage.empty()) glfwWaitEventsTimeout(std::max(m_statusUntil - glfwGetTime(), 0.0) + 0.05);
-        else glfwWaitEvents(); // idle: zero CPU/GPU until the user does something
+        else {
+            // Idle: zero CPU/GPU until the user does something, a status message expires,
+            // or an autosave falls due.
+            double wake = m_uiState.statusMessage.empty() ? -1.0 : m_statusUntil;
+            if (const double due = m_autosaver.nextDue(); due >= 0) wake = wake < 0 ? std::max(due, m_autosaveCheck) : std::min(wake, std::max(due, m_autosaveCheck));
+            if (wake >= 0) glfwWaitEventsTimeout(std::max(wake - glfwGetTime(), 0.0) + 0.05);
+            else glfwWaitEvents();
+        }
 
         const auto now = clock::now();
         const float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.1f);

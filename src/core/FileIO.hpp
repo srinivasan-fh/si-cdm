@@ -47,6 +47,17 @@ struct ProjectState {
     std::uint64_t historyRevision = 0;    // the scene's revision after the last command (not saved)
 };
 
+// The project format: files carry "version" (the format that wrote them) and
+// "reader_version" (the oldest format a reader must understand to open them). A newer
+// file whose reader_version this build knows still opens; what it adds is left out.
+//   1  the first format
+//   2  adds exact geometry ("brep_step"), "reader_version" and "saved_by"
+constexpr int kProjectVersion = 2;
+
+// Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
+// renamed over it. A failure part way leaves any old file as it was.
+bool writeFile(const std::string& path, const std::string& data, std::string* error);
+
 bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error);
 // Replaces `scene`. Missing images are kept (without pixels) and reported in `warning`.
 bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std::string* error,
