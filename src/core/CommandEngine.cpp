@@ -2508,6 +2508,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             s.sketch().remove(static_cast<std::size_t>(doc.selectedCurve));
         } else if (doc.selectedBody >= 0 && doc.selectedBody < static_cast<int>(s.bodies().size())) {
             gone = s.bodies()[static_cast<std::size_t>(doc.selectedBody)].name;
+            s.pushUndo("ERASE " + gone); // a deleted body can be brought back
             s.remove(static_cast<std::size_t>(doc.selectedBody));
         } else if (doc.selectedImage >= 0 && doc.selectedImage < static_cast<int>(s.images().size())) {
             gone = s.images()[static_cast<std::size_t>(doc.selectedImage)].name;

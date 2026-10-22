@@ -513,6 +513,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     const std::size_t count = std::min(bodies.size(), m_meshes.size());
     // Shapes that change while simulating (chains / belts moving along their loop)
     // are streamed each frame in place of the uploaded mesh.
+    for (std::size_t i = count; i < m_streamed.size(); ++i) releaseMesh(m_streamed[i]); // bodies gone: free their buffers first
     m_streamed.resize(count);
     for (std::size_t i = 0; i < count; ++i) {
         releaseMesh(m_streamed[i]);

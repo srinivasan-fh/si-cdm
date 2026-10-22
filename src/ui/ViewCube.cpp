@@ -276,8 +276,10 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
         else std::snprintf(label, sizeof(label), "%s", cam.projection() == Projection::Perspective ? "PERSP" : "ORTHO");
         const ImVec2 ts = ImGui::CalcTextSize(label);
         const ImVec2 p{center.x - ts.x * 0.5f - 4, origin.y + size.y - ts.y - 4};
-        ImGui::SetCursorScreenPos(p);
-        if (!drawing2D && ImGui::InvisibleButton("proj", {ts.x + 8, ts.y + 2})) res.toggleProjection = true;
+        if (!drawing2D) { // a cursor move with no item after it would stretch the window (ImGui asserts)
+            ImGui::SetCursorScreenPos(p);
+            if (ImGui::InvisibleButton("proj", {ts.x + 8, ts.y + 2})) res.toggleProjection = true;
+        }
         const bool hov = !drawing2D && ImGui::IsItemHovered();
         if (hov)
             ImGui::SetTooltip(rollDeg != 0.0f ? "Toggle perspective / orthographic  [P]\nView rolled; right-click > Level View"

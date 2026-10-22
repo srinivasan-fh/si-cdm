@@ -416,3 +416,17 @@ TEST_CASE("FILLET and CHAMFER fill inside corners, and treat round edge loops") 
     CHECK(openEdgeCount(b->mesh) == 0);
     CHECK_NEAR(volumeOf(*b), before - 2 * 2 * kPiD * 9.5 * 1.125, 4.0);
 }
+
+TEST_CASE("ERASE of a body can be undone and redone") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10").ok);
+    REQUIRE(run(d, "SPHERE 5 @30,0,0").ok);
+    REQUIRE(run(d, "ERASE \"Sphere 2\"").ok);
+    CHECK(d.scene.bodies().size() == 1);
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(d.scene.bodies().size() == 2);
+    CHECK(named(d, "Sphere 2") != nullptr);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(d.scene.bodies().size() == 1);
+    CHECK(named(d, "Sphere 2") == nullptr);
+}

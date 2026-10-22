@@ -207,12 +207,13 @@ private:
             const D3& b = p[t[static_cast<std::size_t>((e + 1) % 3)]];
             const double d = std::hypot(a.x - x, a.y - y);
             if (d <= c.R) best = std::max(best, a.z - c.h(d));
-            if (std::max(a.z, b.z) > best) best = std::max(best, dropEdge(c, a, b, x, y));
+            if (std::max(a.z, b.z) > best) best = std::max(best, dropEdge(c, a, b, x, y, best));
         }
         return best;
     }
 
-    static double dropEdge(const Cutter& c, const D3& a, const D3& b, double x, double y) {
+    // The tip height where the cutter rests on edge ab; -inf when that can't beat `best`.
+    static double dropEdge(const Cutter& c, const D3& a, const D3& b, double x, double y, double best = -kInf) {
         const double ux = b.x - a.x, uy = b.y - a.y, L = std::hypot(ux, uy);
         if (L < 1e-12) return -kInf; // vertical: its top corner is the vertex test
         const double ex = ux / L, ey = uy / L;
@@ -223,6 +224,9 @@ private:
         const double ta = std::max(0.0, tf - w), tb = std::min(L, tf + w);
         if (ta > tb) return -kInf;
         const double m = (b.z - a.z) / L;
+        // The cutter only rises away from its axis, and no point of the edge in reach is
+        // nearer the axis than d0: nothing here can sit higher than this.
+        if (a.z + std::max(m * ta, m * tb) - c.h(d0) <= best) return -kInf;
         // The interval's ends are at the rim (distance R, give or take rounding).
         auto f = [&](double t) { return a.z + m * t - c.h(std::min(c.R, std::hypot(d0, t - tf))); };
         if (c.coneSlope <= 0 && c.rc <= 0) return a.z + std::max(m * ta, m * tb); // flat: z is linear across the disc
