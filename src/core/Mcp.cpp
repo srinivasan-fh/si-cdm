@@ -452,6 +452,8 @@ Json McpServer::toolDefinitions() {
         p.set("corner", prop("number", "tool: bull-nose corner radius, mm"));
         p.set("flutes", prop("number", "tool: flutes"));
         p.set("length", prop("number", "tool: flute length, mm"));
+        p.set("stickout", prop("number", "tool: length out of the holder, mm (checked in the simulation)"));
+        p.set("holder", prop("number", "tool: the holder's diameter, mm"));
         p.set("tool", prop("number", "operations: the T number (default: the first that suits)"));
         p.set("stepdown", prop("number", "operations: depth of cut, mm"));
         p.set("stepover", prop("number", "operations: width of cut, mm"));
@@ -465,6 +467,8 @@ Json McpServer::toolDefinitions() {
         p.set("scallop", prop("number", "parallel / waterline: cusp height, mm"));
         p.set("slope", prop("array", "parallel / waterline: [from, to] degrees of surface slope to cut"));
         p.set("raster", prop("boolean", "rough / pocket: zig-zag instead of offset rings"));
+        p.set("adaptive", prop("boolean", "rough / pocket: adaptive clearing - light stepover, deep cuts, trochoidal loops where the tool would be overloaded"));
+        p.set("rest", prop("boolean", "rough / pocket: only the material the operations before left (rest machining)"));
         p.set("cycle", prop("string", "drill: spot, drill, peck, chipbreak, tap, bore"));
         p.set("peck", prop("number", "drill: peck depth, mm"));
         p.set("points", prop("array", "drill / bore: hole centres [[x, y], ...] (default: the part's holes that fit the tool)"));
@@ -997,7 +1001,8 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!a["number"].isNumber() || !a["type"].isString() || !a["diameter"].isNumber())
                 return textResult("tool needs number, type and diameter", true);
             return runLine("CAM TOOL " + num(a["number"].asNumber()) + " " + a["type"].asString() + " " + num(a["diameter"].asNumber()) +
-                           opt("corner", "CORNER") + opt("flutes", "FLUTES") + opt("length", "LENGTH") + text("name", "NAME"));
+                           opt("corner", "CORNER") + opt("flutes", "FLUTES") + opt("length", "LENGTH") + opt("stickout", "STICKOUT") + opt("holder", "HOLDER") +
+                           text("name", "NAME"));
         }
         if (op == "holes" || op == "list" || op == "generate" || op == "clear") return runLine("CAM " + toUpper(op));
         if (op == "simulate") return runLine(std::string("CAM SIMULATE") + (a["show"].asBool() ? " SHOW" : ""));
@@ -1020,6 +1025,8 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["stepover_percent"].isNumber()) line += " STEPOVER " + num(a["stepover_percent"].asNumber()) + "%";
         if (a["side"].isString()) line += " " + toUpper(a["side"].asString());
         if (a["raster"].asBool()) line += " RASTER";
+        if (a["adaptive"].asBool()) line += " ADAPTIVE";
+        if (a["rest"].asBool()) line += " REST";
         if (a["cycle"].isString()) line += " CYCLE " + a["cycle"].asString();
         if (a["slope"].isArray() && a["slope"].size() == 2) line += " SLOPE " + num(a["slope"][0].asNumber()) + " " + num(a["slope"][1].asNumber());
         if (a["points"].isArray() && a["points"].size() > 0) {

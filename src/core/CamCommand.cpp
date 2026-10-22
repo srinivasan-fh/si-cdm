@@ -123,6 +123,8 @@ std::string opText(const CamJob& job, std::size_t i) {
     const CamTool* t = job.tool(op.tool);
     std::string s = std::to_string(i + 1) + ". " + (op.name.empty() ? std::string(opLabel(op.kind)) : op.name) + " with " +
                     (t ? t->describe().substr(0, t->describe().find(',')) : "T" + std::to_string(op.tool) + " (missing)");
+    if (op.adaptive) s += ", adaptive";
+    if (op.rest) s += ", rest";
     if (op.kind == CamOpKind::Drill) s += std::string(", ") + drillCycleKey(op.cycle) + ", " + std::to_string(op.holes.size()) + " holes";
     if (op.generated) s += ": " + op.summary + ", " + feedsText(*t, &op, job);
     else s += ": not generated";
@@ -293,7 +295,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
             changed();
             return out;
         }
-        if (a.size() < 4) return out.fail("Usage: CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|CHAMFER|TAP diameter [CORNER r] [FLUTES n] [LENGTH l] [ANGLE deg] [PITCH p] [HSS] [NAME \"x\"]");
+        if (a.size() < 4) return out.fail("Usage: CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|CHAMFER|TAP diameter [CORNER r] [FLUTES n] [LENGTH l] [ANGLE deg] [PITCH p] [STICKOUT l] [HOLDER d] [HOLDERLENGTH l] [HSS] [NAME \"x\"]");
         CamTool t;
         const std::string ns = lower(a[1]);
         const auto n = parseNumber(ns.substr(!ns.empty() && ns[0] == 't' ? 1 : 0));
@@ -323,6 +325,12 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
                 const auto v = parseNumber(next());
                 if (!v || *v < 20 || *v > 179) return out.fail("ANGLE is 20 to 179 degrees");
                 t.tipAngle = *v;
+            } else if (k == "stickout" || k == "holder" || k == "holderlength") {
+                const auto v = parseLength(next());
+                if (!v || *v <= 0) return out.fail(toUpper(k) + " needs a length");
+                if (k == "stickout") t.stickout = *v;
+                else if (k == "holder") t.holderDiameter = *v;
+                else t.holderLength = *v;
             } else if (k == "corner" || k == "length" || k == "pitch") {
                 const auto v = parseLength(next());
                 if (!v || *v < 0) return out.fail(toUpper(k) + " needs a length");
@@ -414,6 +422,9 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
                            : std::string("  no gouges"));
         out.say(sim.rapidCrashes ? "  RAPID CRASHES: " + std::to_string(sim.rapidCrashes) + " rapid moves through stock" : std::string("  no rapid moves through stock"));
         if (sim.shankHits) out.say("  SHANK: " + std::to_string(sim.shankHits) + " moves cut deeper than a tool's flute length");
+        out.say(sim.holderHits ? "  HOLDER: " + std::to_string(sim.holderHits) + " moves bring " + sim.holderTool +
+                                     "'s holder into the stock or part; a stickout of " + lengthText(std::ceil(sim.neededStickout)) + " would clear them"
+                               : std::string("  no holder collisions"));
         out.say("  cycle time " + minutes(sim.seconds) + ", " + num(sim.cutLength / 1000.0, "%.2f") + " m cutting, " + num(sim.rapidLength / 1000.0, "%.2f") +
                 " m rapid");
         if (show) {
@@ -538,6 +549,8 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         } else if (k == "conventional") op.climb = false;
         else if (k == "climb") op.climb = true;
         else if (k == "raster" || k == "zigzag") op.raster = true;
+        else if (k == "adaptive" || k == "hsm" || k == "trochoidal") op.adaptive = true;
+        else if (k == "rest") op.rest = true;
         else if (k == "offset" || k == "spiral") op.raster = false;
         else if (k == "outside") op.side = 0;
         else if (k == "inside") op.side = 1;

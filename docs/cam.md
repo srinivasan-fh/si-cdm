@@ -90,7 +90,8 @@ CAM SETUP ["body"] [STOCK margin | STOCK x,y,z | FROM x,y,z TO x,y,z] [TOP mm]
 
 ```text
 CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|CHAMFER|TAP diameter
-         [CORNER r] [FLUTES n] [LENGTH flute-length] [ANGLE deg] [PITCH mm] [HSS] [NAME "x"]
+         [CORNER r] [FLUTES n] [LENGTH flute-length] [ANGLE deg] [PITCH mm]
+         [STICKOUT l] [HOLDER diameter] [HOLDERLENGTH l] [HSS] [NAME "x"]
 CAM TOOL DELETE n          CAM TOOLS            (the library with feeds and speeds)
 ```
 
@@ -106,6 +107,11 @@ CAM TOOL DELETE n          CAM TOOLS            (the library with feeds and spee
 | Tap | 3 | 3 × diameter | ISO coarse pitch (M6: 1.0 mm) |
 
 *Manufacture → Add a Starter Tool Library* loads ten common tools.
+
+**The holder:** `STICKOUT` is how far the tool sticks out of its holder. By default it is the
+flute length plus a diameter, and at least 5 mm more than the flute length. `HOLDER` is the
+holder's diameter, by default 3 tool diameters and at least 20 mm. The simulation checks the
+holder against the stock and the part.
 
 **Speeds and feeds:**
 
@@ -149,6 +155,29 @@ If no `TOOL` is given, the operation uses the first suitable tool in the library
   only as high as the part under the way needs.
 - **Depth of cut:** from the material (half the diameter in aluminium, a quarter in steel).
   `LEAVE` sets the stock to leave.
+
+**`ADAPTIVE`** (on `ROUGH` or `POCKET`) is high-efficiency clearing:
+
+- **Defaults:** a light stepover (12% of the diameter) and a deep stepdown (2 diameters, or
+  up to the flute length). The chip-thinning feed rises to match.
+- **Engagement:** the tool tracks the material it has cleared at each depth and measures the
+  angle of its edge in uncut material ahead. Where going straight on would take more than
+  1.5 times its share, it loops trochoidally instead: in slots, at the start of the middle
+  ring, and at tight corners. Each loop is half a stepover beyond the last. The first loops
+  of a run are smaller, so the load builds gradually. Loops shrink to clear the part.
+- **Result:** on a 40 × 50 × 12 pocket with a 10 mm end mill, fewer than 2% of the path
+  points see more than 90° of engagement. Offset rings at 40% run at 50–70° most of the way
+  and up to about 120°, and a slot is 180°.
+
+**`REST`** (on `ROUGH` or `POCKET`) is rest machining:
+
+- **What it cuts:** only the material the operations before it left. Typically a smaller tool
+  follows a big one into the corners and steps.
+- **How:** those operations are simulated first. At each depth, the new tool clears only
+  where it can reach material left between that depth and the one above. Material is counted
+  only above the part plus `LEAVE`, and only when it is thicker than 0.08 mm.
+- **Example:** after a 12 mm end mill, a 4 mm rest pass in a 40 × 50 pocket cuts only the four
+  corners: under a quarter of the path the 4 mm tool needs from scratch.
 
 **`CAM CONTOUR`** cuts the profile:
 
@@ -228,6 +257,9 @@ The report gives:
   as the lowest within that reach of each point.
 - **Rapid moves through stock.**
 - **Shank hits:** stock above a tool's flute length while it is cutting.
+- **Holder collisions:** moves where the stock or the part, within the holder's radius,
+  reaches above the holder's face (the tip plus the stickout), rapids included. The report
+  gives the stickout that would clear them all.
 - **Cycle time:** the feeds, the rapid rate and the tool changes.
 
 `SHOW` adds the cut stock as a body, *Stock (simulated)*, and hides the part.
@@ -275,6 +307,9 @@ Its parameters are listed in the tool's schema.
 {"operation": "setup", "body": "Bracket", "stock_margin": 3, "material": "aluminium", "post": "haas"}
 {"operation": "tool", "number": 1, "type": "flat", "diameter": 6}
 {"operation": "rough", "leave": 0.3, "stepover_percent": 35}
+{"operation": "pocket", "adaptive": true}
+{"operation": "tool", "number": 2, "type": "flat", "diameter": 4, "stickout": 20, "holder": 25}
+{"operation": "pocket", "tool": 2, "rest": true}
 {"operation": "simulate", "show": true}
 {"operation": "post", "path": "bracket.nc"}
 ```
@@ -283,8 +318,4 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Clearing:** trochoidal "dynamic" clearing (the clearing here holds a constant stepover,
-  with chip thinning and ramped entries); rest machining from the previous operation's stock.
 - **Machines:** 4- and 5-axis; lathes.
-- **Collisions:** the tool holder in the collision check (the check covers the flute length
-  only).

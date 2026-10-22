@@ -269,7 +269,8 @@ void scatter(Sketch& s, const Params& p, const std::vector<double>& x) {
             c.radius = std::max(xi(2), 1e-4f);
         } else {
             const bool closed = closedPolyline(c);
-            for (int k = 0; k < paramCount(c) / 2; ++k) c.pts[static_cast<std::size_t>(k)] = {xi(2 * k), xi(2 * k + 1)};
+            const int count = paramCount(c) / 2; // before the points move (moving the first opens the loop)
+            for (int k = 0; k < count; ++k) c.pts[static_cast<std::size_t>(k)] = {xi(2 * k), xi(2 * k + 1)};
             if (closed) c.pts.back() = c.pts.front(); // still closed
         }
     }

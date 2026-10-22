@@ -403,3 +403,135 @@ TEST_CASE("CAM simulation: wide stepover links don't gouge edges; tiny and huge 
     CHECK(sim.gouges == 0);
     CHECK(sim.rapidCrashes == 0);
 }
+
+namespace {
+
+double feedLength(const CamOperation& op) {
+    double len = 0;
+    Vec3 at = op.moves.empty() ? Vec3{} : op.moves[0].to;
+    for (const CamMove& m : op.moves) {
+        if (m.kind != CamMove::Rapid) len += length(m.to - at);
+        at = m.to;
+    }
+    return len;
+}
+
+void pocketPart(Document& d) {
+    REQUIRE(run(d, "BOX 80 60 20 @0,0,0").ok);
+    REQUIRE(run(d, "POCKET \"Block 1\" AT 0,0,20 BOX WIDTH 40 LENGTH 50 DEPTH 12").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 0 TOP 0 MATERIAL aluminium").ok);
+}
+
+} // namespace
+
+TEST_CASE("CAM rest machining cuts only what the bigger tool left") {
+    Document d;
+    pocketPart(d);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 12 LENGTH 30").ok);
+    REQUIRE(run(d, "CAM TOOL 2 FLAT 4 LENGTH 16").ok);
+    CHECK(!run(d, "CAM POCKET TOOL 2 REST").ok); // nothing before it
+    REQUIRE(run(d, "CAM POCKET TOOL 1 LEAVE 0.2").ok);
+    CamSimulation before;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], before));
+    auto r = run(d, "CAM POCKET TOOL 2 REST LEAVE 0.2");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "rest"));
+    // The same pocket with the small tool from scratch, for comparison.
+    Document e;
+    pocketPart(e);
+    REQUIRE(run(e, "CAM TOOL 2 FLAT 4 LENGTH 16").ok);
+    REQUIRE(run(e, "CAM POCKET TOOL 2 LEAVE 0.2").ok);
+    const double rest = feedLength(d.state.cam.ops[1]), full = feedLength(e.state.cam.ops[0]);
+    CHECK(rest > 0);
+    CHECK(rest < 0.25 * full);
+    // Every level's cuts stay in the corners, where the 12 mm tool couldn't reach.
+    for (const CamMove& m : d.state.cam.ops[1].moves)
+        if (m.kind == CamMove::Feed && m.to.z < 19.9f) CHECK(std::fabs(m.to.x) > 12.0f && std::fabs(m.to.y) > 17.0f);
+    CamSimulation after;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], after));
+    CHECK(after.gouges == 0);
+    CHECK(after.removed > before.removed + 50.0); // the corners: about 4 x (6^2 - 2^2)(1 - pi/4) x 12
+}
+
+TEST_CASE("CAM adaptive clearing: one deep level, light engagement, the same pocket, no gouges") {
+    Document d;
+    pocketPart(d);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 10 LENGTH 30").ok);
+    auto r = run(d, "CAM POCKET TOOL 1 ADAPTIVE LEAVE 0.2");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "adaptive"));
+    const CamOperation& op = d.state.cam.ops[0];
+    // 2 diameters a level: the 11.8 mm deep pocket is one level.
+    Vec3 prev = op.moves[0].to;
+    for (const CamMove& m : op.moves) {
+        if (m.kind == CamMove::Feed && std::fabs(m.to.z - prev.z) < 1e-6f && m.to.z < 19.0f) CHECK_NEAR(m.to.z, 8.2, 1e-4); // ramps aside
+        prev = m.to;
+    }
+    // Engagement along the path, measured on a fine grid of the pocket's material.
+    const double R = 5, c = 0.1, X0 = -25;
+    const int N = 500;
+    std::vector<char> mat(static_cast<std::size_t>(N * N));
+    for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i) mat[static_cast<std::size_t>(j * N + i)] = std::fabs(X0 + i * c) < 19.8 && std::fabs(X0 + j * c) < 24.8;
+    auto clearAt = [&](double x, double y) {
+        for (int j = static_cast<int>((y - R - X0) / c); j <= static_cast<int>((y + R - X0) / c) + 1; ++j)
+            for (int i = static_cast<int>((x - R - X0) / c); i <= static_cast<int>((x + R - X0) / c) + 1; ++i)
+                if (i >= 0 && j >= 0 && i < N && j < N && std::hypot(X0 + i * c - x, X0 + j * c - y) <= R) mat[static_cast<std::size_t>(j * N + i)] = 0;
+    };
+    std::size_t samples = 0, heavy = 0;
+    Vec3 at = op.moves[0].to;
+    for (const CamMove& m : op.moves) {
+        const double L = std::hypot(m.to.x - at.x, m.to.y - at.y);
+        const int n = std::max(1, static_cast<int>(L / 0.05));
+        for (int k = 1; k <= n; ++k) {
+            const double x = at.x + (m.to.x - at.x) * static_cast<double>(k) / n, y = at.y + (m.to.y - at.y) * static_cast<double>(k) / n;
+            if (m.to.z < 8.3f && at.z < 8.3f && L > 1e-9) {
+                int deg = 0;
+                for (int a = 0; a < 360; ++a) {
+                    const double ux = std::cos(a * 3.14159265358979 / 180), uy = std::sin(a * 3.14159265358979 / 180);
+                    if (ux * (m.to.x - at.x) + uy * (m.to.y - at.y) < 0) continue;
+                    const int i = static_cast<int>(std::lround((x + ux * R - X0) / c)), j = static_cast<int>(std::lround((y + uy * R - X0) / c));
+                    if (i >= 0 && j >= 0 && i < N && j < N && mat[static_cast<std::size_t>(j * N + i)]) ++deg;
+                }
+                ++samples;
+                if (deg > 90) ++heavy;
+            }
+            if (m.to.z < 8.3f || at.z < 8.3f) clearAt(x, y);
+        }
+        at = m.to;
+    }
+    CHECK(samples > 10000);
+    CHECK(static_cast<double>(heavy) < 0.02 * static_cast<double>(samples)); // a slot is 180 degrees; offset rings at 40% reach 100+
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK_NEAR(sim.removed, 40.0 * 50 * 12 - 4 * 25 * (1 - kPi / 4) * 12 - 0.2 * (40 * 50 + 180 * 12), 400.0);
+}
+
+TEST_CASE("CAM simulation finds the holder hitting the stock, and the stickout that clears it; saved with the job") {
+    Document d;
+    pocketPart(d);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 10 LENGTH 8 STICKOUT 9 HOLDER 30").ok);
+    REQUIRE(run(d, "CAM POCKET TOOL 1 ADAPTIVE").ok);
+    REQUIRE(run(d, "CAM TOOL 2 FLAT 4").ok);
+    REQUIRE(run(d, "CAM POCKET TOOL 2 REST").ok);
+    auto r = run(d, "CAM SIMULATE");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "HOLDER"));
+    CHECK(has(text(r), "stickout of 14 mm")); // 12 deep, plus a millimetre, rounded up
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 10 LENGTH 15 STICKOUT 14 HOLDER 30").ok);
+    r = run(d, "CAM SIMULATE");
+    CHECK(has(text(r), "no holder collisions"));
+    const std::string path = tempPath("sicdm_cam_holder.sicdm");
+    REQUIRE(run(d, "SAVE " + path).ok);
+    Document e;
+    REQUIRE(run(e, "OPEN " + path).ok);
+    REQUIRE(e.state.cam.tools.size() == 2);
+    CHECK_NEAR(e.state.cam.tools[0].stickout, 14.0, 1e-9);
+    CHECK_NEAR(e.state.cam.tools[0].holderDiameter, 30.0, 1e-9);
+    REQUIRE(e.state.cam.ops.size() == 2);
+    CHECK(e.state.cam.ops[0].adaptive);
+    CHECK(e.state.cam.ops[1].rest);
+    std::filesystem::remove(path);
+}

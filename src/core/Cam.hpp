@@ -9,12 +9,16 @@
 //               with radial chip thinning at light stepovers, clamped to the machine
 //   Operations  facing; 2D contour with lead in / out, multiple depths and tabs; pocket
 //               and 3D roughing (offset or zig-zag clearing at each depth, ramped
-//               entries, stock to leave); parallel and waterline 3D finishing; drilling
+//               entries, stock to leave), adaptive (light stepover, deep cuts, trochoidal
+//               loops wherever the tool would take more than its share), and rest
+//               machining (only the material earlier operations left); parallel and
+//               waterline 3D finishing; drilling
 //               (spot, drill, peck, chip-break, tap, bore) with holes found on the
 //               part; helical boring of holes bigger than the end mill
 //   Simulation  the stock as a height field cut by each tool's shape along the moves:
 //               removed volume, stock left, gouges, rapid moves through stock, shank
-//               collisions and cycle time; the cut stock as a body
+//               and holder collisions (and the stickout that would clear them) and cycle
+//               time; the cut stock as a body
 //   Post        Fanuc, Haas, GRBL and LinuxCNC G-code, with arcs (G2 / G3) fitted to
 //               the cuts and canned drilling cycles where the control has them
 //
@@ -54,7 +58,13 @@ struct CamTool {
     int flutes = 3;
     bool hss = false;                // high-speed steel (else carbide)
     std::string name;                // shown in the tool list and the G-code
+    // The holder: the tool sticks out `stickout` from its face (0: the flute length plus
+    // a diameter, at least 5 mm), and it is `holderDiameter` across (0: 3 diameters, at
+    // least 20 mm) and `holderLength` long.
+    double stickout = 0.0, holderDiameter = 0.0, holderLength = 40.0;
     double radius() const noexcept { return diameter * 0.5; }
+    double gauge() const noexcept;        // the stickout in use
+    double holderRadius() const noexcept; // the holder's radius in use
     double tipRadius() const noexcept; // the corner radius used for the cutting shape
     // Height of the tool's cutting edge above its tip at distance d from its axis
     // (infinity past the radius).
@@ -120,6 +130,8 @@ struct CamOperation {
     double angle = 0.0;            // raster direction, degrees from X
     bool climb = true;
     bool raster = false;           // zig-zag clearing instead of offsets
+    bool adaptive = false;         // rough / pocket: light stepover, deep stepdown, trochoids where the engagement would rise
+    bool rest = false;             // rough / pocket: only where the operations before left material
     // Contour: 0 the outside profile, 1 the inside walls (pockets, holes), 2 both.
     int side = 0;
     int tabs = 0;
@@ -187,11 +199,15 @@ struct CamSimulation {
     double deepestGouge = 0.0;
     std::size_t rapidCrashes = 0;  // rapid moves through stock
     std::size_t shankHits = 0;     // stock above a tool's flute length while cutting
+    std::size_t holderHits = 0;    // moves where the stock or part reaches a tool's holder
+    double neededStickout = 0.0;   // the stickout that would clear every holder hit (mm)
+    std::string holderTool;        // the first tool whose holder hits
     double seconds = 0.0;
     double cutLength = 0.0, rapidLength = 0.0;
     double cell = 0.0;
     int nx = 0, ny = 0;
     std::vector<float> height;     // nx * ny, the cut stock's top
+    std::vector<float> partTop;    // nx * ny, the part's top (-inf off the part)
 };
 // Cuts the stock with every operation in order (generating any not yet generated).
 bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string* error = nullptr);

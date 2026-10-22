@@ -522,6 +522,10 @@ double CamTool::tipRadius() const noexcept {
     return 0.0;
 }
 
+double CamTool::gauge() const noexcept { return stickout > 0 ? stickout : fluteLength + std::max(5.0, diameter); }
+
+double CamTool::holderRadius() const noexcept { return 0.5 * (holderDiameter > 0 ? holderDiameter : std::max(20.0, 3.0 * diameter)); }
+
 double CamTool::profile(double d) const noexcept { return cutterOf(*this).h(d); }
 
 std::string CamTool::describe() const {
@@ -703,6 +707,7 @@ struct Ctx {
     double tol;
     CamFeeds feeds;
     double approach = 2.0;     // finishing: rapid down to this far above the surface (roughing leaves steps)
+    const CamSimulation* rest = nullptr; // rest machining: the stock the operations before left
     double D() const { return tool.diameter; }
     double R() const { return tool.radius(); }
     // The tool's tip height at (x, y) that leaves the stock to leave on the part.
@@ -971,8 +976,8 @@ int regionAt(const Grid& g, const std::vector<int>& label, const P2& q) {
 bool genClearing(Ctx& c, bool pocketsOnly, std::string* err) {
     const CamOperation& op = c.op;
     const double D = c.D(), R = c.R();
-    const double s = std::clamp(op.stepover > 0 ? op.stepover : D * 0.4, D * 0.05, D * 0.95);
-    const double sd = op.stepdown > 0 ? op.stepdown : defaultStepdown(c);
+    const double s = std::clamp(op.stepover > 0 ? op.stepover : D * (op.adaptive ? 0.12 : 0.4), D * 0.05, D * 0.95);
+    const double sd = op.stepdown > 0 ? op.stepdown : op.adaptive ? std::max(0.1, std::min(c.tool.fluteLength * 0.9, 2.0 * D)) : defaultStepdown(c);
     const double top = std::isnan(op.top) ? c.stockTop : op.top;
     const double bottom = std::isnan(op.bottom) ? std::max(c.part.z0, c.stockBottom) : op.bottom;
     const std::vector<double> levels = depthLevels(top, bottom, sd, flatLevels(c.part, op.leave));
@@ -993,6 +998,30 @@ bool genClearing(Ctx& c, bool pocketsOnly, std::string* err) {
     auto inStock = [&](double x, double y) { return x >= c.sx0 && x <= c.sx1 && y >= c.sy0 && y <= c.sy1; };
     PathOut o(c.op.moves, c);
     double materialTop = c.stockTop;
+    // The stock the operations before left (rest machining), at a node.
+    const CamSimulation* rs = c.rest;
+    auto restHeight = [&](const P2& q, double* partTop) {
+        const int i = static_cast<int>(std::floor((q.x - c.sx0) / rs->cell)), j = static_cast<int>(std::floor((q.y - c.sy0) / rs->cell));
+        if (i < 0 || j < 0 || i >= rs->nx || j >= rs->ny) {
+            *partTop = -kInf;
+            return -kInf;
+        }
+        const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(rs->nx) + static_cast<std::size_t>(i);
+        *partTop = k < rs->partTop.size() ? rs->partTop[k] : -kInf;
+        return static_cast<double>(rs->height[k]);
+    };
+    const double restMin = std::max(0.08, 4.0 * c.tol); // thinner than this isn't worth a pass
+    // Adaptive: the part's top at each node (the material at a level is the stock above it).
+    Grid partTop;
+    if (op.adaptive) {
+        partTop = g;
+        parallelFor(g.ny, [&](int j) {
+            for (int i = 0; i < g.nx; ++i) {
+                const P2 q = g.pos(i, j);
+                partTop.at(i, j) = c.part.top(q.x, q.y);
+            }
+        });
+    }
     for (const double z : levels) {
         std::vector<char> in(g.v.size());
         for (int j = 0; j < g.ny; ++j)
@@ -1000,6 +1029,29 @@ bool genClearing(Ctx& c, bool pocketsOnly, std::string* err) {
                 const P2 q = g.pos(i, j);
                 in[static_cast<std::size_t>(j * g.nx + i)] = clg.at(i, j) <= z + 1e-9 && inRect(q.x, q.y);
             }
+        // Rest machining: only where the tool can reach material left in this level's slab
+        // (between this depth and the one above, above the part and its stock to leave).
+        std::vector<char> restMat;
+        if (rs) {
+            restMat.assign(g.v.size(), 0);
+            std::vector<char> clear(g.v.size(), 1);
+            bool any = false;
+            for (int j = 0; j < g.ny; ++j)
+                for (int i = 0; i < g.nx; ++i) {
+                    double pt;
+                    const double h = restHeight(g.pos(i, j), &pt);
+                    const double lo = std::max(pt + op.leave, z), hi = std::min(h, materialTop);
+                    const std::size_t k = static_cast<std::size_t>(j * g.nx + i);
+                    if (hi - lo > restMin) restMat[k] = 1, clear[k] = 0, any = true;
+                }
+            if (any) {
+                const Grid toMat = distanceInside(g, clear);
+                for (std::size_t k = 0; k < in.size(); ++k)
+                    if (toMat.v[k] > R + 1.5 * cell) in[k] = 0;
+            } else {
+                std::fill(in.begin(), in.end(), 0);
+            }
+        }
         std::vector<int> label;
         int regions = labelRegions(g, in, label);
         if (pocketsOnly) { // only regions closed in by the part: drop those reaching outside the stock
@@ -1056,7 +1108,7 @@ bool genClearing(Ctx& c, bool pocketsOnly, std::string* err) {
             const int region = regionAt(g, label, l[0]);
             rings.push_back({std::move(l), 0.0, region});
         }
-        if (!op.raster) {
+        if (!op.raster || op.adaptive) {
             const Grid dist = distanceInside(g, in);
             double dmax = 0;
             for (double v : dist.v) dmax = std::max(dmax, v);
@@ -1081,6 +1133,143 @@ bool genClearing(Ctx& c, bool pocketsOnly, std::string* err) {
         }
         if (!op.climb)
             for (Ring& r : rings) std::reverse(r.loop.begin(), r.loop.end());
+        // Adaptive: the material at this level, and what the tool has cleared of it so far.
+        // `straight` is what the rings alone would have cleared: where going straight on
+        // would overload the tool, it loops instead, a stepover further each time.
+        std::vector<char> mat, cleared, straight;
+        if (op.adaptive) {
+            mat.assign(g.v.size(), 0);
+            cleared.assign(g.v.size(), 0);
+            straight.assign(g.v.size(), 0);
+            for (int j = 0; j < g.ny; ++j)
+                for (int i = 0; i < g.nx; ++i) {
+                    const std::size_t k = static_cast<std::size_t>(j * g.nx + i);
+                    const P2 q = g.pos(i, j);
+                    mat[k] = inStock(q.x, q.y) && partTop.at(i, j) < z - 1e-6 && (!rs || restMat[k]);
+                }
+        }
+        auto stamp = [&](const P2& a, const P2& b, double r, bool alsoStraight) { // clears the nodes within r of the segment
+            const int i0 = std::max(0, static_cast<int>(std::floor((std::min(a.x, b.x) - r - g.x0) / g.c)));
+            const int i1 = std::min(g.nx - 1, static_cast<int>(std::ceil((std::max(a.x, b.x) + r - g.x0) / g.c)));
+            const int j0 = std::max(0, static_cast<int>(std::floor((std::min(a.y, b.y) - r - g.y0) / g.c)));
+            const int j1 = std::min(g.ny - 1, static_cast<int>(std::ceil((std::max(a.y, b.y) + r - g.y0) / g.c)));
+            const double dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+            for (int j = j0; j <= j1; ++j)
+                for (int i = i0; i <= i1; ++i) {
+                    const P2 q = g.pos(i, j);
+                    const double t = l2 > 0 ? std::clamp(((q.x - a.x) * dx + (q.y - a.y) * dy) / l2, 0.0, 1.0) : 0.0;
+                    if (std::hypot(q.x - a.x - dx * t, q.y - a.y - dy * t) <= r) {
+                        cleared[static_cast<std::size_t>(j * g.nx + i)] = 1;
+                        if (alsoStraight) straight[static_cast<std::size_t>(j * g.nx + i)] = 1;
+                    }
+                }
+        };
+        // The angle of the tool's edge in uncut material ahead of it at p going along t.
+        constexpr int kEdge = 48;
+        auto engagement = [&](const P2& p, const P2& t, const std::vector<char>& done) {
+            int n = 0;
+            for (int k = 0; k < kEdge; ++k) {
+                const double a = 2 * kPiD * k / kEdge, ux = std::cos(a), uy = std::sin(a);
+                if (ux * t.x + uy * t.y < 0) continue;
+                const int i = static_cast<int>(std::lround((p.x + ux * R - g.x0) / g.c)), j = static_cast<int>(std::lround((p.y + uy * R - g.y0) / g.c));
+                if (i < 0 || j < 0 || i >= g.nx || j >= g.ny) continue;
+                const std::size_t q = static_cast<std::size_t>(j * g.nx + i);
+                if (mat[q] && !done[q]) ++n;
+            }
+            return 2 * kPiD * n / kEdge;
+        };
+        const double nominal = std::acos(1.0 - std::min(s, D) / R);
+        const double limit = std::max(nominal * 1.5, nominal + 15.0 * kPiD / 180.0);
+        P2 stamped{};
+        auto feedA = [&](double x, double y, double zz, double f) { // a feed that clears as it goes
+            const P2 from{o.at.x, o.at.y};
+            if (f > 0) o.feed(x, y, zz, f);
+            else o.feed(x, y, zz);
+            stamp(from, {x, y}, R, true);
+            stamped = {x, y};
+        };
+        // A trochoidal loop at p heading along t: a circle of radius rt ahead of the tool,
+        // round and back (counter-clockwise for climb milling), shrunk until it misses the part.
+        auto trochoid = [&](const P2& p, const P2& t, double maxRt) {
+            const P2 n{-t.y, t.x};
+            const double side = op.climb ? 1.0 : -1.0;
+            for (double rt = std::min(0.5 * R, maxRt); rt >= 0.05 * R; rt *= 0.5) {
+                constexpr int kSeg = 20;
+                std::vector<P2> pts;
+                bool fits = true;
+                for (int k = 1; k <= kSeg && fits; ++k) {
+                    const double a = 2 * kPiD * k / kSeg;
+                    const P2 q{p.x + t.x * rt * (1 - std::cos(a)) - n.x * rt * std::sin(a) * side,
+                               p.y + t.y * rt * (1 - std::cos(a)) - n.y * rt * std::sin(a) * side};
+                    if (!inRect(q.x, q.y) || c.cl(q.x, q.y, floor) > z + 1e-9) fits = false;
+                    pts.push_back(q);
+                }
+                if (!fits) continue;
+                for (const P2& q : pts) o.feed(q.x, q.y, z);
+                stamp({p.x + t.x * rt, p.y + t.y * rt}, {p.x + t.x * rt, p.y + t.y * rt}, R + rt, false);
+                return true;
+            }
+            return false;
+        };
+        // Round a loop from its first point (where the tool is), looping trochoidally
+        // wherever going straight on would take more than the limit.
+        auto adaptiveRound = [&](const Loop& l) {
+            const std::size_t n = l.size();
+            const double adv = std::max(s * 0.5, g.c);
+            P2 cur = l[0];
+            stamped = cur;
+            double sinceLoop = kInf;
+            int run = 0; // loops in a row: the first ones are smaller, so the run eases in
+            const double loopStep = s * 0.5; // each loop takes a crescent this thick
+            for (std::size_t i = 1; i <= n; ++i) {
+                const P2 target = l[i % n];
+                const double len = dist2(cur, target);
+                if (len < 1e-9) continue;
+                const P2 t{(target.x - cur.x) / len, (target.y - cur.y) / len};
+                for (double d = 0; d < len - 1e-9;) {
+                    const double step = std::min(adv, len - d);
+                    const P2 at{cur.x + t.x * d, cur.y + t.y * d}, next{cur.x + t.x * (d + step), cur.y + t.y * (d + step)};
+                    // Loop where straight on would overload the tool, one stepover past the
+                    // last loop, while there is material ahead of the loop.
+                    const bool overloaded = engagement(next, t, straight) > limit;
+                    if (!overloaded) run = 0;
+                    if (overloaded && sinceLoop >= loopStep - 1e-9 && engagement({at.x + t.x * R, at.y + t.y * R}, t, cleared) > 1e-9) {
+                        if (dist2(at, {o.at.x, o.at.y}) > 1e-9) feedA(at.x, at.y, z, -1);
+                        if (trochoid(at, t, loopStep * (run + 1))) sinceLoop = 0, ++run;
+                        o.feed(at.x, at.y, z);
+                    }
+                    stamp(stamped, next, R, true);
+                    stamped = next;
+                    sinceLoop += step;
+                    d += step;
+                }
+                feedA(target.x, target.y, z, -1);
+                cur = target;
+            }
+        };
+        auto adaptiveLoop = [&](const Loop& l, double from) {
+            const std::size_t n = l.size();
+            if (n < 2) return;
+            if (from > z + 1e-9) {
+                const double need = (from - z) / std::tan(kRamp), len = loopLength(l);
+                if (len < D * 0.5) {
+                    o.plunge(l[0].x, l[0].y, z);
+                } else {
+                    double done = 0, zz = from;
+                    o.plunge(l[0].x, l[0].y, from);
+                    for (std::size_t i = 1; zz > z + 1e-9 && i < n * 64; ++i) {
+                        const P2& a = l[(i - 1) % n];
+                        const P2& b = l[i % n];
+                        done += dist2(a, b);
+                        zz = std::max(z, from - (from - z) * done / need);
+                        feedA(b.x, b.y, zz, c.feeds.plunge * 2.0);
+                    }
+                    adaptiveRound(startNear(l, {o.at.x, o.at.y}));
+                    return;
+                }
+            }
+            adaptiveRound(l);
+        };
         // Region by region (nearest first), innermost ring first.
         std::vector<char> regionDone(static_cast<std::size_t>(regions), 0);
         for (int left = regions; left > 0; --left) {
@@ -1101,17 +1290,23 @@ bool genClearing(Ctx& c, bool pocketsOnly, std::string* err) {
                 const P2 cur{o.at.x, o.at.y};
                 const Loop l = startNear(ring, cur);
                 if (entered && dist2(cur, l[0]) <= 2.0 * s && o.freeLine(cur, l[0], z, floor) && std::fabs(o.at.z - z) < 1e-6) {
-                    o.feed(l[0].x, l[0].y, z);
-                    cutLoop(o, l, z, z);
+                    if (op.adaptive) {
+                        feedA(l[0].x, l[0].y, z, -1);
+                        adaptiveLoop(l, z);
+                    } else {
+                        o.feed(l[0].x, l[0].y, z);
+                        cutLoop(o, l, z, z);
+                    }
                 } else {
                     // Rapid only to just above the last depth (the tool may overlap stock
                     // not yet cut at this one), then ramp in along the ring.
                     o.travel(l[0], materialTop + 1.0, materialTop + 0.5, floor);
-                    cutLoop(o, l, z, materialTop + 0.5);
+                    if (op.adaptive) adaptiveLoop(l, materialTop + 0.5);
+                    else cutLoop(o, l, z, materialTop + 0.5);
                 }
                 entered = true;
             };
-            if (op.raster) {
+            if (op.raster && !op.adaptive) {
                 std::vector<Loop> edgeLoops;
                 for (const Ring* r : mine) edgeLoops.push_back(r->loop);
                 const auto lines = section::hatch(edgeLoops, s, op.angle * kPiD / 180.0);
@@ -1745,7 +1940,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
     double stepover = op.stepover;
     if (stepover <= 0) {
         if (op.kind == CamOpKind::Face) stepover = tool->diameter * 0.7;
-        else if (op.kind == CamOpKind::Rough || op.kind == CamOpKind::Pocket) stepover = tool->diameter * 0.4;
+        else if (op.kind == CamOpKind::Rough || op.kind == CamOpKind::Pocket) stepover = tool->diameter * (op.adaptive ? 0.12 : 0.4);
         else if (op.kind == CamOpKind::Parallel || op.kind == CamOpKind::Waterline) stepover = scallopStep(*tool, op.scallop);
     }
     Ctx c{job, *tool, pm, op, cutterOf(*tool, op.leave), su.stockMin.x, su.stockMin.y, su.stockMax.x, su.stockMax.y, su.stockMax.z,
@@ -1759,6 +1954,24 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
         const CamMaterial* pm2 = camMaterial(su.material);
         const double psd = prev.stepdown > 0 ? prev.stepdown : (pt ? pt->diameter * (pm2 ? pm2->stepdownFactor : 0.5) : 3.0);
         c.approach = std::max(c.approach, psd + prev.leave + 1.0);
+    }
+    // Rest machining: simulate the operations before this one for the stock they leave.
+    CamSimulation restSim;
+    if (op.rest && (op.kind == CamOpKind::Rough || op.kind == CamOpKind::Pocket)) {
+        CamJob before = job;
+        std::size_t k = 0;
+        while (k < job.ops.size() && &job.ops[k] != &op) ++k;
+        before.ops.resize(k);
+        if (before.ops.empty()) {
+            if (error) *error = "REST machines what the operations before it left: there are none";
+            return false;
+        }
+        std::string e;
+        if (!simulateJob(before, part, restSim, &e)) {
+            if (error) *error = "REST: " + e;
+            return false;
+        }
+        c.rest = &restSim;
     }
     if (op.setFeed > 0) c.feeds.feed = op.setFeed;
     if (op.setPlunge > 0) c.feeds.plunge = op.setPlunge;
@@ -1893,6 +2106,30 @@ bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string*
             const int j0 = std::max(0, static_cast<int>(std::floor((std::min(a.y, b.y) - R - y0) / cell)));
             const int j1 = std::min(ny - 1, static_cast<int>(std::floor((std::max(a.y, b.y) + R - y0) / cell)));
             const bool flatTool = cut.coneSlope <= 0 && cut.rc <= 0;
+            // The holder: anything within its radius higher than its face, before this move cuts.
+            if (const double zLow = std::min(a.z, b.z), gauge = tool->gauge(); zLow + gauge < top - 1e-9) {
+                const double HR = tool->holderRadius();
+                const int stride = std::max(1, static_cast<int>(HR / (16.0 * cell)));
+                const int hi0 = std::max(0, static_cast<int>(std::floor((std::min(a.x, b.x) - HR - x0) / cell)));
+                const int hi1 = std::min(nx - 1, static_cast<int>(std::floor((std::max(a.x, b.x) + HR - x0) / cell)));
+                const int hj0 = std::max(0, static_cast<int>(std::floor((std::min(a.y, b.y) - HR - y0) / cell)));
+                const int hj1 = std::min(ny - 1, static_cast<int>(std::floor((std::max(a.y, b.y) + HR - y0) / cell)));
+                double worst = -kInf;
+                for (int j = hj0; j <= hj1; j += stride)
+                    for (int i = hi0; i <= hi1; i += stride) {
+                        const double v = h[static_cast<std::size_t>(j * nx + i)];
+                        if (v <= zLow + gauge) continue;
+                        const double cx = x0 + (i + 0.5) * cell, cy = y0 + (j + 0.5) * cell;
+                        const double t = l2 > 0 ? std::clamp(((cx - ax) * dx + (cy - ay) * dy) / l2, 0.0, 1.0) : 0.0;
+                        if (std::hypot(cx - ax - dx * t, cy - ay - dy * t) > HR) continue;
+                        worst = std::max(worst, v - zLow);
+                    }
+                if (worst > -kInf) {
+                    ++out.holderHits;
+                    out.neededStickout = std::max(out.neededStickout, worst + 1.0);
+                    if (out.holderTool.empty()) out.holderTool = "T" + std::to_string(tool->number);
+                }
+            }
             if (l2 < 1e-18 && dz >= 0) continue; // straight up: it cuts nothing new
             for (int j = j0; j <= j1; ++j)
                 for (int i = i0; i <= i1; ++i) {
@@ -1979,7 +2216,11 @@ bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string*
     }
     out.meanLeft = onPart ? sumLeft / static_cast<double>(onPart) : 0.0;
     out.height.resize(h.size());
-    for (std::size_t k = 0; k < h.size(); ++k) out.height[k] = static_cast<float>(h[k]);
+    out.partTop.resize(h.size());
+    for (std::size_t k = 0; k < h.size(); ++k) {
+        out.height[k] = static_cast<float>(h[k]);
+        out.partTop[k] = static_cast<float>(partTop[k]);
+    }
     return true;
 }
 
@@ -2474,6 +2715,9 @@ Json camToJson(const CamJob& job) {
         o.set("diameter", t.diameter);
         o.set("corner", t.cornerRadius);
         o.set("flute_length", t.fluteLength);
+        if (t.stickout > 0) o.set("stickout", t.stickout);
+        if (t.holderDiameter > 0) o.set("holder_diameter", t.holderDiameter);
+        o.set("holder_length", t.holderLength);
         o.set("angle", t.tipAngle);
         o.set("pitch", t.pitch);
         o.set("flutes", t.flutes);
@@ -2496,6 +2740,8 @@ Json camToJson(const CamJob& job) {
         o.set("angle", op.angle);
         o.set("climb", op.climb);
         o.set("raster", op.raster);
+        if (op.adaptive) o.set("adaptive", true);
+        if (op.rest) o.set("rest", true);
         o.set("side", op.side);
         o.set("tabs", op.tabs);
         o.set("tab_width", op.tabWidth);
@@ -2556,6 +2802,9 @@ bool camFromJson(const Json& j, CamJob& job) {
         t.diameter = o["diameter"].asNumber(6);
         t.cornerRadius = o["corner"].asNumber(0);
         t.fluteLength = o["flute_length"].asNumber(20);
+        t.stickout = o["stickout"].asNumber(0);
+        t.holderDiameter = o["holder_diameter"].asNumber(0);
+        t.holderLength = o["holder_length"].asNumber(40);
         t.tipAngle = o["angle"].asNumber(118);
         t.pitch = o["pitch"].asNumber(1);
         t.flutes = o["flutes"].asInt(3);
@@ -2579,6 +2828,8 @@ bool camFromJson(const Json& j, CamJob& job) {
         op.angle = o["angle"].asNumber(0);
         op.climb = o["climb"].asBool(true);
         op.raster = o["raster"].asBool(false);
+        op.adaptive = o["adaptive"].asBool(false);
+        op.rest = o["rest"].asBool(false);
         op.side = o["side"].asInt(0);
         op.tabs = o["tabs"].asInt(0);
         op.tabWidth = o["tab_width"].asNumber(4);

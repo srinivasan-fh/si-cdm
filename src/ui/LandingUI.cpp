@@ -533,6 +533,9 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem("Face")) cmd.commands.push_back("CAM FACE");
         if (ImGui::MenuItem("3D Rough (offset clearing)")) cmd.commands.push_back("CAM ROUGH LEAVE 0.3");
         if (ImGui::MenuItem("Pocket")) cmd.commands.push_back("CAM POCKET");
+        if (ImGui::MenuItem("Adaptive Rough (trochoidal, deep cuts)")) cmd.commands.push_back("CAM ROUGH ADAPTIVE LEAVE 0.3");
+        if (ImGui::MenuItem("Adaptive Pocket")) cmd.commands.push_back("CAM POCKET ADAPTIVE");
+        if (ImGui::MenuItem("Rest Rough (what the tools before left)")) cmd.commands.push_back("CAM ROUGH REST LEAVE 0.3");
         if (ImGui::MenuItem("2D Contour (with tabs)")) cmd.commands.push_back("CAM CONTOUR TABS 4");
         if (ImGui::MenuItem("Parallel Finish")) cmd.commands.push_back("CAM PARALLEL SHALLOW");
         if (ImGui::MenuItem("Waterline Finish")) cmd.commands.push_back("CAM WATERLINE STEEP");
