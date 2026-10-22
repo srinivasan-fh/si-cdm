@@ -1460,10 +1460,10 @@ int writeSurface(IgesOut& w, const Brep& b, const BFace& f, bool& flip) {
             for (const OrientedEdge& oe : l.edges) ++uses[oe.edge];
         for (const auto& [e, n] : uses) {
             if (n < 2) continue;
-            const std::vector<DVec3> q = edgePoints(b, {e, true}, 2);
-            const DVec3 mid = q[1];
+            const std::vector<DVec3> q = edgePoints(b, {e, true}, 2); // a straight edge gives its two ends only
+            const DVec3 first = q.front(), last = q.back(), mid = q.size() > 2 ? q[1] : (first + last) * 0.5;
             if (dlength(mid - foot(mid)) < 1e-9) continue;
-            if (sameAngle(around(q[0]), around(mid)) && sameAngle(around(q[2]), around(mid))) {
+            if (sameAngle(around(first), around(mid)) && sameAngle(around(last), around(mid))) {
                 ref = dnormalize(mid - foot(mid));
                 meridianSeam = true;
             } else {
