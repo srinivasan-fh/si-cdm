@@ -44,20 +44,34 @@ cmake --preset mingw-cross && cmake --build --preset mingw-cross
 wine build/mingw/tests/sicdm_tests.exe # all tests pass under Wine too
 ```
 
-### Installers
+### Releases
 
-`cpack` turns a release build into the platform's installer:
+`scripts/release.sh` builds, tests and packages a release; the packages and a
+`SHA256SUMS-<platform>.txt` land in `dist/<version>/`:
 
-| Platform | Command | Output |
+| Run on | Command | Packages |
 |---|---|---|
-| Windows | `cpack --preset windows` (or `mingw-cross`) | `SICDM-<ver>-windows-x64.exe`: NSIS setup with Start-menu and desktop shortcuts and an uninstaller (`/S` installs silently); also a portable `.zip` |
-| macOS | `cpack --preset xcode` | `SICDM-<ver>-macos.dmg`: drag **SI CDM** to Applications; `sicdm-mcp` sits beside it |
-| Linux | `cpack --preset release` | `sicdm_<ver>_amd64.deb` (desktop entry, icons, dependencies from `dpkg-shlibdeps`) and a `.tar.gz` |
+| Linux | `scripts/release.sh linux` | `sicdm_<ver>_amd64.deb` (desktop entry, icons, dependencies from `dpkg-shlibdeps`) and `sicdm-<ver>-linux-x86_64.tar.gz` |
+| Linux | `scripts/release.sh windows-cross` | the Windows packages below, cross-built with MinGW-w64 (tests run under Wine when it is installed) |
+| macOS | `scripts/release.sh macos` | `SICDM-<ver>-macos.dmg` (Universal): drag **SI CDM** to Applications; `sicdm-mcp` sits beside it |
+| Windows | `scripts\release.cmd` (or `scripts/release.sh` in an MSYS2 UCRT64 shell) | `SICDM-<ver>-windows-x64.exe`: setup with Start-menu and desktop shortcuts and an uninstaller (`/S` installs silently); and a portable `.zip` |
 
-Each package carries the documentation and the third-party licences
-(`resources/THIRD-PARTY-NOTICES.txt`). CI builds, tests and packages all three platforms
-on every push and keeps the packages as workflow artifacts; pushing a `v*` tag also
-publishes them as a GitHub release.
+`scripts/release.sh` alone builds for the machine it runs on, and `all` builds everything that machine
+can (Linux: Linux and Windows). `--clean` starts from empty build folders and `--skip-tests` skips the
+tests. Packages are signed when the environment holds the keys: `SICDM_CODESIGN_ID` (and
+`SICDM_NOTARY_PROFILE` to notarize) on macOS, `SICDM_WIN_CERT` / `SICDM_WIN_CERT_PASS` (a .pfx, with
+`osslsigncode`) for Windows.
+
+To publish all three platforms at once:
+
+```bash
+scripts/release.sh version 0.2.0     # set the version, then commit CMakeLists.txt
+scripts/release.sh tag               # tags v0.2.0 and pushes it
+```
+
+CI runs the same script on macOS, Linux and Windows for every push and keeps the packages as
+workflow artifacts; for a `v*` tag it also publishes them, with their checksums, as a GitHub release.
+Each package carries the documentation and the third-party licences (`resources/THIRD-PARTY-NOTICES.txt`).
 
 ## Launch: icon and splash screen
 

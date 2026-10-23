@@ -11,18 +11,12 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Configure (Xcode generator)
-        run: cmake --preset xcode
-      - name: Build
-        run: cmake --build --preset xcode-release -- -quiet
-      - name: Test
-        run: ctest --preset xcode
-      - name: Package (.dmg)
-        run: cpack --preset xcode
+      - name: Build, test and package (.dmg)
+        run: scripts/release.sh macos
       - uses: actions/upload-artifact@v4
         with:
           name: sicdm-macos
-          path: build/xcode/SICDM-*.dmg
+          path: dist/*/*
           if-no-files-found: error
 
   linux:
@@ -33,12 +27,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev xvfb
-      - name: Configure
-        run: cmake --preset release
-      - name: Build
-        run: cmake --build --preset release -j
-      - name: Test
-        run: ctest --preset release
+      - name: Build, test and package (.deb, .tar.gz)
+        run: scripts/release.sh linux
       - name: Render landing page
         run: xvfb-run -a -s "-screen 0 1600x960x24" ./build/release/sicdm --size 1600 960 --screenshot landing.ppm
       - name: MCP server smoke test (stdio)
@@ -49,17 +39,14 @@ jobs:
             | ./build/release/sicdm-mcp | tee mcp.out
           grep -q '"protocolVersion"' mcp.out
           grep -q 'Created Block 1' mcp.out
-      - name: Package (.deb, .tar.gz)
+      - name: The .deb installs
         run: |
-          cpack --preset release
-          sudo apt-get install -y ./build/release/sicdm_*.deb
+          sudo apt-get install -y ./dist/*/sicdm_*.deb
           test -x /usr/bin/sicdm && test -f /usr/share/applications/sicdm.desktop
       - uses: actions/upload-artifact@v4
         with:
           name: sicdm-linux
-          path: |
-            build/release/sicdm_*.deb
-            build/release/sicdm-*.tar.gz
+          path: dist/*/*
           if-no-files-found: error
 
   windows:
@@ -79,12 +66,8 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-nsis
-      - name: Configure
-        run: cmake --preset windows
-      - name: Build
-        run: cmake --build --preset windows
-      - name: Test
-        run: ctest --preset windows
+      - name: Build, test and package (NSIS installer, .zip)
+        run: scripts/release.sh windows
       - name: MCP server smoke test (stdio)
         run: |
           printf '%s\n' \
@@ -92,20 +75,16 @@ jobs:
             '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_solid","arguments":{"kind":"box","width":10,"depth":10,"height":10}}}' \
             | ./build/windows/sicdm-mcp.exe | tee mcp.out
           grep -q 'Created Block 1' mcp.out
-      - name: Package (NSIS installer, .zip)
-        run: cpack --preset windows
       - name: Installer installs silently
         shell: pwsh
         run: |
-          $setup = Get-ChildItem build/windows/SICDM-*-windows-x64.exe | Select-Object -First 1
+          $setup = Get-ChildItem dist/*/SICDM-*-windows-x64.exe | Select-Object -First 1
           Start-Process -FilePath $setup.FullName -ArgumentList '/S', "/D=$env:RUNNER_TEMP\SICDM" -Wait
           if (-not (Test-Path "$env:RUNNER_TEMP\SICDM\bin\sicdm.exe")) { throw "sicdm.exe not installed" }
       - uses: actions/upload-artifact@v4
         with:
           name: sicdm-windows
-          path: |
-            build/windows/SICDM-*-windows-x64.exe
-            build/windows/SICDM-*-windows-x64.zip
+          path: dist/*/*
           if-no-files-found: error
 
   # Tags v* publish the three platforms' packages as a GitHub release.
