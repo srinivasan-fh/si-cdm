@@ -283,6 +283,82 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         return out;
     }
 
+    if (cmd == "DRAG") {
+        // DRAG curve [START|END|CENTRE|POINT n|CORNER n|RIM] TO x,y [FROM x,y]   or   DRAG curve BY dx,dy
+        std::size_t i = 0;
+        const int ci = leadingCurve(i, {"start", "end", "center", "centre", "point", "corner", "vertex", "rim", "to", "by", "from"});
+        const char* usage = "DRAG curve [START | END | CENTRE | POINT n | RIM] TO x,y [FROM x,y], or DRAG curve BY dx,dy";
+        if (ci < 0) return out.fail(a.empty() ? std::string(usage) : "No sketch curve named " + a[0]);
+        const SketchCurve& c = sketch.curves()[static_cast<std::size_t>(ci)];
+        SketchGrip grip;
+        grip.ref.curve = c.name;
+        if (c.kind == CurveKind::Point) grip.ref.point = 0;
+        std::optional<Vec2> to, from, by;
+        while (i < a.size()) {
+            const std::string w = lower(a[i++]);
+            auto pointArg = [&](std::optional<Vec2>& dst) {
+                if (i >= a.size()) return false;
+                const auto pt = parsePointInput(a[i++]);
+                if (!pt) return false;
+                dst = pt->resolve({});
+                return true;
+            };
+            auto index = [&]() -> int {
+                const auto n = i < a.size() ? parseNumber(a[i]) : std::nullopt;
+                if (!n || *n < 1) return -1;
+                ++i;
+                return static_cast<int>(*n) - 1;
+            };
+            if (w == "start") grip.ref.point = c.kind == CurveKind::Arc ? 1 : 0;
+            else if (w == "end")
+                grip.ref.point = c.kind == CurveKind::Line ? 1
+                                 : (c.kind == CurveKind::Polyline || c.kind == CurveKind::Spline) ? static_cast<int>(c.pts.size()) - 1
+                                 : c.kind == CurveKind::Arc ? 2 : 1;
+            else if (w == "center" || w == "centre") grip.ref.point = 0;
+            else if (w == "point" || w == "corner" || w == "vertex") {
+                grip.ref.point = index();
+                if (grip.ref.point < 0) return out.fail("A point number (1, 2, ...) follows " + toUpper(w));
+            } else if (w == "rim") {
+                if (c.kind != CurveKind::Circle && c.kind != CurveKind::Arc) return out.fail("RIM drags a circle's or arc's radius");
+                grip.rim = true;
+            } else if (w == "to") {
+                if (!pointArg(to)) return out.fail("TO takes the point x,y to drag to");
+            } else if (w == "from") {
+                if (!pointArg(from)) return out.fail("FROM takes the point x,y grabbed");
+            } else if (w == "by") {
+                if (!pointArg(by)) return out.fail("BY takes the move dx,dy");
+            } else
+                return out.fail(usage);
+        }
+        const bool whole = !grip.rim && grip.ref.point < 0;
+        if (!to && !by) return out.fail(usage);
+        if (by && !whole) return out.fail("BY moves a whole curve; a point or rim goes TO x,y");
+        if (!c.pts.empty() && grip.ref.point >= 0) {
+            // The point must be one the curve has.
+            Sketch probe = sketch;
+            SketchConstraint fix;
+            fix.kind = ConstraintKind::Coincident;
+            fix.refs = {grip.ref, grip.ref};
+            if (std::isnan(constraintError(probe, fix))) return out.fail(c.name + " has no point " + std::to_string(grip.ref.point + 1));
+        }
+        Vec2 f = from.value_or(c.pts.empty() ? Vec2{} : c.pts[0]);
+        Vec2 t = by ? Vec2{f.x + by->x, f.y + by->y} : *to;
+        Sketch moved = sketch;
+        const SolveReport r = dragSketch(moved, grip, f, t);
+        if (!r.ok) return out.fail("Can't drag " + c.name + ": " + (r.conflict.empty() ? std::string("the constraints can't all be met") : r.conflict + " can't be met there"));
+        sketch = std::move(moved);
+        sketch.touch();
+        doc.dirty = true;
+        const std::string what = grip.rim ? c.name + " rim" : whole ? c.name : grip.ref.describe();
+        std::string line = "Dragged " + what;
+        if (r.residual > 1e-3) line += ": held " + lengthText(r.residual) + " short by its constraints";
+        Sketch probe = sketch;
+        const SolveReport st = solveSketch(probe);
+        if (!sketch.constraints().empty()) line += " (sketch " + status(st) + ")";
+        out.say(line);
+        return out;
+    }
+
     if (cmd == "CONSTRAINTS") {
         if (sketch.constraints().empty()) {
             out.say("No constraints: CONSTRAIN HORIZONTAL \"Line 1\", DIM \"Line 1\" 40, ... (HELP CONSTRAIN)");

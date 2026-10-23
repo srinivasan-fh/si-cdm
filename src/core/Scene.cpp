@@ -123,10 +123,35 @@ void Scene::pushUndo(std::string label) {
     m_redo.clear(); // a new edit: what was undone is gone for good
 }
 
+void Scene::pushSketchUndo(std::string label) {
+    ++m_undoPushes;
+    Snapshot s;
+    s.label = std::move(label);
+    s.sketchOnly = true;
+    s.sketch = m_sketch;
+    s.before = m_sketch.revision();
+    m_undo.push_back(std::move(s));
+}
+
+void Scene::dropSketchUndo() {
+    // The newest unsealed sketch snapshot (a body edit may have pushed one after it).
+    for (std::size_t i = m_undo.size(); i-- > 0;)
+        if (m_undo[i].sketchOnly && !m_undo[i].sealed) {
+            m_undo.erase(m_undo.begin() + static_cast<std::ptrdiff_t>(i));
+            --m_undoPushes;
+            return;
+        }
+}
+
 void Scene::sealUndo() {
     if (m_undo.empty() || m_undo.back().sealed) return;
     Snapshot& s = m_undo.back();
     s.sealed = true;
+    if (s.sketchOnly) {
+        s.sketchAfter = m_sketch.revision();
+        if (m_undo.size() > 16) m_undo.erase(m_undo.begin());
+        return;
+    }
     s.after = m_revision;
     s.afterBodies.clear();
     for (const Body& b : m_bodies) s.afterBodies.push_back({b.name, b.offset, b.color, b.visible});
@@ -148,6 +173,25 @@ std::string Scene::undo(std::string* why) {
     if (m_undo.empty()) return "";
     Snapshot s = std::move(m_undo.back());
     m_undo.pop_back();
+    if (s.sketchOnly) {
+        if (s.sealed && m_sketch.revision() != s.sketchAfter) {
+            if (why) *why = "Cannot undo " + s.label + ": the sketch changed since (undo history cleared)";
+            m_undo.clear();
+            return "";
+        }
+        Redo r;
+        r.label = s.label;
+        r.sketchOnly = true;
+        r.sketch = m_sketch;
+        m_sketch = std::move(s.sketch);
+        m_sketch.touch();
+        r.sketchAt = m_sketch.revision();
+        if (s.sealed) m_redo.push_back(std::move(r));
+        // The sketch edit before this one left the state now restored: it can be undone next.
+        if (!m_undo.empty() && m_undo.back().sketchOnly && m_undo.back().sealed && m_undo.back().sketchAfter == s.before)
+            m_undo.back().sketchAfter = m_sketch.revision();
+        return s.label;
+    }
     if (s.sealed) {
         const char* changed = m_revision != s.after || s.afterBodies.size() != m_bodies.size() ? "bodies were added, removed or rebuilt"
                               : s.motionsChanged && motionsKey(m_motions) != s.afterMotions ? "the motions changed"
@@ -159,7 +203,11 @@ std::string Scene::undo(std::string* why) {
         }
         // Keep what was done to the bodies since the edit: moves, colours, renames.
         keepLaterChanges(s.bodies, s.afterBodies);
-        Redo r{s.label, m_bodies, m_motions, 0, m_revision, {}};
+        Redo r;
+        r.label = s.label;
+        r.bodies = m_bodies;
+        r.motions = m_motions;
+        r.from = m_revision;
         if (s.motionsChanged) m_motions = std::move(s.motions);
         m_bodies = std::move(s.bodies);
         m_revision = nextRevision();
@@ -196,6 +244,26 @@ std::string Scene::redo(std::string* why) {
     if (m_redo.empty()) return "";
     Redo r = std::move(m_redo.back());
     m_redo.pop_back();
+    if (r.sketchOnly) {
+        if (m_sketch.revision() != r.sketchAt) {
+            if (why) *why = "Cannot redo " + r.label + ": the sketch changed since (redo history cleared)";
+            m_redo.clear();
+            return "";
+        }
+        Snapshot s;
+        s.label = r.label;
+        s.sketchOnly = true;
+        s.sketch = m_sketch;
+        const std::uint64_t from = m_sketch.revision();
+        s.before = from;
+        m_sketch = std::move(r.sketch);
+        m_sketch.touch();
+        m_undo.push_back(std::move(s));
+        sealUndo();
+        // Back to the state the undo before this one left: that one can be redone next.
+        if (!m_redo.empty() && m_redo.back().sketchOnly && m_redo.back().sketchAt == from) m_redo.back().sketchAt = m_sketch.revision();
+        return r.label;
+    }
     if (m_revision != r.at || r.atBodies.size() != m_bodies.size()) {
         if (why) *why = "Cannot redo " + r.label + ": bodies were added, removed or rebuilt since (redo history cleared)";
         m_redo.clear();

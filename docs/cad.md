@@ -98,6 +98,38 @@ around.
 - *Extend*: click near the end to carry on.
 - *Offset*: click the curve on the side to offset to; the distance is in the options bar.
 
+### Dragging
+
+With the **Select** tool, drag sketch geometry and the constraints hold while it moves:
+
+- **A point:** an end, corner, vertex or centre. A small square marks each point of the selected
+  curve, and the one under the cursor lights up.
+- **A circle's or arc's rim:** changes its radius.
+- **Anything else on a curve:** moves the whole curve without changing its shape.
+
+The curves joined to it by constraints follow, moving as little as they must; curves not
+connected to it stay put. When the constraints stop the grip short of the cursor, it goes as far as
+they let it, and the status bar says how far short ("held 5.8 mm short by its constraints"). A
+dimension or a fixed point holds firm. Esc during a drag puts everything back.
+
+Each drag is recorded as a `DRAG` command, so it is in the history and undoes:
+
+```text
+DRAG "Polyline 1" POINT 3 TO 60,50      a point (START, END, CENTRE, POINT n, CORNER n)
+DRAG "Circle 2" RIM TO 45,20            the radius, through 45,20
+DRAG "Line 1" BY 5,0                    a whole curve, moved by 5,0
+DRAG "Line 1" TO 10,10 FROM 0,0         a whole curve, the point 0,0 on it going to 10,10
+```
+
+**Undo:** every sketch edit undoes and redoes, with Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y; Cmd on
+macOS), or `UNDO` / `REDO` and the File menu:
+
+- new curves;
+- trims, extends and offsets;
+- construction changes;
+- constraints and dimensions;
+- drags.
+
 ### Constraint status
 
 The solver works out how free each curve still is.
@@ -405,7 +437,7 @@ parts. In either case `HISTORY` says so, and `REGEN` refuses unless you write `R
 The `cad` tool has these operations:
 
 - `revolve`, `sweep`, `loft`;
-- `constrain`, `dim`, `constraints`, `constraint_edit`, `constraint_delete`;
+- `constrain`, `dim`, `constraints`, `constraint_edit`, `constraint_delete`, `drag`;
 - `pattern`, `mirror`, `edges`, `fillet`, `chamfer`;
 - `massprops`, `measure`;
 - `history`, `regen`, `history_edit`, `history_insert`, `history_delete`.
@@ -418,6 +450,7 @@ The `cad` tool has these operations:
 {"operation": "chamfer", "body": "Block 1", "distance": 1, "select": "1 4 7"}
 {"operation": "dim", "refs": [{"curve": "Polyline 1", "at": "side 1"}], "value": 60}
 {"operation": "constraint_edit", "constraint": "D5", "value": 80}
+{"operation": "drag", "curve": "Polyline 1", "grip": "point 3", "to": [60, 50]}
 {"operation": "massprops", "body": "Housing", "material": "aluminium"}
 {"operation": "history_edit", "step": 2, "command": "HOLE \"Block 1\" AT -20,0,15 DIAMETER 10 THROUGH"}
 ```

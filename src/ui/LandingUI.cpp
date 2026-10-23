@@ -369,6 +369,9 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem("Open Project...", "Ctrl+O")) requestFile(FileOpen, st);
         if (ImGui::MenuItem("Close", "Ctrl+W")) requestClose(cmd, st, st.activeFile);
         ImGui::Separator();
+        if (ImGui::MenuItem("Undo", "Ctrl+Z")) cmd.commands.push_back("UNDO");
+        if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z")) cmd.commands.push_back("REDO");
+        ImGui::Separator();
         if (ImGui::MenuItem("Save", "Ctrl+S")) {
             if (st.projectPath.empty()) requestFile(FileSaveAs, st);
             else cmd.commands.push_back("SAVE");
@@ -1668,6 +1671,11 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
         if (mod && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
             if (io.KeyShift || st.projectPath.empty()) requestFile(FileSaveAs, st);
             else cmd.commands.push_back("SAVE");
+        }
+        // Undo / redo, unless a text field has the keys (it undoes its own typing).
+        if (!io.WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) cmd.commands.push_back(io.KeyShift ? "REDO" : "UNDO");
+            if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) cmd.commands.push_back("REDO");
         }
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Camera.hpp"
+#include "core/Constraints.hpp"
 #include "core/Document.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Mcp.hpp"
@@ -73,6 +74,16 @@ private:
     void onCanvasClick(float x, float y, bool doubleClick);
     std::optional<RayHit> pick(float x, float y) const;
     int pickCurve(float x, float y) const;
+    // Sketch geometry under the cursor that the Select tool can drag: a point of a curve
+    // (an end, corner, vertex or centre), a circle's or arc's rim, or a whole curve.
+    struct SketchGripHit {
+        SketchGrip grip;
+        Vec2 from; // the plane point grabbed (mm)
+        int curve = -1;
+    };
+    std::optional<SketchGripHit> pickSketchGrip(float x, float y) const;
+    void updateSketchDrag(float x, float y);
+    void finishSketchDrag();
     void addCurve(SketchCurve curve);
     void setMode(ViewMode mode);
     void setPlane(SketchPlane plane);
@@ -173,10 +184,18 @@ private:
     void updateSheet();
     // Sketch curves coloured by how the constraints hold them.
     std::uint64_t m_sketchColorKey = 0;
+    // Dragging sketch geometry: the press's grip, the sketch as it was, and where the
+    // grip was last asked to go (each frame solves afresh from the start, as the DRAG
+    // command recorded on release does).
+    std::optional<SketchGripHit> m_gripCandidate;
+    SketchGripHit m_sketchDrag;
+    Sketch m_sketchDragStart;
+    Vec2 m_sketchDragTo{};
+    bool m_sketchDragMoved = false;
     void updateSketchColors();
 
     // Input state
-    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife };
+    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip };
     DragMode m_leftDrag = DragMode::None;
     bool m_escapedDrag = false; // Esc cancelled the drag; the button is still held
     DragMode m_otherDrag = DragMode::None; // right / middle button

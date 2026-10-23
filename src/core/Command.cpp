@@ -27,6 +27,8 @@ constexpr CommandSpec kCommands[] = {
     {"EXTEND", "", "EXTEND curve [START|END|AT x,y]", "Carry a line, arc or open polyline end on to the next curve it meets"},
     {"OFFSET", "", "OFFSET curve distance [SIDE x,y]",
      "Copy a sketch curve a distance to one side (default outside / left; negative: inside / right): parallel lines, concentric arcs..."},
+    {"DRAG", "", "DRAG curve [START|END|CENTRE|POINT n|RIM] TO x,y [FROM x,y] | DRAG curve BY dx,dy",
+     "Drag sketch geometry: the constraints hold, and the curves joined to it follow (as dragging with the mouse)"},
     {"POINT", "PO", "POINT x,y", "Reference point"},
     // Solids
     {"BOX", "BLOCK", "BOX w d h [@x,y,z]", "Block centred on x,y with its base at z"},

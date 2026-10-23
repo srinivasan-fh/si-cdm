@@ -343,3 +343,124 @@ TEST_CASE("MCP create_sketch draws arcs, splines, polygons, slots and constructi
     CHECK(!tool(R"({"kind":"ellipse","points":[[0,0],[20,0]],"radius":5})")["isError"].asBool());
     CHECK(tool(R"({"kind":"ellipse","points":[[0,0],[20,0]]})")["isError"].asBool()); // no minor radius
 }
+
+TEST_CASE("Sketch drag: a point goes where it is dragged, as far as the constraints let it") {
+    Document d;
+    // A rectangle drawn as a closed polyline: square corners, one corner fixed, its width 40.
+    REQUIRE(run(d, "PLINE 0,0 40,0 40,30 0,30 CLOSE").ok);
+    for (const char* c : {"HORIZONTAL \"Polyline 1\" SIDE 1", "HORIZONTAL \"Polyline 1\" SIDE 3", "VERTICAL \"Polyline 1\" SIDE 2",
+                          "VERTICAL \"Polyline 1\" SIDE 4", "FIX \"Polyline 1\" POINT 1"})
+        REQUIRE(run(d, std::string("CONSTRAIN ") + c).ok);
+    REQUIRE(run(d, "DIM \"Polyline 1\" SIDE 1 40").ok);
+    // The far corner can only rise: the height follows, the width and corner 1 stay.
+    const auto r = run(d, "DRAG \"Polyline 1\" POINT 3 TO 60,50");
+    REQUIRE(r.ok);
+    CHECK(r.lines[0].find("20 mm short") != std::string::npos);
+    const SketchCurve& p = *curve(d, "Polyline 1");
+    CHECK(near(p.pts[0].x, 0) && near(p.pts[0].y, 0));
+    CHECK(near(p.pts[1].x, 40) && near(p.pts[1].y, 0));
+    CHECK(near(p.pts[2].x, 40) && near(p.pts[2].y, 50));
+    CHECK(near(p.pts[3].x, 0) && near(p.pts[3].y, 50));
+    CHECK(near(p.pts[4].x, 0) && near(p.pts[4].y, 0)); // still closed
+    for (const SketchConstraint& c : d.scene.sketch().constraints()) CHECK(constraintError(d.scene.sketch(), c) < 1e-5);
+    // The fixed corner doesn't move at all.
+    REQUIRE(run(d, "DRAG \"Polyline 1\" POINT 1 TO 5,5").ok);
+    CHECK(near(curve(d, "Polyline 1")->pts[0].x, 0) && near(curve(d, "Polyline 1")->pts[0].y, 0));
+    // A free point lands exactly where it is dragged.
+    REQUIRE(run(d, "LINE 100,0 120,0").ok);
+    REQUIRE(run(d, "DRAG \"Line 2\" END TO 130.25,10.5").ok);
+    CHECK(near(curve(d, "Line 2")->pts[1].x, 130.25, 1e-4) && near(curve(d, "Line 2")->pts[1].y, 10.5, 1e-4));
+    CHECK(near(curve(d, "Line 2")->pts[0].x, 100, 1e-4)); // the other end stays
+}
+
+TEST_CASE("Sketch drag: joined curves follow, a whole curve moves rigidly, a rim drag sets the radius") {
+    Document d;
+    REQUIRE(run(d, "LINE 0,0 20,0").ok);
+    REQUIRE(run(d, "LINE 20,0 20,15").ok);
+    REQUIRE(run(d, "CONSTRAIN COINCIDENT \"Line 1\" END \"Line 2\" START").ok);
+    REQUIRE(run(d, "CONSTRAIN PERPENDICULAR \"Line 1\" \"Line 2\"").ok);
+    REQUIRE(run(d, "DIM \"Line 2\" 15").ok);
+    // Dragging the corner carries the other line along: still joined, square and 15 long.
+    REQUIRE(run(d, "DRAG \"Line 1\" END TO 30,5").ok);
+    const SketchCurve& a = *curve(d, "Line 1");
+    const SketchCurve& b = *curve(d, "Line 2");
+    CHECK(near(a.pts[1].x, 30, 1e-3) && near(a.pts[1].y, 5, 1e-3));
+    CHECK(near(b.pts[0].x, 30, 1e-3) && near(b.pts[0].y, 5, 1e-3));
+    CHECK(near(std::hypot(b.pts[1].x - b.pts[0].x, b.pts[1].y - b.pts[0].y), 15, 1e-3));
+    const double dotp = (a.pts[1].x - a.pts[0].x) * (b.pts[1].x - b.pts[0].x) + (a.pts[1].y - a.pts[0].y) * (b.pts[1].y - b.pts[0].y);
+    CHECK(near(dotp, 0, 1e-2));
+    // A curve nothing joins moves as a whole, keeping its shape, and nothing else moves.
+    REQUIRE(run(d, "CIRCLE 0,100 10").ok);
+    const Vec2 lineEnd = curve(d, "Line 1")->pts[0];
+    REQUIRE(run(d, "DRAG \"Circle 3\" BY 5,-7").ok);
+    CHECK(near(curve(d, "Circle 3")->pts[0].x, 5, 1e-4) && near(curve(d, "Circle 3")->pts[0].y, 93, 1e-4));
+    CHECK(near(curve(d, "Circle 3")->radius, 10, 1e-4));
+    CHECK(near(curve(d, "Line 1")->pts[0].x, lineEnd.x, 1e-6));
+    // The rim sets the radius; the centre stays.
+    REQUIRE(run(d, "DRAG \"Circle 3\" RIM TO 30,93").ok);
+    CHECK(near(curve(d, "Circle 3")->radius, 25, 1e-3));
+    CHECK(near(curve(d, "Circle 3")->pts[0].x, 5, 1e-3));
+    // A dimensioned radius holds against a rim drag.
+    REQUIRE(run(d, "DIM \"Circle 3\" 12").ok);
+    REQUIRE(run(d, "DRAG \"Circle 3\" RIM TO 60,93").ok);
+    CHECK(near(curve(d, "Circle 3")->radius, 12, 1e-3));
+    // A whole constrained curve drags with what it is joined to.
+    REQUIRE(run(d, "DRAG \"Line 2\" BY 10,0").ok);
+    CHECK(near(curve(d, "Line 2")->pts[0].x, curve(d, "Line 1")->pts[1].x, 1e-3));
+    // Refused: no such point, BY on a point, RIM on a line.
+    CHECK(!run(d, "DRAG \"Line 1\" POINT 7 TO 1,1").ok);
+    CHECK(!run(d, "DRAG \"Line 1\" END BY 1,1").ok);
+    CHECK(!run(d, "DRAG \"Line 1\" RIM TO 1,1").ok);
+    CHECK(!run(d, "DRAG \"Nope\" TO 1,1").ok);
+}
+
+TEST_CASE("Sketch edits undo and redo: new curves, trims, constraints and drags") {
+    Document d;
+    REQUIRE(run(d, "LINE 0,0 10,0").ok);
+    REQUIRE(run(d, "LINE 0,0 0,10").ok);
+    REQUIRE(run(d, "DRAG \"Line 1\" END TO 20,5").ok);
+    REQUIRE(run(d, "UNDO").ok); // the drag
+    CHECK(near(curve(d, "Line 1")->pts[1].x, 10) && near(curve(d, "Line 1")->pts[1].y, 0));
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(near(curve(d, "Line 1")->pts[1].x, 20) && near(curve(d, "Line 1")->pts[1].y, 5));
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "UNDO").ok); // Line 2
+    CHECK(d.scene.sketch().curves().size() == 1);
+    REQUIRE(run(d, "CONSTRAIN HORIZONTAL \"Line 1\"").ok);
+    CHECK(d.scene.sketch().constraints().size() == 1);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.sketch().constraints().empty());
+    // A failed sketch command leaves nothing to undo in its name, and a body edit's undo still works.
+    CHECK(!run(d, "DRAG \"Line 9\" TO 1,1").ok);
+    REQUIRE(run(d, "BOX 10 10 10 @0,50,0").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 0,50,10 DIAMETER 3").ok);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(run(d, "UNDO").ok); // Line 1
+    CHECK(d.scene.sketch().curves().empty());
+    // Erasing a curve undoes, with the constraints on it.
+    REQUIRE(run(d, "RECT 0,0 10,5").ok);
+    const std::string rect = "\"" + last(d).name + "\"";
+    REQUIRE(run(d, "DIM " + rect + " SIDE 1 10").ok);
+    REQUIRE(run(d, "ERASE " + rect).ok);
+    CHECK(d.scene.sketch().curves().empty());
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.sketch().curves().size() == 1);
+    CHECK(d.scene.sketch().constraints().size() == 1);
+}
+
+TEST_CASE("MCP cad drag moves sketch geometry with its constraints held") {
+    Document d;
+    McpServer s(d, nullptr);
+    auto call = [&](const std::string& name, const std::string& args) {
+        const auto r = Json::parse(s.handle(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":")" + name + R"(","arguments":)" + args + "}}"));
+        return r ? (*r)["result"] : Json();
+    };
+    REQUIRE(run(d, "LINE 0,0 10,0").ok);
+    REQUIRE(!call("cad", R"({"operation":"constrain","kind":"horizontal","refs":[{"curve":"Line 1"}]})")["isError"].asBool());
+    REQUIRE(!call("cad", R"({"operation":"drag","curve":"Line 1","grip":"end","to":[30,8]})")["isError"].asBool());
+    CHECK(near(curve(d, "Line 1")->pts[1].x, 30, 1e-3));
+    CHECK(near(curve(d, "Line 1")->pts[1].y, curve(d, "Line 1")->pts[0].y, 1e-4)); // still horizontal
+    REQUIRE(!call("cad", R"({"operation":"drag","curve":"Line 1","by":[0,5]})")["isError"].asBool());
+    CHECK(near(curve(d, "Line 1")->pts[0].x, 0, 1e-3));
+    CHECK(call("cad", R"({"operation":"drag","curve":"Line 1"})")["isError"].asBool());
+}

@@ -134,6 +134,13 @@ public:
     // the bodies and motions is kept before each one (the last few, within a memory
     // budget). Once the edit has succeeded, sealUndo() records the state it left.
     void pushUndo(std::string label);
+    // The same for an edit of the sketch alone (curves, constraints, a drag): a copy of
+    // the sketch, restored only while the sketch is as that edit left it.
+    // It doesn't drop the redo list until keepSketchUndo() says the edit happened;
+    // dropSketchUndo() forgets it (the command failed or changed nothing).
+    void pushSketchUndo(std::string label);
+    void keepSketchUndo() { m_redo.clear(); }
+    void dropSketchUndo();
     // How many snapshots were ever taken (the stack itself is capped).
     std::uint64_t undoPushes() const noexcept { return m_undoPushes; }
     void sealUndo();
@@ -201,6 +208,9 @@ private:
         std::vector<BodyState> afterBodies;
         std::string afterMotions;        // motionsKey() the edit left
         bool motionsChanged = false;
+        bool sketchOnly = false;         // pushSketchUndo: the sketch below, no bodies
+        Sketch sketch;
+        std::uint64_t sketchAfter = 0;   // the sketch's revision the edit left
     };
     std::vector<Snapshot> m_undo;
     std::uint64_t m_undoPushes = 0;
@@ -211,6 +221,9 @@ private:
         std::uint64_t at = 0;       // revision the undo left
         std::uint64_t from = 0;     // revision before the undo (what the redo brings back)
         std::vector<BodyState> atBodies;
+        bool sketchOnly = false;
+        Sketch sketch;              // as the edit had left it
+        std::uint64_t sketchAt = 0; // the sketch's revision the undo left
     };
     std::vector<Redo> m_redo;
     // Carries moves, colours, visibility and renames made since `was` onto `bodies`.

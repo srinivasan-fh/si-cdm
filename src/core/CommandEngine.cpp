@@ -292,6 +292,16 @@ namespace {
 
 // The commands that build the model: the feature history records them, and REGEN
 // replays them. SELECT and PLANE are there because later commands default to them.
+// The commands that edit only the sketch: UNDO takes them back from a copy of it.
+bool sketchCommand(const std::string& cmd) {
+    static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",
+                                          "ELLIPSE",  "SKETCHSLOT",   "POLYGON", "TRIM",  "EXTEND",    "OFFSET",     "CONSTRUCTION",
+                                          "CONSTRAIN", "DIM",         "CONSTRAINT", "DRAG",  "ERASE"};
+    for (const char* k : kSketch)
+        if (cmd == k) return true;
+    return false;
+}
+
 bool historyCommand(const std::string& cmd) {
     static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
                                          "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
@@ -300,7 +310,7 @@ bool historyCommand(const std::string& cmd) {
                                          "PART",     "PARAM",   "ROTATE",  "SCALE",    "ERASE",     "MOVE",    "SELECT",   "REPAIR",  "ORIENT",
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
-                                         "CONSTRUCTION", "EXTEND", "OFFSET"};
+                                         "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -373,7 +383,15 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     const std::uint64_t pushes = doc.scene.undoPushes();
     doc.pendingConstraint.clear();
     doc.historyRewritten = false;
+    const CommandSpec* spec = findCommand(tokenizeCommand(line).name);
+    const bool sketchEdit = spec && sketchCommand(spec->name) && !doc.replaying;
+    const std::uint64_t sketchBefore = doc.scene.sketch().revision();
+    if (sketchEdit) doc.scene.pushSketchUndo(std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))));
     CommandOutput out = runCommand(doc, line, view);
+    if (sketchEdit) {
+        if (out.ok && doc.scene.sketch().revision() != sketchBefore) doc.scene.keepSketchUndo();
+        else doc.scene.dropSketchUndo();
+    }
     // An edit that kept an undo snapshot and succeeded: record the state it left.
     doc.scene.sealUndo();
     if (!doc.replaying && !doc.historyRewritten) recordHistory(doc, line, out, empty, selBody, selCurve, doc.scene.undoPushes() != pushes);
@@ -1583,6 +1601,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         const std::string what = doc.scene.undo(&why);
         if (what.empty()) return out.fail(why.empty() ? "Nothing to undo" : why);
         if (doc.scene.bodies().size() != count || doc.selectedBody >= static_cast<int>(count)) doc.selectedBody = -1;
+        if (doc.selectedCurve >= static_cast<int>(doc.scene.sketch().curves().size())) doc.selectedCurve = -1;
         markChanged(doc);
         out.say("Undid " + what);
         return out;
@@ -1592,6 +1611,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         const std::string what = doc.scene.redo(&why);
         if (what.empty()) return out.fail(why.empty() ? "Nothing to redo" : why);
         if (doc.selectedBody >= static_cast<int>(doc.scene.bodies().size())) doc.selectedBody = -1;
+        if (doc.selectedCurve >= static_cast<int>(doc.scene.sketch().curves().size())) doc.selectedCurve = -1;
         markChanged(doc);
         out.say("Redid " + what);
         return out;
@@ -1599,7 +1619,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     if (cmd == "CAM") return runCamCommand(doc, a, pc.quoted);
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
-    if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET") return runSketchCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET" || cmd == "DRAG") return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
         cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES")
         return runFeatureCommand(doc, cmd, a, pc.quoted);

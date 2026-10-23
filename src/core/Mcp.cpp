@@ -498,13 +498,18 @@ Json McpServer::toolDefinitions() {
         Json p = Json::object();
         p.set("operation", prop("string", "revolve | sweep | loft | pattern | mirror | edges | fillet | chamfer | massprops | measure | history | regen | "
                                           "history_edit | history_insert | history_delete | constrain | dim | constraints | "
-                                          "constraint_edit | constraint_delete"));
+                                          "constraint_edit | constraint_delete | drag"));
         p.set("kind", prop("string", "constrain: coincident, horizontal, vertical, parallel, perpendicular, tangent, equal, concentric, on, "
                                      "midpoint, fix; dim: distance (default), horizontal, vertical, radius, diameter, angle"));
         p.set("refs", prop("array", "constrain / dim: the curves, each {\"curve\": name, \"at\": \"start\" | \"end\" | \"centre\" | "
                                     "\"point n\" | \"side n\"}"));
         p.set("value", prop("number", "dim / constraint_edit: the size (mm, or degrees for an angle); dim without it keeps the size now"));
         p.set("constraint", prop("string", "constraint_edit / delete: its name (D1, C2...)"));
+        p.set("grip", prop("string", "drag: what of 'curve' to drag - \"start\", \"end\", \"centre\", \"point n\", \"rim\" (a circle's or "
+                                     "arc's radius); omitted: the whole curve"));
+        p.set("to", prop("array", "drag: [x, y] mm on the sketch plane where the grip goes (a whole curve: where 'from' goes)"));
+        p.set("from", prop("array", "drag a whole curve: [x, y] mm, the point grabbed (default its first point)"));
+        p.set("by", prop("array", "drag a whole curve: [dx, dy] mm to move it by"));
         p.set("curve", prop("string", "revolve: the closed sketch curve; sweep: the profile"));
         p.set("path", prop("string", "sweep: the path curve"));
         p.set("sections", prop("array", "loft: the closed sketch curves, in order"));
@@ -542,7 +547,8 @@ Json McpServer::toolDefinitions() {
         tools.push(tool("cad",
                         "Part features: revolve, sweep and loft sketch curves into solids; linear and circular patterns; mirror; "
                         "fillets and chamfers on chosen edges (or rolling-ball on all); mass properties (volume, mass, centre of mass, inertia); measure distances; and "
-                        "the feature history (list, edit, insert, delete a step, regenerate).",
+                        "the feature history (list, edit, insert, delete a step, regenerate); sketch constraints and dimensions, and dragging "
+                        "sketch geometry with them held (as with the mouse).",
                         p, {"operation"}));
     }
     {
@@ -1038,6 +1044,17 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine(line);
         }
         if (op == "constraints") return runLine("CONSTRAINTS");
+        if (op == "drag") {
+            if (!a["curve"].isString()) return textResult("drag needs 'curve'", true);
+            auto xy = [&](const Json& v) { return num(v[0].asNumber()) + "," + num(v[1].asNumber()); };
+            std::string line = "DRAG " + quote(a["curve"].asString());
+            if (a["grip"].isString()) line += " " + toUpper(a["grip"].asString());
+            if (a["by"].isArray() && a["by"].size() == 2) line += " BY " + xy(a["by"]);
+            else if (a["to"].isArray() && a["to"].size() == 2) line += " TO " + xy(a["to"]);
+            else return textResult("drag needs 'to' [x, y] (or 'by' [dx, dy] for a whole curve)", true);
+            if (a["from"].isArray() && a["from"].size() == 2) line += " FROM " + xy(a["from"]);
+            return runLine(line);
+        }
         if (op == "constraint_edit" || op == "constraint_delete") {
             if (!a["constraint"].isString()) return textResult(op + " needs 'constraint'", true);
             if (op == "constraint_edit" && !a["value"].isNumber()) return textResult("constraint_edit needs 'value'", true);
@@ -1053,7 +1070,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine("HISTORY " + toUpper(what) + " " + num(a["step"].asNumber()) + (what != "delete" ? " " + a["command"].asString() : std::string()));
         }
         return textResult("operation is one of revolve, sweep, loft, pattern, mirror, edges, fillet, chamfer, massprops, measure, history, regen, "
-                          "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete",
+                          "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete, drag",
                           true);
     }
     if (name == "assembly") {

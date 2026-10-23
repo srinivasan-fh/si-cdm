@@ -265,7 +265,8 @@ The *Design* menu (or the command line) adds part features to sketches and solid
 
 - **Constraint sketcher:** coincident, horizontal, vertical, parallel, perpendicular, tangent,
   equal, concentric, on, midpoint and fix, plus driving dimensions. It counts the degrees of
-  freedom left. Change a dimension and the part is rebuilt from the history.
+  freedom left. Change a dimension and the part is rebuilt from the history. Drag points, rims or
+  whole curves with the Select tool and the constraints hold while they move (`DRAG`).
 - **Revolve, sweep and loft:** from closed sketch curves.
 - **Pattern:** linear, in rows, or circular. The copies can be joined into a part or cut from it.
 - **Mirror.**
@@ -644,6 +645,8 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 - Simulation: `Space` play / pause, `←` / `→` step, `Home` rewind
 - `Ctrl + Tab` / `Ctrl + Shift + Tab`: next / previous file tab; `Ctrl/⌘ W`: close the file tab
 - `Space`: command line
+- `Ctrl/⌘ Z`: undo; `Ctrl/⌘ Shift Z` or `Ctrl/⌘ Y`: redo
+- Select tool, left drag on sketch geometry: drag it with its constraints held
 - Right drag (or left drag on empty space): orbit in 3D, pan in 2D
 - Middle drag / Shift + left drag: pan
 - Scroll: zoom at the cursor

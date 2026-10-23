@@ -64,6 +64,21 @@ struct SolveReport {
 // Moves the curves to meet every constraint. On failure the curves are put back.
 SolveReport solveSketch(Sketch& sketch);
 
+// What a drag holds: a point of a curve (ref.point), a circle's or arc's rim (its
+// radius), or else the whole curve, which then moves without changing shape.
+struct SketchGrip {
+    SketchRef ref;
+    bool rim = false;
+};
+
+// Drags the sketch: the grip goes to `to` (plane mm) as nearly as the constraints let
+// it, and the curves joined to it by constraints follow, moving as little as they must.
+// For a whole curve, `from` is the point grabbed and `to` where it goes. Only the drag's
+// own curves and those constrained to them move. The constraints all hold afterwards;
+// when they can't (or the grip is no curve's) the sketch is left as it was and ok is
+// false. `residual` is how far the grip ended from `to`.
+SolveReport dragSketch(Sketch& sketch, const SketchGrip& grip, Vec2 from, Vec2 to);
+
 // The current error of one constraint (0 when met); NaN when its curves are gone.
 double constraintError(const Sketch& sketch, const SketchConstraint& c);
 // The value a dimension has now (for a new DIM without a value).

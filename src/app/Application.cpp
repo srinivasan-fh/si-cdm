@@ -236,6 +236,36 @@ namespace {
 constexpr float kDragThreshold = 4.0f; // pixels before a press becomes a drag
 constexpr float kPlaceSnap = 5.0f;     // mm grid snap when placing solids
 constexpr float kCurvePickPx = 6.0f;   // screen distance for picking sketch curves
+constexpr float kGripPickPx = 8.0f;    // ... and the points they are dragged by
+
+// The points a sketch curve can be dragged by, numbered as constraint references number
+// them: ends, corners, vertices, centres.
+std::vector<std::pair<int, Vec2>> gripPoints(const SketchCurve& c) {
+    std::vector<std::pair<int, Vec2>> pts;
+    if (c.pts.empty()) return pts;
+    switch (c.kind) {
+    case CurveKind::Rectangle: {
+        if (c.pts.size() < 2) break;
+        const Vec2 a = c.pts[0], b = c.pts[1];
+        pts = {{0, a}, {1, {b.x, a.y}}, {2, b}, {3, {a.x, b.y}}};
+        break;
+    }
+    case CurveKind::Polyline:
+    case CurveKind::Spline: {
+        const std::size_t n = c.pts.size() - (c.isClosed() && c.kind == CurveKind::Polyline && c.pts.size() > 3 ? 1 : 0);
+        for (std::size_t k = 0; k < n; ++k) pts.push_back({static_cast<int>(k), c.pts[k]});
+        break;
+    }
+    case CurveKind::Arc:
+        for (std::size_t k = 0; k < c.pts.size() && k < 3; ++k) pts.push_back({static_cast<int>(k), c.pts[k]});
+        break;
+    case CurveKind::Circle:
+    case CurveKind::Point: pts = {{0, c.pts[0]}}; break;
+    default:
+        for (std::size_t k = 0; k < c.pts.size() && k < 2; ++k) pts.push_back({static_cast<int>(k), c.pts[k]});
+    }
+    return pts;
+}
 
 float snap(float v, float step) { return std::round(v / step) * step; }
 
@@ -343,6 +373,100 @@ int Application::pickCurve(float x, float y) const {
         }
     }
     return best;
+}
+
+std::optional<Application::SketchGripHit> Application::pickSketchGrip(float x, float y) const {
+    const ImGuiIO& io = ImGui::GetIO();
+    const auto& curves = m_doc.scene.sketch().curves();
+    std::optional<SketchGripHit> best;
+    float bestD = kGripPickPx;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        const SketchCurve& c = curves[i];
+        if (!c.visible || c.pts.empty()) continue;
+        const std::vector<std::pair<int, Vec2>> pts = gripPoints(c);
+        const PlaneFrame f = planeFrame(c.plane);
+        for (const auto& [k, q] : pts) {
+            const auto sp = projectToScreen(camera(), f.toWorld(q), io.DisplaySize);
+            if (!sp) continue;
+            const float d = std::hypot(x - sp->x, y - sp->y);
+            if (d < bestD) {
+                bestD = d;
+                SketchGripHit h;
+                h.grip.ref.curve = c.name;
+                h.grip.ref.point = k;
+                h.from = q;
+                h.curve = static_cast<int>(i);
+                best = h;
+            }
+        }
+    }
+    if (best) return best;
+    // Else the curve itself: a circle or arc by its rim, anything else whole.
+    const int ci = pickCurve(x, y);
+    if (ci < 0) return std::nullopt;
+    const SketchCurve& c = curves[static_cast<std::size_t>(ci)];
+    const PlaneFrame f = planeFrame(c.plane);
+    const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+    const float dn = dot(ray.dir, f.normal);
+    if (std::fabs(dn) < 1e-6f) return std::nullopt;
+    SketchGripHit h;
+    h.grip.ref.curve = c.name;
+    h.grip.rim = c.kind == CurveKind::Circle || c.kind == CurveKind::Arc;
+    if (c.kind == CurveKind::Point) h.grip.ref.point = 0;
+    h.from = f.toPlane(ray.at(dot(f.origin - ray.origin, f.normal) / dn));
+    h.curve = ci;
+    return h;
+}
+
+void Application::updateSketchDrag(float x, float y) {
+    const auto& curves = m_sketchDragStart.curves();
+    if (m_sketchDrag.curve < 0 || m_sketchDrag.curve >= static_cast<int>(curves.size())) return;
+    const SketchCurve& c = curves[static_cast<std::size_t>(m_sketchDrag.curve)];
+    const ImGuiIO& io = ImGui::GetIO();
+    const PlaneFrame f = planeFrame(c.plane);
+    const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+    const float dn = dot(ray.dir, f.normal);
+    if (std::fabs(dn) < 1e-6f) return;
+    Vec2 to = f.toPlane(ray.at(dot(f.origin - ray.origin, f.normal) / dn));
+    // The command records the point to 6 significant figures: drag to that same point.
+    char b[64];
+    std::snprintf(b, sizeof b, "%.6g %.6g", static_cast<double>(to.x), static_cast<double>(to.y));
+    std::sscanf(b, "%f %f", &to.x, &to.y);
+    if (m_sketchDragMoved && to.x == m_sketchDragTo.x && to.y == m_sketchDragTo.y) return;
+    Sketch s = m_sketchDragStart;
+    const SolveReport r = dragSketch(s, m_sketchDrag.grip, m_sketchDrag.from, to);
+    if (!r.ok) {
+        setStatus("Can't drag there: " + (r.conflict.empty() ? std::string("the constraints can't all be met") : r.conflict + " can't be met"));
+        return;
+    }
+    m_doc.scene.sketch() = std::move(s);
+    m_doc.scene.sketch().touch();
+    m_sketchDragTo = to;
+    m_sketchDragMoved = true;
+    const std::string what = m_sketchDrag.grip.rim ? c.name + " rim" : m_sketchDrag.grip.ref.point >= 0 ? m_sketchDrag.grip.ref.describe() : c.name;
+    std::string line = "Dragging " + what + " to " + lengthText(to.x) + ", " + lengthText(to.y);
+    if (r.residual > 1e-3) line += "  (held " + lengthText(r.residual) + " short by its constraints)";
+    setStatus(line);
+    m_framesToRender = std::max(m_framesToRender, 2);
+}
+
+void Application::finishSketchDrag() {
+    if (!m_sketchDragMoved) return;
+    m_sketchDragMoved = false;
+    // Put the sketch back and drag it by the command, so it is in the history and undoes.
+    // (The copy keeps its revision, so the edit before the drag can still be undone.)
+    m_doc.scene.sketch() = m_sketchDragStart;
+    const SketchGrip& g = m_sketchDrag.grip;
+    char to[96], from[96];
+    std::snprintf(to, sizeof to, "%.6gmm,%.6gmm", static_cast<double>(m_sketchDragTo.x), static_cast<double>(m_sketchDragTo.y));
+    std::snprintf(from, sizeof from, "%.6gmm,%.6gmm", static_cast<double>(m_sketchDrag.from.x), static_cast<double>(m_sketchDrag.from.y));
+    std::string line = "DRAG \"" + g.ref.curve + "\"";
+    if (g.rim) line += " RIM";
+    else if (g.ref.point >= 0 && m_sketchDragStart.curves()[static_cast<std::size_t>(m_sketchDrag.curve)].kind != CurveKind::Point)
+        line += " POINT " + std::to_string(g.ref.point + 1);
+    line += std::string(" TO ") + to;
+    if (!g.rim && g.ref.point < 0) line += std::string(" FROM ") + from;
+    runCommandLine(line);
 }
 
 void Application::addCurve(SketchCurve curve) {
@@ -701,6 +825,15 @@ void Application::abortSculpt() {
 }
 
 void Application::cancelInteraction(bool commit) {
+    if (m_leftDrag == DragMode::SketchGrip) { // Esc: the sketch as it was
+        if (commit) finishSketchDrag();
+        else if (m_sketchDragMoved) {
+            m_doc.scene.sketch() = m_sketchDragStart; // its own revision: as if never dragged
+            m_sketchDragMoved = false;
+            setStatus("Drag cancelled");
+        }
+    }
+    m_gripCandidate.reset();
     if (m_sculptBody >= 0) {
         if (commit) endSculpt();
         else abortSculpt();
@@ -1001,6 +1134,8 @@ void Application::handleViewportInput() {
         m_pressX = mx;
         m_pressY = my;
         m_leftDrag = DragMode::Pending;
+        m_gripCandidate.reset();
+        if (tool == ToolId::Select && !simulating() && !io.KeyShift) m_gripCandidate = pickSketchGrip(mx, my);
         if (isSculptTool(tool) && beginSculpt(mx, my)) {
             m_leftDrag = m_sculptSettings.brush == SculptBrush::Grab ? DragMode::Grab : DragMode::Sculpt;
         } else if (tool == ToolId::CutChannel && pick(mx, my)) {
@@ -1039,8 +1174,17 @@ void Application::handleViewportInput() {
     }
 
     if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !m_escapedDrag) {
-        if (m_leftDrag == DragMode::Pending && std::hypot(mx - m_pressX, my - m_pressY) > kDragThreshold)
-            m_leftDrag = isSketchTool(tool) ? DragMode::None : orbitOrPan; // dragging empty space navigates
+        if (m_leftDrag == DragMode::Pending && std::hypot(mx - m_pressX, my - m_pressY) > kDragThreshold) {
+            if (m_gripCandidate) { // pressed on sketch geometry: drag it
+                m_leftDrag = DragMode::SketchGrip;
+                m_sketchDrag = *m_gripCandidate;
+                m_sketchDragStart = m_doc.scene.sketch();
+                m_sketchDragMoved = false;
+                m_uiState.selectedCurve = m_sketchDrag.curve;
+                m_uiState.selectedBody = m_uiState.selectedImage = -1;
+            } else
+                m_leftDrag = isSketchTool(tool) ? DragMode::None : orbitOrPan; // dragging empty space navigates
+        }
         switch (m_leftDrag) {
         case DragMode::Orbit: cam.orbit(dx, dy); break;
         case DragMode::Pan: cam.pan(dx, dy, wh); break;
@@ -1070,6 +1214,7 @@ void Application::handleViewportInput() {
         }
         case DragMode::Sculpt:
         case DragMode::Grab: continueSculpt(mx, my); break;
+        case DragMode::SketchGrip: updateSketchDrag(mx, my); break;
         case DragMode::CutPath: {
             const auto hit = pick(mx, my);
             const float step = std::max(m_uiState.channelWidth * 0.5f, 0.5f);
@@ -1085,7 +1230,9 @@ void Application::handleViewportInput() {
         else if (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) endSculpt();
         else if (m_leftDrag == DragMode::CutPath) finishCutDrag(ToolId::CutChannel, mx, my);
         else if (m_leftDrag == DragMode::Knife) finishCutDrag(ToolId::CutKnife, mx, my);
+        else if (m_leftDrag == DragMode::SketchGrip) finishSketchDrag();
         m_leftDrag = DragMode::None;
+        m_gripCandidate.reset();
         m_escapedDrag = false;
     }
     // Brush / tool cursor on the surface under the mouse.
@@ -1196,20 +1343,16 @@ void Application::handleViewportInput() {
         }
     }
     if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && m_leftDrag == DragMode::None) {
-        auto& curves = m_doc.scene.sketch().curves();
-        if (m_uiState.selectedCurve >= 0 && m_uiState.selectedCurve < static_cast<int>(curves.size())) {
-            setStatus("Deleted " + curves[static_cast<std::size_t>(m_uiState.selectedCurve)].name);
-            m_doc.scene.sketch().remove(static_cast<std::size_t>(m_uiState.selectedCurve));
-            m_uiState.selectedCurve = -1;
-        } else if (m_uiState.selectedBody >= 0 && m_uiState.selectedBody < static_cast<int>(m_doc.scene.bodies().size())) {
-            setStatus("Deleted " + m_doc.scene.bodies()[static_cast<std::size_t>(m_uiState.selectedBody)].name);
-            m_doc.scene.remove(static_cast<std::size_t>(m_uiState.selectedBody));
-            m_uiState.selectedBody = -1;
-        } else if (m_uiState.selectedImage >= 0 && m_uiState.selectedImage < static_cast<int>(m_doc.scene.images().size())) {
-            setStatus("Deleted " + m_doc.scene.images()[static_cast<std::size_t>(m_uiState.selectedImage)].name);
-            m_doc.scene.removeImage(static_cast<std::size_t>(m_uiState.selectedImage));
-            m_uiState.selectedImage = -1;
-        }
+        // By the ERASE command, so it is in the history and undoes.
+        const auto& curves = m_doc.scene.sketch().curves();
+        std::string name;
+        if (m_uiState.selectedCurve >= 0 && m_uiState.selectedCurve < static_cast<int>(curves.size()))
+            name = curves[static_cast<std::size_t>(m_uiState.selectedCurve)].name;
+        else if (m_uiState.selectedBody >= 0 && m_uiState.selectedBody < static_cast<int>(m_doc.scene.bodies().size()))
+            name = m_doc.scene.bodies()[static_cast<std::size_t>(m_uiState.selectedBody)].name;
+        else if (m_uiState.selectedImage >= 0 && m_uiState.selectedImage < static_cast<int>(m_doc.scene.images().size()))
+            name = m_doc.scene.images()[static_cast<std::size_t>(m_uiState.selectedImage)].name;
+        if (!name.empty()) runCommandLine("ERASE \"" + name + "\"");
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
     handleCommands(cmd);
@@ -1262,6 +1405,7 @@ void Application::handleCommands(const UiCommands& cmd) {
     if (cmd.applyExtrude) applyExtrude();
     if (cmd.cancelExtrude) cancelExtrude();
     for (const std::string& line : cmd.commands) runCommandLine(line);
+    if (!cmd.commands.empty()) m_framesToRender = std::max(m_framesToRender, 3); // show what they did now, not at the next event
     if (cmd.closeFile) {
         if (const int i = fileIndex(*cmd.closeFile); i >= 0 && !closeFileTab(i, cmd.closeDiscard))
             setStatus(fileDoc(i).displayName() + " was not saved, so it stays open");
@@ -1359,6 +1503,33 @@ void Application::frame(float dt) {
 
     // Sketch preview and crosshair, drawn over the canvas.
     const ImGuiIO& io = ImGui::GetIO();
+    // Select: the selected curve's grips, and the one under the cursor lit up.
+    if (m_ui.toolbox().active() == ToolId::Select && !simulating() &&
+        (m_leftDrag == DragMode::SketchGrip || (!io.WantCaptureMouse && m_leftDrag == DragMode::None))) {
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        const auto& curves = m_doc.scene.sketch().curves();
+        const std::optional<SketchGripHit> hot = m_leftDrag == DragMode::SketchGrip ? std::optional<SketchGripHit>(m_sketchDrag)
+                                                                                     : pickSketchGrip(io.MousePos.x, io.MousePos.y);
+        auto mark = [&](const SketchCurve& c, Vec2 q, bool lit) {
+            const auto sp = projectToScreen(camera(), planeFrame(c.plane).toWorld(q), io.DisplaySize);
+            if (!sp) return;
+            const float h = lit ? 5.0f : 3.5f;
+            fg->AddRectFilled({sp->x - h, sp->y - h}, {sp->x + h, sp->y + h}, lit ? IM_COL32(255, 196, 64, 255) : IM_COL32(20, 24, 32, 230));
+            fg->AddRect({sp->x - h, sp->y - h}, {sp->x + h, sp->y + h}, lit ? IM_COL32(255, 255, 255, 255) : IM_COL32(120, 200, 255, 255));
+        };
+        const int sel = m_uiState.selectedCurve;
+        if (sel >= 0 && sel < static_cast<int>(curves.size()))
+            for (const auto& [k, q] : gripPoints(curves[static_cast<std::size_t>(sel)])) mark(curves[static_cast<std::size_t>(sel)], q, false);
+        if (hot && hot->curve >= 0 && hot->curve < static_cast<int>(curves.size())) {
+            const SketchCurve& c = curves[static_cast<std::size_t>(hot->curve)];
+            if (hot->grip.ref.point >= 0 && c.kind != CurveKind::Point) {
+                for (const auto& [k, q] : gripPoints(c))
+                    if (k == hot->grip.ref.point) mark(c, q, true);
+            } else if (c.kind == CurveKind::Point)
+                mark(c, c.pts[0], true);
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        }
+    }
     if (isSketchTool(m_ui.toolbox().active()) && !io.WantCaptureMouse && !simulating()) {
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         m_sketcher.drawOverlay(fg, camera(), io.DisplaySize, m_ui.toolbox().active());
@@ -2669,6 +2840,8 @@ void Application::updateSketchColors() {
     // Each curve's colour from how the constraints hold it: construction grey, fully
     // constrained green, a constraint that can't be met red, free the usual colour.
     const Sketch& sk = m_doc.scene.sketch();
+    // Not while dragging (the colours can't change: the constraints all hold throughout).
+    if (m_leftDrag == DragMode::SketchGrip && m_vp3D.sketchColors.size() == sk.curves().size()) return;
     const std::uint64_t key = sk.revision() * 1000003u + sk.constraints().size();
     if (key == m_sketchColorKey && m_vp3D.sketchColors.size() == sk.curves().size()) return;
     m_sketchColorKey = key;

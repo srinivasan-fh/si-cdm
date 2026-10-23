@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <functional>
 #include <map>
 
 namespace sicdm {
@@ -414,6 +415,107 @@ int rankOf(std::vector<double> J, std::size_t m, std::size_t n) {
     return rank;
 }
 
+// Residual blocks, each reading a few of the parameters, so the Jacobian is built
+// block by block, perturbing only the block's own parameters.
+struct Block {
+    std::vector<int> vars;
+    std::function<void(const std::vector<double>&, std::vector<double>&)> eval;
+};
+
+// Newton's method for blocks(x) = 0 taking the smallest weighted steps: each step is
+// dx = -W^-1 J^T (J W^-1 J^T)^-1 r, so a parameter with a small inverse weight (or 0)
+// moves little (or not at all). Returns the largest residual left.
+double minimumChangeSolve(const std::vector<Block>& blocks, const std::vector<double>& winv, std::vector<double>& x, int maxIterations) {
+    const std::size_t n = x.size();
+    auto residualsAt = [&](const std::vector<double>& xv) {
+        std::vector<double> r;
+        for (const Block& b : blocks) b.eval(xv, r);
+        return r;
+    };
+    auto worst = [](const std::vector<double>& r) {
+        double w = 0;
+        for (double e : r) w = std::max(w, std::fabs(e));
+        return w;
+    };
+    std::vector<double> r = residualsAt(x), xp = x, rp, rm;
+    for (int it = 0; it < maxIterations && worst(r) > 1e-11; ++it) {
+        const std::size_t m = r.size();
+        std::vector<double> J(m * n, 0.0);
+        std::size_t row = 0;
+        for (const Block& b : blocks) {
+            rp.clear();
+            b.eval(x, rp);
+            const std::size_t rows = rp.size();
+            for (const int jv : b.vars) {
+                const std::size_t j = static_cast<std::size_t>(jv);
+                if (winv[j] == 0) continue;
+                const double h = 1e-7 * std::max(1.0, std::fabs(x[j]));
+                xp[j] = x[j] + h;
+                rp.clear();
+                b.eval(xp, rp);
+                xp[j] = x[j] - h;
+                rm.clear();
+                b.eval(xp, rm);
+                xp[j] = x[j];
+                for (std::size_t i = 0; i < rows && i < rp.size() && i < rm.size(); ++i) J[(row + i) * n + j] = (rp[i] - rm[i]) / (2 * h);
+            }
+            row += rows;
+        }
+        // M = J W^-1 J^T, a little regularised so repeated constraints don't stall it.
+        std::vector<double> M(m * m, 0.0);
+        double trace = 0;
+        for (std::size_t a = 0; a < m; ++a)
+            for (std::size_t c = a; c < m; ++c) {
+                double v = 0;
+                for (std::size_t j = 0; j < n; ++j) v += J[a * n + j] * winv[j] * J[c * n + j];
+                M[a * m + c] = M[c * m + a] = v;
+                if (a == c) trace += v;
+            }
+        std::vector<double> y;
+        double mu = 1e-12 * std::max(trace / static_cast<double>(std::max<std::size_t>(m, 1)), 1e-12);
+        bool solved = false;
+        for (int tries = 0; tries < 8 && !solved; ++tries, mu *= 100) {
+            std::vector<double> Md = M;
+            for (std::size_t a = 0; a < m; ++a) Md[a * m + a] += mu;
+            solved = cholesky(Md, r, static_cast<int>(m), y);
+        }
+        if (!solved) break;
+        std::vector<double> dx(n, 0.0);
+        for (std::size_t j = 0; j < n; ++j) {
+            if (winv[j] == 0) continue;
+            double v = 0;
+            for (std::size_t a = 0; a < m; ++a) v += J[a * n + j] * y[a];
+            dx[j] = -winv[j] * v;
+        }
+        // Halve the step until it helps.
+        const double f = norm2(r);
+        bool improved = false;
+        for (double alpha = 1; alpha > 1e-4 && !improved; alpha *= 0.5) {
+            std::vector<double> xn = x;
+            for (std::size_t j = 0; j < n; ++j) xn[j] += alpha * dx[j];
+            auto rn = residualsAt(xn);
+            if (norm2(rn) < f) x = std::move(xn), r = std::move(rn), improved = true;
+        }
+        xp = x;
+        if (!improved) break;
+    }
+    return worst(r);
+}
+
+// Which of a curve's parameters are positions (pairs that move with it) and which are
+// sizes (radii, angles) that a rigid move keeps.
+std::vector<char> positional(const SketchCurve& c) {
+    std::vector<char> pos(static_cast<std::size_t>(paramCount(c)), 1);
+    switch (c.kind) {
+    case CurveKind::Circle: pos[2] = 0; break;
+    case CurveKind::Arc: pos[2] = pos[3] = pos[4] = 0; break;
+    case CurveKind::Ellipse:
+    case CurveKind::Slot: pos[4] = 0; break;
+    default: break;
+    }
+    return pos;
+}
+
 } // namespace
 
 const char* constraintKey(ConstraintKind k) {
@@ -558,6 +660,169 @@ SolveReport solveSketch(Sketch& sketch) {
     rep.redundant = static_cast<int>(m) - rank;
     rep.ok = true;
     (void)start;
+    return rep;
+}
+
+SolveReport dragSketch(Sketch& sketch, const SketchGrip& grip, Vec2 from, Vec2 to) {
+    SolveReport rep;
+    const int gi = findCurve(sketch, grip.ref.curve);
+    if (gi < 0) return rep;
+    const SketchCurve& gc = sketch.curves()[static_cast<std::size_t>(gi)];
+    if (grip.rim && gc.kind != CurveKind::Circle && gc.kind != CurveKind::Arc) return rep;
+    // The curves the drag reaches: the grip's, and every curve joined to it through
+    // constraints. The constraints among them are the ones to keep.
+    std::vector<std::string> reach{gc.name};
+    std::vector<const SketchConstraint*> keep;
+    std::vector<char> taken(sketch.constraints().size(), 0);
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (std::size_t k = 0; k < sketch.constraints().size(); ++k) {
+            if (taken[k]) continue;
+            const SketchConstraint& c = sketch.constraints()[k];
+            const bool touches = std::any_of(c.refs.begin(), c.refs.end(), [&](const SketchRef& r) {
+                return std::find(reach.begin(), reach.end(), r.curve) != reach.end();
+            });
+            if (!touches) continue;
+            taken[k] = 1;
+            keep.push_back(&c);
+            grew = true;
+            for (const SketchRef& r : c.refs)
+                if (findCurve(sketch, r.curve) >= 0 && std::find(reach.begin(), reach.end(), r.curve) == reach.end()) reach.push_back(r.curve);
+        }
+    }
+    Params p;
+    for (const std::string& name : reach) {
+        const int ci = findCurve(sketch, name);
+        p.at[name] = {ci, static_cast<int>(p.x.size())};
+        appendParams(sketch.curves()[static_cast<std::size_t>(ci)], p.x);
+    }
+    rep.parameters = static_cast<int>(p.x.size());
+    const std::vector<double> x0 = p.x;
+    const auto [gIndex, g0] = p.at.at(gc.name);
+    (void)gIndex;
+    const std::vector<char> pos = positional(gc);
+    const V2 delta{static_cast<double>(to.x) - from.x, static_cast<double>(to.y) - from.y};
+    const V2 target{to.x, to.y};
+
+    // How far a point or rim grip is from where the drag wants it.
+    auto pull = [&](const View& g, std::vector<double>& r) {
+        if (grip.rim) {
+            V2 c;
+            double rad = 0;
+            g.circle(grip.ref, &c, &rad);
+            r.push_back(len(target - c) - rad);
+        } else if (grip.ref.point >= 0) {
+            V2 q;
+            if (g.point(grip.ref, &q)) r.insert(r.end(), {q.x - target.x, q.y - target.y});
+        }
+    };
+    // A whole curve moves rigidly: its positions by delta, its sizes kept (positional
+    // parameters come in x, y pairs ahead of the sizes, for every kind).
+    std::vector<double> wantRigid;
+    if (!grip.rim && grip.ref.point < 0) {
+        wantRigid.resize(pos.size());
+        for (std::size_t k = 0; k < pos.size(); ++k)
+            wantRigid[k] = x0[static_cast<std::size_t>(g0) + k] + (pos[k] ? (k % 2 == 0 ? delta.x : delta.y) : 0.0);
+    }
+    auto pullRigid = [&](const std::vector<double>& x, std::vector<double>& r) {
+        for (std::size_t k = 0; k < wantRigid.size(); ++k) r.push_back(x[static_cast<std::size_t>(g0) + k] - wantRigid[k]);
+    };
+
+    auto pulled = [&](const View& g, const std::vector<double>& xv, std::vector<double>& r) {
+        if (wantRigid.empty()) pull(g, r);
+        else pullRigid(xv, r);
+    };
+    // The parameters the pull drives directly: a point's coordinates, a rim's radius,
+    // a whole curve's.
+    std::vector<char> driven(x0.size(), 0);
+    {
+        std::vector<double> xv = x0;
+        std::vector<double> base;
+        pulled(View(sketch, p, xv), xv, base);
+        for (std::size_t j = 0; j < xv.size(); ++j) {
+            xv[j] = x0[j] + 1e-4 * std::max(1.0, std::fabs(x0[j]));
+            std::vector<double> moved;
+            pulled(View(sketch, p, xv), xv, moved);
+            xv[j] = x0[j];
+            for (std::size_t i = 0; i < base.size() && i < moved.size(); ++i)
+                if (std::fabs(moved[i] - base[i]) > 1e-9) driven[j] = 1;
+        }
+        // A rim drag drives the radius, not the centre (moving the centre would meet it too).
+        if (grip.rim) {
+            for (std::size_t k = 0; k < pos.size(); ++k) driven[static_cast<std::size_t>(g0) + k] = 0;
+            driven[static_cast<std::size_t>(g0) + 2] = 1;
+        }
+    }
+    auto curveVars = [&](const std::string& name, std::vector<int>& vars) {
+        const auto& [ci, first] = p.at.at(name);
+        const int count = paramCount(sketch.curves()[static_cast<std::size_t>(ci)]);
+        for (int k = 0; k < count; ++k)
+            if (std::find(vars.begin(), vars.end(), first + k) == vars.end()) vars.push_back(first + k);
+    };
+    std::vector<Block> blocks;
+    for (const SketchConstraint* c : keep) {
+        Block b;
+        for (const SketchRef& rf : c->refs) curveVars(rf.curve, b.vars);
+        b.eval = [&, c](const std::vector<double>& xv, std::vector<double>& r) {
+            const auto rc = residuals(View(sketch, p, xv), *c);
+            r.insert(r.end(), rc.begin(), rc.end());
+        };
+        blocks.push_back(std::move(b));
+    }
+    Block pullBlock;
+    curveVars(gc.name, pullBlock.vars);
+    pullBlock.eval = [&](const std::vector<double>& xv, std::vector<double>& r) { pulled(View(sketch, p, xv), xv, r); };
+    std::vector<double> pullOnly(x0.size(), 0.0), weighted(x0.size(), 1.0);
+    for (std::size_t j = 0; j < x0.size(); ++j)
+        if (driven[j]) pullOnly[j] = 1, weighted[j] = 1e-4;
+    auto pullLeft = [&](const std::vector<double>& xv) {
+        std::vector<double> r;
+        pulled(View(sketch, p, xv), xv, r);
+        return std::sqrt(norm2(r));
+    };
+    // 1. The grip goes where it is dragged: only its driven parameters move.
+    // 2. The constraints, with the smallest change: the driven parameters weigh 10^4
+    //    times the others, so the rest of the sketch gives way first and the grip only
+    //    as far as the constraints insist.
+    // Again from there until the grip settles (each round leaves about 10^-4 of the
+    // last one's give).
+    std::vector<double> x = x0;
+    double left = 0, settled = std::numeric_limits<double>::infinity();
+    for (int round = 0; round < 6; ++round) {
+        std::vector<double> xr = x;
+        minimumChangeSolve({pullBlock}, pullOnly, xr, 20);
+        left = blocks.empty() ? 0.0 : minimumChangeSolve(blocks, weighted, xr, 50);
+        if (left > 1e-6) break;
+        x = std::move(xr);
+        const double now = pullLeft(x);
+        if (std::fabs(settled - now) < 1e-9 || now < 1e-9) break;
+        settled = now;
+    }
+    if (left > 1e-6 && x == x0) { // the drag asked too much at once: all parameters alike
+        std::vector<double> xs = x0;
+        minimumChangeSolve({pullBlock}, pullOnly, xs, 20);
+        left = minimumChangeSolve(blocks, std::vector<double>(x0.size(), 1.0), xs, 50);
+        if (left <= 1e-6) x = std::move(xs);
+    } else if (left > 1e-6)
+        left = 0; // a later round failed: keep the last good one
+    left *= left;
+    rep.residual = std::sqrt(left);
+    if (rep.residual > 1e-6) {
+        double worst = 0;
+        const View g(sketch, p, x);
+        for (const SketchConstraint* c : keep)
+            for (double v : residuals(g, *c))
+                if (std::fabs(v) > worst) worst = std::fabs(v), rep.conflict = c->name;
+        return rep; // nothing written
+    }
+    scatter(sketch, p, x);
+    {
+        const View g(sketch, p, x);
+        std::vector<double> r;
+        pulled(g, x, r);
+        rep.residual = std::sqrt(norm2(r));
+    }
+    rep.ok = true;
     return rep;
 }
 
