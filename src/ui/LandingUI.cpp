@@ -615,6 +615,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem("Rotary Rough (4-axis, 3 mm levels)")) cmd.commands.push_back("CAM ROTARY STEPDOWN 3 LEAVE 0.3");
         if (ImGui::MenuItem("Pocket the Front Face (3+2, A -90)")) cmd.commands.push_back("CAM POCKET INDEX -90 0");
         if (ImGui::MenuItem("Drill the Right Face (3+2, A -90 C -90)")) cmd.commands.push_back("CAM DRILL INDEX -90 -90");
+        if (ImGui::MenuItem("5-axis Surface Finish (ball, leaning 10 deg)")) cmd.commands.push_back("CAM 5AXIS");
         ImGui::TextDisabled("Any operation: INDEX a c turns the table first");
         if (ImGui::MenuItem("2D Contour (with tabs)")) cmd.commands.push_back("CAM CONTOUR TABS 4");
         if (ImGui::MenuItem("Parallel Finish")) cmd.commands.push_back("CAM PARALLEL SHALLOW");

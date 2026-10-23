@@ -378,6 +378,8 @@ Details: [docs/printing.md](docs/printing.md).
   - rest machining: a smaller tool clears only what the tools before it left;
   - 3+2 indexed versions of any operation (the table turned to A and C first);
   - 4-axis rotary wrapping (helical or along the axis, roughing in levels);
+  - simultaneous 5-axis surface finishing: a ball end mill leaning along the cut, the table
+    turning on A and C, the shank and holder kept clear of the part;
   - parallel and waterline finishing;
   - spot, peck, chip-break, tap and bore cycles at the holes found on the part;
   - helical boring.

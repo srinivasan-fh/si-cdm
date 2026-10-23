@@ -2,6 +2,7 @@
 
 #include "core/Cam.hpp"
 #include "core/CamLibrary.hpp"
+#include "core/CamVerify.hpp"
 #include "core/Json.hpp"
 #include "core/Mcp.hpp"
 #include "core/Command.hpp"
@@ -647,6 +648,86 @@ TEST_CASE("CAM rotary: 4-axis wrapping turns a bar under the tool, roughing in l
     REQUIRE(e.state.cam.ops.size() == 2);
     CHECK(e.state.cam.ops[0].kind == CamOpKind::Rotary);
     CHECK(e.state.cam.ops[1].along);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("CAM 5-axis: a ball end mill leans along the cut over a dome, turning the table as it goes") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 8 @0,0,0").ok);
+    REQUIRE(run(d, "SPHERE 15 @0,0,-7").ok); // centred on the plate's top
+    REQUIRE(run(d, "BOOLEAN \"Block 1\" UNION \"Sphere 2\"").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 1 MATERIAL aluminium").ok);
+    REQUIRE(run(d, "CAM TOOL 1 FLAT 6 LENGTH 30").ok);
+    REQUIRE(run(d, "CAM TOOL 2 BALL 4 STICKOUT 40").ok);
+    REQUIRE(run(d, "CAM ROUGH TOOL 1 LEAVE 0.3").ok);
+    // A 3-axis machine can't, a flat end mill can't, and the table isn't indexed by hand.
+    REQUIRE(run(d, "CAM MACHINE PRESET vmc").ok);
+    auto r = run(d, "CAM 5AXIS TOOL 2");
+    CHECK(!r.ok);
+    CHECK(has(text(r), "A and C"));
+    REQUIRE(run(d, "CAM MACHINE PRESET trunnion").ok);
+    CHECK(!run(d, "CAM 5AXIS TOOL 1").ok);
+    CHECK(!run(d, "CAM 5AXIS TOOL 2 A 30").ok);
+    CHECK(!run(d, "CAM 5AXIS TOOL 2 MAXTILT 150").ok);
+    r = run(d, "CAM 5AXIS TOOL 2 SCALLOP 0.05");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "lead 10 deg"));
+    const CamJob& job = d.state.cam;
+    REQUIRE(job.ops.size() == 2);
+    const CamOperation& op = job.ops[1];
+    CHECK(op.kind == CamOpKind::Surface5);
+    CHECK(job.multiAxis());
+    // The ball's centre never inside the dome grown by its radius; on the dome the axis
+    // leans from the surface normal by about the lead; on its flanks the table tilts far.
+    const Vec3 centre{0, 0, 8};
+    double nearest = 1e9, maxA = 0, leanSum = 0, cLo = 1e9, cHi = -1e9;
+    std::size_t onDome = 0;
+    for (const CamMove& m : op.moves) {
+        if (m.kind == CamMove::Rapid) continue;
+        const Vec3 axis = camToolAxis(m.a, m.c);
+        const Vec3 ball = camToPart(job, m.to, m.a, m.c) + axis * 2.0f;
+        const double rr = length(ball - centre);
+        nearest = std::min(nearest, rr);
+        maxA = std::max(maxA, std::fabs(static_cast<double>(m.a)));
+        cLo = std::min(cLo, static_cast<double>(m.c)), cHi = std::max(cHi, static_cast<double>(m.c));
+        if (std::fabs(rr - 17.0) < 0.1 && ball.z > 12.0 && std::fabs(m.a) < 45.0) {
+            const Vec3 n = (ball - centre) * static_cast<float>(1.0 / rr);
+            leanSum += std::acos(std::clamp(static_cast<double>(dot(n, axis)), -1.0, 1.0)) * 180.0 / kPi;
+            ++onDome;
+        }
+    }
+    CHECK(nearest > 17.0 - 0.1); // the sphere's facets sit up to 0.07 inside it
+    CHECK(maxA > 40.0);
+    CHECK(maxA < 60.0 + 1e-3);
+    CHECK(cHi - cLo > 180.0);
+    REQUIRE(onDome > 500);
+    CHECK_NEAR(leanSum / static_cast<double>(onDome), 10.0, 2.5);
+    // Cut in the voxels: nothing gouged, no rapid through the stock.
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.voxels);
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    // Posted with A and C at inverse-time feed, and read back on the toolpath.
+    const std::string g = postToString(d.state.cam, d.scene.bodies()[0], "linuxcnc");
+    CHECK(has(g, "G93"));
+    CHECK(has(g, "G94"));
+    CHECK(has(g, " C"));
+    const CamPostCheck pc = checkPost(d.state.cam, "linuxcnc", g);
+    CHECK(pc.errors == 0);
+    CHECK(pc.deviation <= pc.allowed);
+    // Less lean, and the options saved with the job.
+    REQUIRE(run(d, "CAM DELETE 2").ok);
+    REQUIRE(run(d, "CAM 5AXIS TOOL 2 SCALLOP 0.1 MAXTILT 25 LEADANGLE 0 SIDETILT 5").ok);
+    for (const CamMove& m : d.state.cam.ops[1].moves) CHECK(std::fabs(m.a) <= 25.0 + 1e-3);
+    const std::string path = tempPath("sicdm_cam_5axis.sicdm");
+    REQUIRE(run(d, "SAVE " + path).ok);
+    Document e;
+    REQUIRE(run(e, "OPEN " + path).ok);
+    REQUIRE(e.state.cam.ops.size() == 2);
+    const CamOperation& o = e.state.cam.ops[1];
+    CHECK(o.kind == CamOpKind::Surface5);
+    CHECK(o.maxTilt == 25 && o.leadAngle == 0 && o.sideTilt == 5);
     std::filesystem::remove(path);
 }
 

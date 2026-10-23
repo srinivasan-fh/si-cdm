@@ -446,7 +446,7 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("operation", prop("string", "setup | tool | library | face | rough | pocket | contour | parallel | waterline | drill | bore | rotary | "
-                                          "holes | list | generate | simulate | post | delete | clear"));
+                                          "5axis | machine | holes | list | generate | simulate | post | delete | clear"));
         p.set("library", prop("string", "library: list | import | export | store | use | delete | load | save - the user's tool library: import a "
                                         "vendor catalogue (.csv) or Fusion 360 library (.json) into it, use a library tool in the job, store job "
                                         "tools in it, or load / save the job's tools straight from / to a file"));
@@ -460,6 +460,7 @@ Json McpServer::toolDefinitions() {
         p.set("material", prop("string", "setup: aluminium, steel, stainless, brass, castiron, titanium, plastic, wood"));
         p.set("origin", prop("string", "setup: work zero at the stock's top 'corner' (default), 'centre', or the 'model' origin"));
         p.set("post", prop("string", "setup / post: fanuc, haas, grbl, linuxcnc"));
+        p.set("preset", prop("string", "machine: the preset - generic, vmc, vmc-4th (A: 4-axis), trunnion (A and C: 3+2 and 5-axis), benchtop, router"));
         p.set("number", prop("number", "tool: T number"));
         p.set("type", prop("string", "tool: flat, ball, bull, face, drill, spot, chamfer, tap"));
         p.set("diameter", prop("number", "tool: diameter, mm; drill/bore with points: the hole size"));
@@ -478,8 +479,11 @@ Json McpServer::toolDefinitions() {
         p.set("depth", prop("number", "operations: depth below the stock top (drill: below the hole's top), mm"));
         p.set("side", prop("string", "contour: outside (default), inside, both"));
         p.set("tabs", prop("number", "contour: holding tabs on the outside profile"));
-        p.set("scallop", prop("number", "parallel / waterline: cusp height, mm"));
-        p.set("slope", prop("array", "parallel / waterline: [from, to] degrees of surface slope to cut"));
+        p.set("scallop", prop("number", "parallel / waterline / 5axis: cusp height, mm"));
+        p.set("slope", prop("array", "parallel / waterline / 5axis: [from, to] degrees of surface slope to cut"));
+        p.set("max_tilt", prop("number", "5axis: the most the tool leans from vertical, degrees (default 60)"));
+        p.set("lead_angle", prop("number", "5axis: the tool leaning forward along the cut from the surface normal, degrees (default 10)"));
+        p.set("side_tilt", prop("number", "5axis: the tool leaning sideways across the cut, degrees (default 0)"));
         p.set("raster", prop("boolean", "rough / pocket: zig-zag instead of offset rings"));
         p.set("adaptive", prop("boolean", "rough / pocket: adaptive clearing - light stepover, deep cuts, trochoidal loops where the tool would be overloaded"));
         p.set("index_a", prop("number", "any 3-axis operation: 3+2, the table turned to A degrees (about X) first"));
@@ -496,7 +500,7 @@ Json McpServer::toolDefinitions() {
         tools.push(tool("cam",
                         "CNC milling CAM: set up the part and stock, build a tool library with feeds and speeds, add operations "
                         "(facing, 2D contour with tabs, pocket, 3D roughing - adaptive or rest - parallel and waterline finishing, drilling "
-                        "cycles, helical boring, 3+2 indexed versions of any of them, and 4-axis rotary wrapping), simulate the cut "
+                        "cycles, helical boring, 3+2 indexed versions of any of them, 4-axis rotary wrapping, and simultaneous 5-axis surface finishing with a ball end mill on a table-table machine), simulate the cut "
                         "(stock left, gouges, rapid crashes, holder collisions, cycle time; voxels when the part turns) and post G-code for "
                         "Fanuc, Haas, GRBL or LinuxCNC.",
                         p, {"operation"}));
@@ -1292,6 +1296,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         }
         if (op == "holes" || op == "list" || op == "generate" || op == "clear") return runLine("CAM " + toUpper(op));
         if (op == "simulate") return runLine(std::string("CAM SIMULATE") + (a["show"].asBool() ? " SHOW" : ""));
+        if (op == "machine") return runLine("CAM MACHINE" + (a["preset"].isString() ? " PRESET " + a["preset"].asString() : std::string()));
         if (op == "post") {
             if (!a["path"].isString()) return textResult("post needs 'path'", true);
             return runLine("CAM POST " + quote(a["path"].asString()) + (a["post"].isString() ? " " + a["post"].asString() : std::string()));
@@ -1300,14 +1305,15 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!a["index"].isNumber()) return textResult("delete needs 'index'", true);
             return runLine("CAM DELETE " + num(a["index"].asNumber()));
         }
-        static const char* const kOps[] = {"face", "rough", "pocket", "contour", "parallel", "waterline", "drill", "bore", "rotary"};
+        static const char* const kOps[] = {"face", "rough", "pocket", "contour", "parallel", "waterline", "drill", "bore", "rotary", "5axis"};
         if (std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
-            return textResult("operation is one of setup, tool, face, rough, pocket, contour, parallel, waterline, drill, bore, rotary, holes, "
+            return textResult("operation is one of setup, tool, face, rough, pocket, contour, parallel, waterline, drill, bore, rotary, 5axis, machine, holes, "
                               "list, generate, simulate, post, delete, clear",
                               true);
         std::string line = "CAM " + toUpper(op) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("stepover", "STEPOVER") +
                            opt("leave", "LEAVE") + opt("top", "TOP") + opt("bottom", "BOTTOM") + opt("depth", "DEPTH") + opt("tabs", "TABS") +
-                           opt("scallop", "SCALLOP") + opt("peck", "PECK") + opt("diameter", "DIAMETER") + text("name", "NAME");
+                           opt("scallop", "SCALLOP") + opt("peck", "PECK") + opt("diameter", "DIAMETER") + opt("max_tilt", "MAXTILT") +
+                           opt("lead_angle", "LEADANGLE") + opt("side_tilt", "SIDETILT") + text("name", "NAME");
         if (a["stepover_percent"].isNumber()) line += " STEPOVER " + num(a["stepover_percent"].asNumber()) + "%";
         if (a["side"].isString()) line += " " + toUpper(a["side"].asString());
         if (a["raster"].asBool()) line += " RASTER";

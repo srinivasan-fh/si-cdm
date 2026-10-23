@@ -1,5 +1,6 @@
 #include "TestFramework.hpp"
 
+#include "core/Cam.hpp"
 #include "core/Mcp.hpp"
 #include "core/Motion.hpp"
 #include "core/Physics.hpp"
@@ -269,6 +270,16 @@ TEST_CASE("MCP cam sets up, adds tools and operations, simulates and posts") {
     std::filesystem::remove(nc);
     CHECK(tool(s, "cam", R"({"operation":"juggle"})")["isError"].asBool());
     CHECK(tool(s, "cam", R"({"operation":"tool","number":2})")["isError"].asBool());
+    // Simultaneous 5-axis wants a ball end mill and a machine that turns the table both ways.
+    CHECK(!tool(s, "cam", R"({"operation":"tool","number":3,"type":"ball","diameter":4})")["isError"].asBool());
+    CHECK(!tool(s, "cam", R"({"operation":"machine","preset":"vmc"})")["isError"].asBool());
+    CHECK(tool(s, "cam", R"({"operation":"5axis","tool":3})")["isError"].asBool());
+    CHECK(!tool(s, "cam", R"({"operation":"machine","preset":"trunnion"})")["isError"].asBool());
+    r = tool(s, "cam", R"({"operation":"5axis","tool":3,"scallop":0.05,"max_tilt":40,"lead_angle":5,"side_tilt":-3})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("lead 5 deg, tilt -3 deg, at most 40 deg from vertical") != std::string::npos);
+    CHECK(d.state.cam.ops.size() == 2);
+    CHECK(d.state.cam.ops.size() == 2 && d.state.cam.ops[1].kind == CamOpKind::Surface5);
 }
 
 TEST_CASE("MCP drawing lays out views, dimensions them and exports the sheet") {

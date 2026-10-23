@@ -285,6 +285,30 @@ CAM ROTARY [TOOL n] [STEPOVER s] [STEPDOWN d] [LEAVE l] [ALONG] [TOP x] [BOTTOM 
   finish. Each level rapids only to just above what the level before left.
 - **X range:** `TOP` and `BOTTOM` limit it (it is the part's length by default).
 
+**Simultaneous 5-axis.** A ball end mill finishes the surface with the tool leaning, the
+table turning on A and C as it cuts (a table-table machine: `CAM MACHINE PRESET trunnion`):
+
+```text
+CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
+          [LEADANGLE deg] [SIDETILT deg] [MAXTILT deg]
+```
+
+- **Passes:** zig-zag rasters over the part at `ANGLE`, a scallop's stepover apart, as in
+  parallel finishing. `SLOPE` keeps to surfaces in that range.
+- **Tool axis:** the surface normal, leaned `LEADANGLE` forward along the cut (default 10, so
+  the ball cuts off its centre, where it doesn't rub) and `SIDETILT` across it (default 0).
+  It leans at most `MAXTILT` from vertical (default 60) and is smoothed along the pass.
+- **Clear of the part:** the shank and holder are checked along the axis at each point;
+  where they would touch, the axis stands back up towards vertical until they don't.
+  Points that can't be cleared, or that the machine's A travel can't reach, are skipped.
+- **Turning:** each move turns the table at most 1.5 degrees. Where the table would flip
+  (the axis passing upright), the run ends.
+- **Links:** between runs close together the tool goes across lifted along its axis, at
+  feed, where the ball, shank and holder stay clear of the part all the way. Elsewhere it
+  goes up to the clearance height.
+- **Needs:** a ball end mill, and a machine with A and C. The table isn't indexed by hand
+  (no `INDEX`).
+
 **Posts:**
 
 - The work zero is the rotary centre for the whole program.
@@ -465,7 +489,8 @@ single block, with the feed override low, above the part.
 The `cam` tool has these operations:
 
 - `setup`, `tool`, `library`;
-- `face`, `rough`, `pocket`, `contour`, `parallel`, `waterline`, `drill`, `bore`, `rotary`;
+- `face`, `rough`, `pocket`, `contour`, `parallel`, `waterline`, `drill`, `bore`, `rotary`, `5axis`;
+- `machine` (a preset);
 - `holes`, `list`, `generate`, `simulate`, `post`, `delete`, `clear`.
 
 Its parameters are listed in the tool's schema.
@@ -481,6 +506,8 @@ Its parameters are listed in the tool's schema.
 {"operation": "pocket", "tool": 2, "rest": true}
 {"operation": "pocket", "tool": 1, "index_a": -90}
 {"operation": "rotary", "tool": 3, "stepover": 0.5, "stepdown": 3}
+{"operation": "machine", "preset": "trunnion"}
+{"operation": "5axis", "tool": 3, "scallop": 0.01, "lead_angle": 8, "max_tilt": 45}
 {"operation": "simulate", "show": true}
 {"operation": "post", "path": "bracket.nc"}
 ```
@@ -489,4 +516,5 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Machines:** simultaneous 5-axis (tool-axis tilting along a surface); lathes.
+- **Machines:** lathes; 5-axis on head-head or head-table machines (B axes), and swarf
+  (flank) cutting.

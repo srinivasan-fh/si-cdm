@@ -70,6 +70,7 @@ const char* opLabel(CamOpKind k) {
     case CamOpKind::Drill: return "Drill";
     case CamOpKind::Bore: return "Helical bore";
     case CamOpKind::Rotary: return "Rotary (4-axis)";
+    case CamOpKind::Surface5: return "5-axis surface finish";
     }
     return "Op";
 }
@@ -98,6 +99,7 @@ int defaultTool(const CamJob& job, CamOpKind k, DrillCycle cycle) {
     case CamOpKind::Parallel:
     case CamOpKind::Waterline:
     case CamOpKind::Rotary: return first({CamToolType::Ball, CamToolType::BullNose, CamToolType::Flat});
+    case CamOpKind::Surface5: return first({CamToolType::Ball});
     case CamOpKind::Drill:
         if (cycle == DrillCycle::Spot) return first({CamToolType::Spot, CamToolType::Chamfer, CamToolType::Drill});
         if (cycle == DrillCycle::Tap) return first({CamToolType::Tap});
@@ -135,6 +137,11 @@ std::string opText(const CamJob& job, std::size_t i) {
                     (t ? t->describe().substr(0, t->describe().find(',')) : "T" + std::to_string(op.tool) + " (missing)");
     if (op.indexA != 0 || op.indexC != 0) s += ", table at A" + num(op.indexA) + " C" + num(op.indexC);
     if (op.kind == CamOpKind::Rotary) s += op.along ? ", along the axis" : ", helical";
+    if (op.kind == CamOpKind::Surface5) {
+        char b[96];
+        std::snprintf(b, sizeof b, ", lead %g deg, tilt %g deg, at most %g deg from vertical", op.leadAngle, op.sideTilt, op.maxTilt);
+        s += b;
+    }
     if (op.adaptive) s += ", adaptive";
     if (op.rest) s += ", rest";
     if (op.kind == CamOpKind::Drill) s += std::string(", ") + drillCycleKey(op.cycle) + ", " + std::to_string(op.holes.size()) + " holes";
@@ -824,8 +831,9 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
     else if (sub == "drill" || sub == "spot" || sub == "tap" || sub == "peck") kind = CamOpKind::Drill;
     else if (sub == "bore" || sub == "helix") kind = CamOpKind::Bore;
     else if (sub == "rotary" || sub == "wrap" || sub == "4axis") kind = CamOpKind::Rotary;
+    else if (sub == "5axis" || sub == "surface5" || sub == "multiaxis" || sub == "swarf5") kind = CamOpKind::Surface5;
     else
-        return out.fail("CAM SETUP | TOOL | TOOLS | LIBRARY | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | ROTARY | HOLES | LIST | "
+        return out.fail("CAM SETUP | TOOL | TOOLS | LIBRARY | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | ROTARY | 5AXIS | HOLES | LIST | "
                         "GENERATE | SIMULATE [SHOW] | POST path [post] | DELETE n | CLEAR | SHOW | HIDE");
     Body* p = needPart();
     if (!p) return out;
@@ -985,9 +993,19 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
             const auto v = number("PLUNGE");
             if (!v || *v <= 0) return out.fail("PLUNGE needs mm/min");
             op.setPlunge = *v;
+        } else if (k == "maxtilt") {
+            const auto v = number("MAXTILT");
+            if (!v || *v < 0 || *v > 120) return out.fail("MAXTILT is 0 to 120 degrees from vertical");
+            op.maxTilt = *v;
+        } else if (k == "leadangle" || k == "sidetilt") {
+            const auto v = number(k == "leadangle" ? "LEADANGLE" : "SIDETILT");
+            if (!v || std::fabs(*v) > 60) return out.fail(toUpper(k) + " is -60 to 60 degrees");
+            (k == "leadangle" ? op.leadAngle : op.sideTilt) = *v;
         } else return out.fail("Unknown option " + a[i] + " for CAM " + toUpper(sub));
         if (!out.ok) return out;
     }
+    if (kind == CamOpKind::Surface5 && (op.indexA != 0 || op.indexC != 0))
+        return out.fail("CAM 5AXIS turns the table itself as it cuts: no A, C or INDEX (MAXTILT, LEADANGLE and SIDETILT steer the axis)");
     if (tool < 0) tool = defaultTool(job, kind, op.cycle);
     if (tool < 0) return out.fail(std::string("No tool for ") + opLabel(kind) + " in the library: add one with CAM TOOL");
     op.tool = tool;

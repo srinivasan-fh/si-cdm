@@ -129,7 +129,7 @@ CamTool camToolFromJson(const Json& o);
 // cut in mm (0: full width), which thins the chip and lets the feed rise.
 CamFeeds camFeeds(const CamTool& tool, const CamMaterial& material, const CamMachine& machine, double stepover = 0.0);
 
-enum class CamOpKind { Face, Contour, Pocket, Rough, Parallel, Waterline, Drill, Bore, Rotary };
+enum class CamOpKind { Face, Contour, Pocket, Rough, Parallel, Waterline, Drill, Bore, Rotary, Surface5 };
 const char* camOpKey(CamOpKind k);
 
 enum class DrillCycle { Spot, Drill, Peck, ChipBreak, Tap, Bore };
@@ -170,6 +170,11 @@ struct CamOperation {
     // Multi-axis.
     double indexA = 0.0, indexC = 0.0; // 3+2: the table turned to these (degrees) for the whole operation
     bool along = false;            // rotary: passes along the axis instead of a helix round it
+    // Simultaneous 5-axis surface finishing (Surface5): the tool axis follows the surface
+    // normal, leaning `leadAngle` along the cut and `sideTilt` across it, never more than
+    // `maxTilt` from vertical, and tilting back towards vertical where its shank or holder
+    // would touch the part.
+    double maxTilt = 60.0, leadAngle = 10.0, sideTilt = 0.0; // degrees
     // Contour: 0 the outside profile, 1 the inside walls (pockets, holes), 2 both.
     int side = 0;
     int tabs = 0;
