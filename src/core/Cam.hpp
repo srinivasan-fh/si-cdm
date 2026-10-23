@@ -63,6 +63,10 @@ struct CamTool {
     int flutes = 3;
     bool hss = false;                // high-speed steel (else carbide)
     std::string name;                // shown in the tool list and the G-code
+    std::string vendor, productId;   // from a tool catalogue
+    // The tool maker's cutting data, used instead of the material's when set: cutting speed
+    // (m/min) and chip load (mm per tooth; drills and spot drills: mm per turn).
+    double vc = 0.0, fz = 0.0;
     // The holder: the tool sticks out `stickout` from its face (0: the flute length plus
     // a diameter, at least 5 mm), and it is `holderDiameter` across (0: 3 diameters, at
     // least 20 mm) and `holderLength` long.
@@ -117,6 +121,10 @@ struct CamFeeds {
     double rpm = 0.0, feed = 0.0, plunge = 0.0; // mm/min
     double chipLoad = 0.0;                      // mm per tooth after chip thinning
 };
+// A tool as JSON (the project's and the tool library's form) and back.
+Json camToolToJson(const CamTool& t);
+CamTool camToolFromJson(const Json& o);
+
 // The spindle speed and feeds for a tool in a material. `stepover`: the radial width of
 // cut in mm (0: full width), which thins the chip and lets the feed rise.
 CamFeeds camFeeds(const CamTool& tool, const CamMaterial& material, const CamMachine& machine, double stepover = 0.0);

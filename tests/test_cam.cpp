@@ -1,6 +1,9 @@
 #include "TestFramework.hpp"
 
 #include "core/Cam.hpp"
+#include "core/CamLibrary.hpp"
+#include "core/Json.hpp"
+#include "core/Mcp.hpp"
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/Scene.hpp"
@@ -645,4 +648,143 @@ TEST_CASE("CAM rotary: 4-axis wrapping turns a bar under the tool, roughing in l
     CHECK(e.state.cam.ops[0].kind == CamOpKind::Rotary);
     CHECK(e.state.cam.ops[1].along);
     std::filesystem::remove(path);
+}
+
+namespace {
+
+void setEnv(const char* name, const std::string& value) {
+#if defined(_WIN32)
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
+void writeText(const std::string& path, const std::string& text) {
+    std::ofstream f(path, std::ios::binary);
+    f << text;
+}
+
+} // namespace
+
+TEST_CASE("CAM tool library: vendor catalogues as CSV, Fusion 360 libraries, and back") {
+    // A catalogue with its own column names and order, a quoted name, SFM and an unknown type.
+    const std::string csv = "EDP,Type,Dia,Flutes,LOC,Corner Radius,Material,Description,Manufacturer,SFM,Chipload\n"
+                            "33006,End Mill,6,3,18,,Carbide,\"6mm 3FL, AlTiN\",Acme,1000,0.03\n"
+                            "33020,Bull Nose,12,4,30,1.5,Carbide,12mm R1.5,Acme,,\n"
+                            "44005,Spot Drill,8,,,,HSS,spot,Acme,,\n"
+                            "55001,Thread Mill,6,3,12,,Carbide,threadmill,Acme,,\n";
+    std::vector<CamTool> tools;
+    std::vector<std::string> notes;
+    std::string err;
+    REQUIRE(toolsFromCsv(csv, tools, &err, &notes));
+    REQUIRE(tools.size() == 3);
+    CHECK(notes.size() == 1); // the thread mill
+    CHECK(tools[0].type == CamToolType::Flat && tools[0].diameter == 6 && tools[0].flutes == 3 && tools[0].fluteLength == 18);
+    CHECK(tools[0].name == "6mm 3FL, AlTiN");
+    CHECK(tools[0].vendor == "Acme" && tools[0].productId == "33006");
+    CHECK(std::fabs(tools[0].vc - 304.8) < 1e-9); // 1000 SFM
+    CHECK(tools[0].fz == 0.03);
+    CHECK(tools[1].type == CamToolType::BullNose && tools[1].cornerRadius == 1.5);
+    CHECK(tools[2].type == CamToolType::Spot && tools[2].hss && tools[2].flutes == 2); // the type's defaults fill in
+    CHECK(tools[0].number == 1 && tools[1].number == 2 && tools[2].number == 3);
+
+    // Fusion 360: millimetre and inch tools, presets, holders and unknown types left out.
+    const std::string fusion = R"({"data":[
+      {"type":"flat end mill","unit":"millimeters","description":"8mm","vendor":"Harvey","product-id":"H-8","BMC":"carbide",
+       "geometry":{"DC":8,"NOF":3,"LCF":20,"RE":0},"post-process":{"number":4},"start-values":{"presets":[{"v_c":350,"f_z":0.04}]}},
+      {"type":"chamfer mill","unit":"inches","geometry":{"DC":0.25,"NOF":4,"LCF":0.3,"TA":45},"post-process":{"number":7},
+       "start-values":{"presets":[{"v_c":800,"f_z":0.001}]}},
+      {"type":"holder","geometry":{}},
+      {"type":"slot mill","unit":"millimeters","geometry":{"DC":20}},
+      {"type":"drill","unit":"millimeters","geometry":{"DC":5,"SIG":140},"post-process":{"number":9},"start-values":{"presets":[{"v_c":90,"f_n":0.12}]}}]})";
+    std::vector<CamTool> fu;
+    notes.clear();
+    REQUIRE(toolsFromFusion(fusion, fu, &err, &notes));
+    REQUIRE(fu.size() == 3);
+    CHECK(notes.size() == 1); // the slot mill; the holder silently
+    CHECK(fu[0].number == 4 && fu[0].diameter == 8 && fu[0].vc == 350 && fu[0].fz == 0.04 && fu[0].productId == "H-8");
+    CHECK(fu[1].type == CamToolType::Chamfer && std::fabs(fu[1].diameter - 6.35) < 1e-9 && fu[1].tipAngle == 90);
+    CHECK(std::fabs(fu[1].vc - 243.84) < 1e-9 && std::fabs(fu[1].fz - 0.0254) < 1e-12);
+    CHECK(fu[2].type == CamToolType::Drill && fu[2].tipAngle == 140 && fu[2].fz == 0.12);
+
+    // Every format reads back what it wrote.
+    std::vector<CamTool> all = tools;
+    all.insert(all.end(), fu.begin(), fu.end());
+    for (ToolFileFormat f : {ToolFileFormat::Native, ToolFileFormat::Csv, ToolFileFormat::Fusion}) {
+        const std::string path = (std::filesystem::temp_directory_path() / (f == ToolFileFormat::Csv ? "sicdm tools.csv" : "sicdm tools.json")).string();
+        REQUIRE(saveToolFile(path, all, &err, f));
+        std::vector<CamTool> back;
+        REQUIRE(loadToolFile(path, back, &err));
+        REQUIRE(back.size() == all.size());
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            CHECK(back[i].type == all[i].type);
+            CHECK(std::fabs(back[i].diameter - all[i].diameter) < 1e-6);
+            CHECK(back[i].flutes == all[i].flutes);
+            CHECK(back[i].number == all[i].number);
+            CHECK(std::fabs(back[i].vc - all[i].vc) < 1e-6);
+            CHECK(std::fabs(back[i].fz - all[i].fz) < 1e-9);
+            CHECK(back[i].productId == all[i].productId);
+        }
+        std::filesystem::remove(path);
+    }
+    // The vendor's cutting data sets the feeds and speeds.
+    const CamMaterial* alu = camMaterial("aluminium");
+    REQUIRE(alu);
+    CamMachine mach;
+    mach.maxRpm = 30000;
+    const CamFeeds f = camFeeds(fu[2], *alu, mach);
+    CHECK(std::fabs(f.rpm - 5720) < 1e-9); // 90 m/min on 5 mm, to the 10 below
+    CHECK(std::fabs(f.chipLoad - 0.12) < 1e-12);
+}
+
+TEST_CASE("CAM LIBRARY: import into the user's library, use in a job, store and save") {
+    const std::string lib = (std::filesystem::temp_directory_path() / "sicdm test tool library.json").string();
+    std::filesystem::remove(lib);
+    setEnv("SICDM_TOOL_LIBRARY", lib);
+    const std::string cat = (std::filesystem::temp_directory_path() / "sicdm catalogue.csv").string();
+    writeText(cat, "type,diameter,flutes,product_id,vc,fz\nflat,6,3,F6,250,0.03\nball,10,2,B10,,\ndrill,6.8,2,D68,,\n");
+    Document d;
+    REQUIRE(run(d, "CAM LIBRARY").ok);
+    REQUIRE(run(d, "CAM LIBRARY IMPORT \"" + cat + "\"").ok);
+    CHECK(text(run(d, "CAM LIBRARY IMPORT \"" + cat + "\"")).find("3 already there") != std::string::npos);
+    CHECK(text(run(d, "CAM LIBRARY")).find("#3") != std::string::npos);
+    REQUIRE(run(d, "BOX 60 40 20").ok);
+    REQUIRE(run(d, "CAM SETUP STOCK 2 MATERIAL aluminium").ok);
+    REQUIRE(run(d, "CAM LIBRARY USE F6").ok);
+    REQUIRE(run(d, "CAM LIBRARY USE F6").ok); // the next free number, not a replacement
+    REQUIRE(run(d, "CAM LIBRARY USE #2 AS 12").ok);
+    REQUIRE(d.state.cam.tools.size() == 3);
+    CHECK(d.state.cam.tools[0].number == 1 && d.state.cam.tools[1].number == 2 && d.state.cam.tools[2].number == 12);
+    CHECK(d.state.cam.tools[0].vc == 250);
+    CHECK(!run(d, "CAM LIBRARY USE nothing").ok);
+    // Operations use the library tools like any other.
+    REQUIRE(run(d, "CAM FACE TOOL 1").ok);
+    // Job tools into the library, once; a job's tools to a file and into another job.
+    REQUIRE(run(d, "CAM TOOL 5 BULL 8 CORNER 1").ok);
+    CHECK(text(run(d, "CAM LIBRARY STORE ALL")).find("Stored 1 tool") != std::string::npos);
+    const std::string jobFile = (std::filesystem::temp_directory_path() / "sicdm job tools.csv").string();
+    REQUIRE(run(d, "CAM LIBRARY SAVE \"" + jobFile + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "CAM LIBRARY LOAD \"" + jobFile + "\"").ok);
+    CHECK(e.state.cam.tools.size() == 4);
+    REQUIRE(run(d, "CAM LIBRARY DELETE #1").ok);
+    std::vector<CamTool> stored;
+    REQUIRE(loadToolFile(lib, stored));
+    CHECK(stored.size() == 3);
+    // Saved with the project: the vendor fields too.
+    const Json j = camToJson(d.state.cam);
+    CamJob back;
+    REQUIRE(camFromJson(j, back));
+    CHECK(back.tools[0].productId == "F6" && back.tools[0].vc == 250 && back.tools[0].fz == 0.03);
+    // Over MCP.
+    McpServer s(d, nullptr);
+    const auto r = Json::parse(s.handle(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cam","arguments":{"operation":"library","library":"list"}}})"));
+    REQUIRE(r.has_value());
+    CHECK(!(*r)["result"]["isError"].asBool());
+    CHECK((*r)["result"]["content"][0]["text"].asString().find("Tool library") != std::string::npos);
+    std::filesystem::remove(lib);
+    std::filesystem::remove(cat);
+    std::filesystem::remove(jobFile);
+    setEnv("SICDM_TOOL_LIBRARY", "");
 }

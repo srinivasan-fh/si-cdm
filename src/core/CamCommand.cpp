@@ -3,6 +3,7 @@
 #include "core/CamCommand.hpp"
 
 #include "core/Cam.hpp"
+#include "core/CamLibrary.hpp"
 #include "core/CamVerify.hpp"
 #include "core/FileIO.hpp"
 #include "core/Command.hpp"
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <filesystem>
 #include <optional>
 #include <fstream>
 #include <cctype>
@@ -170,6 +172,205 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         return p;
     };
     auto changed = [&] { doc.dirty = true; };
+
+    if (sub == "library" || sub == "lib") {
+        // CAM LIBRARY [LIST [text]] | IMPORT file [REPLACE] | EXPORT file [CSV|FUSION] | STORE n|ALL | USE entry [AS n]
+        //             | DELETE entry | LOAD file | SAVE file [CSV|FUSION]
+        const std::string op = a.size() > 1 ? lower(a[1]) : "list";
+        const std::string libPath = toolLibraryPath();
+        std::vector<CamTool> lib;
+        std::string err;
+        std::vector<std::string> notes;
+        if (std::filesystem::exists(libPath) && !loadToolFile(libPath, lib, &err, nullptr, ToolFileFormat::Native))
+            return out.fail("The tool library " + libPath + " can't be read: " + err);
+        auto rest = [&](std::size_t from) {
+            std::string r;
+            for (std::size_t k = from; k < a.size(); ++k) r += (r.empty() ? "" : " ") + a[k];
+            return r;
+        };
+        auto formatWord = [&](const std::string& w) {
+            const std::string f = lower(w);
+            return f == "csv" ? ToolFileFormat::Csv : f == "fusion" ? ToolFileFormat::Fusion : ToolFileFormat::Auto;
+        };
+        // The path and an optional trailing format word.
+        auto pathAndFormat = [&](std::size_t from, ToolFileFormat& fmt) {
+            std::size_t end = a.size();
+            fmt = ToolFileFormat::Auto;
+            if (end > from + 1 && !quotedArg(end - 1) && formatWord(a[end - 1]) != ToolFileFormat::Auto) fmt = formatWord(a[--end]);
+            std::string p;
+            for (std::size_t k = from; k < end; ++k) p += (p.empty() ? "" : " ") + a[k];
+            return p;
+        };
+        auto saveLib = [&]() {
+            if (!saveToolFile(libPath, lib, &err, ToolFileFormat::Native)) {
+                out.fail("Can't write the tool library: " + err);
+                return false;
+            }
+            return true;
+        };
+        auto sameTool = [](const CamTool& x, const CamTool& t) {
+            return x.type == t.type && std::fabs(x.diameter - t.diameter) < 1e-9 && x.flutes == t.flutes && x.productId == t.productId && x.vendor == t.vendor &&
+                   std::fabs(x.cornerRadius - t.cornerRadius) < 1e-9 && x.name == t.name;
+        };
+        // An entry: its number in the listing (#3 or 3), or its product id or name.
+        auto findEntry = [&](const std::string& key) -> int {
+            std::string k = key;
+            if (!k.empty() && k[0] == '#') k = k.substr(1);
+            if (const auto n = parseNumber(k); n && *n >= 1 && *n <= static_cast<float>(lib.size()) && std::floor(*n) == *n) return static_cast<int>(*n) - 1;
+            for (std::size_t i = 0; i < lib.size(); ++i)
+                if ((!lib[i].productId.empty() && lower(lib[i].productId) == lower(key)) || (!lib[i].name.empty() && lower(lib[i].name) == lower(key)))
+                    return static_cast<int>(i);
+            return -1;
+        };
+        if (op == "list" || op == "find" || op == "search") {
+            const std::string filter = lower(rest(2));
+            if (lib.empty()) {
+                out.say("The tool library (" + libPath + ") is empty: CAM LIBRARY IMPORT catalogue.csv|.json, or CAM LIBRARY STORE ALL");
+                return out;
+            }
+            out.say("Tool library, " + std::to_string(lib.size()) + " tools (" + libPath + "):");
+            for (std::size_t i = 0; i < lib.size(); ++i) {
+                const std::string line = "  #" + std::to_string(i + 1) + "  " + lib[i].describe();
+                if (!filter.empty() && lower(line).find(filter) == std::string::npos) continue;
+                std::string extra;
+                if (lib[i].vc > 0) extra += "  vc " + num(lib[i].vc) + " m/min";
+                if (lib[i].fz > 0) extra += "  fz " + num(lib[i].fz) + " mm";
+                out.say(line + extra);
+            }
+            return out;
+        }
+        if (op == "import") {
+            // Into the user's library (REPLACE: instead of what is there).
+            bool replace = false;
+            std::size_t end = a.size();
+            if (end > 2 && lower(a[end - 1]) == "replace" && !quotedArg(end - 1)) replace = true, --end;
+            std::string path;
+            for (std::size_t k = 2; k < end; ++k) path += (path.empty() ? "" : " ") + a[k];
+            if (path.empty()) return out.fail("CAM LIBRARY IMPORT file.csv|.json [REPLACE]");
+            std::vector<CamTool> got;
+            if (!loadToolFile(path, got, &err, &notes)) return out.fail(err);
+            if (replace) lib.clear();
+            int added = 0, same = 0;
+            for (CamTool& t : got) {
+                const bool dup = std::any_of(lib.begin(), lib.end(), [&](const CamTool& x) { return sameTool(x, t); });
+                if (dup) {
+                    ++same;
+                    continue;
+                }
+                lib.push_back(t);
+                ++added;
+            }
+            if (!saveLib()) return out;
+            out.say("Imported " + std::to_string(added) + " tools into the library" + (same ? " (" + std::to_string(same) + " already there)" : "") + ": " +
+                    std::to_string(lib.size()) + " in all");
+            for (const std::string& n : notes) out.say("  " + n);
+            return out;
+        }
+        if (op == "export") {
+            ToolFileFormat fmt;
+            const std::string path = pathAndFormat(2, fmt);
+            if (path.empty()) return out.fail("CAM LIBRARY EXPORT file [CSV|FUSION]");
+            if (!saveToolFile(path, lib, &err, fmt)) return out.fail(err);
+            out.say("Wrote " + std::to_string(lib.size()) + " library tools to " + path);
+            return out;
+        }
+        if (op == "delete" || op == "remove") {
+            if (a.size() < 3) return out.fail("CAM LIBRARY DELETE #n | product | name");
+            const int i = findEntry(rest(2));
+            if (i < 0) return out.fail("No library tool " + rest(2) + " (CAM LIBRARY lists them)");
+            const std::string what = lib[static_cast<std::size_t>(i)].describe();
+            lib.erase(lib.begin() + i);
+            if (!saveLib()) return out;
+            out.say("Removed from the library: " + what);
+            return out;
+        }
+        if (op == "store" || op == "add") {
+            // The job's tools into the library.
+            if (a.size() < 3) return out.fail("CAM LIBRARY STORE n | ALL");
+            std::vector<CamTool> pick;
+            if (lower(a[2]) == "all") pick = job.tools;
+            else
+                for (std::size_t k = 2; k < a.size(); ++k) {
+                    const std::string w = lower(a[k]);
+                    const auto n = parseNumber(w.substr(!w.empty() && w[0] == 't' ? 1 : 0));
+                    const auto it = std::find_if(job.tools.begin(), job.tools.end(), [&](const CamTool& t) { return n && t.number == static_cast<int>(*n); });
+                    if (it == job.tools.end()) return out.fail("No tool " + a[k] + " in the job");
+                    pick.push_back(*it);
+                }
+            if (pick.empty()) return out.fail("The job has no tools");
+            int stored = 0;
+            for (const CamTool& t : pick)
+                if (std::none_of(lib.begin(), lib.end(), [&](const CamTool& x) { return sameTool(x, t); })) lib.push_back(t), ++stored;
+            if (!saveLib()) return out;
+            out.say("Stored " + std::to_string(stored) + (stored == 1 ? " tool" : " tools") + " in the library" +
+                    (stored < static_cast<int>(pick.size()) ? " (" + std::to_string(pick.size() - static_cast<std::size_t>(stored)) + " already there)" : "") + ", " +
+                    std::to_string(lib.size()) + " in all");
+            return out;
+        }
+        if (op == "use" || op == "get") {
+            // A library tool into the job, as its own T number or AS n.
+            std::size_t end = a.size();
+            int as = -1;
+            if (end >= 5 && lower(a[end - 2]) == "as") {
+                const std::string w = lower(a[end - 1]);
+                const auto n = parseNumber(w.substr(!w.empty() && w[0] == 't' ? 1 : 0));
+                if (!n || *n < 1 || *n > 999) return out.fail("AS takes a tool number, 1 to 999");
+                as = static_cast<int>(*n);
+                end -= 2;
+            }
+            std::string key;
+            for (std::size_t k = 2; k < end; ++k) key += (key.empty() ? "" : " ") + a[k];
+            const int i = findEntry(key);
+            if (i < 0) return out.fail(key.empty() ? std::string("CAM LIBRARY USE #n | product | name [AS n]") : "No library tool " + key + " (CAM LIBRARY lists them)");
+            CamTool t = lib[static_cast<std::size_t>(i)];
+            if (as > 0) t.number = as;
+            else // its own number, or the next free one: a library tool never replaces one silently
+                while (std::any_of(job.tools.begin(), job.tools.end(), [&](const CamTool& x) { return x.number == t.number; }) && t.number < 999) ++t.number;
+            const auto it = std::find_if(job.tools.begin(), job.tools.end(), [&](const CamTool& x) { return x.number == t.number; });
+            const bool replaced = it != job.tools.end();
+            if (replaced) *it = t;
+            else job.tools.push_back(t);
+            std::sort(job.tools.begin(), job.tools.end(), [](const CamTool& x, const CamTool& y) { return x.number < y.number; });
+            for (CamOperation& o : job.ops)
+                if (o.tool == t.number) o.generated = false;
+            changed();
+            out.say((replaced ? "Replaced with " : "Added ") + t.describe());
+            if (const CamMaterial* m = camMaterial(job.setup.material)) out.say("  in " + m->name + ": " + feedsText(t, nullptr, job));
+            return out;
+        }
+        if (op == "load") {
+            // A file's tools straight into the job.
+            ToolFileFormat fmt;
+            const std::string path = pathAndFormat(2, fmt);
+            if (path.empty()) return out.fail("CAM LIBRARY LOAD file");
+            std::vector<CamTool> got;
+            if (!loadToolFile(path, got, &err, &notes, fmt)) return out.fail(err);
+            if (got.empty()) return out.fail("No tools in " + path);
+            for (const CamTool& t : got) {
+                const auto it = std::find_if(job.tools.begin(), job.tools.end(), [&](const CamTool& x) { return x.number == t.number; });
+                if (it != job.tools.end()) *it = t;
+                else job.tools.push_back(t);
+                for (CamOperation& o : job.ops)
+                    if (o.tool == t.number) o.generated = false;
+            }
+            std::sort(job.tools.begin(), job.tools.end(), [](const CamTool& x, const CamTool& y) { return x.number < y.number; });
+            changed();
+            out.say("Loaded " + std::to_string(got.size()) + " tools into the job");
+            for (const std::string& n : notes) out.say("  " + n);
+            return out;
+        }
+        if (op == "save") {
+            ToolFileFormat fmt;
+            const std::string path = pathAndFormat(2, fmt);
+            if (path.empty()) return out.fail("CAM LIBRARY SAVE file [CSV|FUSION]");
+            if (job.tools.empty()) return out.fail("The job has no tools");
+            if (!saveToolFile(path, job.tools, &err, fmt)) return out.fail(err);
+            out.say("Wrote the job's " + std::to_string(job.tools.size()) + " tools to " + path);
+            return out;
+        }
+        return out.fail("CAM LIBRARY [LIST] | IMPORT file [REPLACE] | EXPORT file [CSV|FUSION] | STORE n|ALL | USE entry [AS n] | DELETE entry | LOAD file | "
+                        "SAVE file [CSV|FUSION]");
+    }
 
     if (sub == "list" || sub == "status") {
         if (job.empty()) {
@@ -624,7 +825,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
     else if (sub == "bore" || sub == "helix") kind = CamOpKind::Bore;
     else if (sub == "rotary" || sub == "wrap" || sub == "4axis") kind = CamOpKind::Rotary;
     else
-        return out.fail("CAM SETUP | TOOL | TOOLS | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | ROTARY | HOLES | LIST | "
+        return out.fail("CAM SETUP | TOOL | TOOLS | LIBRARY | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | ROTARY | HOLES | LIST | "
                         "GENERATE | SIMULATE [SHOW] | POST path [post] | DELETE n | CLEAR | SHOW | HIDE");
     Body* p = needPart();
     if (!p) return out;

@@ -565,6 +565,7 @@ std::string CamTool::describe() const {
     std::snprintf(b, sizeof(b), ", %d flute%s, %s", flutes, flutes == 1 ? "" : "s", hss ? "HSS" : "carbide");
     s += b;
     if (!name.empty()) s += " (" + name + ")";
+    if (!vendor.empty() || !productId.empty()) s += " [" + vendor + (vendor.empty() || productId.empty() ? "" : " ") + productId + "]";
     return s;
 }
 
@@ -687,17 +688,62 @@ const CamMaterial* camMaterial(const std::string& key) {
     return nullptr;
 }
 
+Json camToolToJson(const CamTool& t) {
+    Json o = Json::object();
+    o.set("number", t.number);
+    o.set("type", camToolTypeKey(t.type));
+    o.set("diameter", t.diameter);
+    o.set("corner", t.cornerRadius);
+    o.set("flute_length", t.fluteLength);
+    if (t.stickout > 0) o.set("stickout", t.stickout);
+    if (t.holderDiameter > 0) o.set("holder_diameter", t.holderDiameter);
+    o.set("holder_length", t.holderLength);
+    o.set("angle", t.tipAngle);
+    o.set("pitch", t.pitch);
+    o.set("flutes", t.flutes);
+    o.set("hss", t.hss);
+    o.set("name", t.name);
+    if (!t.vendor.empty()) o.set("vendor", t.vendor);
+    if (!t.productId.empty()) o.set("product_id", t.productId);
+    if (t.vc > 0) o.set("vc", t.vc);
+    if (t.fz > 0) o.set("fz", t.fz);
+    return o;
+}
+
+CamTool camToolFromJson(const Json& o) {
+    CamTool t;
+    t.number = o["number"].asInt(1);
+    if (!camToolTypeFromKey(o["type"].asString("flat"), &t.type)) t.type = CamToolType::Flat;
+    t.diameter = o["diameter"].asNumber(6);
+    t.cornerRadius = o["corner"].asNumber(0);
+    t.fluteLength = o["flute_length"].asNumber(20);
+    t.stickout = o["stickout"].asNumber(0);
+    t.holderDiameter = o["holder_diameter"].asNumber(0);
+    t.holderLength = o["holder_length"].asNumber(40);
+    t.tipAngle = o["angle"].asNumber(118);
+    t.pitch = o["pitch"].asNumber(1);
+    t.flutes = o["flutes"].asInt(3);
+    t.hss = o["hss"].asBool(false);
+    t.name = o["name"].asString("");
+    t.vendor = o["vendor"].asString("");
+    t.productId = o["product_id"].asString("");
+    t.vc = o["vc"].asNumber(0);
+    t.fz = o["fz"].asNumber(0);
+    return t;
+}
+
 CamFeeds camFeeds(const CamTool& t, const CamMaterial& m, const CamMachine& machine, double stepover) {
     CamFeeds f;
     const double d = std::max(t.diameter, 0.1);
     double vc = t.hss ? m.cuttingSpeedHss : m.cuttingSpeedCarbide;
     if (t.type == CamToolType::Drill || t.type == CamToolType::Spot) vc *= 0.7;
     if (t.type == CamToolType::Tap) vc *= 0.15;
+    if (t.vc > 0) vc = t.vc; // the tool maker's own figure
     f.rpm = std::min(vc * 1000.0 / (kPiD * d), machine.maxRpm);
     if (t.type == CamToolType::Tap) f.rpm = std::min(f.rpm, 1000.0);
     f.rpm = std::max(100.0, std::floor(f.rpm / 10.0) * 10.0);
     if (t.type == CamToolType::Drill || t.type == CamToolType::Spot || t.type == CamToolType::Tap) {
-        const double perRev = t.type == CamToolType::Tap ? t.pitch : std::clamp(m.drillFeedPerDiameter * d, 0.01, 0.5);
+        const double perRev = t.type == CamToolType::Tap ? t.pitch : t.fz > 0 ? t.fz : std::clamp(m.drillFeedPerDiameter * d, 0.01, 0.5);
         f.feed = std::min(f.rpm * perRev, machine.maxFeed);
         if (t.type == CamToolType::Tap) f.feed = f.rpm * t.pitch; // synchronised: never clamped
         f.plunge = f.feed;
@@ -706,6 +752,7 @@ CamFeeds camFeeds(const CamTool& t, const CamMaterial& m, const CamMachine& mach
     }
     double fz = std::clamp(m.chipLoadPerDiameter * d, 0.005, 0.3);
     if (t.type == CamToolType::FaceMill) fz *= 1.2;
+    if (t.fz > 0) fz = t.fz;
     // Radial chip thinning: below half the diameter the chip is thinner than the feed per
     // tooth, so the feed rises to keep it at the target.
     if (stepover > 0 && stepover < d * 0.5) fz *= std::min(3.0, d / (2.0 * std::sqrt(stepover * (d - stepover))));
@@ -3369,23 +3416,7 @@ Json camToJson(const CamJob& job) {
     j.set("setup", s);
     j.set("show_paths", job.showPaths);
     Json tools = Json::array();
-    for (const CamTool& t : job.tools) {
-        Json o = Json::object();
-        o.set("number", t.number);
-        o.set("type", camToolTypeKey(t.type));
-        o.set("diameter", t.diameter);
-        o.set("corner", t.cornerRadius);
-        o.set("flute_length", t.fluteLength);
-        if (t.stickout > 0) o.set("stickout", t.stickout);
-        if (t.holderDiameter > 0) o.set("holder_diameter", t.holderDiameter);
-        o.set("holder_length", t.holderLength);
-        o.set("angle", t.tipAngle);
-        o.set("pitch", t.pitch);
-        o.set("flutes", t.flutes);
-        o.set("hss", t.hss);
-        o.set("name", t.name);
-        tools.push(o);
-    }
+    for (const CamTool& t : job.tools) tools.push(camToolToJson(t));
     j.set("tools", tools);
     Json ops = Json::array();
     for (const CamOperation& op : job.ops) {
@@ -3477,23 +3508,7 @@ bool camFromJson(const Json& j, CamJob& job) {
         if (m.hasC) m.cMin = c[0].asNumber(-99999), m.cMax = c[1].asNumber(99999);
     }
     job.showPaths = j["show_paths"].asBool(true);
-    for (const Json& o : j["tools"].items()) {
-        CamTool t;
-        t.number = o["number"].asInt(1);
-        if (!camToolTypeFromKey(o["type"].asString("flat"), &t.type)) t.type = CamToolType::Flat;
-        t.diameter = o["diameter"].asNumber(6);
-        t.cornerRadius = o["corner"].asNumber(0);
-        t.fluteLength = o["flute_length"].asNumber(20);
-        t.stickout = o["stickout"].asNumber(0);
-        t.holderDiameter = o["holder_diameter"].asNumber(0);
-        t.holderLength = o["holder_length"].asNumber(40);
-        t.tipAngle = o["angle"].asNumber(118);
-        t.pitch = o["pitch"].asNumber(1);
-        t.flutes = o["flutes"].asInt(3);
-        t.hss = o["hss"].asBool(false);
-        t.name = o["name"].asString("");
-        job.tools.push_back(t);
-    }
+    for (const Json& o : j["tools"].items()) job.tools.push_back(camToolFromJson(o));
     for (const Json& o : j["operations"].items()) {
         CamOperation op;
         const std::string kind = o["kind"].asString("rough");

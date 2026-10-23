@@ -365,7 +365,10 @@ Details: [docs/printing.md](docs/printing.md).
 
 - **Setup and tools:** the stock, the work zero and the material. A tool library: flat, ball and
   bull-nose end mills, face mills, drills, spot drills and taps. Spindle speeds and feeds come
-  from the material, with chip thinning at light stepovers.
+  from the material, or the tool maker's own cutting data, with chip thinning at light stepovers.
+- **Tool libraries:** your own library of cutters, shared by every job; vendor catalogues
+  (CSV) and Fusion 360 tool libraries import into it, and libraries export to CSV, Fusion 360
+  or SI CDM JSON (`CAM LIBRARY`).
 - **Operations:**
   - facing;
   - 2D contour with lead arcs and tabs;

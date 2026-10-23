@@ -53,6 +53,7 @@ add_library(sicdm_core STATIC
     src/core/Section.cpp
     src/core/Cam.cpp
     src/core/CamCommand.cpp
+    src/core/CamLibrary.cpp
     src/core/FeatureCommand.cpp
     src/core/Constraints.cpp
     src/core/Brep.cpp

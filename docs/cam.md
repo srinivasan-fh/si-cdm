@@ -121,7 +121,41 @@ holder against the stock and the part.
 - Light stepovers thin the chip, so the feed rises by `D / (2 √(ae (D − ae)))` (at most 3×).
   This is how a 10% stepover in aluminium runs about 1.7× faster.
 - Drills feed per turn. Taps feed exactly one pitch per turn.
+- A tool with the maker's own cutting speed (`vc`) and chip load (`fz`, per turn for
+  drills) from a catalogue uses those instead of the material table's.
 - `RPM`, `FEED` and `PLUNGE` on an operation override the values from the tool and material.
+
+### Tool libraries
+
+The cutters you own live in your tool library, apart from any one job. Jobs take tools from
+it, and vendor catalogues and other CAM systems' libraries feed into it.
+
+```text
+CAM LIBRARY [LIST [text]]                 the library, with each tool's maker, product and cutting data
+CAM LIBRARY IMPORT file.csv|.json [REPLACE]
+CAM LIBRARY USE #n|product|name [AS n]    into the job (its own T number, or the next free one)
+CAM LIBRARY STORE n ...|ALL               the job's tools into the library
+CAM LIBRARY DELETE #n|product|name
+CAM LIBRARY EXPORT file [CSV|FUSION]      the library to a file
+CAM LIBRARY LOAD file                     a file's tools straight into the job
+CAM LIBRARY SAVE file [CSV|FUSION]        the job's tools to a file
+```
+
+**Where the library is:** `~/.config/sicdm/tools.json` on Linux,
+`~/Library/Application Support/SI-CDM/tools.json` on macOS and `%APPDATA%\SI-CDM\tools.json` on
+Windows. `SICDM_TOOL_LIBRARY` points it elsewhere, for example at a shared drive.
+
+**File formats:**
+
+| Format | Reads | Writes |
+| --- | --- | --- |
+| **SI CDM JSON** | `{"format": "sicdm-tools", "tools": [...]}` | `.json` by default |
+| **CSV** (vendor catalogues, spreadsheets) | A header row naming the columns, in any order. Common names are understood: `Dia`/`DC`, `Flutes`/`Z`/`NOF`, `LOC`/`LCF`, `Corner Radius`/`RE`, `EDP`/`SKU`/`Product`, `Manufacturer`, `Vc` or `SFM` (feet per minute, converted), `Chipload`/`fz`, `Material` (HSS or carbide) | `.csv` |
+| **Fusion 360 tool library** (`.json` export) | Flat, ball, bull-nose, face, chamfer and spot mills, drills and taps, with their geometry (`DC`, `NOF`, `LCF`, `RE`, `SIG`, `TA`, `TP`), post number, maker and product, and the first preset's `v_c` and `f_z` (or `f_n`). Inch libraries are converted | `FUSION` |
+
+What a file doesn't say comes from the tool type's defaults. Tools of a type SI CDM doesn't
+cut with (thread mills, slot mills...) are left out, and the import lists them. Importing
+the same catalogue twice adds nothing twice.
 
 ## Operations
 
@@ -430,7 +464,7 @@ single block, with the feed override low, above the part.
 
 The `cam` tool has these operations:
 
-- `setup`, `tool`;
+- `setup`, `tool`, `library`;
 - `face`, `rough`, `pocket`, `contour`, `parallel`, `waterline`, `drill`, `bore`, `rotary`;
 - `holes`, `list`, `generate`, `simulate`, `post`, `delete`, `clear`.
 
@@ -439,6 +473,8 @@ Its parameters are listed in the tool's schema.
 ```json
 {"operation": "setup", "body": "Bracket", "stock_margin": 3, "material": "aluminium", "post": "haas"}
 {"operation": "tool", "number": 1, "type": "flat", "diameter": 6}
+{"operation": "library", "library": "import", "path": "harvey.json"}
+{"operation": "library", "library": "use", "entry": "H-8", "as": 3}
 {"operation": "rough", "leave": 0.3, "stepover_percent": 35}
 {"operation": "pocket", "adaptive": true}
 {"operation": "tool", "number": 2, "type": "flat", "diameter": 4, "stickout": 20, "holder": 25}

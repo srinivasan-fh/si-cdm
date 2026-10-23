@@ -445,8 +445,15 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
-        p.set("operation", prop("string", "setup | tool | face | rough | pocket | contour | parallel | waterline | drill | bore | rotary | holes | "
-                                          "list | generate | simulate | post | delete | clear"));
+        p.set("operation", prop("string", "setup | tool | library | face | rough | pocket | contour | parallel | waterline | drill | bore | rotary | "
+                                          "holes | list | generate | simulate | post | delete | clear"));
+        p.set("library", prop("string", "library: list | import | export | store | use | delete | load | save - the user's tool library: import a "
+                                        "vendor catalogue (.csv) or Fusion 360 library (.json) into it, use a library tool in the job, store job "
+                                        "tools in it, or load / save the job's tools straight from / to a file"));
+        p.set("entry", prop("string", "library use / delete: the library tool - its number in the listing (#3), product id or name; library "
+                                      "store: a job tool number, or ALL; library list: text to search for"));
+        p.set("as", prop("number", "library use: the tool number in the job (default the library's, or the next free)"));
+        p.set("file_format", prop("string", "library export / save: csv or fusion (default: by the extension, else the native JSON)"));
         p.set("body", prop("string", "setup: the part (default: the selection)"));
         p.set("stock_margin", prop("number", "setup: stock around the part, mm (default 2; 1 on top)"));
         p.set("stock_size", prop("array", "setup: stock size [x, y, z], mm, centred on the part, from its bottom"));
@@ -482,7 +489,7 @@ Json McpServer::toolDefinitions() {
         p.set("cycle", prop("string", "drill: spot, drill, peck, chipbreak, tap, bore"));
         p.set("peck", prop("number", "drill: peck depth, mm"));
         p.set("points", prop("array", "drill / bore: hole centres [[x, y], ...] (default: the part's holes that fit the tool)"));
-        p.set("path", prop("string", "post: the G-code file"));
+        p.set("path", prop("string", "post: the G-code file; library import / export / load / save: the tool file"));
         p.set("show", prop("boolean", "simulate: add the cut stock as a body"));
         p.set("index", prop("number", "delete: the operation's number (1-based)"));
         p.set("name", prop("string", "tool / operations: a name"));
@@ -1254,6 +1261,18 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         auto text = [&](const char* key, const char* word) {
             return a[key].isString() ? std::string(" ") + word + " " + quote(a[key].asString()) : std::string();
         };
+        if (op == "library") {
+            const std::string what = a["library"].asString("list");
+            std::string line = "CAM LIBRARY " + toUpper(what);
+            if (what == "import" || what == "export" || what == "load" || what == "save") {
+                if (!a["path"].isString()) return textResult("library " + what + " needs path", true);
+                line += " " + quote(a["path"].asString());
+                if (a["file_format"].isString()) line += " " + toUpper(a["file_format"].asString());
+            } else if (a["entry"].isString() || a["entry"].isNumber())
+                line += " " + (a["entry"].isNumber() ? num(a["entry"].asNumber()) : a["entry"].asString());
+            if (what == "use" && a["as"].isNumber()) line += " AS " + num(a["as"].asNumber());
+            return runLine(line);
+        }
         if (op == "setup") {
             std::string line = "CAM SETUP" + (a["body"].isString() ? " " + quote(a["body"].asString()) : std::string());
             if (a["stock_size"].isArray() && a["stock_size"].size() == 3)
