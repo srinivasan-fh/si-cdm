@@ -507,6 +507,50 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("operation", prop("string", "setup | tool | tools | profile | face | rough | finish | bore | groove | drill | thread | partoff | list | "
+                                          "generate | simulate | post | delete | clear"));
+        p.set("body", prop("string", "setup: the part (default: the selection)"));
+        p.set("axis", prop("string", "setup: the model's axis the part turns about, x, y or z (default: its longest side)"));
+        p.set("flip", prop("boolean", "setup: face the part's -axis end instead of its +axis end"));
+        p.set("bar", prop("number", "setup: the bar's diameter, mm (default: the part's plus 2, to a whole mm)"));
+        p.set("front", prop("number", "setup: bar in front of the part to face off, mm (default 1)"));
+        p.set("material", prop("string", "setup: aluminium, steel, stainless, brass, castiron, titanium, plastic, wood"));
+        p.set("post", prop("string", "setup / post: fanuc, haas, linuxcnc"));
+        p.set("max_rpm", prop("number", "setup: the spindle's limit (constant surface speed is clamped to it)"));
+        p.set("number", prop("number", "tool: T number"));
+        p.set("type", prop("string", "tool: turn, bore (boring bar), groove (grooving / parting blade), thread, drill"));
+        p.set("nose", prop("number", "tool: the insert's nose radius, mm (a blade's corners)"));
+        p.set("insert", prop("string", "tool: turning / boring insert shape C or W (80 deg), D (55), V (35), T (60), S (90), or an angle"));
+        p.set("size", prop("number", "tool: a drill's diameter, a boring bar's smallest bore, a blade's width, mm"));
+        p.set("reach", prop("number", "tool: how deep a blade, drill or boring bar goes, mm"));
+        p.set("tool", prop("number", "operations: the T number (default: the first that suits)"));
+        p.set("inside", prop("boolean", "rough / finish: the bore instead of the outside"));
+        p.set("stepdown", prop("number", "face / rough: depth of cut, mm"));
+        p.set("leave", prop("number", "rough / finish: stock to leave radially, mm"));
+        p.set("leave_z", prop("number", "rough / finish: stock to leave on faces, mm"));
+        p.set("from", prop("number", "operations: start Z (0 is the part's front face, negative towards the chuck)"));
+        p.set("to", prop("number", "operations: end Z"));
+        p.set("depth", prop("number", "drill: depth from the front face, mm (default: the part's bore)"));
+        p.set("peck", prop("number", "drill / partoff: peck depth, mm"));
+        p.set("pitch", prop("number", "thread: the pitch, mm"));
+        p.set("diameter", prop("number", "thread: the major diameter, mm (default: the part's there)"));
+        p.set("speed", prop("number", "operations: cutting speed, m/min"));
+        p.set("feed", prop("number", "operations: feed, mm per turn"));
+        p.set("rpm", prop("number", "operations: a constant spindle speed instead of constant surface speed"));
+        p.set("path", prop("string", "post: the G-code file"));
+        p.set("show", prop("boolean", "simulate: add the turned stock as a body"));
+        p.set("index", prop("number", "delete: the operation's number (1-based)"));
+        p.set("name", prop("string", "tool / operations: a name"));
+        tools.push(tool("lathe",
+                        "CNC turning: set up a part to turn about an axis from bar stock, add turning inserts, boring bars, grooving / "
+                        "parting blades, drills and threading inserts, then facing, rough and finish turning and boring (stock to leave, "
+                        "the insert's angle limiting how steeply it goes down behind shoulders), grooving the recesses a turning insert "
+                        "can't reach, drilling on the axis, single-point threading and parting off; simulate the turned profile (stock "
+                        "left, gouges, rapid crashes, cycle time at constant surface speed) and post Fanuc, Haas or LinuxCNC lathe G-code.",
+                        p, {"operation"}));
+    }
+    {
+        Json p = Json::object();
         p.set("operation", prop("string", "revolve | sweep | loft | pattern | mirror | edges | fillet | chamfer | massprops | measure | history | regen | "
                                           "history_edit | history_insert | history_delete | constrain | dim | constraints | "
                                           "constraint_edit | constraint_delete | drag"));
@@ -1256,6 +1300,52 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                           "autodim, tolerance, gdt, gdt_delete, datum, datum_delete, finish, general_tolerance, title, note, scale, size, "
                           "projection, export, delete",
                           true);
+    }
+    if (name == "lathe") {
+        const std::string op = a["operation"].asString();
+        auto opt = [&](const char* key, const char* word) {
+            return a[key].isNumber() ? std::string(" ") + word + " " + num(a[key].asNumber()) : std::string();
+        };
+        auto text = [&](const char* key, const char* word) {
+            return a[key].isString() ? std::string(" ") + word + " " + quote(a[key].asString()) : std::string();
+        };
+        if (op == "setup") {
+            std::string line = "LATHE SETUP" + (a["body"].isString() ? " " + quote(a["body"].asString()) : std::string());
+            if (a["axis"].isString()) line += " AXIS " + a["axis"].asString();
+            if (a["flip"].asBool()) line += " FLIP";
+            line += opt("bar", "BAR") + opt("front", "FRONT") + opt("max_rpm", "MAXRPM");
+            if (a["material"].isString()) line += " MATERIAL " + a["material"].asString();
+            if (a["post"].isString()) line += " POST " + a["post"].asString();
+            return runLine(line);
+        }
+        if (op == "tool") {
+            if (!a["number"].isNumber() || !a["type"].isString()) return textResult("tool needs number and type", true);
+            std::string line = "LATHE TOOL " + num(a["number"].asNumber()) + " " + a["type"].asString();
+            if (a["size"].isNumber()) line += " " + num(a["size"].asNumber());
+            line += opt("nose", "NOSE") + opt("reach", "REACH") + text("name", "NAME");
+            if (a["insert"].isString() || a["insert"].isNumber()) line += " INSERT " + (a["insert"].isNumber() ? num(a["insert"].asNumber()) : a["insert"].asString());
+            return runLine(line);
+        }
+        if (op == "tools" || op == "profile" || op == "list" || op == "generate" || op == "clear") return runLine("LATHE " + toUpper(op));
+        if (op == "simulate") return runLine(std::string("LATHE SIMULATE") + (a["show"].asBool() ? " SHOW" : ""));
+        if (op == "post") {
+            if (!a["path"].isString()) return textResult("post needs 'path'", true);
+            return runLine("LATHE POST " + quote(a["path"].asString()) + (a["post"].isString() ? " " + a["post"].asString() : std::string()));
+        }
+        if (op == "delete") {
+            if (!a["index"].isNumber()) return textResult("delete needs 'index'", true);
+            return runLine("LATHE DELETE " + num(a["index"].asNumber()));
+        }
+        static const char* const kOps[] = {"face", "rough", "finish", "bore", "groove", "drill", "thread", "partoff"};
+        if (std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
+            return textResult("operation is one of setup, tool, tools, profile, face, rough, finish, bore, groove, drill, thread, partoff, list, generate, "
+                              "simulate, post, delete, clear",
+                              true);
+        std::string line = "LATHE " + toUpper(op) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("leave", "LEAVE") + opt("leave_z", "LEAVEZ") +
+                           opt("from", "FROM") + opt("to", "TO") + opt("depth", "DEPTH") + opt("peck", "PECK") + opt("pitch", "PITCH") +
+                           opt("diameter", "DIAMETER") + opt("speed", "SPEED") + opt("feed", "FEED") + opt("rpm", "RPM") + text("name", "NAME");
+        if (a["inside"].asBool()) line += " INSIDE";
+        return runLine(line);
     }
     if (name == "cam") {
         const std::string op = a["operation"].asString();

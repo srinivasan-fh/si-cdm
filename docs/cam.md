@@ -516,5 +516,5 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Machines:** lathes; 5-axis on head-head or head-table machines (B axes), and swarf
-  (flank) cutting.
+- **Machines:** 5-axis on head-head or head-table machines (B axes), and swarf (flank)
+  cutting. (Lathes have their own job: see [lathe.md](lathe.md).)

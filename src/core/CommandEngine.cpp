@@ -5,6 +5,7 @@
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
 #include "core/CamCommand.hpp"
+#include "core/LatheCommand.hpp"
 #include "core/AssemblyCommand.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/DrawingCommand.hpp"
@@ -697,7 +698,8 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.dirty = false;
         doc.clearSelection();
         doc.primitiveSerial = 0;
-        doc.state.cam = CamJob{}; // the job, the drawing and the mates belonged to the old parts
+        doc.state.cam = CamJob{}; // the jobs, the drawing and the mates belonged to the old parts
+        doc.state.lathe = LatheJob{};
         doc.state.drawing = Drawing{};
         doc.state.assembly = AssemblyState{};
         doc.state.history.clear();
@@ -1617,6 +1619,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         return out;
     }
     if (cmd == "CAM") return runCamCommand(doc, a, pc.quoted);
+    if (cmd == "LATHE") return runLatheCommand(doc, a, pc.quoted);
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
     if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET" || cmd == "DRAG") return runSketchCommand(doc, cmd, a, pc.quoted);

@@ -407,6 +407,39 @@ CAM POST bracket.nc HAAS
 
 Details: [docs/cam.md](docs/cam.md).
 
+## CNC turning (lathe)
+
+*Manufacture → Turning (Lathe)* (or the `LATHE` command) turns a part from bar stock on a
+2-axis lathe.
+
+- **Setup:** the part's turning axis, the end the lathe faces, the bar and the material. The
+  part's profile is found as the lathe sees it: the farthest it reaches from the axis, and its
+  bore.
+- **Tools:** turning inserts (nose radius and insert shape, which sets how steeply the insert
+  can go down behind a shoulder), boring bars, grooving and parting blades, threading inserts
+  and drills.
+- **Operations:**
+  - facing;
+  - rough and finish turning, outside and in the bore, with stock to leave;
+  - grooving the recesses a turning insert can't reach;
+  - drilling on the axis;
+  - single-point threading;
+  - parting off.
+- **Simulation:** cuts the bar's profile with each tool's shape. It reports stock left, gouges,
+  rapid crashes and cycle time at constant surface speed, and shows the turned stock.
+- **Posts:** Fanuc, Haas and LinuxCNC lathe programs. X is a diameter; they use constant
+  surface speed under a spindle limit, feed per turn, and synchronised threading passes.
+
+```text
+LATHE SETUP "Shaft" MATERIAL steel      LATHE TOOL 1 TURN NOSE 0.8 INSERT C      LATHE TOOL 2 TURN NOSE 0.4 INSERT D      LATHE TOOL 3 GROOVE 3
+LATHE FACE      LATHE ROUGH TOOL 1 LEAVE 0.2      LATHE FINISH TOOL 2      LATHE GROOVE      LATHE PARTOFF      LATHE SIMULATE SHOW
+LATHE POST shaft.nc FANUC
+```
+
+![Lathe toolpaths on a shaft](docs/lathe-paths.png)
+
+Details: [docs/lathe.md](docs/lathe.md).
+
 ## Library: motors and gears
 
 ![Library](docs/library.png)

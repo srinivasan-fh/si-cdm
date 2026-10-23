@@ -71,6 +71,8 @@ add_library(sicdm_core STATIC
     src/core/SketchCommand.cpp
     src/core/Features.cpp
     src/core/Library.cpp
+    src/core/Lathe.cpp
+    src/core/LatheCommand.cpp
     src/core/CommandEngine.cpp
     src/core/FileIO.cpp
     src/core/Json.cpp

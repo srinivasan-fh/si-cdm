@@ -9,6 +9,7 @@
 //   images      .png .jpg .jpeg .bmp .tga .gif .psd .hdr .pnm: reference images
 
 #include "core/Cam.hpp"
+#include "core/Lathe.hpp"
 #include "core/Assembly.hpp"
 #include "core/Drawing.hpp"
 #include "core/Scene.hpp"
@@ -43,6 +44,7 @@ struct ProjectState {
     UnitSettings units{};     // display / input units (geometry is always stored in mm)
     float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
     CamJob cam;               // CAM: setup, tools and operations (toolpaths are remade)
+    LatheJob lathe;           // lathe CAM: setup, tools and operations
     Drawing drawing;          // the drawing sheet: views, dimensions, title block
     AssemblyState assembly;   // mates between the parts
     std::vector<HistoryStep> history;     // the feature history
@@ -65,7 +67,8 @@ struct ProjectState {
 //      before 6 leaves those curves out)
 //   7  adds drawing tolerances: dimension tolerances ("tol"), feature control frames
 //      ("frames"), datums, surface finish marks and the general tolerance
-constexpr int kProjectVersion = 7;
+//   8  adds the lathe job ("lathe")
+constexpr int kProjectVersion = 8;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

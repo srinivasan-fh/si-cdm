@@ -524,6 +524,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     }
     if (state.simDuration > 0.0f) doc.set("simulation_duration", state.simDuration);
     if (!state.cam.empty()) doc.set("cam", camToJson(state.cam));
+    if (!state.lathe.empty()) doc.set("lathe", latheToJson(state.lathe));
     if (!state.assembly.empty()) doc.set("assembly", assemblyToJson(state.assembly));
     if (!state.drawing.empty()) doc.set("drawing", drawingToJson(state.drawing));
     if (!state.history.empty()) {
@@ -784,6 +785,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);
     if (const Json& cj = (*doc)["cam"]; cj.isObject()) camFromJson(cj, st.cam);
+    if (const Json& lj = (*doc)["lathe"]; lj.isObject()) latheFromJson(lj, st.lathe);
     if (const Json& aj = (*doc)["assembly"]; aj.isObject()) assemblyFromJson(aj, st.assembly);
     if (const Json& dj = (*doc)["drawing"]; dj.isObject()) drawingFromJson(dj, st.drawing);
     for (const Json& j : (*doc)["history"].items()) {

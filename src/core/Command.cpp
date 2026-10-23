@@ -127,6 +127,13 @@ constexpr CommandSpec kCommands[] = {
      "[CSV|FUSION] (tool libraries, vendor catalogues, Fusion 360); operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d] [ADAPTIVE] [REST] [INDEX a c]...; CAM ROTARY [ALONG] [STEPOVER s] [STEPDOWN d]; CAM 5AXIS [LEADANGLE a] [SIDETILT a] [MAXTILT a]; CAM SIMULATE [SHOW]; "
      "CAM POST file.nc [FANUC|HAAS|GRBL|LINUXCNC] [FORCE] (read back and checked first); CAM CHECK [post | file.nc [post]]; "
      "CAM MACHINE [PRESET vmc|vmc-4th|trunnion|benchtop|router] [TRAVEL x y z] [ZERO x,y,z] [A min max] [C min max] [POCKETS n] [MAXRPM n]"},
+    {"LATHE", "TURN TURNING", "LATHE SETUP|TOOL|FACE|ROUGH|FINISH|BORE|GROOVE|DRILL|THREAD|PARTOFF|PROFILE|LIST|SIMULATE|POST ...",
+     "CNC turning: LATHE SETUP [body] [AXIS X|Y|Z] [FLIP] [BAR d] [FRONT f] [MATERIAL m] [POST FANUC|HAAS|LINUXCNC] [MAXRPM n]; "
+     "LATHE TOOL n TURN [NOSE r] [INSERT C|D|V|T|W] | BORE d | GROOVE w [CORNER r] [REACH l] | THREAD | DRILL d [ANGLE a]; "
+     "operations take [TOOL n] [STEPDOWN d] [LEAVE l] [LEAVEZ l] [FROM z] [TO z] [SPEED m/min] [FEED mm/rev] [RPM n]: LATHE FACE; LATHE ROUGH|FINISH "
+     "[INSIDE]; LATHE BORE (rough inside); LATHE GROOVE (the recesses a turning insert can't reach); LATHE DRILL [DEPTH d] [PECK p]; "
+     "LATHE THREAD PITCH p [FROM z] [TO z] [DIAMETER d]; LATHE PARTOFF [PECK p]; LATHE SIMULATE [SHOW]; LATHE POST file.nc [post]; "
+     "Z is 0 at the part's front face, negative towards the chuck"},
     {"SHEET", "DWG", "SHEET NEW|VIEW|SECTION|DIM|AUTODIM|TOL|GDT|DATUM|FINISH|TOLERANCE|TITLE|NOTE|SCALE|SIZE|PROJECTION|EXPORT|SHOW ...",
      "Drawings: SHEET NEW [bodies] [SIZE A3] [PORTRAIT] [THIRD] [SCALE 1:2] lays out front, top, right and isometric views; SHEET VIEW ADD kind [AT x,y]; "
      "SHEET SECTION [view] [VERTICAL|HORIZONTAL] [AT pos] [FLIP]; SHEET DIM HORIZONTAL|VERTICAL|ALIGNED|DIAMETER|RADIUS view x,y,z x,y,z [OFFSET mm]; "

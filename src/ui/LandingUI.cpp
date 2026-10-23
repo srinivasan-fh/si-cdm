@@ -643,6 +643,33 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem("Post Process (G-code)...")) requestFile(FilePost, st);
         if (ImGui::MenuItem("Show Toolpaths")) cmd.commands.push_back("CAM SHOW");
         if (ImGui::MenuItem("Hide Toolpaths")) cmd.commands.push_back("CAM HIDE");
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Turning (Lathe)")) {
+            if (ImGui::MenuItem("Set Up the Selected Part")) cmd.commands.push_back("LATHE SETUP");
+            if (ImGui::MenuItem("Add Starter Lathe Tools")) {
+                for (const char* t : {"LATHE TOOL 1 TURN NOSE 0.8 INSERT C", "LATHE TOOL 2 TURN NOSE 0.4 INSERT D", "LATHE TOOL 3 GROOVE 3",
+                                      "LATHE TOOL 4 DRILL 8", "LATHE TOOL 5 BORE 6 NOSE 0.2", "LATHE TOOL 6 THREAD"})
+                    cmd.commands.push_back(t);
+                cmd.commands.push_back("LATHE TOOLS");
+            }
+            if (ImGui::MenuItem("Show the Part's Profile")) cmd.commands.push_back("LATHE PROFILE");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Face")) cmd.commands.push_back("LATHE FACE");
+            if (ImGui::MenuItem("Rough Turn (leave 0.2)")) cmd.commands.push_back("LATHE ROUGH LEAVE 0.2");
+            if (ImGui::MenuItem("Finish Turn")) cmd.commands.push_back("LATHE FINISH");
+            if (ImGui::MenuItem("Groove the Recesses")) cmd.commands.push_back("LATHE GROOVE");
+            if (ImGui::MenuItem("Drill the Bore")) cmd.commands.push_back("LATHE DRILL");
+            if (ImGui::MenuItem("Rough Bore (leave 0.1)")) cmd.commands.push_back("LATHE BORE LEAVE 0.1");
+            if (ImGui::MenuItem("Finish Bore")) cmd.commands.push_back("LATHE FINISH INSIDE");
+            if (ImGui::MenuItem("Part Off")) cmd.commands.push_back("LATHE PARTOFF");
+            ImGui::TextDisabled("LATHE THREAD PITCH p FROM z TO z");
+            ImGui::Separator();
+            if (ImGui::MenuItem("List the Lathe Job")) cmd.commands.push_back("LATHE LIST");
+            if (ImGui::MenuItem("Simulate (show turned stock)")) cmd.commands.push_back("LATHE SIMULATE SHOW");
+            if (ImGui::MenuItem("Show / Hide Lathe Paths")) cmd.commands.push_back("LATHE PATHS");
+            ImGui::TextDisabled("LATHE POST file.nc [FANUC|HAAS|LINUXCNC]");
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("AI")) {

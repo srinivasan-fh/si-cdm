@@ -1544,7 +1544,7 @@ void Application::frame(float dt) {
         }
     }
     if (m_extrudeCurve >= 0) drawExtrudePreview();
-    if (m_uiState.mode == ViewMode::Model3D && m_doc.state.cam.showPaths) drawToolpathOverlay();
+    if (m_uiState.mode == ViewMode::Model3D && (m_doc.state.cam.showPaths || m_doc.state.lathe.showPaths)) drawToolpathOverlay();
     if (m_uiState.mode == ViewMode::Drawing2D && !m_doc.scene.sketch().constraints().empty()) drawConstraintOverlay();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active())))
@@ -2363,18 +2363,40 @@ void Application::drawConstraintOverlay() const {
 }
 
 // CAM toolpaths over the 3D view: cuts in each operation's colour, plunges yellow,
-// rapids thin red.
+// rapids thin red. Lathe paths are drawn in the plane through the turning axis.
 void Application::drawToolpathOverlay() const {
     const CamJob& job = m_doc.state.cam;
-    std::size_t total = 0;
-    for (const CamOperation& op : job.ops)
-        if (op.generated) total += op.moves.size();
-    if (total == 0) return;
+    const LatheJob& lathe = m_doc.state.lathe;
+    std::size_t total = 0, latheMoves = 0;
+    if (job.showPaths)
+        for (const CamOperation& op : job.ops)
+            if (op.generated) total += op.moves.size();
+    if (lathe.showPaths)
+        for (const LatheOperation& op : lathe.ops)
+            if (op.generated) latheMoves += op.moves.size();
+    if (total == 0 && latheMoves == 0) return;
     const ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     dl->PushClipRect(m_ui.canvasMin(), m_ui.canvasMax(), true);
     static const ImU32 kColours[] = {IM_COL32(80, 200, 255, 220), IM_COL32(120, 230, 140, 220), IM_COL32(255, 170, 70, 220),
                                      IM_COL32(200, 140, 255, 220), IM_COL32(255, 110, 170, 220), IM_COL32(90, 230, 220, 220)};
+    if (latheMoves > 0) {
+        for (std::size_t o = 0; o < lathe.ops.size(); ++o) {
+            const LatheOperation& op = lathe.ops[o];
+            if (!op.generated || op.moves.empty()) continue;
+            const ImU32 cut = kColours[o % std::size(kColours)];
+            std::optional<ImVec2> prev;
+            for (const LatheMove& m : op.moves) {
+                const auto q = projectToScreen(m_cam3D, lathe.frame.toModel(m.x, m.z), io.DisplaySize);
+                if (q && prev) dl->AddLine(*prev, *q, m.kind == LatheMove::Rapid ? IM_COL32(235, 80, 70, 130) : cut, m.kind == LatheMove::Rapid ? 1.0f : 1.4f);
+                prev = q;
+            }
+        }
+    }
+    if (total == 0) {
+        dl->PopClipRect();
+        return;
+    }
     // Very long programs are thinned to keep the view responsive.
     const std::size_t stride = std::max<std::size_t>(1, total / 150000);
     const ImU32 rapid = IM_COL32(235, 80, 70, 130), plunge = IM_COL32(250, 220, 80, 220);

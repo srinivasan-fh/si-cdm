@@ -282,6 +282,32 @@ TEST_CASE("MCP cam sets up, adds tools and operations, simulates and posts") {
     CHECK(d.state.cam.ops.size() == 2 && d.state.cam.ops[1].kind == CamOpKind::Surface5);
 }
 
+TEST_CASE("MCP lathe sets up a bar, adds tools and operations, simulates and posts") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "create_solid", R"({"kind":"cylinder","radius":10,"height":30,"name":"Pin"})")["isError"].asBool());
+    Json r = tool(s, "lathe", R"({"operation":"setup","body":"Pin","material":"brass","post":"linuxcnc","bar":22})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("22 mm bar") != std::string::npos);
+    CHECK(!tool(s, "lathe", R"({"operation":"tool","number":1,"type":"turn","nose":0.4,"insert":"D"})")["isError"].asBool());
+    CHECK(!tool(s, "lathe", R"({"operation":"tool","number":2,"type":"groove","size":2.5})")["isError"].asBool());
+    CHECK(!tool(s, "lathe", R"({"operation":"face"})")["isError"].asBool());
+    r = tool(s, "lathe", R"({"operation":"rough","leave":0.2,"stepdown":1})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("Rough turn") != std::string::npos);
+    CHECK(!tool(s, "lathe", R"({"operation":"finish"})")["isError"].asBool());
+    CHECK(!tool(s, "lathe", R"({"operation":"partoff","peck":2})")["isError"].asBool());
+    r = tool(s, "lathe", R"({"operation":"simulate"})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("no gouges") != std::string::npos);
+    const std::string nc = (std::filesystem::temp_directory_path() / "sicdm mcp lathe.ngc").generic_string();
+    CHECK(!tool(s, "lathe", R"({"operation":"post","path":")" + nc + R"("})")["isError"].asBool());
+    CHECK(std::filesystem::exists(nc));
+    std::filesystem::remove(nc);
+    CHECK(tool(s, "lathe", R"({"operation":"knurl"})")["isError"].asBool());
+    CHECK(d.state.lathe.ops.size() == 4);
+}
+
 TEST_CASE("MCP drawing lays out views, dimensions them and exports the sheet") {
     Document d;
     McpServer s(d, nullptr);

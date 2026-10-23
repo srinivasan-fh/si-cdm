@@ -763,6 +763,7 @@ bool regenerateHistory(Document& doc, const std::vector<HistoryStep>& steps, Com
     doc.state.historyRevision = doc.scene.revision();
     doc.dirty = true;
     for (CamOperation& op : doc.state.cam.ops) op.generated = false; // the part was rebuilt
+    for (LatheOperation& op : doc.state.lathe.ops) op.generated = false;
     return true;
 }
 
