@@ -292,6 +292,27 @@ TEST_CASE("MCP drawing lays out views, dimensions them and exports the sheet") {
     std::filesystem::remove(pdf);
     CHECK(tool(s, "drawing", R"({"operation":"dim","kind":"horizontal"})")["isError"].asBool());
     CHECK(tool(s, "drawing", R"({"operation":"scribble"})")["isError"].asBool());
+
+    // Tolerances and GD&T.
+    const std::size_t dims = d.state.drawing.dims.size();
+    CHECK(!tool(s, "drawing", R"({"operation":"dim","kind":"vertical","view":"Front","from":[30,0,0],"to":[30,0,15],"tolerance":"+0.1 -0.05"})")["isError"].asBool());
+    CHECK(d.state.drawing.dims.size() == dims + 1);
+    if (d.state.drawing.dims.size() != dims + 1) return;
+    CHECK(d.state.drawing.dims.back().tol.kind == DimTolerance::Deviation);
+    CHECK(!tool(s, "drawing", R"({"operation":"tolerance","index":1,"tolerance":"FIT H7"})")["isError"].asBool());
+    CHECK(d.state.drawing.dims[0].tol.fit == "H7");
+    CHECK(!tool(s, "drawing", R"({"operation":"datum","letter":"A","view":"Front","point":[-30,0,0],"sheet_offset":[-12,0]})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"gdt","symbol":"perpendicularity","value":0.02,"datums":["A"],"view":"Front","point":[30,0,7.5]})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"gdt","symbol":"position","value":0.05,"diameter":true,"material":"MMC","datums":["A"],"index":1})")["isError"].asBool());
+    CHECK(tool(s, "drawing", R"({"operation":"gdt","symbol":"flatness","value":0.02,"datums":["A"],"view":"Front","point":[0,0,15]})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"finish","value":3.2,"machined":true,"view":"Front","point":[0,0,15]})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"general_tolerance","tolerance":"ISO 2768-m"})")["isError"].asBool());
+    CHECK(d.state.drawing.frames.size() == 2);
+    CHECK(d.state.drawing.datums.size() == 1);
+    CHECK(d.state.drawing.finishes.size() == 1);
+    CHECK(d.state.drawing.generalTolerance == "ISO 2768-m");
+    CHECK(!tool(s, "drawing", R"({"operation":"gdt_delete","index":1})")["isError"].asBool());
+    CHECK(d.state.drawing.frames.size() == 1);
 }
 
 TEST_CASE("MCP cad revolves, patterns, fillets, weighs and edits the history") {

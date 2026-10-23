@@ -320,10 +320,15 @@ Details: [docs/assembly.md](docs/assembly.md).
 - **Sections:** hatched where the cut meets material.
 - **Dimensions:** automatic overall sizes and hole diameters, or picked by hand. They are tied to
   the model.
+- **Tolerances and GD&T:** ± and stacked deviations, limits, basic sizes and ISO 286 fits
+  (H7, g6...); feature control frames for all 14 characteristics with Ø zones, MMC / LMC and
+  datum references, checked against ISO 1101; datum symbols, surface finish marks and the
+  ISO 2768 general tolerance.
 - **Sheet:** a title block, notes, and export to PDF, SVG or DXF.
 
 ```text
 SHEET NEW A3      SHEET SECTION      SHEET AUTODIM      SHEET TITLE MATERIAL 6061-T6      SHEET EXPORT part.pdf
+SHEET TOL 3 FIT H7      SHEET DATUM A ON Front -40,0,6      SHEET GDT position 0.05 DIA MMC DATUMS A B DIM 4
 ```
 
 ![Drawing sheet](docs/drawing-sheet.png)

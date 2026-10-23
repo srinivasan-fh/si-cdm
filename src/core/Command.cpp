@@ -126,10 +126,12 @@ constexpr CommandSpec kCommands[] = {
      "CHAMFER|TAP d [STICKOUT l] [HOLDER d]; operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d] [ADAPTIVE] [REST] [INDEX a c]...; CAM ROTARY [ALONG] [STEPOVER s] [STEPDOWN d]; CAM SIMULATE [SHOW]; "
      "CAM POST file.nc [FANUC|HAAS|GRBL|LINUXCNC] [FORCE] (read back and checked first); CAM CHECK [post | file.nc [post]]; "
      "CAM MACHINE [PRESET vmc|vmc-4th|trunnion|benchtop|router] [TRAVEL x y z] [ZERO x,y,z] [A min max] [C min max] [POCKETS n] [MAXRPM n]"},
-    {"SHEET", "DWG", "SHEET NEW|VIEW|SECTION|DIM|AUTODIM|TITLE|NOTE|SCALE|SIZE|PROJECTION|EXPORT|SHOW ...",
+    {"SHEET", "DWG", "SHEET NEW|VIEW|SECTION|DIM|AUTODIM|TOL|GDT|DATUM|FINISH|TOLERANCE|TITLE|NOTE|SCALE|SIZE|PROJECTION|EXPORT|SHOW ...",
      "Drawings: SHEET NEW [bodies] [SIZE A3] [PORTRAIT] [THIRD] [SCALE 1:2] lays out front, top, right and isometric views; SHEET VIEW ADD kind [AT x,y]; "
      "SHEET SECTION [view] [VERTICAL|HORIZONTAL] [AT pos] [FLIP]; SHEET DIM HORIZONTAL|VERTICAL|ALIGNED|DIAMETER|RADIUS view x,y,z x,y,z [OFFSET mm]; "
-     "SHEET AUTODIM; SHEET TITLE field text; SHEET NOTE text [AT x,y]; SHEET EXPORT file.pdf|.svg|.dxf"},
+     "SHEET AUTODIM; SHEET TOL n 0.1 | +0.1 -0.05 | LIMITS ... | FIT H7 [VALUES] | BASIC; SHEET GDT position 0.1 DIA MMC DATUMS A B ON view x,y,z | "
+     "DIM n; SHEET DATUM A ON view x,y,z; SHEET FINISH RA 1.6 ON view x,y,z; SHEET TOLERANCE ISO 2768-m; SHEET TITLE field text; "
+     "SHEET NOTE text [AT x,y]; SHEET EXPORT file.pdf|.svg|.dxf"},
     {"MATE", "MATES", "MATE [type [value] \"A\" AT x,y,z \"B\" AT x,y,z [FLIP]] | FIX body | SOLVE | EDIT | FLIP | SUPPRESS | DELETE | CLEAR",
      "Assembly mates: COINCIDENT, FLUSH, CONCENTRIC, DISTANCE mm, ANGLE deg, PARALLEL, PERPENDICULAR between faces picked by a point on each "
      "(planes, axes of round faces, sphere centres); the second part moves to the first. MATE FIX holds a part still; MATE alone lists them; "

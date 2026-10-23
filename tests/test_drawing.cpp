@@ -6,6 +6,7 @@
 #include "core/FileIO.hpp"
 #include "core/Json.hpp"
 #include "core/Scene.hpp"
+#include "core/Tolerances.hpp"
 
 #include <array>
 #include <cmath>
@@ -352,4 +353,130 @@ TEST_CASE("Drawing: commands need a drawing and bodies, and views come and go") 
     CHECK(d.state.drawing.view("Bottom") == nullptr);
     REQUIRE(run(d, "SHEET DELETE").ok);
     CHECK(d.state.drawing.empty());
+}
+
+TEST_CASE("Tolerances: ISO 286 fits and ISO 2768 general tolerances match the tables") {
+    auto fit = [](const char* code, double size, double up, double lo) {
+        FitDeviations f;
+        std::string why;
+        const bool ok = isoFit(code, size, f, &why);
+        CHECK(ok);
+        CHECK(std::fabs(f.upper - up) < 1e-9);
+        CHECK(std::fabs(f.lower - lo) < 1e-9);
+    };
+    fit("H7", 20, 0.021, 0);
+    fit("g6", 20, -0.007, -0.020);
+    fit("h6", 20, 0, -0.013);
+    fit("k6", 25, 0.015, 0.002);
+    fit("p6", 50, 0.042, 0.026);
+    fit("f7", 30, -0.020, -0.041);
+    fit("H8", 100, 0.054, 0);
+    fit("G7", 10, 0.020, 0.005);
+    fit("js6", 18, 0.0055, -0.0055);
+    fit("n6", 3, 0.010, 0.004);   // 3 mm is in the first range (up to and including 3)
+    fit("H11", 500, 0.400, 0);
+    FitDeviations f;
+    CHECK(!isoFit("H7", 600, f));  // beyond the tables here
+    CHECK(!isoFit("Z7", 20, f));
+    CHECK(!isoFit("H13", 20, f));
+    CHECK(!isoFit("K7", 20, f));   // holes K M N P need the corrections: refused, not guessed
+    CHECK(std::fabs(itTolerance(7, 40) - 0.025) < 1e-12);
+    CHECK(std::fabs(generalTolerance('m', 25) - 0.2) < 1e-12);
+    CHECK(std::fabs(generalTolerance('f', 100) - 0.15) < 1e-12);
+    CHECK(std::fabs(generalTolerance('c', 5) - 0.3) < 1e-12);
+    CHECK(generalTolerance('v', 2) == 0); // class v starts above 3 mm
+}
+
+TEST_CASE("Drawing: dimension tolerances, feature control frames, datums and surface finish") {
+    Document d;
+    REQUIRE(run(d, "BOX 80 50 12 @0,0,0").ok);
+    REQUIRE(run(d, "SHEET NEW SIZE A3").ok);
+    REQUIRE(run(d, "SHEET DIM HORIZONTAL Front -40,0,0 40,0,0 TOL 0.1").ok);
+    REQUIRE(run(d, "SHEET DIM VERTICAL Front 40,0,0 40,0,12 TOL +0.05 -0.1").ok);
+    REQUIRE(run(d, "SHEET DIM VERTICAL Top -40,-25,12 -40,25,12 FIT h7 VALUES").ok);
+    REQUIRE(run(d, "SHEET DIM HORIZONTAL Top -40,25,12 40,25,12").ok);
+    Drawing& dw = d.state.drawing;
+    REQUIRE(dw.dims.size() == 4);
+    CHECK(dimensionText(dw, dw.dims[0]) == "80 \xC2\xB1" "0.1");
+    std::string up, lo;
+    CHECK(dimensionText(dw, dw.dims[1], &up, &lo) == "12");
+    CHECK(up == "+0.05");
+    CHECK(lo == "-0.1");
+    CHECK(dimensionText(dw, dw.dims[2]) == "50 h7 (0/-0.025)");
+    double hi = 0, low = 0;
+    REQUIRE(dimensionLimits(dw, dw.dims[2], hi, low));
+    CHECK(std::fabs(hi - 50) < 1e-9 && std::fabs(low - 49.975) < 1e-9);
+    // Set later: limits, basic, none.
+    REQUIRE(run(d, "SHEET TOL 4 LIMITS +0.2 -0.1").ok);
+    CHECK(dimensionText(dw, dw.dims[3], &up, &lo).empty());
+    CHECK(up == "80.2");
+    CHECK(lo == "79.9");
+    REQUIRE(run(d, "SHEET TOL 4 BASIC").ok);
+    CHECK(!dimensionLimits(dw, dw.dims[3], hi, low));
+    CHECK(!run(d, "SHEET TOL 9 0.1").ok);
+    CHECK(!run(d, "SHEET TOL 1 FIT Q7").ok);
+
+    // Datums and frames, with the rules of ISO 1101.
+    REQUIRE(run(d, "SHEET DATUM A ON Front -40,0,6 OFFSET -12,0").ok);
+    REQUIRE(run(d, "SHEET DATUM B ON Top 0,-25,6").ok);
+    CHECK(!run(d, "SHEET DATUM A ON Front 0,0,0").ok); // one datum A
+    CHECK(!run(d, "SHEET DATUM I ON Front 0,0,0").ok); // I, O, Q are not used
+    REQUIRE(run(d, "SHEET GDT flatness 0.02 ON Front 0,0,12").ok);
+    REQUIRE(run(d, "SHEET GDT position 0.05 DIA MMC DATUMS A B DIM 3").ok);
+    REQUIRE(run(d, "SHEET GDT perpendicularity 0.03 DATUMS A ON Front 40,0,6 OFFSET 12,-8").ok);
+    CHECK(!run(d, "SHEET GDT flatness 0.02 DATUMS A ON Front 0,0,12").ok);      // form: no datums
+    CHECK(!run(d, "SHEET GDT parallelism 0.02 ON Front 0,0,12").ok);            // orientation needs one
+    CHECK(!run(d, "SHEET GDT flatness 0.02 DIA ON Front 0,0,12").ok);           // no cylindrical zone
+    CHECK(!run(d, "SHEET GDT runout 0.02 MMC DATUMS A ON Front 0,0,12").ok);    // no material condition
+    CHECK(!run(d, "SHEET GDT position 0.05 DATUMS A A ON Front 0,0,12").ok);    // a datum once
+    CHECK(!run(d, "SHEET GDT position -1 DATUMS A ON Front 0,0,12").ok);
+    CHECK(!run(d, "SHEET GDT position 0.05 DATUMS A DIM 9").ok);
+    REQUIRE(run(d, "SHEET FINISH RA 1.6 MACHINED ON Front 0,0,12").ok);
+    REQUIRE(run(d, "SHEET TOLERANCE ISO 2768-mK").ok);
+    CHECK(dw.generalTolerance == "ISO 2768-mK");
+    CHECK(!run(d, "SHEET TOLERANCE ISO 2768-x").ok);
+    REQUIRE(dw.frames.size() == 3);
+    CHECK(dw.frames[1].dim == 2);
+    CHECK(dw.frames[1].material == 'M');
+    CHECK(dw.frames[1].datums.size() == 2);
+
+    // On the sheet: the frames' boxes and texts, the datum letters, Ra, the general note.
+    const SheetGraphics g = renderDrawing(dw, d.scene);
+    auto hasText = [&](const std::string& t) {
+        for (const SheetText& x : g.texts)
+            if (x.text == t) return true;
+        return false;
+    };
+    CHECK(hasText("0.02"));
+    CHECK(hasText("\xC3\x98" "0.05"));
+    CHECK(hasText("A"));
+    CHECK(hasText("B"));
+    CHECK(hasText("M"));
+    CHECK(hasText("Ra 1.6"));
+    CHECK(hasText("UNLESS OTHERWISE STATED: GENERAL TOLERANCES ISO 2768-MK"));
+    CHECK(g.fills.size() >= 2 + 4 * 2); // datum triangles and arrowheads
+    // DXF writes the plus-minus and diameter signs as its codes.
+    const std::string dxf = sheetToDxf(renderDrawing(dw, d.scene, 2));
+    CHECK(dxf.find("%%p") != std::string::npos);
+    CHECK(dxf.find("%%c") != std::string::npos);
+
+    // Deleting a dimension takes the frame under it and renumbers the rest.
+    REQUIRE(run(d, "SHEET DIM DELETE 1").ok);
+    REQUIRE(dw.frames.size() == 3);
+    CHECK(dw.frames[1].dim == 1);
+    REQUIRE(run(d, "SHEET DIM DELETE 2").ok);
+    CHECK(dw.frames.size() == 2);
+
+    // Saved and read back the same.
+    const std::string before = drawingToJson(dw).dump();
+    Drawing back;
+    REQUIRE(drawingFromJson(*Json::parse(before), back));
+    CHECK(drawingToJson(back).dump() == before);
+    CHECK(back.datums.size() == 2);
+    CHECK(back.finishes.size() == 1);
+    CHECK(back.finishes[0].process == 1);
+    // A view's annotations go with it.
+    REQUIRE(run(d, "SHEET VIEW DELETE Front").ok);
+    CHECK(dw.datums.size() == 1);
+    CHECK(dw.finishes.empty());
 }

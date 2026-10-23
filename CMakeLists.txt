@@ -65,6 +65,7 @@ add_library(sicdm_core STATIC
     src/core/SketchEdit.cpp
     src/core/AssemblyCommand.cpp
     src/core/Drawing.cpp
+    src/core/Tolerances.cpp
     src/core/DrawingCommand.cpp
     src/core/SketchCommand.cpp
     src/core/Features.cpp

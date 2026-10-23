@@ -3157,12 +3157,48 @@ void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
     ImGui::SameLine();
     if (ImGui::Button("Auto Dimension")) cmd.commands.push_back("SHEET AUTODIM");
     ImGui::SameLine();
-    if (ImGui::Checkbox("Dimension Tool", &m_sheetDimTool)) m_sheetDimFirst = -1;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click two points of a view: horizontal, vertical or aligned by how they lie");
+    static const char* kSheetTools[] = {"Pan", "Dimension", "Feature Frame (GD&T)", "Datum", "Surface Finish"};
+    ImGui::SetNextItemWidth(170);
+    if (ImGui::Combo("##sheettool", &m_sheetTool, kSheetTools, 5)) m_sheetDimFirst = -1;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Dimension: click two points of a view. Frame, datum, finish: click the feature's point in a view.");
+    m_sheetDimTool = m_sheetTool != 0;
     ImGui::SameLine();
     if (ImGui::Button("Section")) cmd.commands.push_back("SHEET SECTION FRONT VERTICAL");
     ImGui::SameLine();
     if (ImGui::Button("Export...")) requestFile(FileSheetExport, st);
+    // The tool's options.
+    if (m_sheetTool == 1) {
+        ImGui::SetNextItemWidth(160);
+        ImGui::InputTextWithHint("Tolerance##dimtol", "0.1 | +0.1 -0.05 | FIT H7", m_sheetTol, sizeof m_sheetTol);
+    } else if (m_sheetTool == 2) {
+        static const char* kSymbols[] = {"Straightness", "Flatness", "Circularity", "Cylindricity", "Profile of a line", "Profile of a surface", "Angularity",
+                                         "Perpendicularity", "Parallelism", "Position", "Concentricity", "Symmetry", "Circular runout", "Total runout"};
+        ImGui::SetNextItemWidth(150);
+        ImGui::Combo("##gdtsym", &m_gdtSymbol, kSymbols, 14);
+        ImGui::SameLine();
+        ImGui::Checkbox("\xC3\x98", &m_gdtDiameter);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("mm##gdtv", &m_gdtValue, 0, 0, "%.3f");
+        ImGui::SameLine();
+        static const char* kMat[] = {"RFS", "MMC", "LMC"};
+        ImGui::SetNextItemWidth(70);
+        ImGui::Combo("##gdtmat", &m_gdtMaterial, kMat, 3);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputTextWithHint("Datums##gdtd", "A B C", m_gdtDatums, sizeof m_gdtDatums);
+    } else if (m_sheetTool == 3) {
+        ImGui::SetNextItemWidth(40);
+        ImGui::InputText("Datum letter", m_datumLetter, sizeof m_datumLetter, ImGuiInputTextFlags_CharsUppercase);
+    } else if (m_sheetTool == 4) {
+        ImGui::SetNextItemWidth(80);
+        ImGui::InputFloat("Ra (um)", &m_finishRa, 0, 0, "%.2f");
+        ImGui::SameLine();
+        static const char* kProc[] = {"Any process", "Machined", "Not machined"};
+        ImGui::SetNextItemWidth(130);
+        ImGui::Combo("##finproc", &m_finishProcess, kProc, 3);
+    }
     for (const std::string& w : g.warnings) ImGui::TextColored({0.95f, 0.6f, 0.3f, 1}, "%s", w.c_str());
 
     // Canvas: the sheet, y up, scaled and panned.
@@ -3257,7 +3293,8 @@ void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
         for (std::size_t i = 0; i < g.snaps.size(); ++i) {
             const ImVec2 p = toScreen(g.snaps[i].x, g.snaps[i].y);
             const float dd = std::hypot(p.x - io.MousePos.x, p.y - io.MousePos.y);
-            if (dd < bd && (m_sheetDimFirst < 0 || g.snaps[i].view == g.snaps[static_cast<std::size_t>(std::min<int>(m_sheetDimFirst, static_cast<int>(g.snaps.size()) - 1))].view))
+            if (dd < bd && (m_sheetTool != 1 || m_sheetDimFirst < 0 ||
+                            g.snaps[i].view == g.snaps[static_cast<std::size_t>(std::min<int>(m_sheetDimFirst, static_cast<int>(g.snaps.size()) - 1))].view))
                 bd = dd, best = static_cast<int>(i);
         }
         if (m_sheetDimFirst >= static_cast<int>(g.snaps.size())) m_sheetDimFirst = -1;
@@ -3269,7 +3306,25 @@ void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
         }
         if (best >= 0) {
             dl->AddCircle(toScreen(g.snaps[static_cast<std::size_t>(best)].x, g.snaps[static_cast<std::size_t>(best)].y), 6, IM_COL32(220, 80, 40, 255), 0, 2.0f);
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            const SheetPoint& hit = g.snaps[static_cast<std::size_t>(best)];
+            char at[160];
+            std::snprintf(at, sizeof at, "ON \"%s\" %.6g,%.6g,%.6g", hit.view.c_str(), hit.model.x, hit.model.y, hit.model.z);
+            if (m_sheetTool >= 2 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { // frame, datum, finish on the point
+                char line[320];
+                if (m_sheetTool == 2) {
+                    static const char* kKeys[] = {"straightness", "flatness",   "circularity", "cylindricity", "profile-line", "profile-surface", "angularity",
+                                                  "perpendicularity", "parallelism", "position", "concentricity", "symmetry", "runout", "total-runout"};
+                    std::string datums = m_gdtDatums;
+                    std::snprintf(line, sizeof line, "SHEET GDT %s %.6g%s%s%s %s", kKeys[m_gdtSymbol], static_cast<double>(m_gdtValue), m_gdtDiameter ? " DIA" : "",
+                                  m_gdtMaterial == 1 ? " MMC" : m_gdtMaterial == 2 ? " LMC" : "", datums.find_first_not_of(' ') == std::string::npos ? "" : (" DATUMS " + datums).c_str(), at);
+                } else if (m_sheetTool == 3) {
+                    std::snprintf(line, sizeof line, "SHEET DATUM %s %s", m_datumLetter, at);
+                    if (m_datumLetter[0] >= 'A' && m_datumLetter[0] < 'Z') ++m_datumLetter[0]; // the next letter next time
+                } else
+                    std::snprintf(line, sizeof line, "SHEET FINISH RA %.3g%s %s", static_cast<double>(m_finishRa),
+                                  m_finishProcess == 1 ? " MACHINED" : m_finishProcess == 2 ? " UNMACHINED" : "", at);
+                cmd.commands.push_back(line);
+            } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 if (m_sheetDimFirst < 0) m_sheetDimFirst = best;
                 else if (best != m_sheetDimFirst) {
                     const SheetPoint &a = g.snaps[static_cast<std::size_t>(m_sheetDimFirst)], &b = g.snaps[static_cast<std::size_t>(best)];
@@ -3278,7 +3333,9 @@ void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
                     char pa[96], pb[96];
                     std::snprintf(pa, sizeof pa, "%.6g,%.6g,%.6g", a.model.x, a.model.y, a.model.z);
                     std::snprintf(pb, sizeof pb, "%.6g,%.6g,%.6g", b.model.x, b.model.y, b.model.z);
-                    cmd.commands.push_back(std::string("SHEET DIM ") + kind + " \"" + a.view + "\" " + pa + " " + pb);
+                    std::string tol = m_sheetTol;
+                    cmd.commands.push_back(std::string("SHEET DIM ") + kind + " \"" + a.view + "\" " + pa + " " + pb +
+                                           (tol.find_first_not_of(' ') == std::string::npos ? "" : " TOL " + tol));
                     m_sheetDimFirst = -1;
                 }
             }

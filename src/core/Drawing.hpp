@@ -12,6 +12,11 @@
 //   Dimensions  horizontal, vertical and aligned lengths, diameters and radii, tied to
 //               model points so they follow the model; automatic overall sizes and hole
 //               diameters
+//   Tolerances  on dimensions: +/-, deviations, limits, basic (boxed) and ISO 286 fits;
+//               geometric tolerances (GD&T, ISO 1101 / ASME Y14.5): feature control
+//               frames with their symbol, zone, material condition and datum
+//               references, datum feature symbols, surface finish marks (ISO 1302) and
+//               the general tolerance (ISO 2768) in the title block
 //   Sheet       ISO and ANSI sizes, a border, a title block and the projection symbol
 //   Export      PDF, SVG and DXF (layers and line types for visible, hidden, centre,
 //               dimension and hatch lines)
@@ -49,12 +54,67 @@ struct DrawingView {
     bool flip = false;        // look the other way along the cut
 };
 
+// A size tolerance on a dimension.
+struct DimTolerance {
+    enum Kind { None, Symmetric, Deviation, Limits, Fit, Basic } kind = None;
+    double upper = 0, lower = 0; // mm from the nominal size (Symmetric: +/- upper)
+    std::string fit;             // Fit: an ISO 286 code, H7, g6 ...
+    bool values = false;         // Fit: its limits too, (+0.021/0)
+};
+
 struct DrawingDim {
     enum Kind { Horizontal, Vertical, Aligned, Diameter, Radius } kind = Horizontal;
     std::string view;
     DVec3 a, b;               // model points; Diameter / Radius: a the centre, b on the circle
     double offset = 10;       // sheet mm from the measured feature
     std::string text;         // instead of the measured value
+    DimTolerance tol;
+};
+
+// The geometric characteristics (ISO 1101 / ASME Y14.5).
+enum class GdtSymbol {
+    Straightness, Flatness, Circularity, Cylindricity,          // form: no datums
+    LineProfile, SurfaceProfile,                                // profile: datums optional
+    Angularity, Perpendicularity, Parallelism,                  // orientation
+    Position, Concentricity, Symmetry,                          // location
+    CircularRunout, TotalRunout                                 // runout
+};
+const char* gdtName(GdtSymbol s);
+bool gdtFromName(const std::string& name, GdtSymbol* out);
+bool gdtTakesDatums(GdtSymbol s); // form tolerances take none
+bool gdtNeedsDatum(GdtSymbol s);  // orientation, location and runout need one
+bool gdtTakesDiameter(GdtSymbol s); // a cylindrical zone makes sense
+
+// A feature control frame: | symbol | [dia] tolerance [M|L] | A | B | C |, on a leader to a
+// model point in a view, or under a dimension's value.
+struct DrawingFrame {
+    GdtSymbol symbol = GdtSymbol::Position;
+    double tolerance = 0.1;      // mm
+    bool diameter = false;       // a cylindrical zone (the diameter sign before the value)
+    char material = 0;           // 'M' maximum or 'L' least material condition, or 0
+    std::vector<std::string> datums; // up to three, primary first; "B(M)" carries a modifier
+    std::string view;            // on a leader to `at` in this view...
+    DVec3 at;
+    double dx = 14, dy = 10;     // ... the frame this far from the point (sheet mm)
+    int dim = -1;                // ... or under dimension `dim` (index into dims)
+};
+
+// A datum feature symbol: the letter in a box, on a leader ending in a filled triangle on
+// the feature.
+struct DrawingDatum {
+    std::string letter;
+    std::string view;
+    DVec3 at;
+    double dx = 0, dy = -12;
+};
+
+// A surface texture mark (ISO 1302): the check mark on the surface, its Ra over the long leg.
+struct DrawingFinish {
+    double ra = 1.6;             // micrometres
+    int process = 0;             // 0 any, 1 material removal required, 2 removal not allowed
+    std::string view;
+    DVec3 at;
+    double dx = 0, dy = 0;       // the mark's foot from the point (sheet mm)
 };
 
 struct DrawingNote {
@@ -72,6 +132,10 @@ struct Drawing {
     std::vector<DrawingView> views;
     std::vector<DrawingDim> dims;
     std::vector<DrawingNote> notes;
+    std::vector<DrawingFrame> frames;
+    std::vector<DrawingDatum> datums;
+    std::vector<DrawingFinish> finishes;
+    std::string generalTolerance; // "ISO 2768-mK": shown in the title block
     std::map<std::string, std::string> title; // TITLE, PART, MATERIAL, DRAWN, CHECKED, COMPANY, REV, DATE
     bool empty() const { return views.empty(); }
     const DrawingView* view(const std::string& name) const;
@@ -125,6 +189,11 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v);
 int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView = "");
 // The measured value of a dimension (model mm).
 double dimensionValue(const Drawing& d, const DrawingDim& dim);
+// A dimension's text: its value (or text), with its tolerance. `stack` gets the upper and
+// lower lines of a stacked tolerance (deviations, limits) when there is one.
+std::string dimensionText(const Drawing& d, const DrawingDim& dim, std::string* upper = nullptr, std::string* lower = nullptr);
+// The limits a dimension's tolerance allows (mm): false when it has none (or a basic one).
+bool dimensionLimits(const Drawing& d, const DrawingDim& dim, double& high, double& low);
 
 std::string sheetToSvg(const SheetGraphics& g);
 std::string sheetToPdf(const SheetGraphics& g, const std::string& title = "Drawing");

@@ -575,7 +575,8 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("operation", prop("string", "new | list | view_add | view_move | view_delete | view_scale | view_hidden | section | dim | dim_delete | "
-                                          "autodim | title | note | scale | size | projection | export | delete"));
+                                          "autodim | tolerance | gdt | gdt_delete | datum | datum_delete | finish | general_tolerance | title | note | "
+                                          "scale | size | projection | export | delete"));
         p.set("bodies", prop("array", "new: the bodies to draw (default: every visible body)"));
         p.set("size", prop("string", "new / size: A4, A3, A2, A1, A0, LETTER, TABLOID, ANSI C, ANSI D (default A3)"));
         p.set("portrait", prop("boolean", "new / size: portrait instead of landscape"));
@@ -594,10 +595,24 @@ Json McpServer::toolDefinitions() {
         p.set("field", prop("string", "title: TITLE, PART, MATERIAL, DRAWN, CHECKED, DATE, REV, SHEET"));
         p.set("text", prop("string", "title / note / dim: the text"));
         p.set("path", prop("string", "export: the file (.pdf, .svg or .dxf)"));
+        p.set("tolerance", prop("string", "dim / tolerance: the size tolerance - \"0.1\" (+/-), \"+0.1 -0.05\", \"LIMITS +0.1 -0.05\", "
+                                          "\"FIT H7\" (ISO 286; \"FIT H7 VALUES\" shows the limits), \"BASIC\" or \"NONE\"; "
+                                          "general_tolerance: \"ISO 2768-mK\" or \"NONE\""));
+        p.set("symbol", prop("string", "gdt: straightness, flatness, circularity, cylindricity, profile-line, profile-surface, angularity, "
+                                       "perpendicularity, parallelism, position, concentricity, symmetry, runout, total-runout"));
+        p.set("value", prop("number", "gdt: the tolerance zone (mm); finish: Ra (micrometres)"));
+        p.set("diameter", prop("boolean", "gdt: a cylindrical zone (the diameter sign)"));
+        p.set("material", prop("string", "gdt: MMC or LMC"));
+        p.set("datums", prop("array", "gdt: the datum references, primary first, e.g. [\"A\", \"B\"] or [\"A\", \"B(M)\"]"));
+        p.set("letter", prop("string", "datum / datum_delete: the datum letter"));
+        p.set("point", prop("array", "gdt / datum / finish: the model point [x, y, z] in 'view' the leader goes to"));
+        p.set("sheet_offset", prop("array", "gdt / datum / finish: where the symbol sits from the point, [dx, dy] sheet mm"));
+        p.set("machined", prop("boolean", "finish: material removal required (false: not allowed; omit: any process)"));
         tools.push(tool("drawing",
                         "2D engineering drawings of the model: front, top, right and isometric views laid out on an ISO or ANSI sheet "
                         "(first or third angle) with hidden lines dashed, section views hatched, centre marks, dimensions (automatic overall "
-                        "sizes and hole diameters, or by hand), a title block and notes; exported to PDF, SVG or DXF.",
+                        "sizes and hole diameters, or by hand) with size tolerances and ISO 286 fits, geometric tolerances (feature control frames, "
+                        "datums), surface finish marks, the general tolerance, a title block and notes; exported to PDF, SVG or DXF.",
                         p, {"operation"}));
     }
     {
@@ -1167,8 +1182,47 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                 return textResult("dim needs kind, view, from [x, y, z] and to [x, y, z]", true);
             std::string line = "SHEET DIM " + a["kind"].asString() + view + " " + vec(a["from"], 3) + " " + vec(a["to"], 3);
             if (a["offset"].isNumber()) line += " OFFSET " + num(a["offset"].asNumber());
+            if (a["tolerance"].isString()) line += " TOL " + a["tolerance"].asString();
             if (a["text"].isString()) line += " TEXT " + quote(a["text"].asString());
             return runLine(line);
+        }
+        if (op == "tolerance") {
+            if (!a["index"].isNumber() || !a["tolerance"].isString()) return textResult("tolerance needs index (the dimension) and tolerance", true);
+            return runLine("SHEET TOL " + num(a["index"].asNumber()) + " " + a["tolerance"].asString());
+        }
+        if (op == "general_tolerance") {
+            if (!a["tolerance"].isString()) return textResult("general_tolerance needs tolerance: \"ISO 2768-m\" or \"NONE\"", true);
+            return runLine("SHEET TOLERANCE " + a["tolerance"].asString());
+        }
+        auto placement = [&]() -> std::string {
+            std::string s;
+            if (a["index"].isNumber() && op == "gdt") return " DIM " + num(a["index"].asNumber());
+            if (a["point"].isArray()) s = " ON" + view + " " + vec(a["point"], 3);
+            if (a["sheet_offset"].isArray()) s += " OFFSET " + vec(a["sheet_offset"], 2);
+            return s;
+        };
+        if (op == "gdt") {
+            if (!a["symbol"].isString() || !a["value"].isNumber()) return textResult("gdt needs symbol, value, and view + point (or index of a dimension)", true);
+            std::string line = "SHEET GDT " + a["symbol"].asString() + " " + num(a["value"].asNumber());
+            if (a["diameter"].asBool()) line += " DIA";
+            if (a["material"].isString()) line += " " + toUpper(a["material"].asString());
+            if (a["datums"].isArray() && a["datums"].size() > 0) {
+                line += " DATUMS";
+                for (const Json& x : a["datums"].items()) line += " " + x.asString();
+            }
+            return runLine(line + placement());
+        }
+        if (op == "gdt_delete") return runLine("SHEET GDT DELETE " + num(a["index"].asNumber()));
+        if (op == "datum") {
+            if (!a["letter"].isString()) return textResult("datum needs letter, view and point", true);
+            return runLine("SHEET DATUM " + a["letter"].asString() + placement());
+        }
+        if (op == "datum_delete") return runLine("SHEET DATUM DELETE " + a["letter"].asString());
+        if (op == "finish") {
+            if (!a["value"].isNumber()) return textResult("finish needs value (Ra, micrometres), view and point", true);
+            std::string line = "SHEET FINISH RA " + num(a["value"].asNumber());
+            if (a["machined"].isBool()) line += a["machined"].asBool() ? " MACHINED" : " UNMACHINED";
+            return runLine(line + placement());
         }
         if (op == "dim_delete") return runLine("SHEET DIM DELETE " + num(a["index"].asNumber()));
         if (op == "title") {
@@ -1188,7 +1242,8 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine("SHEET EXPORT " + quote(a["path"].asString()));
         }
         return textResult("operation is one of new, list, view_add, view_move, view_delete, view_scale, view_hidden, section, dim, dim_delete, "
-                          "autodim, title, note, scale, size, projection, export, delete",
+                          "autodim, tolerance, gdt, gdt_delete, datum, datum_delete, finish, general_tolerance, title, note, scale, size, "
+                          "projection, export, delete",
                           true);
     }
     if (name == "cam") {

@@ -202,8 +202,19 @@ private:
     // the dimension tool's first point.
     float m_sheetZoom = 0.0f;
     float m_sheetPanX = 0.0f, m_sheetPanY = 0.0f;
-    bool m_sheetDimTool = false;
+    bool m_sheetDimTool = false; // any annotation tool (below) is active
     int m_sheetDimFirst = -1;
+    // Annotation tools: 0 pan, 1 dimension, 2 feature control frame, 3 datum, 4 surface finish.
+    int m_sheetTool = 0;
+    char m_sheetTol[48] = "";        // the dimension tool's tolerance: 0.1, +0.1 -0.05, FIT H7 ...
+    int m_gdtSymbol = 9;             // position
+    float m_gdtValue = 0.05f;
+    bool m_gdtDiameter = true;
+    int m_gdtMaterial = 0;           // none, MMC, LMC
+    char m_gdtDatums[24] = "A B";
+    char m_datumLetter[4] = "A";
+    float m_finishRa = 1.6f;
+    int m_finishProcess = 1;
 
     Toolbox m_toolbox;
     ViewCube m_viewCube;

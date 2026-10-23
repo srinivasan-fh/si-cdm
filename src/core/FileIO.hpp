@@ -63,7 +63,9 @@ struct ProjectState {
 //      file with either has reader_version 5, others still 1
 //   6  adds sketch arcs, splines, ellipses and slots, and construction curves (a reader
 //      before 6 leaves those curves out)
-constexpr int kProjectVersion = 6;
+//   7  adds drawing tolerances: dimension tolerances ("tol"), feature control frames
+//      ("frames"), datums, surface finish marks and the general tolerance
+constexpr int kProjectVersion = 7;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

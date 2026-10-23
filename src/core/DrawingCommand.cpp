@@ -6,6 +6,7 @@
 #include "core/Document.hpp"
 #include "core/Drawing.hpp"
 #include "core/FileIO.hpp"
+#include "core/Tolerances.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
@@ -30,6 +31,12 @@ std::string mm(double v) {
     return b;
 }
 
+std::string mm3(double v) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%.6g", v);
+    return b;
+}
+
 std::string describeView(const Drawing& d, const DrawingView& v) {
     std::string s = v.name + " (" + viewKindName(v.kind) + ") at " + mm(v.x) + ", " + mm(v.y) + " mm";
     if (v.scale > 0) s += ", scale " + scaleText(v.scale);
@@ -48,6 +55,82 @@ const char* dimKindName(DrawingDim::Kind k) {
     case DrawingDim::Radius: return "radius";
     }
     return "";
+}
+
+// Reads a size tolerance from words[i...]: a number (+/-), "+a -b" or "+a/-b"
+// (deviations), LIMITS +a -b, FIT H7 [VALUES], BASIC or NONE. Advances i past it.
+bool parseTolerance(const std::vector<std::string>& w, std::size_t& i, DimTolerance& t, std::string& why) {
+    auto number = [&](const std::string& s, double& v) {
+        std::string x = s;
+        if (x.rfind("\xC2\xB1", 0) == 0) x = x.substr(2);
+        if (!x.empty() && x[0] == '+') x = x.substr(1);
+        const auto n = parseNumber(x);
+        if (!n) return false;
+        v = *n;
+        return true;
+    };
+    if (i >= w.size()) return why = "TOL takes 0.1 (+/-), +0.1 -0.05, LIMITS +0.1 -0.05, FIT H7 [VALUES], BASIC or NONE", false;
+    const std::string k = lowerOf(w[i]);
+    if (k == "none" || k == "off") {
+        t = DimTolerance{};
+        ++i;
+        return true;
+    }
+    if (k == "basic") {
+        t = DimTolerance{};
+        t.kind = DimTolerance::Basic;
+        ++i;
+        return true;
+    }
+    if (k == "fit") {
+        if (i + 1 >= w.size()) return why = "FIT takes an ISO 286 code: H7, g6, js9...", false;
+        t = DimTolerance{};
+        t.kind = DimTolerance::Fit;
+        t.fit = w[i + 1];
+        i += 2;
+        if (i < w.size() && lowerOf(w[i]) == "values") t.values = true, ++i;
+        FitDeviations probe;
+        if (!isoFit(t.fit, 20, probe, &why)) return false;
+        return true;
+    }
+    const bool limits = k == "limits";
+    if (limits) ++i;
+    if (i >= w.size()) return why = "LIMITS takes the deviations +0.1 -0.05", false;
+    // "+0.1/-0.05" in one word.
+    std::string first = w[i], second;
+    if (const auto slash = first.find('/'); slash != std::string::npos) second = first.substr(slash + 1), first = first.substr(0, slash);
+    double a = 0, b = 0;
+    if (!number(first, a)) return why = "Not a tolerance: " + w[i], false;
+    ++i;
+    const bool explicitSign = !first.empty() && (first[0] == '+' || first[0] == '-');
+    if (second.empty() && i < w.size() && (w[i][0] == '-' || w[i][0] == '+') && number(w[i], b)) second = w[i++];
+    else if (!second.empty() && !number(second, b)) return why = "Not a tolerance: " + second, false;
+    t = DimTolerance{};
+    if (second.empty() && !limits && !explicitSign) { // a plain number: +/-
+        t.kind = DimTolerance::Symmetric;
+        t.upper = std::fabs(a), t.lower = -std::fabs(a);
+        return true;
+    }
+    if (second.empty()) return why = "Give both deviations: +0.1 -0.05", false;
+    t.kind = limits ? DimTolerance::Limits : DimTolerance::Deviation;
+    t.upper = std::max(a, b), t.lower = std::min(a, b);
+    return true;
+}
+
+std::string toleranceText(const DimTolerance& t) {
+    switch (t.kind) {
+    case DimTolerance::None: return "";
+    case DimTolerance::Basic: return "basic";
+    case DimTolerance::Fit: return "fit " + t.fit;
+    case DimTolerance::Symmetric: return "+/-" + mm3(t.upper);
+    default: return std::string(t.kind == DimTolerance::Limits ? "limits " : "") + "+" + mm3(t.upper) + " / " + mm3(t.lower);
+    }
+}
+
+std::string frameText(const DrawingFrame& f) {
+    std::string s = std::string(gdtName(f.symbol)) + " " + (f.diameter ? "dia " : "") + mm3(f.tolerance) + (f.material ? std::string(" (") + f.material + ")" : "");
+    for (const std::string& x : f.datums) s += " | " + x;
+    return s;
 }
 
 // Lays the standard views out again (after the scale or sheet changes); other views
@@ -97,8 +180,19 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         out.say("Drawing: " + d.sheet + (d.landscape ? " landscape" : " portrait") + ", " + (d.thirdAngle ? "third" : "first") + "-angle projection, scale " +
                 scaleText(d.scale) + ", " + (d.bodies.empty() ? std::string("all visible bodies") : std::to_string(d.bodies.size()) + " bodies"));
         for (const DrawingView& v : d.views) out.say("  view " + describeView(d, v));
-        for (std::size_t i = 0; i < d.dims.size(); ++i)
-            out.say("  dim " + std::to_string(i + 1) + ": " + dimKindName(d.dims[i].kind) + " in " + d.dims[i].view + " = " + mm(dimensionValue(d, d.dims[i])) + " mm");
+        for (std::size_t i = 0; i < d.dims.size(); ++i) {
+            std::string line = "  dim " + std::to_string(i + 1) + ": " + dimKindName(d.dims[i].kind) + " in " + d.dims[i].view + " = " + mm(dimensionValue(d, d.dims[i])) + " mm";
+            if (d.dims[i].tol.kind != DimTolerance::None) line += ", " + toleranceText(d.dims[i].tol);
+            double hi, lo;
+            if (dimensionLimits(d, d.dims[i], hi, lo)) line += " (" + mm3(lo) + " to " + mm3(hi) + ")";
+            out.say(line);
+        }
+        for (std::size_t i = 0; i < d.frames.size(); ++i)
+            out.say("  gdt " + std::to_string(i + 1) + ": " + frameText(d.frames[i]) +
+                    (d.frames[i].dim >= 0 ? " under dim " + std::to_string(d.frames[i].dim + 1) : " in " + d.frames[i].view));
+        for (const DrawingDatum& dt : d.datums) out.say("  datum " + dt.letter + " in " + dt.view);
+        for (std::size_t i = 0; i < d.finishes.size(); ++i) out.say("  finish " + std::to_string(i + 1) + ": Ra " + mm3(d.finishes[i].ra) + " in " + d.finishes[i].view);
+        if (!d.generalTolerance.empty()) out.say("  general tolerances " + d.generalTolerance);
         for (const auto& [k, v] : d.title) out.say("  title " + k + ": " + v);
         return out;
     }
@@ -204,9 +298,20 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         } else if (op == "delete" || op == "remove") {
             const std::string name = v->name;
             d.views.erase(d.views.begin() + (v - d.views.data()));
-            d.dims.erase(std::remove_if(d.dims.begin(), d.dims.end(), [&](const DrawingDim& m) { return lowerOf(m.view) == lowerOf(name); }), d.dims.end());
+            // Its dimensions go, and the frames under them; the others' dimension numbers close up.
+            std::vector<int> renumber(d.dims.size(), -1);
+            std::vector<DrawingDim> keptDims;
+            for (std::size_t k = 0; k < d.dims.size(); ++k)
+                if (lowerOf(d.dims[k].view) != lowerOf(name)) renumber[k] = static_cast<int>(keptDims.size()), keptDims.push_back(d.dims[k]);
+            d.dims = std::move(keptDims);
+            std::erase_if(d.frames, [&](DrawingFrame& f) {
+                if (f.dim >= 0) return (f.dim = f.dim < static_cast<int>(renumber.size()) ? renumber[static_cast<std::size_t>(f.dim)] : -1) < 0;
+                return lowerOf(f.view) == lowerOf(name);
+            });
+            std::erase_if(d.datums, [&](const DrawingDatum& x) { return lowerOf(x.view) == lowerOf(name); });
+            std::erase_if(d.finishes, [&](const DrawingFinish& x) { return lowerOf(x.view) == lowerOf(name); });
             changed();
-            out.say("Deleted view " + name + " and its dimensions");
+            out.say("Deleted view " + name + " and its dimensions and annotations");
             return out;
         } else if (op == "scale" && a.size() >= 4) {
             if (!parseScale(a[3], v->scale)) return out.fail("SCALE takes 1:2, 2:1 or a number");
@@ -275,6 +380,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         // SHEET DIM DIAMETER|RADIUS view centre point | DELETE n | CLEAR
         if (a.size() >= 2 && lowerOf(a[1]) == "clear") {
             d.dims.clear();
+            std::erase_if(d.frames, [](const DrawingFrame& f) { return f.dim >= 0; });
             changed();
             out.say("All dimensions removed");
             return out;
@@ -282,7 +388,13 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         if (a.size() >= 3 && (lowerOf(a[1]) == "delete" || lowerOf(a[1]) == "remove")) {
             const auto n = parseNumber(a[2]);
             if (!n || *n < 1 || *n > static_cast<float>(d.dims.size())) return out.fail("No dimension " + a[2] + " (SHEET lists them)");
-            d.dims.erase(d.dims.begin() + static_cast<std::ptrdiff_t>(*n) - 1);
+            const int gone = static_cast<int>(*n) - 1;
+            d.dims.erase(d.dims.begin() + gone);
+            std::erase_if(d.frames, [&](DrawingFrame& f) {
+                if (f.dim == gone) return true;
+                if (f.dim > gone) --f.dim;
+                return false;
+            });
             changed();
             out.say("Dimension removed");
             return out;
@@ -310,6 +422,22 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
                 if (!o) return out.fail("OFFSET takes sheet mm (negative: below / left)");
                 dm.offset = *o;
             } else if (w == "text" && i + 1 < a.size()) dm.text = rest(++i), i = a.size();
+            else if (w == "tol" || w == "tolerance") {
+                std::string why;
+                std::size_t j = i + 1;
+                if (!parseTolerance(a, j, dm.tol, why)) return out.fail(why);
+                i = j - 1;
+            } else if (w == "fit" || w == "basic" || w == "limits") {
+                std::string why;
+                std::size_t j = i;
+                if (!parseTolerance(a, j, dm.tol, why)) return out.fail(why);
+                i = j - 1;
+            }
+        }
+        if (dm.tol.kind == DimTolerance::Fit) {
+            FitDeviations f;
+            std::string why;
+            if (!isoFit(dm.tol.fit, dimensionValue(d, dm), f, &why)) return out.fail(why);
         }
         d.dims.push_back(dm);
         changed();
@@ -321,6 +449,216 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         const int n = autoDimension(d, doc.scene, a.size() > 1 ? a[1] : "");
         if (n) changed();
         out.say(n ? "Added " + std::to_string(n) + " dimensions: overall sizes and hole diameters" : "Nothing new to dimension");
+        return out;
+    }
+
+    if (sub == "tol" || sub == "tolerance") {
+        // SHEET TOL n 0.1 | +0.1 -0.05 | LIMITS +0.1 -0.05 | FIT H7 [VALUES] | BASIC | NONE
+        // SHEET TOLERANCE ISO 2768-m[K] | NONE   (the general tolerance in the title block)
+        if (a.size() >= 2 && (lowerOf(a[1]).rfind("iso", 0) == 0 || lowerOf(a[1]) == "general")) {
+            std::string spec = rest(lowerOf(a[1]) == "general" ? 2 : 1);
+            std::string up = toUpper(spec);
+            std::erase_if(up, [](char c) { return c == ' '; });
+            // ISO2768-M, ISO2768-MK, ISO 2768-m...
+            const auto dash = up.find('-');
+            if (up.rfind("ISO2768", 0) != 0 || dash == std::string::npos || dash + 1 >= up.size() ||
+                std::string("FMCV").find(up[dash + 1]) == std::string::npos || (dash + 2 < up.size() && std::string("HKL").find(up[dash + 2]) == std::string::npos) ||
+                dash + 3 < up.size())
+                return out.fail("General tolerances: ISO 2768-f, -m, -c or -v, with H, K or L for the geometric class (ISO 2768-mK)");
+            std::string cls = std::string(1, static_cast<char>(std::tolower(static_cast<unsigned char>(up[dash + 1])))) + (dash + 2 < up.size() ? std::string(1, up[dash + 2]) : "");
+            d.generalTolerance = "ISO 2768-" + cls;
+            changed();
+            out.say("General tolerances " + d.generalTolerance + ": a 25 mm size +/-" + mm3(generalTolerance(cls[0], 25)) + " mm, 100 mm +/-" +
+                    mm3(generalTolerance(cls[0], 100)) + " mm");
+            return out;
+        }
+        if (a.size() >= 2 && lowerOf(a[1]) == "none" && a.size() == 2) {
+            d.generalTolerance.clear();
+            changed();
+            out.say("No general tolerance");
+            return out;
+        }
+        if (a.size() < 3) return out.fail("SHEET TOL n 0.1 | +0.1 -0.05 | LIMITS +0.1 -0.05 | FIT H7 [VALUES] | BASIC | NONE, or SHEET TOLERANCE ISO 2768-m");
+        const auto n = parseNumber(a[1]);
+        if (!n || *n < 1 || *n > static_cast<float>(d.dims.size())) return out.fail("No dimension " + a[1] + " (SHEET lists them)");
+        DrawingDim& dm = d.dims[static_cast<std::size_t>(*n) - 1];
+        DimTolerance t;
+        std::string why;
+        std::size_t i = 2;
+        if (!parseTolerance(a, i, t, why)) return out.fail(why);
+        if (t.kind == DimTolerance::Fit) {
+            FitDeviations f;
+            if (!isoFit(t.fit, dimensionValue(d, dm), f, &why)) return out.fail(why);
+        }
+        dm.tol = t;
+        changed();
+        std::string line = "Dimension " + a[1] + ": " + dimensionText(d, dm);
+        double hi, lo;
+        if (dimensionLimits(d, dm, hi, lo)) line += "  (" + mm3(lo) + " to " + mm3(hi) + " mm)";
+        out.say(t.kind == DimTolerance::None ? "Dimension " + a[1] + ": no tolerance" : line);
+        return out;
+    }
+
+    // Reads "view x,y,z" or "DIM n" (frames), then OFFSET dx,dy, from words[i...].
+    auto attach = [&](std::size_t& i, std::string& viewName, DVec3& at, double& dx, double& dy, int* dimIndex, std::string& why) {
+        bool placed = false;
+        while (i < a.size()) {
+            const std::string w = lowerOf(a[i]);
+            if (dimIndex && (w == "dim" || w == "dimension") && i + 1 < a.size()) {
+                const auto n = parseNumber(a[i + 1]);
+                if (!n || *n < 1 || *n > static_cast<float>(d.dims.size())) return why = "No dimension " + a[i + 1], false;
+                *dimIndex = static_cast<int>(*n) - 1;
+                i += 2;
+                placed = true;
+            } else if ((w == "on" || w == "in") && i + 2 < a.size()) {
+                const DrawingView* v = d.view(a[i + 1]);
+                if (!v) return why = "No view named " + a[i + 1], false;
+                const auto p = parseVec3(a[i + 2]);
+                if (!p) return why = "The point is model x,y,z (mm)", false;
+                viewName = v->name, at = DVec3(*p);
+                i += 3;
+                placed = true;
+            } else if (w == "offset" && i + 1 < a.size()) {
+                const auto p = parseVec3(a[i + 1]);
+                if (!p) return why = "OFFSET takes dx,dy on the sheet (mm)", false;
+                dx = p->x, dy = p->y;
+                i += 2;
+            } else
+                break;
+        }
+        if (!placed) return why = dimIndex ? "Say where: ON view x,y,z or DIM n" : "Say where: ON view x,y,z", false;
+        return true;
+    };
+
+    if (sub == "gdt" || sub == "frame" || sub == "fcf") {
+        // SHEET GDT symbol tolerance [DIA] [MMC|LMC] [DATUMS A B C] ON view x,y,z [OFFSET dx,dy] | DIM n
+        // SHEET GDT DELETE n | CLEAR
+        if (a.size() >= 2 && lowerOf(a[1]) == "clear") {
+            d.frames.clear();
+            changed();
+            out.say("All feature control frames removed");
+            return out;
+        }
+        if (a.size() >= 3 && (lowerOf(a[1]) == "delete" || lowerOf(a[1]) == "remove")) {
+            const auto n = parseNumber(a[2]);
+            if (!n || *n < 1 || *n > static_cast<float>(d.frames.size())) return out.fail("No frame " + a[2] + " (SHEET lists them)");
+            d.frames.erase(d.frames.begin() + static_cast<std::ptrdiff_t>(*n) - 1);
+            changed();
+            out.say("Feature control frame removed");
+            return out;
+        }
+        const char* usage = "SHEET GDT symbol tolerance [DIA] [MMC|LMC] [DATUMS A B C] ON view x,y,z [OFFSET dx,dy] | DIM n  (symbols: straightness, "
+                            "flatness, circularity, cylindricity, profile-line, profile-surface, angularity, perpendicularity, parallelism, "
+                            "position, concentricity, symmetry, runout, total-runout)";
+        if (a.size() < 3) return out.fail(usage);
+        DrawingFrame f;
+        if (!gdtFromName(a[1], &f.symbol)) return out.fail(std::string("Unknown characteristic ") + a[1] + ". " + usage);
+        std::size_t i = 2;
+        if (lowerOf(a[i]) == "dia" || lowerOf(a[i]) == "diameter") f.diameter = true, ++i;
+        if (i >= a.size()) return out.fail(usage);
+        std::string tolWord = a[i];
+        if (tolWord.rfind("\xC3\x98", 0) == 0) f.diameter = true, tolWord = tolWord.substr(2);
+        const auto tv = parseNumber(tolWord);
+        if (!tv || !(*tv > 0)) return out.fail("The tolerance is a zone size in mm, over 0");
+        f.tolerance = *tv;
+        ++i;
+        std::string why;
+        while (i < a.size()) {
+            const std::string w = lowerOf(a[i]);
+            if (w == "dia" || w == "diameter") f.diameter = true, ++i;
+            else if (w == "mmc" || w == "m") f.material = 'M', ++i;
+            else if (w == "lmc" || w == "l") f.material = 'L', ++i;
+            else if (w == "datum" || w == "datums") {
+                ++i;
+                while (i < a.size() && f.datums.size() < 3) {
+                    std::string x = toUpper(a[i]);
+                    // A letter, with an optional (M) or (L).
+                    if (x.empty() || !std::isalpha(static_cast<unsigned char>(x[0])) || (x.size() > 1 && x != std::string(1, x[0]) + "(M)" && x != std::string(1, x[0]) + "(L)"))
+                        break;
+                    f.datums.push_back(x);
+                    ++i;
+                }
+            } else
+                break;
+        }
+        if (!attach(i, f.view, f.at, f.dx, f.dy, &f.dim, why)) return out.fail(why);
+        if (i < a.size()) return out.fail("Not understood: " + a[i] + ". " + usage);
+        if (!gdtTakesDatums(f.symbol) && !f.datums.empty()) return out.fail(std::string(gdtName(f.symbol)) + " is a form tolerance: it takes no datums");
+        if (gdtNeedsDatum(f.symbol) && f.datums.empty()) return out.fail(std::string(gdtName(f.symbol)) + " is measured from a datum: DATUMS A [B [C]]");
+        if (f.diameter && !gdtTakesDiameter(f.symbol)) return out.fail(std::string(gdtName(f.symbol)) + " has no cylindrical zone (no DIA)");
+        if (f.material && (f.symbol == GdtSymbol::Flatness || f.symbol == GdtSymbol::Circularity || f.symbol == GdtSymbol::Cylindricity ||
+                           f.symbol == GdtSymbol::LineProfile || f.symbol == GdtSymbol::SurfaceProfile || f.symbol == GdtSymbol::CircularRunout ||
+                           f.symbol == GdtSymbol::TotalRunout || f.symbol == GdtSymbol::Concentricity || f.symbol == GdtSymbol::Symmetry))
+            return out.fail(std::string("A material condition doesn't apply to ") + gdtName(f.symbol));
+        for (std::size_t k = 0; k < f.datums.size(); ++k)
+            for (std::size_t j = k + 1; j < f.datums.size(); ++j)
+                if (f.datums[k][0] == f.datums[j][0]) return out.fail("Each datum once: " + f.datums[k]);
+        d.frames.push_back(f);
+        changed();
+        out.say("Frame " + std::to_string(d.frames.size()) + ": " + frameText(f));
+        for (const std::string& x : f.datums) {
+            const std::string letter(1, x[0]);
+            if (std::none_of(d.datums.begin(), d.datums.end(), [&](const DrawingDatum& dt) { return dt.letter == letter; }))
+                out.say("  note: no datum " + letter + " on the drawing yet (SHEET DATUM " + letter + " ON view x,y,z)");
+        }
+        return out;
+    }
+
+    if (sub == "datum") {
+        // SHEET DATUM letter ON view x,y,z [OFFSET dx,dy] | DELETE letter
+        if (a.size() >= 3 && (lowerOf(a[1]) == "delete" || lowerOf(a[1]) == "remove")) {
+            const std::string letter = toUpper(a[2]);
+            const auto before = d.datums.size();
+            std::erase_if(d.datums, [&](const DrawingDatum& x) { return x.letter == letter; });
+            if (before == d.datums.size()) return out.fail("No datum " + letter);
+            changed();
+            out.say("Datum " + letter + " removed");
+            return out;
+        }
+        if (a.size() < 2) return out.fail("SHEET DATUM letter ON view x,y,z [OFFSET dx,dy]");
+        DrawingDatum dt;
+        dt.letter = toUpper(a[1]);
+        if (dt.letter.size() != 1 || !std::isalpha(static_cast<unsigned char>(dt.letter[0])) || dt.letter == "I" || dt.letter == "O" || dt.letter == "Q")
+            return out.fail("A datum is one letter (not I, O or Q)");
+        if (std::any_of(d.datums.begin(), d.datums.end(), [&](const DrawingDatum& x) { return x.letter == dt.letter; }))
+            return out.fail("There is already a datum " + dt.letter);
+        std::size_t i = 2;
+        std::string why;
+        if (!attach(i, dt.view, dt.at, dt.dx, dt.dy, nullptr, why)) return out.fail(why);
+        d.datums.push_back(dt);
+        changed();
+        out.say("Datum " + dt.letter + " on " + dt.view);
+        return out;
+    }
+
+    if (sub == "finish" || sub == "surface") {
+        // SHEET FINISH [RA] 1.6 [MACHINED|UNMACHINED] ON view x,y,z [OFFSET dx,dy] | DELETE n
+        if (a.size() >= 3 && (lowerOf(a[1]) == "delete" || lowerOf(a[1]) == "remove")) {
+            const auto n = parseNumber(a[2]);
+            if (!n || *n < 1 || *n > static_cast<float>(d.finishes.size())) return out.fail("No finish mark " + a[2]);
+            d.finishes.erase(d.finishes.begin() + static_cast<std::ptrdiff_t>(*n) - 1);
+            changed();
+            out.say("Finish mark removed");
+            return out;
+        }
+        DrawingFinish f;
+        std::size_t i = 1;
+        if (i < a.size() && lowerOf(a[i]) == "ra") ++i;
+        const auto ra = i < a.size() ? parseNumber(a[i]) : std::nullopt;
+        if (!ra || !(*ra > 0)) return out.fail("SHEET FINISH [RA] 1.6 [MACHINED|UNMACHINED] ON view x,y,z (Ra in micrometres)");
+        f.ra = *ra;
+        ++i;
+        while (i < a.size()) {
+            const std::string w = lowerOf(a[i]);
+            if (w == "machined" || w == "removal") f.process = 1, ++i;
+            else if (w == "unmachined" || w == "noremoval" || w == "asis") f.process = 2, ++i;
+            else break;
+        }
+        std::string why;
+        if (!attach(i, f.view, f.at, f.dx, f.dy, nullptr, why)) return out.fail(why);
+        d.finishes.push_back(f);
+        changed();
+        out.say("Finish Ra " + mm3(f.ra) + " um on " + f.view);
         return out;
     }
 
@@ -399,7 +737,8 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         return out;
     }
 
-    return out.fail("SHEET NEW | VIEW | SECTION | DIM | AUTODIM | TITLE | NOTE | SCALE | SIZE | PROJECTION | EXPORT | SHOW | HIDE | DELETE");
+    return out.fail("SHEET NEW | VIEW | SECTION | DIM | AUTODIM | TOL | GDT | DATUM | FINISH | TOLERANCE | TITLE | NOTE | SCALE | SIZE | PROJECTION | "
+                    "EXPORT | SHOW | HIDE | DELETE");
 }
 
 } // namespace sicdm

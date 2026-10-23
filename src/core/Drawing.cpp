@@ -1,4 +1,5 @@
 #include "core/Drawing.hpp"
+#include "core/Tolerances.hpp"
 
 #include "core/Json.hpp"
 #include "core/Scene.hpp"
@@ -481,19 +482,65 @@ void drawView(const Drawing& d, const DrawingView& v, const Model& m, SheetGraph
 
 // --- annotation -----------------------------------------------------------------------------
 
-void drawDimension(const Drawing& d, const DrawingDim& dim, const Model& m, SheetGraphics& g) {
+// Rough text widths (Helvetica-like), for laying text out against lines and boxes. A text
+// `h` high is set in a font h / 0.72 big (h is the capitals' height), as the exports do.
+double textWidth(const std::string& s, double h) {
+    double w = 0;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if ((c & 0xC0) == 0x80) continue; // UTF-8 continuation
+        w += c == ' ' || c == '.' || c == ',' || c == '(' || c == ')' || c == '/' || c == '|' ? 0.29 : c >= 0x80 ? 0.78 : (c == 'M' || c == 'W') ? 0.83 : 0.56;
+    }
+    return w * h / 0.72;
+}
+
+// Where a dimension's text went: its centre on the baseline, angle and width.
+struct TextPlace {
+    double x = 0, y = 0, angle = 0, width = 0;
+    bool placed = false;
+};
+
+// A dimension's text and tolerance along a baseline: the value, then a stacked pair
+// (deviations or limits) in smaller text after it, or the value boxed (basic). (x, y) is
+// the start (align 0) or the middle (align 1) of the whole on the baseline.
+TextPlace dimText(SheetGraphics& g, double x, double y, double angle, int align, double th, const std::string& main, const std::string& up,
+                  const std::string& lo, bool box) {
+    const double ar = angle * kPiD2 / 180, ux = std::cos(ar), uy = std::sin(ar), nx = -uy, ny = ux;
+    const double sh = th * 0.7, wm = textWidth(main, th), ws = std::max(textWidth(up, sh), textWidth(lo, sh));
+    const bool stack = !up.empty() || !lo.empty();
+    const double total = wm + (stack ? 0.8 + ws : 0);
+    const double s0 = align == 1 ? -total / 2 : 0; // along the baseline from (x, y)
+    auto at = [&](double along, double across) { return std::pair<double, double>{x + ux * along + nx * across, y + uy * along + ny * across}; };
+    const auto m0 = at(s0, 0);
+    if (!main.empty()) g.texts.push_back({m0.first, m0.second, th, angle, 0, main});
+    if (stack) {
+        const auto u0 = at(s0 + wm + 0.8, th * 0.45), l0 = at(s0 + wm + 0.8, -th * 0.25);
+        if (!up.empty()) g.texts.push_back({u0.first, u0.second, sh, angle, 0, up});
+        if (!lo.empty()) g.texts.push_back({l0.first, l0.second, sh, angle, 0, lo});
+    }
+    if (box) { // a basic (theoretically exact) dimension
+        const auto a = at(s0 - 0.8, -0.8), b = at(s0 + wm + 0.8, -0.8), c = at(s0 + wm + 0.8, th + 0.8), e = at(s0 - 0.8, th + 0.8);
+        g.lines.push_back({a.first, a.second, b.first, b.second, SheetLine::Thin});
+        g.lines.push_back({b.first, b.second, c.first, c.second, SheetLine::Thin});
+        g.lines.push_back({c.first, c.second, e.first, e.second, SheetLine::Thin});
+        g.lines.push_back({e.first, e.second, a.first, a.second, SheetLine::Thin});
+    }
+    const auto mid = at(s0 + total / 2, 0);
+    return {mid.first, mid.second, angle, total, true};
+}
+
+void drawDimension(const Drawing& d, const DrawingDim& dim, const Model& m, SheetGraphics& g, TextPlace* where = nullptr) {
     const DrawingView* v = d.view(dim.view);
     if (!v) return;
     ViewSetup vs;
     if (!setupView(d, *v, vs)) return;
     const Projector P = projectorFor(d, *v, vs.f, m.centre());
     const auto A = P(dim.a), B = P(dim.b);
-    const double value = dimensionValue(d, dim);
-    const std::string text = !dim.text.empty() ? dim.text
-                             : dim.kind == DrawingDim::Diameter ? "\xC3\x98" + num(value)
-                             : dim.kind == DrawingDim::Radius   ? "R" + num(value)
-                                                                : num(value);
+    std::string up, lo;
+    const std::string text = dimensionText(d, dim, &up, &lo);
+    const bool basic = dim.tol.kind == DimTolerance::Basic;
     const double th = 3.5, gap = 1.0, over = 2.0;
+    TextPlace placed;
     auto line = [&](double ax, double ay, double bx, double by, SheetLine::Style s = SheetLine::Thin) { g.lines.push_back({ax, ay, bx, by, s}); };
     if (dim.kind == DrawingDim::Diameter || dim.kind == DrawingDim::Radius) {
         // A leader from the circle at 45 degrees, out to the text.
@@ -503,11 +550,11 @@ void drawDimension(const Drawing& d, const DrawingDim& dim, const Model& m, Shee
         const double off = std::max(dim.offset, 4.0);
         const double kx = ex + off * c45, ky = ey + off * c45;
         line(ex, ey, kx, ky);
-        const double shoulder = 0.62 * th * static_cast<double>(text.size()) + 2;
-        line(kx, ky, kx + shoulder, ky);
+        placed = dimText(g, kx + 1, ky + 0.8, 0, 0, th, text, up, lo, basic);
+        line(kx, ky, kx + placed.width + 2, ky);
         addArrow(g, ex, ey, -c45, -c45);
         if (dim.kind == DrawingDim::Radius) line(A.first, A.second, ex, ey);
-        g.texts.push_back({kx + 1, ky + 0.8, th, 0, 0, text});
+        if (where) *where = placed;
         return;
     }
     double ux = 1, uy = 0; // along the dimension line
@@ -557,7 +604,218 @@ void drawDimension(const Drawing& d, const DrawingDim& dim, const Model& m, Shee
     if (angle < -89.99) angle += 180;
     const double tx = 0.5 * (a2.first + b2.first), ty = 0.5 * (a2.second + b2.second);
     const double ar = angle * kPiD2 / 180;
-    g.texts.push_back({tx - std::sin(ar) * 1.0, ty + std::cos(ar) * 1.0, th, angle, 1, text});
+    placed = dimText(g, tx - std::sin(ar) * 1.0, ty + std::cos(ar) * 1.0, angle, 1, th, text, up, lo, basic);
+    if (where) *where = placed;
+}
+
+// --- geometric tolerancing -------------------------------------------------------------------
+
+void polyline(SheetGraphics& g, const std::vector<std::pair<double, double>>& pts, bool closed = false, SheetLine::Style st = SheetLine::Thin) {
+    for (std::size_t i = 0; i + 1 < pts.size() + (closed ? 1 : 0); ++i) {
+        const auto& a = pts[i];
+        const auto& b = pts[(i + 1) % pts.size()];
+        g.lines.push_back({a.first, a.second, b.first, b.second, st});
+    }
+}
+void circle(SheetGraphics& g, double cx, double cy, double r, double a0 = 0, double a1 = 2 * kPiD2, SheetLine::Style st = SheetLine::Thin) {
+    const int n = std::max(6, static_cast<int>(24 * (a1 - a0) / (2 * kPiD2)));
+    std::vector<std::pair<double, double>> pts;
+    for (int k = 0; k <= n; ++k) {
+        const double t = a0 + (a1 - a0) * k / n;
+        pts.push_back({cx + r * std::cos(t), cy + r * std::sin(t)});
+    }
+    polyline(g, pts, false, st);
+}
+
+// The characteristic's symbol in a box `h` high centred on (cx, cy).
+void gdtGlyph(SheetGraphics& g, GdtSymbol s, double cx, double cy, double h) {
+    const double r = h * 0.3; // half the glyph's size
+    auto L = [&](double x0, double y0, double x1, double y1) { g.lines.push_back({cx + x0 * r, cy + y0 * r, cx + x1 * r, cy + y1 * r, SheetLine::Thin}); };
+    auto arrowHead = [&](double tx, double ty, double dx, double dy) { addArrow(g, cx + tx * r, cy + ty * r, dx, dy, 0.45 * r * 2, 0.22 * r * 2); };
+    switch (s) {
+    case GdtSymbol::Straightness: L(-1, 0, 1, 0); break;
+    case GdtSymbol::Flatness: polyline(g, {{cx - r, cy - 0.5 * r}, {cx + 0.5 * r, cy - 0.5 * r}, {cx + r, cy + 0.5 * r}, {cx - 0.5 * r, cy + 0.5 * r}}, true); break;
+    case GdtSymbol::Circularity: circle(g, cx, cy, r * 0.85); break;
+    case GdtSymbol::Cylindricity:
+        circle(g, cx, cy, r * 0.6);
+        L(-0.95, -1, -0.15, 1);
+        L(0.15, -1, 0.95, 1);
+        break;
+    case GdtSymbol::LineProfile: circle(g, cx, cy - 0.5 * r, r * 0.95, 0, kPiD2); break;
+    case GdtSymbol::SurfaceProfile:
+        circle(g, cx, cy - 0.5 * r, r * 0.95, 0, kPiD2);
+        L(-0.95, -0.5, 0.95, -0.5);
+        break;
+    case GdtSymbol::Angularity:
+        L(-1, -0.8, 1, -0.8);
+        L(-1, -0.8, 0.9, 0.9);
+        break;
+    case GdtSymbol::Perpendicularity:
+        L(-1, -0.9, 1, -0.9);
+        L(0, -0.9, 0, 1);
+        break;
+    case GdtSymbol::Parallelism:
+        L(-0.9, -1, -0.1, 1);
+        L(0.1, -1, 0.9, 1);
+        break;
+    case GdtSymbol::Position:
+        circle(g, cx, cy, r * 0.65);
+        L(-1, 0, 1, 0);
+        L(0, -1, 0, 1);
+        break;
+    case GdtSymbol::Concentricity:
+        circle(g, cx, cy, r * 0.45);
+        circle(g, cx, cy, r * 0.95);
+        break;
+    case GdtSymbol::Symmetry:
+        L(-1, 0, 1, 0);
+        L(-0.6, 0.55, 0.6, 0.55);
+        L(-0.6, -0.55, 0.6, -0.55);
+        break;
+    case GdtSymbol::CircularRunout:
+        L(-0.6, -1, 0.5, 0.9);
+        arrowHead(0.5, 0.9, 1.1, 1.9);
+        break;
+    case GdtSymbol::TotalRunout:
+        L(-0.9, -0.9, 0.9, -0.9);
+        L(-0.9, -0.9, -0.2, 0.9);
+        L(0.2, -0.9, 0.9, 0.9);
+        arrowHead(-0.2, 0.9, 0.7, 1.8);
+        arrowHead(0.9, 0.9, 0.7, 1.8);
+        break;
+    }
+}
+
+// A material condition modifier: the letter in a circle.
+void circledLetter(SheetGraphics& g, double cx, double cy, double h, char letter) {
+    circle(g, cx, cy, h * 0.42);
+    g.texts.push_back({cx, cy - h * 0.25, h * 0.55, 0, 1, std::string(1, letter)});
+}
+
+// A feature control frame with its top-left corner at (x, y); returns its width.
+double drawFrameBoxes(SheetGraphics& g, const DrawingFrame& f, double x, double y, double h) {
+    const double th = h * 0.5;
+    std::vector<double> cells{h}; // the symbol
+    std::string value = num(f.tolerance);
+    if (f.tolerance < 0.01 && f.tolerance > 0) { // three or four decimals
+        char b[32];
+        std::snprintf(b, sizeof b, "%.4f", f.tolerance);
+        value = b;
+        while (value.back() == '0') value.pop_back();
+    }
+    const std::string zone = (f.diameter ? "\xC3\x98" : "") + value;
+    const double tw = textWidth(zone, th) + (f.material ? h * 1.2 : 0) + 3;
+    cells.push_back(std::max(tw, h * 1.6));
+    std::vector<std::string> datum;
+    for (const std::string& dt : f.datums) {
+        datum.push_back(dt);
+        cells.push_back(std::max(h, textWidth(dt, th) + 3));
+    }
+    double w = 0;
+    for (double c : cells) w += c;
+    const double y0 = y - h;
+    polyline(g, {{x, y0}, {x + w, y0}, {x + w, y}, {x, y}}, true);
+    double cx = x;
+    for (std::size_t i = 0; i < cells.size(); ++i) {
+        if (i > 0) g.lines.push_back({cx, y0, cx, y, SheetLine::Thin});
+        if (i == 0) gdtGlyph(g, f.symbol, cx + h / 2, y0 + h / 2, h);
+        else if (i == 1) {
+            g.texts.push_back({cx + 1.5, y0 + (h - th) / 2, th, 0, 0, zone});
+            if (f.material) circledLetter(g, cx + 1.5 + textWidth(zone, th) + h * 0.65, y0 + h / 2, h * 0.9, f.material);
+        } else {
+            const std::string& dt = datum[i - 2];
+            g.texts.push_back({cx + cells[i] / 2, y0 + (h - th) / 2, th, 0, 1, dt});
+        }
+        cx += cells[i];
+    }
+    return w;
+}
+
+// A leader from the box at (x, y) to the point (px, py), the arrow on the point.
+void leader(SheetGraphics& g, double x, double y, double px, double py) {
+    g.lines.push_back({x, y, px, py, SheetLine::Thin});
+    addArrow(g, px, py, px - x, py - y);
+}
+
+bool viewPoint(const Drawing& d, const Model& m, const std::string& view, const DVec3& at, double& px, double& py) {
+    const DrawingView* v = d.view(view);
+    if (!v) return false;
+    ViewSetup vs;
+    if (!setupView(d, *v, vs)) return false;
+    const auto p = projectorFor(d, *v, vs.f, m.centre())(at);
+    px = p.first, py = p.second;
+    return true;
+}
+
+void drawFrame(const Drawing& d, const DrawingFrame& f, const Model& m, const std::vector<TextPlace>& dimPlaces, SheetGraphics& g) {
+    const double h = 7.0;
+    if (f.dim >= 0) { // under the dimension's value
+        if (f.dim >= static_cast<int>(dimPlaces.size()) || !dimPlaces[static_cast<std::size_t>(f.dim)].placed) return;
+        const TextPlace& t = dimPlaces[static_cast<std::size_t>(f.dim)];
+        // Below the text (to its right when the text runs up the sheet).
+        DrawingFrame probe = f;
+        SheetGraphics scratch;
+        const double w = drawFrameBoxes(scratch, probe, 0, 0, h);
+        // Under the value: below horizontal text, below the lower end of text running up
+        // the sheet (so it stays outside the part, along the dimension line).
+        double cx = t.x, cy = t.y - 2.0 - h / 2;
+        if (std::fabs(std::sin(t.angle * kPiD2 / 180)) > 0.7) cy = t.y - t.width / 2 - 2.0 - h / 2, cx = t.x - 1.0 - w / 2; // clear of the line
+        // A diameter or radius: from the start of its text, clear of the leader's elbow.
+        const DrawingDim& dm = d.dims[static_cast<std::size_t>(f.dim)];
+        if (dm.kind == DrawingDim::Diameter || dm.kind == DrawingDim::Radius) cx = t.x - t.width / 2 + w / 2;
+        drawFrameBoxes(g, f, cx - w / 2, cy + h / 2, h);
+        return;
+    }
+    double px, py;
+    if (!viewPoint(d, m, f.view, f.at, px, py)) return;
+    const double x = px + f.dx, y = py + f.dy + h / 2; // the frame's left end, middle, at (px + dx, py + dy)
+    const bool left = f.dx < 0;
+    SheetGraphics scratch;
+    const double w = drawFrameBoxes(scratch, f, 0, 0, h);
+    const double fx = left ? x - w : x;
+    drawFrameBoxes(g, f, fx, y, h);
+    const double ex = left ? x : fx, ey = y - h / 2;
+    // The leader leaves the frame's near end horizontally, then runs to the point.
+    const double kx = ex + (left ? 3 : -3);
+    g.lines.push_back({ex, ey, kx, ey, SheetLine::Thin});
+    leader(g, kx, ey, px, py);
+}
+
+void drawDatum(const Drawing& d, const DrawingDatum& dt, const Model& m, SheetGraphics& g) {
+    double px, py;
+    if (!viewPoint(d, m, dt.view, dt.at, px, py)) return;
+    const double h = 7.0, bx = px + dt.dx, by = py + dt.dy; // the box's centre
+    polyline(g, {{bx - h / 2, by - h / 2}, {bx + h / 2, by - h / 2}, {bx + h / 2, by + h / 2}, {bx - h / 2, by + h / 2}}, true);
+    g.texts.push_back({bx, by - h * 0.25, h * 0.5, 0, 1, dt.letter});
+    // From the box's nearest side to the feature, ending in a filled triangle on it.
+    double dx = px - bx, dy = py - by;
+    const double l = std::hypot(dx, dy);
+    if (l < h * 0.6) return;
+    dx /= l, dy /= l;
+    const double sx = bx + dx * h / 2 / std::max(std::fabs(dx), std::fabs(dy)), sy = by + dy * h / 2 / std::max(std::fabs(dx), std::fabs(dy));
+    const double tri = 3.0, half = 1.7;
+    const double qx = px - dx * tri, qy = py - dy * tri; // the triangle's apex, its base on the feature
+    g.lines.push_back({sx, sy, qx, qy, SheetLine::Thin});
+    g.fills.push_back({{qx, qy}, {px - dy * half, py + dx * half}, {px + dy * half, py - dx * half}});
+}
+
+void drawFinish(const Drawing& d, const DrawingFinish& f, const Model& m, SheetGraphics& g) {
+    double px, py;
+    if (!viewPoint(d, m, f.view, f.at, px, py)) return;
+    const double x = px + f.dx, y = py + f.dy, s = 3.5;
+    // The check mark: a short leg up-left and a long one up-right from the foot.
+    const double c60 = 0.5, s60 = std::sqrt(3.0) / 2;
+    const double lx = x - s * c60 * 1.2, ly = y + s * s60 * 1.2;   // short leg
+    const double rx = x + s * c60 * 2.6, ry = y + s * s60 * 2.6;   // long leg
+    g.lines.push_back({x, y, lx, ly, SheetLine::Thin});
+    g.lines.push_back({x, y, rx, ry, SheetLine::Thin});
+    if (f.process == 1) g.lines.push_back({lx, ly, 2 * x - lx, ly, SheetLine::Thin}); // the bar closing a triangle: removal required
+    if (f.process == 2) circle(g, x, y + s * 0.62, s * 0.42);                                               // the circle: no removal
+    // The Ra value over a line running on from the long leg.
+    const std::string text = "Ra " + num(f.ra);
+    const double w = textWidth(text, 2.5) + 1.5;
+    g.lines.push_back({rx, ry, rx + w, ry, SheetLine::Thin});
+    g.texts.push_back({rx + 0.8, ry + 0.8, 2.5, 0, 0, text});
 }
 
 void drawSectionLine(const Drawing& d, const DrawingView& sec, const Model& m, SheetGraphics& g) {
@@ -666,6 +924,8 @@ void drawSheetFrame(const Drawing& d, SheetGraphics& g) {
     cell(x0 + 4 * w6, y0, w6, "REV", field("REV", "A"));
     cell(x0 + 5 * w6, y0, w6, "SIZE", upper(d.sheet));
     if (!field("COMPANY").empty()) g.texts.push_back({x0 + tw - 1.5, r3 + 1.8, 3.0, 0, 2, field("COMPANY")});
+    if (!d.generalTolerance.empty())
+        g.texts.push_back({W - b - 1.5, y0 + th + 2.0, 2.5, 0, 2, "UNLESS OTHERWISE STATED: GENERAL TOLERANCES " + upper(d.generalTolerance)});
 }
 
 } // namespace
@@ -1002,6 +1262,118 @@ double dimensionValue(const Drawing& d, const DrawingDim& dim) {
     return 0;
 }
 
+namespace {
+
+struct GdtInfo {
+    GdtSymbol s;
+    const char* name;
+    int datums;    // 0 none, 1 optional, 2 required
+    bool diameter; // a cylindrical zone allowed
+};
+constexpr GdtInfo kGdt[] = {
+    {GdtSymbol::Straightness, "straightness", 0, true},      {GdtSymbol::Flatness, "flatness", 0, false},
+    {GdtSymbol::Circularity, "circularity", 0, false},       {GdtSymbol::Cylindricity, "cylindricity", 0, false},
+    {GdtSymbol::LineProfile, "profile-line", 1, false},      {GdtSymbol::SurfaceProfile, "profile-surface", 1, false},
+    {GdtSymbol::Angularity, "angularity", 2, true},          {GdtSymbol::Perpendicularity, "perpendicularity", 2, true},
+    {GdtSymbol::Parallelism, "parallelism", 2, true},        {GdtSymbol::Position, "position", 2, true},
+    {GdtSymbol::Concentricity, "concentricity", 2, true},    {GdtSymbol::Symmetry, "symmetry", 2, false},
+    {GdtSymbol::CircularRunout, "runout", 2, false},         {GdtSymbol::TotalRunout, "total-runout", 2, false}};
+
+const GdtInfo& gdtInfo(GdtSymbol s) {
+    for (const GdtInfo& g : kGdt)
+        if (g.s == s) return g;
+    return kGdt[0];
+}
+
+// A deviation: "+0.021", "-0.007", "0".
+std::string deviationText(double v) {
+    if (std::fabs(v) < 5e-7) return "0";
+    char b[32];
+    std::snprintf(b, sizeof b, "%+.3f", v);
+    std::string t = b;
+    while (t.back() == '0' && t.find('.') != std::string::npos && t.size() > t.find('.') + 2) t.pop_back();
+    return t;
+}
+
+std::string limitText(double v) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%.3f", v);
+    std::string t = b;
+    while (t.back() == '0' && t.size() > t.find('.') + 2) t.pop_back();
+    return t;
+}
+
+} // namespace
+
+const char* gdtName(GdtSymbol s) { return gdtInfo(s).name; }
+
+bool gdtFromName(const std::string& name, GdtSymbol* out) {
+    std::string n;
+    for (char c : name) n += c == '_' || c == ' ' ? '-' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (const GdtInfo& g : kGdt)
+        if (n == g.name) return *out = g.s, true;
+    static const std::pair<const char*, GdtSymbol> aliases[] = {
+        {"flat", GdtSymbol::Flatness},          {"straight", GdtSymbol::Straightness},     {"roundness", GdtSymbol::Circularity},
+        {"round", GdtSymbol::Circularity},      {"cylinder", GdtSymbol::Cylindricity},     {"lineprofile", GdtSymbol::LineProfile},
+        {"profile", GdtSymbol::SurfaceProfile}, {"surfaceprofile", GdtSymbol::SurfaceProfile}, {"angle", GdtSymbol::Angularity},
+        {"perp", GdtSymbol::Perpendicularity},  {"square", GdtSymbol::Perpendicularity},   {"parallel", GdtSymbol::Parallelism},
+        {"pos", GdtSymbol::Position},           {"true-position", GdtSymbol::Position},    {"coaxiality", GdtSymbol::Concentricity},
+        {"concentric", GdtSymbol::Concentricity}, {"circular-runout", GdtSymbol::CircularRunout}, {"totalrunout", GdtSymbol::TotalRunout}};
+    for (const auto& [a, sym] : aliases)
+        if (n == a) return *out = sym, true;
+    return false;
+}
+
+bool gdtTakesDatums(GdtSymbol s) { return gdtInfo(s).datums > 0; }
+bool gdtNeedsDatum(GdtSymbol s) { return gdtInfo(s).datums == 2; }
+bool gdtTakesDiameter(GdtSymbol s) { return gdtInfo(s).diameter; }
+
+std::string dimensionText(const Drawing& d, const DrawingDim& dim, std::string* upper, std::string* lower) {
+    if (upper) upper->clear();
+    if (lower) lower->clear();
+    const double value = dimensionValue(d, dim);
+    const std::string prefix = dim.kind == DrawingDim::Diameter ? "\xC3\x98" : dim.kind == DrawingDim::Radius ? "R" : "";
+    const std::string base = !dim.text.empty() ? dim.text : prefix + num(value);
+    const DimTolerance& t = dim.tol;
+    switch (t.kind) {
+    case DimTolerance::None:
+    case DimTolerance::Basic: return base;
+    case DimTolerance::Symmetric: return base + " \xC2\xB1" + deviationText(std::fabs(t.upper)).substr(1);
+    case DimTolerance::Deviation:
+        if (upper) *upper = deviationText(t.upper);
+        if (lower) *lower = deviationText(t.lower);
+        return base;
+    case DimTolerance::Limits:
+        if (upper) *upper = limitText(value + t.upper);
+        if (lower) *lower = limitText(value + t.lower);
+        return prefix;
+    case DimTolerance::Fit: {
+        std::string s = base + " " + t.fit;
+        FitDeviations f;
+        if (t.values && isoFit(t.fit, value, f)) s += " (" + deviationText(f.upper) + "/" + deviationText(f.lower) + ")";
+        return s;
+    }
+    }
+    return base;
+}
+
+bool dimensionLimits(const Drawing& d, const DrawingDim& dim, double& high, double& low) {
+    const double value = dimensionValue(d, dim);
+    const DimTolerance& t = dim.tol;
+    switch (t.kind) {
+    case DimTolerance::Symmetric: high = value + std::fabs(t.upper), low = value - std::fabs(t.upper); return true;
+    case DimTolerance::Deviation:
+    case DimTolerance::Limits: high = value + t.upper, low = value + t.lower; return true;
+    case DimTolerance::Fit: {
+        FitDeviations f;
+        if (!isoFit(t.fit, value, f)) return false;
+        high = value + f.upper, low = value + f.lower;
+        return true;
+    }
+    default: return false;
+    }
+}
+
 SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
     SheetGraphics g;
     if (!sheetSize(d.sheet, g.width, g.height)) g.width = 420, g.height = 297;
@@ -1030,7 +1402,11 @@ SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
         }
         if (v.kind == ViewKind::Section) drawSectionLine(d, v, m, g);
     }
-    for (const DrawingDim& dim : d.dims) drawDimension(d, dim, m, g);
+    std::vector<TextPlace> dimPlaces(d.dims.size());
+    for (std::size_t i = 0; i < d.dims.size(); ++i) drawDimension(d, d.dims[i], m, g, &dimPlaces[i]);
+    for (const DrawingFrame& f : d.frames) drawFrame(d, f, m, dimPlaces, g);
+    for (const DrawingDatum& dt : d.datums) drawDatum(d, dt, m, g);
+    for (const DrawingFinish& f : d.finishes) drawFinish(d, f, m, g);
     for (const DrawingNote& n : d.notes) g.texts.push_back({n.x, n.y, n.height, 0, 0, n.text});
     // Views that do not fit: off the sheet, on the title block or on each other.
     const double W = g.width, H = g.height, tol = 0.5;
@@ -1322,10 +1698,12 @@ std::string sheetToDxf(const SheetGraphics& g) {
     for (const SheetText& t : g.texts) {
         std::string s;
         for (std::size_t i = 0; i < t.text.size(); ++i) {
-            if (static_cast<unsigned char>(t.text[i]) == 0xC3 && i + 1 < t.text.size() && static_cast<unsigned char>(t.text[i + 1]) == 0x98) {
-                s += "%%c"; // the diameter sign
-                ++i;
-            } else s += t.text[i];
+            const unsigned char c0 = static_cast<unsigned char>(t.text[i]);
+            const unsigned char c1 = i + 1 < t.text.size() ? static_cast<unsigned char>(t.text[i + 1]) : 0;
+            if (c0 == 0xC3 && c1 == 0x98) s += "%%c", ++i;      // the diameter sign
+            else if (c0 == 0xC2 && c1 == 0xB1) s += "%%p", ++i; // plus-minus
+            else if (c0 == 0xC2 && c1 == 0xB0) s += "%%d", ++i; // degrees
+            else s += t.text[i];
         }
         pair(0, "TEXT");
         pair(8, "THIN");
@@ -1370,9 +1748,39 @@ Json drawingToJson(const Drawing& d) {
         o.set("kind", kDims[dm.kind]).set("view", dm.view).set("offset", dm.offset);
         o.set("a", Json(Json::Array{Json(dm.a.x), Json(dm.a.y), Json(dm.a.z)})).set("b", Json(Json::Array{Json(dm.b.x), Json(dm.b.y), Json(dm.b.z)}));
         if (!dm.text.empty()) o.set("text", dm.text);
+        if (dm.tol.kind != DimTolerance::None) {
+            static const char* kTol[] = {"none", "symmetric", "deviation", "limits", "fit", "basic"};
+            Json t = Json::object();
+            t.set("kind", kTol[dm.tol.kind]).set("upper", dm.tol.upper).set("lower", dm.tol.lower);
+            if (!dm.tol.fit.empty()) t.set("fit", dm.tol.fit).set("values", dm.tol.values);
+            o.set("tol", t);
+        }
         dims.push(o);
     }
     j.set("dims", dims);
+    auto point = [](const DVec3& p) { return Json(Json::Array{Json(p.x), Json(p.y), Json(p.z)}); };
+    Json frames = Json::array();
+    for (const DrawingFrame& f : d.frames) {
+        Json o = Json::object();
+        o.set("symbol", gdtName(f.symbol)).set("tolerance", f.tolerance).set("diameter", f.diameter);
+        if (f.material) o.set("material", std::string(1, f.material));
+        Json dl = Json::array();
+        for (const std::string& x : f.datums) dl.push(x);
+        o.set("datums", dl);
+        if (f.dim >= 0) o.set("dim", f.dim);
+        else o.set("view", f.view).set("at", point(f.at)).set("dx", f.dx).set("dy", f.dy);
+        frames.push(o);
+    }
+    j.set("frames", frames);
+    Json datums = Json::array();
+    for (const DrawingDatum& dt : d.datums)
+        datums.push(Json::object().set("letter", dt.letter).set("view", dt.view).set("at", point(dt.at)).set("dx", dt.dx).set("dy", dt.dy));
+    j.set("datums", datums);
+    Json finishes = Json::array();
+    for (const DrawingFinish& f : d.finishes)
+        finishes.push(Json::object().set("ra", f.ra).set("process", f.process).set("view", f.view).set("at", point(f.at)).set("dx", f.dx).set("dy", f.dy));
+    j.set("finishes", finishes);
+    if (!d.generalTolerance.empty()) j.set("general_tolerance", d.generalTolerance);
     Json notes = Json::array();
     for (const DrawingNote& n : d.notes) notes.push(Json::object().set("x", n.x).set("y", n.y).set("height", n.height).set("text", n.text));
     j.set("notes", notes);
@@ -1411,8 +1819,36 @@ bool drawingFromJson(const Json& j, Drawing& d) {
         if (a.size() == 3) dm.a = {a[0].asNumber(0), a[1].asNumber(0), a[2].asNumber(0)};
         if (b.size() == 3) dm.b = {b[0].asNumber(0), b[1].asNumber(0), b[2].asNumber(0)};
         dm.text = o["text"].asString("");
+        if (o["tol"].isObject()) {
+            static const char* kTol[] = {"none", "symmetric", "deviation", "limits", "fit", "basic"};
+            const std::string tk = o["tol"]["kind"].asString("none");
+            for (int i = 0; i < 6; ++i)
+                if (tk == kTol[i]) dm.tol.kind = static_cast<DimTolerance::Kind>(i);
+            dm.tol.upper = o["tol"]["upper"].asNumber(0), dm.tol.lower = o["tol"]["lower"].asNumber(0);
+            dm.tol.fit = o["tol"]["fit"].asString(""), dm.tol.values = o["tol"]["values"].asBool(false);
+        }
         d.dims.push_back(dm);
     }
+    auto point = [](const Json& a) {
+        const auto& v = a.items();
+        return v.size() == 3 ? DVec3{v[0].asNumber(0), v[1].asNumber(0), v[2].asNumber(0)} : DVec3{};
+    };
+    for (const Json& o : j["frames"].items()) {
+        DrawingFrame f;
+        if (!gdtFromName(o["symbol"].asString(""), &f.symbol)) continue;
+        f.tolerance = o["tolerance"].asNumber(0.1), f.diameter = o["diameter"].asBool(false);
+        const std::string mc = o["material"].asString("");
+        f.material = mc.empty() ? 0 : mc[0];
+        for (const Json& x : o["datums"].items()) f.datums.push_back(x.asString(""));
+        f.dim = o["dim"].asInt(-1);
+        f.view = o["view"].asString(""), f.at = point(o["at"]), f.dx = o["dx"].asNumber(14), f.dy = o["dy"].asNumber(10);
+        d.frames.push_back(f);
+    }
+    for (const Json& o : j["datums"].items())
+        d.datums.push_back({o["letter"].asString("A"), o["view"].asString(""), point(o["at"]), o["dx"].asNumber(0), o["dy"].asNumber(-12)});
+    for (const Json& o : j["finishes"].items())
+        d.finishes.push_back({o["ra"].asNumber(1.6), o["process"].asInt(0), o["view"].asString(""), point(o["at"]), o["dx"].asNumber(0), o["dy"].asNumber(0)});
+    d.generalTolerance = j["general_tolerance"].asString("");
     for (const Json& o : j["notes"].items()) d.notes.push_back({o["x"].asNumber(0), o["y"].asNumber(0), o["height"].asNumber(3.5), o["text"].asString("")});
     if (j["title"].isObject())
         for (const auto& [k, v] : j["title"].members()) d.title[k] = v.asString("");

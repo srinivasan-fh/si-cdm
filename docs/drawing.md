@@ -126,9 +126,100 @@ Running it again adds nothing twice.
 
 **In the drawing window:**
 
-1. Turn on *Dimension Tool*.
+1. Pick *Dimension* in the tool list. A tolerance typed in its box goes on each new
+   dimension.
 2. Click two points. They snap to vertices and edge ends.
 3. The dimension is horizontal, vertical or aligned, whichever the points suggest.
+
+## Tolerances and GD&T
+
+![Size tolerances, ISO fits, feature control frames, datums and a surface finish mark](drawing-gdt.png)
+
+### Size tolerances
+
+```text
+SHEET TOL n 0.1                  80 ±0.1
+SHEET TOL n +0.05 -0.1           12 with +0.05 over -0.1, stacked
+SHEET TOL n LIMITS +0.2 -0.1     the limits themselves, 80.2 over 79.9
+SHEET TOL n FIT H7 [VALUES]      an ISO 286 fit: Ø20 H7, with VALUES Ø20 H7 (+0.021/0)
+SHEET TOL n BASIC                a basic (theoretically exact) size, boxed
+SHEET TOL n NONE
+SHEET DIM ... TOL 0.1            the same, as the dimension is made
+```
+
+`n` is the dimension's number in the `SHEET` listing, which also shows each toleranced
+size's limits.
+
+**ISO 286 fits:**
+
+| | Letters | Grades | Sizes |
+| --- | --- | --- | --- |
+| Holes | D, E, F, G, H, JS | IT5 to IT11 | up to 500 mm |
+| Shafts | d, e, f, g, h, js, k, m, n, p | IT5 to IT11 | up to 500 mm |
+
+The deviations come from the standard's tables, for example H7 on 20 mm is +0.021/0 and g6
+is −0.007/−0.020. The hole letters K, M, N and P need the standard's corrections, so they
+are refused rather than guessed.
+
+**General tolerances:** `SHEET TOLERANCE ISO 2768-mK` notes them above the title block
+(classes f, m, c and v, with H, K or L for geometric tolerances). They apply to every size
+without its own tolerance.
+
+### Feature control frames
+
+```text
+SHEET GDT symbol tolerance [DIA] [MMC|LMC] [DATUMS A [B [C]]] ON view x,y,z [OFFSET dx,dy]
+SHEET GDT symbol tolerance ... DIM n             under dimension n's value
+SHEET GDT DELETE n · SHEET GDT CLEAR
+```
+
+A frame reads `| symbol | [Ø] tolerance [Ⓜ|Ⓛ] | A | B | C |`. It sits on a leader to the
+model point, `OFFSET` sheet mm away (default 14, 10), or under a dimension's value. Under a
+size, it applies to the feature of size, for example a hole's position.
+
+| Kind | Symbols | Datums |
+| --- | --- | --- |
+| Form | `straightness`, `flatness`, `circularity`, `cylindricity` | none |
+| Profile | `profile-line`, `profile-surface` | optional |
+| Orientation | `angularity`, `perpendicularity`, `parallelism` | at least one |
+| Location | `position`, `concentricity`, `symmetry` | at least one |
+| Runout | `runout`, `total-runout` | at least one |
+
+The rules of ISO 1101 / ASME Y14.5 are checked:
+
+- form tolerances refuse datums;
+- orientation, location and runout tolerances need one;
+- a cylindrical zone (`DIA`) is only for straightness, orientation, position and
+  concentricity;
+- a material condition (`MMC`, `LMC`) is only for features of size;
+- each datum is used once.
+
+A datum reference may carry its own modifier, as `B(M)`.
+
+### Datums and surface finish
+
+```text
+SHEET DATUM A ON view x,y,z [OFFSET dx,dy]       the letter boxed, a filled triangle on the feature
+SHEET DATUM DELETE A
+SHEET FINISH [RA] 1.6 [MACHINED|UNMACHINED] ON view x,y,z [OFFSET dx,dy]
+SHEET FINISH DELETE n
+```
+
+**Datums:** one letter each, not I, O or Q. A frame naming a datum the drawing doesn't have
+yet gets a note.
+
+**Surface finish:** the ISO 1302 mark, with its Ra (µm) over the long leg:
+
+- a bar closes the V when material must be removed (`MACHINED`);
+- a circle sits in it when material may not be removed (`UNMACHINED`).
+
+**In the drawing window:** pick *Feature Frame (GD&T)*, *Datum* or *Surface Finish* in the
+tool list. Set the symbol, tolerance, Ø, material condition and datums (or the letter, or
+Ra and process) in the bar, then click the feature's point in a view. The datum letter steps
+on to the next one after each.
+
+**Exports:** PDF and SVG draw the symbols as lines. DXF writes them as lines too, and writes
+the ±, Ø and ° signs as its `%%p`, `%%c` and `%%d` codes.
 
 ## Export
 
@@ -146,9 +237,17 @@ The MCP tool `drawing` does all of this. Its operations are:
 
 - `new`, `list` and `delete`;
 - `view_add`, `view_move`, `view_delete`, `view_scale` and `view_hidden`;
-- `section`, `dim`, `dim_delete` and `autodim`;
+- `section`, `dim` (with `tolerance`), `dim_delete` and `autodim`;
+- `tolerance`, `general_tolerance`, `gdt`, `gdt_delete`, `datum`, `datum_delete` and `finish`;
 - `title` and `note`;
 - `scale`, `size` and `projection`;
 - `export`.
+
+```json
+{"operation": "tolerance", "index": 3, "tolerance": "FIT H7 VALUES"}
+{"operation": "datum", "letter": "A", "view": "Front", "point": [-40, 0, 6], "sheet_offset": [-12, 0]}
+{"operation": "gdt", "symbol": "position", "value": 0.05, "diameter": true, "material": "MMC", "datums": ["A", "B"], "index": 4}
+{"operation": "finish", "value": 0.8, "machined": true, "view": "Front", "point": [0, 0, 12]}
+```
 
 `run_command` takes any `SHEET` line too.
