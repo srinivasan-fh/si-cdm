@@ -897,6 +897,7 @@ bool roundBody(Body& body, const RoundOptions& o, std::string* error) {
     b.visible = body.visible;
     b.component = body.component;
     b.attachedTo = body.attachedTo;
+    b.assembly = body.assembly;
     b.physics = body.physics;
     body = std::move(b);
     return true;

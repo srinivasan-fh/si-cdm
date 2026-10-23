@@ -29,6 +29,7 @@ struct Body {
     Vec3 rotation{};        // degrees about X, then Y, then Z, about the body origin (mesh bodies keep it baked in)
     std::string component;  // library component this body belongs to ("" = none)
     std::string attachedTo; // moves rigidly with this body (armour on its part, a hinge pin on its parent)
+    std::string assembly;   // the sub-assembly it sits in ("Gearbox/Input shaft"; "" = the top level)
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
     // Exact geometry (STEP imports and the primitives), in the mesh's own frame: good
     // while the mesh is still the one made with it (a sculpt, boolean or remesh leaves it

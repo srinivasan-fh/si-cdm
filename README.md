@@ -238,6 +238,25 @@ HISTORY      HISTORY EDIT 2 HOLE "Block 1" AT -20,0,15 DIAMETER 10 THROUGH      
 
 Details: [docs/cad.md](docs/cad.md).
 
+## Assemblies
+
+*Assembly* menu (or `MATE` and `ASSEMBLY`) puts parts together.
+
+- **Mates:** click a face on the part that stays, then one on the part to move. The mate types
+  are coincident, flush, concentric, distance, angle, parallel, perpendicular and fix. Round
+  faces mate by their axes, on exact solids and meshes alike.
+- **Solver:** moves the parts into place and reports the degrees of freedom left and any mates
+  in conflict.
+- **Sub-assemblies:** a tree of them, shown in the Model panel and kept in STEP files both ways.
+- **Checks:** an interference check that reports overlap volumes, and a parts list.
+
+```text
+MATE CONCENTRIC "Plate" AT 19,0,5 "Pin" AT 115,50,24      MATE FLUSH "Plate" AT 0,0,0 "Pin" AT 15,0,-3
+ASSEMBLY GROUP "Base" "Plate" "Pin"      ASSEMBLY INTERFERENCE      ASSEMBLY BOM
+```
+
+Details: [docs/assembly.md](docs/assembly.md).
+
 ## Drawings
 
 *Drawing → New Drawing* (or `SHEET NEW`) makes a 2D engineering drawing of the model.
@@ -489,8 +508,8 @@ With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,d
 | Menu (shortcut) | Formats |
 | --- | --- |
 | **New / Open / Save / Save As** (Ctrl/⌘ N, O, S, Shift+S) | `.sicdm` project (JSON): parametric solids, meshes, sketches, reference images |
-| **Import** (Ctrl/⌘ I) | `.step` `.stp` → exact solids (assemblies placed, units converted) · `.igs` `.iges` → exact solids (trimmed surfaces sewn) or surfaces · `.stl` `.obj` → body · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
-| **Export** (Ctrl/⌘ E) | `.step` (AP214: exact B-reps, other meshes as planar faces) · `.igs` (IGES 5.3 trimmed surfaces) · `.stl` `.obj` `.3mf` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
+| **Import** (Ctrl/⌘ I) | `.step` `.stp` → exact solids (assemblies placed in their sub-assembly tree, units converted) · `.igs` `.iges` → exact solids (trimmed surfaces sewn) or surfaces · `.stl` `.obj` → body · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
+| **Export** (Ctrl/⌘ E) | `.step` (AP214: exact B-reps, other meshes as planar faces, the sub-assembly tree) · `.igs` (IGES 5.3 trimmed surfaces) · `.stl` `.obj` `.3mf` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
 | **Drawing → Export...** | `.pdf` `.svg` `.dxf` (the drawing sheet: views, sections, dimensions, title block) |
 
 **STEP and IGES:** imports keep their exact geometry (planes, cylinders, cones, spheres, tori, NURBS),
@@ -535,6 +554,7 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 `cam` (CNC milling: setup, tools, operations, simulation, G-code post),
 `cad` (sketch constraints and dimensions, revolve, sweep, loft, pattern, mirror, edge fillets and chamfers, mass properties, measure, feature history),
 `drawing` (2D drawings: views, sections, dimensions, title block, PDF / SVG / DXF export),
+`assembly` (mates, sub-assembly tree, interference, parts list),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

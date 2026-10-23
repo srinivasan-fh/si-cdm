@@ -360,6 +360,40 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
     const ToolInfo& info = toolInfo(tool);
     const bool is2D = m_uiState.mode == ViewMode::Drawing2D;
 
+    // The mate tool: a face on the part that stays, then one on the part that moves.
+    if (!m_uiState.mateTool.empty() && !is2D) {
+        const auto hit = pick(x, y);
+        if (!hit) {
+            setStatus("Click a face of a part");
+            return;
+        }
+        const Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)];
+        char at[96];
+        std::snprintf(at, sizeof at, "%.4f,%.4f,%.4f", hit->point.x, hit->point.y, hit->point.z);
+        if (m_uiState.mateFirst.empty()) {
+            m_uiState.mateFirst = b.name;
+            m_uiState.mateFirstPoint = hit->point;
+            setStatus(b.name + " picked: now a face on the part to move");
+            return;
+        }
+        if (b.name == m_uiState.mateFirst) {
+            setStatus("Pick a face on another part");
+            return;
+        }
+        char first[96];
+        std::snprintf(first, sizeof first, "%.4f,%.4f,%.4f", m_uiState.mateFirstPoint.x, m_uiState.mateFirstPoint.y, m_uiState.mateFirstPoint.z);
+        std::string line = "MATE " + m_uiState.mateTool;
+        if (m_uiState.mateTool == "DISTANCE" || m_uiState.mateTool == "ANGLE") {
+            char v[32];
+            std::snprintf(v, sizeof v, " %g", static_cast<double>(m_uiState.mateValue));
+            line += v;
+        }
+        line += " \"" + m_uiState.mateFirst + "\" AT " + first + " \"" + b.name + "\" AT " + at;
+        m_uiState.mateFirst.clear(); // ready for the next pair
+        runCommandLine(line);
+        return;
+    }
+
     if (isSketchTool(tool)) {
         if (auto c = m_sketcher.click(tool, doubleClick)) addCurve(std::move(*c));
         return;
@@ -1208,6 +1242,7 @@ void Application::frame(float dt) {
     updatePrompt();
     refreshFileTabs();
     updateSheet();
+    m_uiState.assembly = &m_doc.state.assembly;
     const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
 

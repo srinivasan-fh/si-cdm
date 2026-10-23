@@ -220,6 +220,9 @@ std::optional<BooleanOp> booleanOpFromKey(const std::string& key) noexcept;
 // a = a (op) b, both closed meshes in the same coordinates. False (a unchanged) when
 // the result would be empty for Union / Subtract or the inputs have no triangles.
 bool meshBoolean(MeshData& a, const MeshData& b, BooleanOp op);
+// The same, cleaning the inputs first and nudging the tool a hair when faces lie on each
+// other (blocks side by side), keeping the result with the fewest holes.
+bool meshBooleanRobust(MeshData& a, const MeshData& b, BooleanOp op);
 
 // Cutters and tools (closed, outward-facing meshes).
 MeshData cutterCylinder(const Vec3& from, const Vec3& to, float radius, int segments = 48);

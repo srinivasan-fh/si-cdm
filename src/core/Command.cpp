@@ -117,6 +117,13 @@ constexpr CommandSpec kCommands[] = {
      "Drawings: SHEET NEW [bodies] [SIZE A3] [PORTRAIT] [THIRD] [SCALE 1:2] lays out front, top, right and isometric views; SHEET VIEW ADD kind [AT x,y]; "
      "SHEET SECTION [view] [VERTICAL|HORIZONTAL] [AT pos] [FLIP]; SHEET DIM HORIZONTAL|VERTICAL|ALIGNED|DIAMETER|RADIUS view x,y,z x,y,z [OFFSET mm]; "
      "SHEET AUTODIM; SHEET TITLE field text; SHEET NOTE text [AT x,y]; SHEET EXPORT file.pdf|.svg|.dxf"},
+    {"MATE", "MATES", "MATE [type [value] \"A\" AT x,y,z \"B\" AT x,y,z [FLIP]] | FIX body | SOLVE | EDIT | FLIP | SUPPRESS | DELETE | CLEAR",
+     "Assembly mates: COINCIDENT, FLUSH, CONCENTRIC, DISTANCE mm, ANGLE deg, PARALLEL, PERPENDICULAR between faces picked by a point on each "
+     "(planes, axes of round faces, sphere centres); the second part moves to the first. MATE FIX holds a part still; MATE alone lists them; "
+     "MATE EDIT n value, FLIP n, SUPPRESS n, DELETE n; MATE SOLVE places the parts again"},
+    {"ASSEMBLY", "ASM", "ASSEMBLY [TREE] | GROUP \"name\" body... | UNGROUP body... | INTERFERENCE [body...] | BOM",
+     "The assembly: its tree of sub-assemblies and parts, putting parts in a sub-assembly (a/b for one inside another), the parts that "
+     "overlap and by how much, and the parts list"},
     {"PRINTCHECK", "PRINTABILITY", "PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]",
      "Check a part for printing: holes, non-manifold edges, inside out, overhangs, thin walls, size, material, time"},
     {"REPAIR", "FIX", "REPAIR [body]", "Make a mesh printable: weld, drop bad faces, fix the winding, fill holes, drop specks"},

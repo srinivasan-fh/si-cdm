@@ -5,6 +5,7 @@
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
 #include "core/CamCommand.hpp"
+#include "core/AssemblyCommand.hpp"
 #include "core/DrawingCommand.hpp"
 #include "core/FeatureCommand.hpp"
 #include "core/SketchCommand.hpp"
@@ -297,7 +298,7 @@ bool historyCommand(const std::string& cmd) {
                                          "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
                                          "PART",     "PARAM",   "ROTATE",  "SCALE",    "ERASE",     "MOVE",    "SELECT",   "REPAIR",  "ORIENT",
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
-                                         "CONSTRAINT"};
+                                         "CONSTRAINT", "MATE",  "ASSEMBLY"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -560,7 +561,9 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.dirty = false;
         doc.clearSelection();
         doc.primitiveSerial = 0;
-        doc.state.cam = CamJob{}; // the job belonged to the old parts
+        doc.state.cam = CamJob{}; // the job, the drawing and the mates belonged to the old parts
+        doc.state.drawing = Drawing{};
+        doc.state.assembly = AssemblyState{};
         doc.state.history.clear();
         doc.state.historyRedo.clear();
         doc.state.historyComplete = true;
@@ -1477,6 +1480,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     }
     if (cmd == "CAM") return runCamCommand(doc, a, pc.quoted);
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
+    if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
         cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES")
         return runFeatureCommand(doc, cmd, a, pc.quoted);
@@ -2503,6 +2507,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                 if (!b.visible || b.mesh.indices.empty()) continue;
                 StepPart p;
                 p.name = b.name;
+                p.assembly = b.assembly;
                 if (const auto ex = exactBrep(b)) {
                     auto br = std::make_shared<Brep>(*ex);
                     Placement t;
@@ -2615,6 +2620,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                 p.brep->name = name;
                 b.brep = p.brep;
                 b.brepKey = meshKey(b.mesh);
+                b.assembly = p.assembly;
                 doc.scene.add(std::move(b));
                 if (names.size() < 120) names += (names.empty() ? "" : ", ") + name;
             }

@@ -266,7 +266,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     Json doc = Json::object();
     doc.set("format", "sicdm-project");
     doc.set("version", kProjectVersion);
-    doc.set("reader_version", 1); // what 2 and 3 added is optional: a format-1 reader can open it
+    doc.set("reader_version", 1); // what 2 to 4 added is optional: a format-1 reader can open it
 #ifdef SICDM_VERSION
     doc.set("saved_by", std::string("SI CDM ") + SICDM_VERSION);
 #endif
@@ -294,6 +294,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (b.rotation.x != 0.0f || b.rotation.y != 0.0f || b.rotation.z != 0.0f) jb.set("rotation", vec3Json(b.rotation));
         if (!b.component.empty()) jb.set("component", b.component);
         if (!b.attachedTo.empty()) jb.set("attached_to", b.attachedTo);
+        if (!b.assembly.empty()) jb.set("assembly", b.assembly);
         if (b.physics.enabled) {
             const PhysicsProps& p = b.physics;
             Json ph = Json::object();
@@ -331,7 +332,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             }
             jb.set("mesh", mesh);
             // Exact geometry kept with the mesh it belongs to (as a STEP record).
-            if (b.exact()) jb.set("brep_step", writeStep({StepPart{b.name, std::const_pointer_cast<Brep>(b.brep)}}, b.name + ".step"));
+            if (b.exact()) jb.set("brep_step", writeStep({StepPart{b.name, std::const_pointer_cast<Brep>(b.brep), ""}}, b.name + ".step"));
         }
         bodies.push(jb);
     }
@@ -408,6 +409,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     }
     if (state.simDuration > 0.0f) doc.set("simulation_duration", state.simDuration);
     if (!state.cam.empty()) doc.set("cam", camToJson(state.cam));
+    if (!state.assembly.empty()) doc.set("assembly", assemblyToJson(state.assembly));
     if (!state.drawing.empty()) doc.set("drawing", drawingToJson(state.drawing));
     if (!state.history.empty()) {
         Json h = Json::array();
@@ -514,6 +516,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         }
         b.component = jb["component"].asString();
         b.attachedTo = jb["attached_to"].asString();
+        b.assembly = jb["assembly"].asString();
         b.offset = jsonVec3(jb["offset"]);
         b.color = jsonVec3(jb["color"], b.color);
         b.visible = jb["visible"].asBool(true);
@@ -623,6 +626,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);
     if (const Json& cj = (*doc)["cam"]; cj.isObject()) camFromJson(cj, st.cam);
+    if (const Json& aj = (*doc)["assembly"]; aj.isObject()) assemblyFromJson(aj, st.assembly);
     if (const Json& dj = (*doc)["drawing"]; dj.isObject()) drawingFromJson(dj, st.drawing);
     for (const Json& j : (*doc)["history"].items()) {
         HistoryStep step;

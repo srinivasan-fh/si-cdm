@@ -269,16 +269,17 @@ public:
                 const std::string pn = productName(rep);
                 if (!pn.empty()) name = pn;
             }
-            const std::vector<Placement> where = rep >= 0 ? instances(rep) : std::vector<Placement>{Placement{}};
+            const std::vector<Instance> where = rep >= 0 ? instances(rep) : std::vector<Instance>{Instance{}};
             for (std::size_t k = 0; k < where.size(); ++k) {
                 StepPart p;
                 p.name = name.empty() ? "STEP part" : name;
+                p.assembly = where[k].path;
                 if (k == 0 && where.size() == 1) {
                     p.brep = brep;
                 } else {
                     p.brep = std::make_shared<Brep>(*brep);
                 }
-                if (!isIdentity(where[k])) p.brep->transform(where[k]);
+                if (!isIdentity(where[k].p)) p.brep->transform(where[k].p);
                 p.brep->name = p.name;
                 parts.push_back(std::move(p));
             }
@@ -490,15 +491,31 @@ private:
     };
     std::vector<Link> m_pendingLinks;
 
-    std::vector<Placement> instances(long long rep, int depth = 0) const {
+    // Each place the representation is used: where, and the assemblies it sits in (outermost first).
+    struct Instance {
+        Placement p;
+        std::string path;
+    };
+    std::vector<Instance> instances(long long rep, int depth = 0) {
         const long long c = classOf(rep);
         const auto range = m_parents.equal_range(c);
-        if (range.first == range.second || depth > 32) return {Placement{}};
-        std::vector<Placement> out;
-        for (auto it = range.first; it != range.second; ++it)
-            for (const Placement& up : instances(it->second.first, depth + 1)) out.push_back(it->second.second.then(up));
+        if (range.first == range.second || depth > 32) return {Instance{}};
+        std::vector<Instance> out;
+        for (auto it = range.first; it != range.second; ++it) {
+            std::string name = assemblyName(it->second.first);
+            for (char& ch : name)
+                if (ch == '/') ch = '-'; // the path separator
+            for (const Instance& up : instances(it->second.first, depth + 1))
+                out.push_back({it->second.second.then(up.p), name.empty() ? up.path : up.path.empty() ? name : up.path + "/" + name});
+        }
         return out;
     }
+    std::string assemblyName(long long rep) {
+        const auto it = m_assemblyNames.find(rep);
+        if (it != m_assemblyNames.end()) return it->second;
+        return m_assemblyNames[rep] = productName(rep);
+    }
+    std::map<long long, std::string> m_assemblyNames;
 
     // --- geometry ---
     DVec3 point(long long id) const {
@@ -1060,8 +1077,42 @@ std::string writeStep(const std::vector<StepPart>& parts, const std::string& fil
     const int ctx = w.add("(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((" + Writer::ref(unc) + ")) GLOBAL_UNIT_ASSIGNED_CONTEXT((" +
                           Writer::ref(mm) + "," + Writer::ref(rad) + "," + Writer::ref(sr) + ")) REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY'))");
     std::vector<int> prods;
+    // Sub-assemblies: a product each, with an empty shape the parts are placed in.
+    struct Node {
+        int pd = 0, rep = 0;
+    };
+    std::map<std::string, Node> nodes;
+    int nauos = 0;
+    auto place = [&](const std::string& parentPath, int childPd, int childRep, const std::string& childName) {
+        const Node& parent = nodes.at(parentPath);
+        const std::string id = "NAUO" + std::to_string(++nauos);
+        const int nauo = w.add("NEXT_ASSEMBLY_USAGE_OCCURRENCE('" + id + "','" + esc(childName) + "',''," + Writer::ref(parent.pd) + "," + Writer::ref(childPd) + ",$)");
+        const int pds = w.add("PRODUCT_DEFINITION_SHAPE('Placement','Placement of " + esc(childName) + "'," + Writer::ref(nauo) + ")");
+        // The parts are written where they are, so the placement is the identity.
+        const int idt = w.add("ITEM_DEFINED_TRANSFORMATION('',''," + Writer::ref(w.axis(Frame{})) + "," + Writer::ref(w.axis(Frame{})) + ")");
+        const int rr = w.add("(REPRESENTATION_RELATIONSHIP(''," + std::string("''") + "," + Writer::ref(childRep) + "," + Writer::ref(parent.rep) +
+                             ")REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(" + Writer::ref(idt) + ")SHAPE_REPRESENTATION_RELATIONSHIP())");
+        w.add("CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(" + Writer::ref(rr) + "," + Writer::ref(pds) + ")");
+    };
+    std::function<void(const std::string&)> addNode = [&](const std::string& path) {
+        if (path.empty() || nodes.count(path)) return;
+        const std::size_t slash = path.rfind('/');
+        const std::string parent = slash == std::string::npos ? "" : path.substr(0, slash);
+        addNode(parent);
+        const std::string nm = esc(slash == std::string::npos ? path : path.substr(slash + 1));
+        const int prod = w.add("PRODUCT('" + nm + "','" + nm + "',''," + "(" + Writer::ref(pctx) + "))");
+        prods.push_back(prod);
+        const int pdf = w.add("PRODUCT_DEFINITION_FORMATION(''," + std::string("''") + "," + Writer::ref(prod) + ")");
+        const int pd = w.add("PRODUCT_DEFINITION('design',''," + Writer::ref(pdf) + "," + Writer::ref(pdctx) + ")");
+        const int pds = w.add("PRODUCT_DEFINITION_SHAPE('',''," + Writer::ref(pd) + ")");
+        const int rep = w.add("SHAPE_REPRESENTATION('" + nm + "',(" + Writer::ref(w.axis(Frame{})) + ")," + Writer::ref(ctx) + ")");
+        w.add("SHAPE_DEFINITION_REPRESENTATION(" + Writer::ref(pds) + "," + Writer::ref(rep) + ")");
+        nodes[path] = {pd, rep};
+        if (!parent.empty()) place(parent, pd, rep, slash == std::string::npos ? path : path.substr(slash + 1));
+    };
     for (const StepPart& part : parts) {
         if (!part.brep || part.brep->empty()) continue;
+        addNode(part.assembly);
         const std::string nm = esc(part.name.empty() ? "Part" : part.name);
         const int prod = w.add("PRODUCT('" + nm + "','" + nm + "',''," + "(" + Writer::ref(pctx) + "))");
         prods.push_back(prod);
@@ -1076,6 +1127,7 @@ std::string writeStep(const std::vector<StepPart>& parts, const std::string& fil
         const int rep = w.add(std::string(solid ? "ADVANCED_BREP_SHAPE_REPRESENTATION" : "MANIFOLD_SURFACE_SHAPE_REPRESENTATION") + "('" + nm + "',(" +
                               Writer::ref(item) + "," + Writer::ref(origin) + ")," + Writer::ref(ctx) + ")");
         w.add("SHAPE_DEFINITION_REPRESENTATION(" + Writer::ref(pds) + "," + Writer::ref(rep) + ")");
+        if (!part.assembly.empty()) place(part.assembly, pd, rep, part.name.empty() ? "Part" : part.name);
     }
     if (!prods.empty()) {
         std::string l = "(";

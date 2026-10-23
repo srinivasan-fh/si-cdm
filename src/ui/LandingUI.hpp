@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Assembly.hpp"
 #include "core/Camera.hpp"
 #include "core/Drawing.hpp"
 #include "core/Scene.hpp"
@@ -31,6 +32,13 @@ struct UiState {
     // The drawing sheet window; the app keeps `sheet` drawn while it is open.
     bool showSheet = false;
     const SheetGraphics* sheet = nullptr;
+    // Assembly: the mates (the app points this at the document's), and the mate tool:
+    // its type (COINCIDENT, FLUSH... ; empty: off), value, and the face picked first.
+    const AssemblyState* assembly = nullptr;
+    std::string mateTool;
+    float mateValue = 0.0f;
+    std::string mateFirst;    // the first part's name ("" until picked)
+    Vec3 mateFirstPoint{};
     bool snapGrid = true;
     bool snapPoints = true;
     int selectedBody = -1;
@@ -182,6 +190,8 @@ private:
     void drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCamera& cam, const UiState& st);
     void drawControlsWindow(UiState& st);
     void drawAboutWindow(UiState& st);
+    void drawMateWindow(UiCommands& cmd, UiState& st);
+    const Scene* m_menuScene = nullptr; // the scene the menus name parts from (set each frame)
     void drawSheetWindow(UiCommands& cmd, UiState& st);
     // Drawing sheet window: zoom (pixels per mm), pan (mm at the canvas's top left), and
     // the dimension tool's first point.

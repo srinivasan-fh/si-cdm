@@ -458,6 +458,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             while (bodyNamed(doc, src.name + " (" + std::to_string(next) + ")") >= 0) ++next; // names stay unique
             Body b = featureBody(src.name + " (" + std::to_string(next++) + ")", std::move(m), src.color);
             b.component = src.component;
+            b.assembly = src.assembly;
             doc.scene.add(std::move(b));
         }
         doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
@@ -696,6 +697,7 @@ bool regenerateHistory(Document& doc, const std::vector<HistoryStep>& steps, Com
     const int sb = doc.selectedBody, sc = doc.selectedCurve, si = doc.selectedImage, serial = doc.primitiveSerial;
     const bool mm = doc.apiMillimeters;
     doc.scene.clear();
+    doc.state.assembly = {}; // the MATE steps put the mates back
     doc.clearSelection();
     doc.primitiveSerial = 0;
     doc.state.plane = SketchPlane::Top;

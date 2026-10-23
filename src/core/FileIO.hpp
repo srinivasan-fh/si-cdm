@@ -9,6 +9,7 @@
 //   images      .png .jpg .jpeg .bmp .tga .gif .psd .hdr .pnm: reference images
 
 #include "core/Cam.hpp"
+#include "core/Assembly.hpp"
 #include "core/Drawing.hpp"
 #include "core/Scene.hpp"
 #include "core/Units.hpp"
@@ -43,6 +44,7 @@ struct ProjectState {
     float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
     CamJob cam;               // CAM: setup, tools and operations (toolpaths are remade)
     Drawing drawing;          // the drawing sheet: views, dimensions, title block
+    AssemblyState assembly;   // mates between the parts
     std::vector<HistoryStep> history;     // the feature history
     std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)
     bool historyComplete = true;          // false: the model was also changed outside commands
@@ -55,7 +57,8 @@ struct ProjectState {
 //   1  the first format
 //   2  adds exact geometry ("brep_step"), "reader_version" and "saved_by"
 //   3  adds the drawing sheet ("drawing")
-constexpr int kProjectVersion = 3;
+//   4  adds assemblies: each body's "assembly" path and the mates ("assembly")
+constexpr int kProjectVersion = 4;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

@@ -3281,6 +3281,8 @@ bool addBoss(Body& body, const Vec3& at, const Vec3& normal, BossShape shape, fl
     return applyCut(body, tool, BooleanOp::Union, "boss", error);
 }
 
+bool meshBooleanRobust(MeshData& a, const MeshData& b, BooleanOp op) { return robustBoolean(a, b, op); }
+
 bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error) {
     MeshData m = a.mesh; // in a's frame (see applyCut)
     MeshData other = b.mesh;

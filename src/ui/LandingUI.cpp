@@ -303,6 +303,7 @@ float niceStep(float minWorld) {
 UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSettings& vp, UiState& st) {
     UiCommands cmd;
     const ImGuiViewport* mv = ImGui::GetMainViewport();
+    m_menuScene = &scene;
     drawMenuBar(cmd, cam, vp, st);
     drawOptionsBar(cmd, cam, vp, st);
     drawStatusBar(cmd, scene, cam, st);
@@ -345,6 +346,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showControls) drawControlsWindow(st);
     if (st.showAbout) drawAboutWindow(st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
+    if (!st.mateTool.empty()) drawMateWindow(cmd, st);
     return cmd;
 }
 
@@ -533,6 +535,44 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::Separator();
         if (ImGui::MenuItem("Export Drawing (PDF, SVG, DXF)...")) requestFile(FileSheetExport, st);
         if (ImGui::MenuItem("Delete Drawing")) cmd.commands.push_back("SHEET DELETE");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Assembly")) {
+        const Scene& scene = *m_menuScene;
+        auto startMate = [&](const char* type) {
+            st.mateTool = type;
+            st.mateFirst.clear();
+            if (st.mode != ViewMode::Model3D) cmd.mode = ViewMode::Model3D;
+        };
+        ImGui::TextDisabled("Mate two faces (click one on each part)");
+        if (ImGui::MenuItem("Coincident (Face to Face)")) startMate("COINCIDENT");
+        if (ImGui::MenuItem("Flush (Faces the Same Way)")) startMate("FLUSH");
+        if (ImGui::MenuItem("Concentric (Round Faces)")) startMate("CONCENTRIC");
+        if (ImGui::MenuItem("Distance...")) startMate("DISTANCE");
+        if (ImGui::MenuItem("Angle...")) startMate("ANGLE");
+        if (ImGui::MenuItem("Parallel")) startMate("PARALLEL");
+        if (ImGui::MenuItem("Perpendicular")) startMate("PERPENDICULAR");
+        ImGui::Separator();
+        const bool body = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size());
+        const std::string selName = body ? "\"" + scene.bodies()[static_cast<std::size_t>(st.selectedBody)].name + "\"" : std::string();
+        if (ImGui::MenuItem("Fix the Selected Part", nullptr, false, body)) cmd.commands.push_back("MATE FIX " + selName);
+        if (ImGui::MenuItem("Solve Mates", nullptr, false, st.assembly && !st.assembly->empty())) cmd.commands.push_back("MATE SOLVE");
+        if (ImGui::MenuItem("List Mates")) cmd.commands.push_back("MATE");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Put the Selected Part in a Sub-assembly", nullptr, false, body)) {
+            int n = 1;
+            for (bool taken = true; taken; ++n) {
+                taken = false;
+                for (const Body& b : scene.bodies()) taken = taken || b.assembly == "Sub-assembly " + std::to_string(n);
+                if (!taken) break;
+            }
+            cmd.commands.push_back("ASSEMBLY GROUP \"Sub-assembly " + std::to_string(n) + "\" " + selName);
+        }
+        if (ImGui::MenuItem("Take the Selected Part Out", nullptr, false, body)) cmd.commands.push_back("ASSEMBLY UNGROUP " + selName);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Check Interference")) cmd.commands.push_back("ASSEMBLY INTERFERENCE");
+        if (ImGui::MenuItem("Assembly Tree")) cmd.commands.push_back("ASSEMBLY");
+        if (ImGui::MenuItem("Parts List (BOM)")) cmd.commands.push_back("ASSEMBLY BOM");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Manufacture")) {
@@ -1196,21 +1236,66 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             if (ImGui::TreeNode("Bodies")) {
                 auto& bodies = scene.bodies();
-                for (int i = 0; i < static_cast<int>(bodies.size()); ++i) {
-                    Body& b = bodies[static_cast<std::size_t>(i)];
-                    ImGui::PushID(i);
-                    eyeToggle("##vis", b.visible);
-                    ImGui::SameLine(0, 4);
-                    ImGui::ColorButton("##col", {b.color.x, b.color.y, b.color.z, 1.0f},
-                                       ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder, {10, 10});
-                    ImGui::SameLine(0, 6);
-                    if (ImGui::Selectable(b.name.c_str(), st.selectedBody == i)) {
-                        st.selectedBody = st.selectedBody == i ? -1 : i;
-                        st.selectedCurve = st.selectedImage = -1;
+                // Sub-assemblies (every path and its ancestors), in the order their parts come.
+                std::vector<std::string> paths;
+                for (const Body& b : bodies)
+                    for (std::string q = b.assembly; !q.empty();) {
+                        if (std::find(paths.begin(), paths.end(), q) == paths.end()) paths.push_back(q);
+                        const std::size_t slash = q.rfind('/');
+                        q = slash == std::string::npos ? "" : q.substr(0, slash);
                     }
-                    ImGui::PopID();
-                }
+                std::sort(paths.begin(), paths.end());
+                std::function<void(const std::string&)> group = [&](const std::string& path) {
+                    for (const std::string& q : paths) {
+                        const std::size_t slash = q.rfind('/');
+                        if ((slash == std::string::npos ? std::string() : q.substr(0, slash)) != path) continue;
+                        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+                        if (ImGui::TreeNode(q.c_str(), "%s", (slash == std::string::npos ? q : q.substr(slash + 1)).c_str())) {
+                            group(q);
+                            ImGui::TreePop();
+                        }
+                    }
+                    for (int i = 0; i < static_cast<int>(bodies.size()); ++i) {
+                        Body& b = bodies[static_cast<std::size_t>(i)];
+                        if (b.assembly != path) continue;
+                        ImGui::PushID(i);
+                        eyeToggle("##vis", b.visible);
+                        ImGui::SameLine(0, 4);
+                        ImGui::ColorButton("##col", {b.color.x, b.color.y, b.color.z, 1.0f},
+                                           ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder, {10, 10});
+                        ImGui::SameLine(0, 6);
+                        if (ImGui::Selectable(b.name.c_str(), st.selectedBody == i)) {
+                            st.selectedBody = st.selectedBody == i ? -1 : i;
+                            st.selectedCurve = st.selectedImage = -1;
+                        }
+                        ImGui::PopID();
+                    }
+                };
+                group("");
                 ImGui::TreePop();
+            }
+            if (st.assembly && !st.assembly->empty()) {
+                char mateLabel[48];
+                std::snprintf(mateLabel, sizeof(mateLabel), "Mates (%zu)###mates", st.assembly->mates.size());
+                if (ImGui::TreeNode(mateLabel)) {
+                    for (const Mate& m : st.assembly->mates) {
+                        ImGui::PushID(m.name.c_str());
+                        const double e = mateError(scene, m);
+                        const bool met = m.suppressed || (e >= 0 && e < 1e-3);
+                        const std::string text = describeMate(m);
+                        if (met) ImGui::TextUnformatted(text.c_str());
+                        else ImGui::TextColored(theme::vec(theme::kError), "%s  (not met)", text.c_str());
+                        if (ImGui::BeginPopupContextItem("##mate")) {
+                            if (ImGui::MenuItem(m.suppressed ? "Unsuppress" : "Suppress"))
+                                cmd.commands.push_back(std::string("MATE ") + (m.suppressed ? "UNSUPPRESS " : "SUPPRESS ") + m.name);
+                            if (m.a.geom == MateGeom::Plane && m.b.geom == MateGeom::Plane && ImGui::MenuItem("Flip")) cmd.commands.push_back("MATE FLIP " + m.name);
+                            if (ImGui::MenuItem("Delete")) cmd.commands.push_back("MATE DELETE " + m.name);
+                            ImGui::EndPopup();
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
             }
             auto& curves = scene.sketch().curves();
             char sketchLabel[48];
@@ -3160,6 +3245,39 @@ void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
     }
     dl->PopClipRect();
     ImGui::End();
+}
+
+// The mate tool: pick a face on the part that stays, then one on the part that moves.
+void LandingUI::drawMateWindow(UiCommands& cmd, UiState& st) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 70}, ImGuiCond_Appearing, {0.5f, 0.0f});
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    bool open = true;
+    if (!ImGui::Begin("Mate", &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        if (!open) st.mateTool.clear();
+        return;
+    }
+    static const char* kTypes[] = {"COINCIDENT", "FLUSH", "CONCENTRIC", "DISTANCE", "ANGLE", "PARALLEL", "PERPENDICULAR"};
+    int cur = 0;
+    for (int i = 0; i < 7; ++i)
+        if (st.mateTool == kTypes[i]) cur = i;
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::Combo("##type", &cur, kTypes, 7)) st.mateTool = kTypes[cur];
+    if (st.mateTool == "DISTANCE" || st.mateTool == "ANGLE") {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        ImGui::InputFloat(st.mateTool == "DISTANCE" ? "mm" : "deg", &st.mateValue, 0, 0, "%.3f");
+    }
+    if (st.mateFirst.empty()) ImGui::TextUnformatted("Click a face on the part that stays");
+    else ImGui::Text("%s picked: now click a face on the part to move", st.mateFirst.c_str());
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) open = false;
+    ImGui::End();
+    if (!open) {
+        st.mateTool.clear();
+        st.mateFirst.clear();
+    }
+    (void)cmd;
 }
 
 } // namespace sicdm

@@ -540,6 +540,27 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("operation", prop("string", "mate | fix | list | solve | edit | flip | suppress | unsuppress | delete | clear | tree | group | ungroup | "
+                                          "interference | bom"));
+        p.set("type", prop("string", "mate: coincident, flush, concentric, distance, angle, parallel or perpendicular"));
+        p.set("part", prop("string", "mate: the part that stays; fix: the part to hold still"));
+        p.set("at", prop("array", "mate: a point [x, y, z] on the face of `part` to mate (mm, world)"));
+        p.set("moving", prop("string", "mate: the part that moves"));
+        p.set("moving_at", prop("array", "mate: a point [x, y, z] on the face of `moving`"));
+        p.set("value", prop("number", "mate distance (mm) or angle (degrees); edit: the new value"));
+        p.set("flip", prop("boolean", "mate: planes the other way round (flush instead of facing)"));
+        p.set("mate", prop("string", "edit / flip / suppress / unsuppress / delete: the mate's name (M1...) or number"));
+        p.set("name", prop("string", "group: the sub-assembly (a/b for one inside another)"));
+        p.set("parts", prop("array", "group / ungroup / interference: part names"));
+        tools.push(tool("assembly",
+                        "Assemblies: mate parts by their faces (coincident, flush, concentric, distance, angle, parallel, perpendicular; "
+                        "planes, axes of round faces and sphere centres picked by a point on the face) and the solver moves the second "
+                        "part into place, reporting the freedom left and conflicts; fix parts; the tree of sub-assemblies (kept in STEP "
+                        "files); interference between parts with overlap volumes; and the parts list.",
+                        p, {"operation"}));
+    }
+    {
+        Json p = Json::object();
         p.set("operation", prop("string", "new | list | view_add | view_move | view_delete | view_scale | view_hidden | section | dim | dim_delete | "
                                           "autodim | title | note | scale | size | projection | export | delete"));
         p.set("bodies", prop("array", "new: the bodies to draw (default: every visible body)"));
@@ -794,7 +815,14 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                 if (a["move_by"].isArray()) b.offset += v3("move_by");
                 if (a["visible"].isBool()) b.visible = a["visible"].asBool();
                 if (a["color"].isArray()) b.color = v3("color");
-                if (a["rename"].isString() && !a["rename"].asString().empty()) m_doc.scene.renameBody(bi, a["rename"].asString());
+                if (a["rename"].isString() && !a["rename"].asString().empty()) {
+                    const std::string old = b.name, now = a["rename"].asString();
+                    m_doc.scene.renameBody(bi, now);
+                    for (Mate& m : m_doc.state.assembly.mates) {
+                        if (m.a.body == old) m.a.body = now;
+                        if (m.b.body == old) m.b.body = now;
+                    }
+                }
                 m_doc.dirty = m_changed = true;
                 return textResult("Updated body " + b.name, false);
             }
@@ -1009,6 +1037,52 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         }
         return textResult("operation is one of revolve, sweep, loft, pattern, mirror, edges, fillet, chamfer, massprops, measure, history, regen, "
                           "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete",
+                          true);
+    }
+    if (name == "assembly") {
+        const std::string op = a["operation"].asString();
+        auto vec3 = [&](const Json& v) {
+            std::string s;
+            for (std::size_t i = 0; i < 3 && i < v.size(); ++i) s += (i ? "," : "") + num(v[i].asNumber());
+            return s;
+        };
+        auto names = [&](const char* key) {
+            std::string s;
+            if (a[key].isArray())
+                for (std::size_t i = 0; i < a[key].size(); ++i) s += " " + quote(a[key][i].asString());
+            return s;
+        };
+        const std::string mate = a["mate"].isString() ? a["mate"].asString() : a["mate"].isNumber() ? num(a["mate"].asNumber()) : std::string();
+        if (op == "mate") {
+            if (!a["type"].isString() || !a["part"].isString() || !a["at"].isArray() || !a["moving"].isString() || !a["moving_at"].isArray())
+                return textResult("mate needs type, part, at [x, y, z], moving and moving_at [x, y, z]", true);
+            std::string line = "MATE " + a["type"].asString();
+            if (a["value"].isNumber()) line += " " + num(a["value"].asNumber());
+            line += " " + quote(a["part"].asString()) + " AT " + vec3(a["at"]) + " " + quote(a["moving"].asString()) + " AT " + vec3(a["moving_at"]);
+            if (a["flip"].asBool()) line += " FLIP";
+            return runLine(line);
+        }
+        if (op == "fix") {
+            if (!a["part"].isString()) return textResult("fix needs part", true);
+            return runLine("MATE FIX " + quote(a["part"].asString()));
+        }
+        if (op == "list") return runLine("MATE");
+        if (op == "solve") return runLine("MATE SOLVE");
+        if (op == "clear") return runLine("MATE CLEAR");
+        if (op == "edit" || op == "flip" || op == "suppress" || op == "unsuppress" || op == "delete") {
+            if (mate.empty()) return textResult(op + " needs mate (its name or number)", true);
+            return runLine("MATE " + toUpper(op) + " " + mate + (op == "edit" ? " " + num(a["value"].asNumber()) : std::string()));
+        }
+        if (op == "tree") return runLine("ASSEMBLY");
+        if (op == "group") {
+            if (!a["name"].isString() || !a["parts"].isArray()) return textResult("group needs name and parts", true);
+            return runLine("ASSEMBLY GROUP " + quote(a["name"].asString()) + names("parts"));
+        }
+        if (op == "ungroup") return runLine("ASSEMBLY UNGROUP" + names("parts"));
+        if (op == "interference") return runLine("ASSEMBLY INTERFERENCE" + names("parts"));
+        if (op == "bom") return runLine("ASSEMBLY BOM");
+        return textResult("operation is one of mate, fix, list, solve, edit, flip, suppress, unsuppress, delete, clear, tree, group, ungroup, "
+                          "interference, bom",
                           true);
     }
     if (name == "drawing") {

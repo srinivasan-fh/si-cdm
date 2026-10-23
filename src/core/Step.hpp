@@ -8,9 +8,11 @@
 // extrusions and revolutions; lines, circles, ellipses, B-spline curves, polylines (and
 // the 3D curve of surface / seam curves and trimmed curves); length units (SI with any
 // prefix, inch, foot...) and plane-angle units; assemblies (the placement of each part
-// instance through the representation relationships); product names.
+// instance through the representation relationships, and the sub-assemblies it sits in);
+// product names.
 //
-// Written: AP214 (automotive_design), millimetres, one product per body.
+// Written: AP214 (automotive_design), millimetres, one product per body, and the
+// sub-assemblies the bodies sit in as assembly products (NEXT_ASSEMBLY_USAGE_OCCURRENCE).
 
 #include "core/Brep.hpp"
 
@@ -23,6 +25,7 @@ namespace sicdm {
 struct StepPart {
     std::string name;
     std::shared_ptr<Brep> brep; // millimetres, placed where the assembly puts it
+    std::string assembly;       // the sub-assemblies it sits in, outermost first ("Robot/Arm"); "" at the top
 };
 
 struct StepReadReport {
