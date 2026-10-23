@@ -19,9 +19,13 @@ struct Profile {
     float radius = 0.0f;      // circle
 };
 
-// Closed curve -> profile: rectangles, circles and closed simple polylines.
+// Closed curve -> profile: rectangles, circles, closed simple polylines and splines,
+// ellipses and slots (construction curves are none).
 // Returns nullopt (with a reason) for open curves, points and self-intersections.
 std::optional<Profile> profileFromCurve(const SketchCurve& curve, std::string* why = nullptr);
+// The same for curve `index` of a sketch, and for an open curve, the closed loop it makes
+// with the curves joined to it end to end (lines and arcs round a slot, say).
+std::optional<Profile> profileFromSketch(const Sketch& sketch, std::size_t index, std::string* why = nullptr);
 
 // Body parameters for an extrusion between depths w0 and w1 along the plane
 // normal (w1 > w0). Layout (all mm):

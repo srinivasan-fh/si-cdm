@@ -173,7 +173,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             } else return out.fail("Usage: REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [KEEP]");
         }
         std::string why;
-        const auto profile = profileFromCurve(curve, &why);
+        const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(ci), &why);
         if (!profile) return out.fail("Cannot revolve " + curve.name + ": " + why);
         std::optional<MeshData> mesh;
         std::shared_ptr<Brep> exact;
@@ -224,7 +224,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         const SketchCurve profileCurve = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
         const SketchCurve pathCurve = doc.scene.sketch().curves()[static_cast<std::size_t>(pi)];
         std::string why;
-        const auto profile = profileFromCurve(profileCurve, &why);
+        const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(ci), &why);
         if (!profile) return out.fail("Cannot sweep " + profileCurve.name + ": " + why);
         std::vector<Vec3> path;
         bool closed = false;
@@ -268,7 +268,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         for (const auto& [ci, off] : sections) {
             const SketchCurve& c = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
             std::string why;
-            const auto profile = profileFromCurve(c, &why);
+            const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(ci), &why);
             if (!profile) return out.fail("Section " + c.name + ": " + why);
             const PlaneFrame f = planeFrame(c.plane);
             std::vector<Vec3> loop;

@@ -6,6 +6,7 @@
 #include "core/Pose.hpp"
 #include "core/CamCommand.hpp"
 #include "core/AssemblyCommand.hpp"
+#include "core/SketchEdit.hpp"
 #include "core/DrawingCommand.hpp"
 #include "core/FeatureCommand.hpp"
 #include "core/SketchCommand.hpp"
@@ -298,7 +299,8 @@ bool historyCommand(const std::string& cmd) {
                                          "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
                                          "PART",     "PARAM",   "ROTATE",  "SCALE",    "ERASE",     "MOVE",    "SELECT",   "REPAIR",  "ORIENT",
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
-                                         "CONSTRAINT", "MATE",  "ASSEMBLY"};
+                                         "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
+                                         "CONSTRUCTION", "EXTEND", "OFFSET"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -402,8 +404,121 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     auto usage = [&] { return out.fail(std::string("Usage: ") + spec->usage); };
 
     // ---- Sketch -----------------------------------------------------------
+    // A trailing CONSTRUCTION makes any new curve a construction (reference) curve.
+    bool construction = false;
+    std::vector<std::string> sketchArgs = a;
+    if ((cmd == "LINE" || cmd == "PLINE" || cmd == "RECT" || cmd == "POINT" || cmd == "CIRCLE" || cmd == "ARC" || cmd == "SPLINE" || cmd == "ELLIPSE" ||
+         cmd == "SKETCHSLOT" || cmd == "POLYGON") &&
+        !sketchArgs.empty() && (iequal(sketchArgs.back(), "construction") || iequal(sketchArgs.back(), "constr"))) {
+        construction = true;
+        sketchArgs.pop_back();
+    }
+    auto addSketchCurve = [&](SketchCurve c) {
+        c.construction = construction;
+        return addCurve(doc, std::move(c));
+    };
+    if (cmd == "ARC") {
+        // ARC start through end | ARC CENTER c start end (counter-clockwise from start to end)
+        const bool centred = !sketchArgs.empty() && (iequal(sketchArgs[0], "center") || iequal(sketchArgs[0], "centre"));
+        std::vector<std::string> pa(sketchArgs.begin() + (centred ? 1 : 0), sketchArgs.end());
+        std::vector<Vec2> pts;
+        std::string bad;
+        if (!parsePoints(pa, pts, bad)) return out.fail("Not a point: " + bad);
+        if (pts.size() != 3) return out.fail("ARC start through end  |  ARC CENTER centre start end");
+        SketchCurve c;
+        c.kind = CurveKind::Arc;
+        if (centred) {
+            const float r = std::hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+            if (!(r > 0)) return out.fail("The start must be away from the centre");
+            c.pts = {pts[0], pts[1], pts[2]};
+            c.radius = r;
+        } else {
+            Vec2 centre;
+            float r;
+            bool ccw;
+            if (!arcThrough(pts[0], pts[1], pts[2], centre, r, ccw)) return out.fail("The three points are in line: no arc passes through them");
+            c.pts = ccw ? std::vector<Vec2>{centre, pts[0], pts[2]} : std::vector<Vec2>{centre, pts[2], pts[0]};
+            c.radius = r;
+        }
+        return addSketchCurve(c);
+    }
+    if (cmd == "SPLINE") {
+        std::vector<std::string> pa = sketchArgs;
+        bool close = false;
+        if (!pa.empty() && (iequal(pa.back(), "close") || iequal(pa.back(), "closed"))) close = true, pa.pop_back();
+        std::vector<Vec2> pts;
+        std::string bad;
+        if (!parsePoints(pa, pts, bad)) return out.fail("Not a point: " + bad);
+        if (close && pts.size() > 2 && std::hypot(pts.front().x - pts.back().x, pts.front().y - pts.back().y) < 1e-6f) pts.pop_back();
+        if (pts.size() < (close ? 3u : 2u)) return usage();
+        SketchCurve c;
+        c.kind = CurveKind::Spline;
+        c.pts = pts;
+        c.closed = close;
+        return addSketchCurve(c);
+    }
+    if (cmd == "ELLIPSE") {
+        // ELLIPSE centre major-axis-end minor-radius
+        if (sketchArgs.size() != 3) return usage();
+        std::vector<Vec2> pts;
+        std::string bad;
+        if (!parsePoints({sketchArgs[0], sketchArgs[1]}, pts, bad)) return out.fail("Not a point: " + bad);
+        const auto ry = parseLength(sketchArgs[2]);
+        const float rx = std::hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        if (!ry || !(*ry > 0) || !(rx > 0)) return out.fail("An ellipse needs a major axis and a minor radius");
+        SketchCurve c;
+        c.kind = CurveKind::Ellipse;
+        c.pts = pts;
+        c.radius = static_cast<float>(*ry);
+        return addSketchCurve(c);
+    }
+    if (cmd == "SKETCHSLOT") {
+        // SKETCHSLOT centre1 centre2 radius
+        if (sketchArgs.size() != 3) return usage();
+        std::vector<Vec2> pts;
+        std::string bad;
+        if (!parsePoints({sketchArgs[0], sketchArgs[1]}, pts, bad)) return out.fail("Not a point: " + bad);
+        const auto r = parseLength(sketchArgs[2]);
+        if (!r || !(*r > 0) || std::hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) <= 0) return out.fail("A slot needs two different end centres and a radius");
+        SketchCurve c;
+        c.kind = CurveKind::Slot;
+        c.pts = pts;
+        c.radius = static_cast<float>(*r);
+        return addSketchCurve(c);
+    }
+    if (cmd == "POLYGON") {
+        // POLYGON centre radius [sides] [CIRCUMSCRIBED] [ANGLE deg]: a closed polyline
+        if (sketchArgs.size() < 2) return usage();
+        const auto c0 = parsePointInput(sketchArgs[0]);
+        const auto r = parseLength(sketchArgs[1]);
+        if (!c0 || !r || !(*r > 0)) return usage();
+        const Vec2 centre = c0->resolve({});
+        int sides = 6;
+        bool outside = false;
+        float angle = 0;
+        for (std::size_t k = 2; k < sketchArgs.size(); ++k) {
+            if (iequal(sketchArgs[k], "circumscribed") || iequal(sketchArgs[k], "across-flats") || iequal(sketchArgs[k], "flats")) outside = true;
+            else if (iequal(sketchArgs[k], "inscribed")) outside = false;
+            else if (iequal(sketchArgs[k], "angle") && k + 1 < sketchArgs.size()) {
+                const auto v = parseNumber(sketchArgs[++k]);
+                if (!v) return usage();
+                angle = *v;
+            } else if (const auto n = parseNumber(sketchArgs[k])) sides = static_cast<int>(*n);
+            else return usage();
+        }
+        if (sides < 3 || sides > 1000) return out.fail("A polygon has 3 to 1000 sides");
+        // Inscribed: corners on the radius; circumscribed: sides touching it (a nut across flats).
+        const float rc = static_cast<float>(*r) / (outside ? std::cos(kPi / static_cast<float>(sides)) : 1.0f);
+        SketchCurve c;
+        c.kind = CurveKind::Polyline;
+        for (int k = 0; k <= sides; ++k) { // the first corner on +u (turned by ANGLE)
+            const float t = angle * kPi / 180.0f + 2.0f * kPi * static_cast<float>(k % sides) / static_cast<float>(sides);
+            c.pts.push_back({centre.x + rc * std::cos(t), centre.y + rc * std::sin(t)});
+        }
+        return addSketchCurve(c);
+    }
     if (cmd == "LINE" || cmd == "PLINE" || cmd == "RECT" || cmd == "POINT") {
-        std::vector<std::string> pointArgs = a;
+        std::vector<std::string> pointArgs = sketchArgs;
         bool close = false;
         if (cmd == "PLINE" && !pointArgs.empty() && iequal(pointArgs.back(), "close")) {
             close = true;
@@ -417,37 +532,37 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             if (pts.size() != 1) return usage();
             c.kind = CurveKind::Point;
             c.pts = pts;
-            return addCurve(doc, c);
+            return addSketchCurve(c);
         }
         if (cmd == "RECT") {
             if (pts.size() != 2 || pts[0].x == pts[1].x || pts[0].y == pts[1].y) return usage();
             c.kind = CurveKind::Rectangle;
             c.pts = pts;
-            return addCurve(doc, c);
+            return addSketchCurve(c);
         }
         if (pts.size() < 2) return usage();
         if (cmd == "PLINE") {
             if (close) pts.push_back(pts.front());
             c.kind = CurveKind::Polyline;
             c.pts = pts;
-            return addCurve(doc, c);
+            return addSketchCurve(c);
         }
         for (std::size_t i = 1; i < pts.size(); ++i) { // LINE p1 p2 p3 ... = connected segments
             SketchCurve seg;
             seg.kind = CurveKind::Line;
             seg.pts = {pts[i - 1], pts[i]};
-            for (auto& l : addCurve(doc, seg).lines) out.say(l);
+            for (auto& l : addSketchCurve(seg).lines) out.say(l);
         }
         return out;
     }
     if (cmd == "CIRCLE") {
-        if (a.size() != 2) return usage();
-        const auto c = parsePointInput(a[0]);
+        if (sketchArgs.size() != 2) return usage();
+        const auto c = parsePointInput(sketchArgs[0]);
         if (!c) return usage();
         const Vec2 centre = c->resolve({});
         float r = 0.0f;
-        if (const auto n = parseLength(a[1])) r = static_cast<float>(*n);
-        else if (const auto p = parsePointInput(a[1])) {
+        if (const auto n = parseLength(sketchArgs[1])) r = static_cast<float>(*n);
+        else if (const auto p = parsePointInput(sketchArgs[1])) {
             const Vec2 q = p->resolve(centre);
             r = std::hypot(q.x - centre.x, q.y - centre.y);
         }
@@ -456,7 +571,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         curve.kind = CurveKind::Circle;
         curve.pts = {centre};
         curve.radius = r;
-        return addCurve(doc, curve);
+        return addSketchCurve(curve);
     }
 
     // ---- Solids -----------------------------------------------------------
@@ -529,7 +644,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             return out.fail("Select a closed sketch curve (rectangle, circle or closed polyline) or give its name");
         SketchCurve& c = curves[static_cast<std::size_t>(index)];
         std::string why;
-        const auto profile = profileFromCurve(c, &why);
+        const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(index), &why);
         if (!profile) return out.fail("Cannot extrude: " + why);
         Body b = defaultPrimitive("box", ++doc.primitiveSerial); // name / colour series
         b.name = "Extrude " + std::to_string(doc.primitiveSerial);
@@ -541,6 +656,9 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         attachPrimitiveBrep(b);
         const std::string profileName = c.name;
         if (!keep) { // the sketch is consumed, as in most CAD tools (show it again in the Model panel)
+            std::vector<std::size_t> chain; // a loop of curves end to end: all of them
+            if (!c.isClosed()) chainLoop(doc.scene.sketch(), static_cast<std::size_t>(index), &chain);
+            for (std::size_t k : chain) doc.scene.sketch().curves()[k].visible = false;
             c.visible = false;
             doc.scene.sketch().touch();
         }
@@ -1481,6 +1599,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     if (cmd == "CAM") return runCamCommand(doc, a, pc.quoted);
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET") return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
         cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES")
         return runFeatureCommand(doc, cmd, a, pc.quoted);
@@ -1678,6 +1797,16 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         out.say(body.name + ": " + done + fmt(", %g triangles", static_cast<double>(body.mesh.indices.size() / 3)) +
                 fmt(" (was %g)", static_cast<double>(before)) + (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))));
         return out;
+    }
+    // TRIM "curve" AT x,y cuts a sketch curve back to the curves crossing it.
+    if (cmd == "TRIM" && std::any_of(a.begin(), a.end(), [](const std::string& w) { return iequal(w, "at"); })) {
+        bool curveFirst = false;
+        for (std::size_t k = 0; k < a.size() && !iequal(a[k], "at"); ++k) {
+            std::string nm;
+            for (std::size_t q = 0; q <= k; ++q) nm += (q ? " " : "") + a[q];
+            for (const SketchCurve& c : doc.scene.sketch().curves()) curveFirst = curveFirst || iequal(c.name, nm);
+        }
+        if (curveFirst) return runSketchCommand(doc, "TRIMCURVE", a, pc.quoted);
     }
     if (cmd == "SCULPT" || cmd == "HOLE" || cmd == "POCKET" || cmd == "CHANNEL" || cmd == "TRIM" || cmd == "BOSS") {
         if (cmd == "SCULPT" && a.size() == 1 && iequal(a[0], "list")) {

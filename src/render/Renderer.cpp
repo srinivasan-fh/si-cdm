@@ -506,11 +506,37 @@ void Renderer::drawImages(const Scene& scene, const OrbitCamera& cam, const View
 void Renderer::uploadSketch(const Sketch& sketch) {
     std::vector<Vec3> verts;
     m_sketchRanges.clear();
+    // Construction curves dashed: dashes a fixed share of the sketch's size.
+    const AABB box = sketch.bounds();
+    const float dash = std::max(box.valid() ? length(box.max - box.min) / 160.0f : 1.0f, 0.05f);
     for (const SketchCurve& c : sketch.curves()) {
         const std::vector<Vec3> strip = c.worldStrip();
-        m_sketchRanges.push_back({static_cast<GLint>(verts.size()), static_cast<GLsizei>(strip.size()),
-                                  c.kind == CurveKind::Point});
-        verts.insert(verts.end(), strip.begin(), strip.end());
+        if (!c.construction || c.kind == CurveKind::Point || strip.size() < 2) {
+            m_sketchRanges.push_back({static_cast<GLint>(verts.size()), static_cast<GLsizei>(strip.size()), c.kind == CurveKind::Point, false});
+            verts.insert(verts.end(), strip.begin(), strip.end());
+            continue;
+        }
+        const GLint first = static_cast<GLint>(verts.size());
+        const double period = 2.0 * static_cast<double>(dash);
+        double phase = 0; // where in the dash-and-gap period the next piece starts
+        for (std::size_t i = 1; i < strip.size(); ++i) {
+            const Vec3 a = strip[i - 1], b = strip[i];
+            const double l = static_cast<double>(length(b - a));
+            if (!(l > 0)) continue;
+            for (double t = 0; t < l;) {
+                const bool drawing = phase < dash;
+                // On to the end of this dash or gap (at least a sliver, so it always moves on).
+                const double step = std::max(std::min(l - t, (drawing ? dash : period) - phase), 1e-9 * period);
+                if (drawing) {
+                    verts.push_back(a + (b - a) * static_cast<float>(t / l));
+                    verts.push_back(a + (b - a) * static_cast<float>(std::min(t + step, l) / l));
+                }
+                t += step;
+                phase += step;
+                if (phase >= period) phase -= period;
+            }
+        }
+        m_sketchRanges.push_back({first, static_cast<GLsizei>(verts.size()) - first, false, true});
     }
     glBindBuffer(GL_ARRAY_BUFFER, m_sketchVbo);
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(Vec3)), verts.data(), GL_DYNAMIC_DRAW);
@@ -532,11 +558,11 @@ void Renderer::drawSketch(const Scene& scene, const OrbitCamera& cam, const View
     for (std::size_t i = 0; i < n; ++i) {
         if (!curves[i].visible) continue;
         const SketchRange& r = m_sketchRanges[i];
-        const Vec3 c = static_cast<int>(i) == selected ? Vec3{0.35f, 0.72f, 1.0f} : s.sketchColor;
+        const Vec3 c = static_cast<int>(i) == selected ? Vec3{0.35f, 0.72f, 1.0f} : i < s.sketchColors.size() ? s.sketchColors[i] : s.sketchColor;
         m_sketchShader.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
         m_sketchShader.set("uRound", r.point ? 1.0f : 0.0f);
         m_sketchShader.set("uPointSize", r.point ? 7.0f : 1.0f);
-        glDrawArrays(r.point ? GL_POINTS : GL_LINE_STRIP, r.first, r.count);
+        glDrawArrays(r.point ? GL_POINTS : r.dashed ? GL_LINES : GL_LINE_STRIP, r.first, r.count);
     }
     glDisable(GL_PROGRAM_POINT_SIZE);
     glEnable(GL_DEPTH_TEST);

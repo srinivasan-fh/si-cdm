@@ -20,14 +20,17 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::Point, C::Sketch, "Point", "", "Zero-dimensional references for hole placements, centres and weld locations. Click to place.", true},
     {T::Line, C::Sketch, "Line", "L", "Straight segments defining edges, structural frames and linear boundaries. Click start, click end.", true},
     {T::Polyline, C::Sketch, "Polyline", "", "Connected lines acting as a single continuous path. Click points; Enter, double-click or click the start to finish.", true},
-    {T::Arc, C::Sketch, "Arc", "A", "Curved segments for smooth transitions, corners and circular paths.", false},
+    {T::Arc, C::Sketch, "Arc", "A", "Curved segments for smooth transitions, corners and circular paths. Click the start, the end, then a point on the arc.", true},
     {T::Conic, C::Sketch, "Conic Section", "", "Parabolas and hyperbolas for precise trajectory paths.", false},
     {T::Circle, C::Sketch, "Circle", "C", "Closed circles for shafts, holes, fasteners and rotational axes. Click centre, click radius.", true},
-    {T::Ellipse, C::Sketch, "Ellipse", "", "Stretched circles for specialised fluid and structural profiles.", false},
+    {T::Ellipse, C::Sketch, "Ellipse", "", "Stretched circles for specialised fluid and structural profiles. Click the centre, the end of the major axis, then the minor radius.", true},
     {T::Rectangle, C::Sketch, "Rectangle", "R", "Four-sided enclosures for blocks, pockets and stock footprints. Click two opposite corners.", true},
-    {T::Slot, C::Sketch, "Slot", "", "Elongated tracks with rounded ends for sliding joints and fasteners.", false},
-    {T::Polygon, C::Sketch, "Polygon", "", "Multi-sided shapes (hexagons) for bolts, nuts and sockets.", false},
-    {T::Spline, C::Sketch, "Spline", "", "Flexible, mathematically controlled curves for organic and aerodynamic outlines.", false},
+    {T::Slot, C::Sketch, "Slot", "", "Elongated tracks with rounded ends for sliding joints and fasteners. Click the two end centres, then the width.", true},
+    {T::Polygon, C::Sketch, "Polygon", "", "Multi-sided shapes (hexagons) for bolts, nuts and sockets. Click the centre, then a corner (sides in the options bar).", true},
+    {T::Spline, C::Sketch, "Spline", "", "Flexible, mathematically controlled curves for organic and aerodynamic outlines. Click the points it passes through; Enter or double-click finishes, clicking the first point closes it.", true},
+    {T::SketchTrim, C::Sketch, "Trim", "T", "Click a piece of a sketch curve to cut it away, back to the curves crossing it.", true},
+    {T::SketchExtend, C::Sketch, "Extend", "", "Click near the end of a line, arc or open polyline to carry it on to the next curve.", true},
+    {T::SketchOffset, C::Sketch, "Offset", "", "Click a sketch curve, then the side: a copy the distance in the options bar away.", true},
 
     {T::Block, C::Solid, "Block / Cuboid", "B", "Rectangular prism for housings and raw stock. Click to place.", true},
     {T::Wedge, C::Solid, "Wedge", "", "Right-angled triangular block for braces, ramps and stiffeners. Click to place.", true},
@@ -112,6 +115,7 @@ constexpr ToolId gArc[] = {T::Arc, T::Conic};
 constexpr ToolId gCircle[] = {T::Circle, T::Ellipse};
 constexpr ToolId gRect[] = {T::Rectangle, T::Slot, T::Polygon};
 constexpr ToolId gSpline[] = {T::Spline};
+constexpr ToolId gSketchEdit[] = {T::SketchTrim, T::SketchExtend, T::SketchOffset};
 constexpr ToolId gBlock[] = {T::Block, T::Wedge, T::Pyramid, T::Prism};
 constexpr ToolId gCylinder[] = {T::Cylinder, T::Cone};
 constexpr ToolId gSphere[] = {T::Sphere, T::Torus};
@@ -142,7 +146,7 @@ constexpr ToolId gInterference[] = {T::InterferenceCheck};
 constexpr ToolGroup kGroups[] = {
     {C::Navigate, gMove},   {C::Navigate, gSelect}, {C::Navigate, gOrbit},   {C::Navigate, gPan},
     {C::Navigate, gZoom},   {C::Sketch, gPoint},    {C::Sketch, gLine},      {C::Sketch, gArc},
-    {C::Sketch, gCircle},   {C::Sketch, gRect},     {C::Sketch, gSpline},    {C::Solid, gBlock},
+    {C::Sketch, gCircle},   {C::Sketch, gRect},     {C::Sketch, gSpline},    {C::Sketch, gSketchEdit}, {C::Solid, gBlock},
     {C::Solid, gCylinder},  {C::Solid, gSphere},    {C::Feature, gExtrude},  {C::Feature, gSweep},
     {C::Feature, gRib},     {C::Surface, gPlane},   {C::Surface, gPatch},    {C::ClassA, gNurbs},
     {C::ClassA, gAirfoil},  {C::Generative, gTopo}, {C::Generative, gLattice}, {C::Mesh, gMesh},
@@ -183,8 +187,10 @@ bool isCutTool(ToolId id) { return toolInfo(id).category == ToolCategory::Cut; }
 bool isWearableTool(ToolId id) { return toolInfo(id).category == ToolCategory::Wearable || id == ToolId::TpmsLattice; }
 
 bool isSketchTool(ToolId id) {
-    return id == ToolId::Point || id == ToolId::Line || id == ToolId::Polyline || id == ToolId::Rectangle ||
-           id == ToolId::Circle;
+    return id == ToolId::Point || id == ToolId::Line || id == ToolId::Polyline || id == ToolId::Rectangle || id == ToolId::Circle || id == ToolId::Arc ||
+           id == ToolId::Ellipse || id == ToolId::Slot || id == ToolId::Polygon || id == ToolId::Spline;
 }
+
+bool isSketchEditTool(ToolId id) { return id == ToolId::SketchTrim || id == ToolId::SketchExtend || id == ToolId::SketchOffset; }
 
 } // namespace sicdm

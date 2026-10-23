@@ -7,6 +7,8 @@
 #include "core/Document.hpp"
 #include "core/FeatureCommand.hpp"
 #include "core/Units.hpp"
+#include "core/Extrude.hpp"
+#include "core/SketchEdit.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -80,8 +82,9 @@ bool parseRefs(const Sketch& s, const std::vector<std::string>& a, const std::ve
                 ++i;
                 return static_cast<int>(*n) - 1;
             };
-            if (w == "start") r.point = 0;
-            else if (w == "end") r.point = c->kind == CurveKind::Line ? 1 : c->kind == CurveKind::Polyline ? static_cast<int>(c->pts.size()) - 1 : 2;
+            if (w == "start") r.point = c->kind == CurveKind::Arc ? 1 : 0;
+            else if (w == "end")
+                r.point = c->kind == CurveKind::Line ? 1 : (c->kind == CurveKind::Polyline || c->kind == CurveKind::Spline) ? static_cast<int>(c->pts.size()) - 1 : 2;
             else if (w == "center" || w == "centre") r.point = 0;
             else if (w == "point" || w == "corner" || w == "vertex") r.point = index();
             else r.segment = index();
@@ -116,6 +119,169 @@ SketchConstraint* constraintNamed(Sketch& s, const std::string& w) {
 CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
     CommandOutput out;
     Sketch& sketch = doc.scene.sketch();
+
+    // The curve named by the leading words (up to a keyword), or the selected one.
+    auto leadingCurve = [&](std::size_t& i, std::initializer_list<const char*> keys) -> int {
+        auto isKey = [&](const std::string& w) {
+            for (const char* k : keys)
+                if (lower(w) == k) return true;
+            return false;
+        };
+        std::string name;
+        std::size_t j = i;
+        int found = -1;
+        for (; j < a.size() && !(isKey(a[j]) && !(j < quoted.size() && quoted[j])); ++j) {
+            name += (name.empty() ? "" : " ") + a[j];
+            for (std::size_t k = 0; k < sketch.curves().size(); ++k)
+                if (lower(sketch.curves()[k].name) == lower(name)) found = static_cast<int>(k), i = j + 1;
+        }
+        if (name.empty() && doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(sketch.curves().size())) return doc.selectedCurve;
+        return found;
+    };
+    auto replaceCurve = [&](std::size_t index, const std::vector<SketchCurve>& with) {
+        const std::string gone = sketch.curves()[index].name;
+        sketch.remove(index);
+        std::string names;
+        for (const SketchCurve& c : with) names += (names.empty() ? "" : ", ") + sketch.add(c).name;
+        doc.selectedCurve = with.empty() ? -1 : static_cast<int>(sketch.curves().size()) - 1;
+        doc.dirty = true;
+        return names;
+    };
+
+    if (cmd == "CONSTRUCTION") {
+        // CONSTRUCTION [curve...] [ON|OFF]
+        bool on = true;
+        std::vector<std::string> words = a;
+        if (!words.empty() && (lower(words.back()) == "on" || lower(words.back()) == "off")) on = lower(words.back()) == "on", words.pop_back();
+        std::vector<int> which;
+        if (words.empty()) {
+            if (doc.selectedCurve < 0 || doc.selectedCurve >= static_cast<int>(sketch.curves().size())) return out.fail("Select a sketch curve or name it");
+            which.push_back(doc.selectedCurve);
+        }
+        for (std::size_t i = 0; i < words.size();) {
+            std::string name;
+            int found = -1;
+            std::size_t used = 0;
+            for (std::size_t j = i; j < words.size(); ++j) {
+                name += (name.empty() ? "" : " ") + words[j];
+                for (std::size_t k = 0; k < sketch.curves().size(); ++k)
+                    if (lower(sketch.curves()[k].name) == lower(name)) found = static_cast<int>(k), used = j - i + 1;
+            }
+            if (found < 0) return out.fail("No sketch curve named " + words[i]);
+            which.push_back(found);
+            i += used;
+        }
+        for (int k : which) sketch.curves()[static_cast<std::size_t>(k)].construction = on;
+        sketch.touch();
+        doc.dirty = true;
+        out.say(std::string(on ? "Construction: " : "Not construction: ") + std::to_string(which.size()) + (which.size() == 1 ? " curve" : " curves") +
+                (on ? " (dashed; guides the sketch, not part of profiles)" : ""));
+        return out;
+    }
+
+    if (cmd == "TRIMCURVE") {
+        // TRIM "curve" AT x,y
+        std::size_t i = 0;
+        const int ci = leadingCurve(i, {"at"});
+        if (ci < 0) return out.fail("TRIM \"curve\" AT x,y (a point on the piece to cut away)");
+        if (i >= a.size() || lower(a[i]) != "at" || i + 1 >= a.size()) return out.fail("TRIM \"curve\" AT x,y");
+        const auto p = parsePointInput(a[i + 1]);
+        if (!p) return out.fail("AT takes the point x,y on the piece to cut away");
+        std::vector<SketchCurve> left;
+        std::string why;
+        if (!trimCurve(sketch, static_cast<std::size_t>(ci), p->resolve({}), left, &why)) return out.fail(why);
+        const std::string name = sketch.curves()[static_cast<std::size_t>(ci)].name;
+        const std::string names = replaceCurve(static_cast<std::size_t>(ci), left);
+        out.say(left.empty() ? "Trimmed away all of " + name + " (nothing crosses it there)" : "Trimmed " + name + ": " + names + " left");
+        return out;
+    }
+
+    if (cmd == "EXTEND") {
+        // EXTEND "curve" [START|END | AT x,y]
+        std::size_t i = 0;
+        const int ci = leadingCurve(i, {"at", "start", "end"});
+        if (ci < 0) return out.fail(a.empty() ? std::string("EXTEND \"curve\" [START | END | AT x,y]") : "No sketch curve named " + a[0]);
+        const SketchCurve& c = sketch.curves()[static_cast<std::size_t>(ci)];
+        if (c.pts.empty()) return out.fail(c.name + " has no ends");
+        Vec2 pick = c.pts.back();
+        if (c.kind == CurveKind::Arc && c.pts.size() >= 3) pick = c.pts[2];
+        if (i < a.size()) {
+            const std::string w = lower(a[i]);
+            if (w == "start") pick = c.kind == CurveKind::Arc && c.pts.size() >= 3 ? c.pts[1] : c.pts.front();
+            else if (w == "at" && i + 1 < a.size()) {
+                const auto p = parsePointInput(a[i + 1]);
+                if (!p) return out.fail("AT takes a point x,y near the end to extend");
+                pick = p->resolve({});
+            } else if (w != "end") return out.fail("EXTEND \"curve\" [START | END | AT x,y]");
+        }
+        SketchCurve ext;
+        std::string why;
+        if (!extendCurve(sketch, static_cast<std::size_t>(ci), pick, ext, &why)) return out.fail(why);
+        SketchCurve& target = sketch.curves()[static_cast<std::size_t>(ci)];
+        target = ext;
+        sketch.touch();
+        doc.dirty = true;
+        out.say("Extended " + target.name + "  " + target.measure());
+        return out;
+    }
+
+    if (cmd == "OFFSET") {
+        // OFFSET "curve" distance [SIDE x,y]   (default: outside a closed curve, left of an open one)
+        std::size_t i = 0;
+        const int ci = leadingCurve(i, {"side", "toward", "towards"});
+        if (ci < 0 && !a.empty() && !parseLength(a[0])) return out.fail("No sketch curve named " + a[0]);
+        if (ci < 0 || i >= a.size()) return out.fail("OFFSET \"curve\" distance [SIDE x,y]");
+        const auto dist = parseLength(a[i]);
+        if (!dist) return out.fail("OFFSET \"curve\" distance [SIDE x,y]");
+        const SketchCurve c = sketch.curves()[static_cast<std::size_t>(ci)];
+        // Which side: given, or outside / left (a negative distance: inside / right).
+        Vec2 side{};
+        bool given = false;
+        if (i + 2 < a.size() + 1 && i + 1 < a.size()) {
+            const std::string w = lower(a[i + 1]);
+            if ((w == "side" || w == "toward" || w == "towards") && i + 2 < a.size()) {
+                const auto p = parsePointInput(a[i + 2]);
+                if (!p) return out.fail("SIDE takes a point x,y on the side to offset to");
+                side = p->resolve({});
+                given = true;
+            }
+        }
+        if (!given) {
+            const std::vector<Vec2> strip = c.planeStrip(0.1f);
+            if (strip.size() < 2) return out.fail(c.name + " has no side to offset to");
+            Vec2 lo = strip[0], hi = strip[0];
+            for (const Vec2& q : strip) lo = {std::min(lo.x, q.x), std::min(lo.y, q.y)}, hi = {std::max(hi.x, q.x), std::max(hi.y, q.y)};
+            const bool outwards = *dist > 0;
+            if (c.kind == CurveKind::Arc && c.pts.size() >= 3) { // away from its centre, or towards it
+                const Vec2 m{(strip[strip.size() / 2].x), (strip[strip.size() / 2].y)};
+                const Vec2 d{m.x - c.pts[0].x, m.y - c.pts[0].y};
+                side = outwards ? Vec2{m.x + d.x, m.y + d.y} : c.pts[0];
+            } else if (c.isClosed()) {
+                const Vec2 mid{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f};
+                side = outwards ? Vec2{hi.x + (hi.x - lo.x) + 1.0f, hi.y + (hi.y - lo.y) + 1.0f} : mid;
+                if (!outwards && (c.kind == CurveKind::Polyline || c.kind == CurveKind::Spline)) {
+                    // A loop's inside: just inside its first piece.
+                    const Vec2 p0 = strip[0], p1 = strip[1];
+                    const float l = std::max(std::hypot(p1.x - p0.x, p1.y - p0.y), 1e-6f);
+                    const float area = signedArea(strip);
+                    const float s = area >= 0 ? 1.0f : -1.0f; // inside a counter-clockwise loop is on its left
+                    side = {(p0.x + p1.x) * 0.5f - (p1.y - p0.y) / l * 1e-3f * s, (p0.y + p1.y) * 0.5f + (p1.x - p0.x) / l * 1e-3f * s};
+                }
+            } else {
+                const Vec2 p0 = strip[0], p1 = strip[1];
+                const float l = std::max(std::hypot(p1.x - p0.x, p1.y - p0.y), 1e-6f), s = outwards ? 1.0f : -1.0f;
+                side = {(p0.x + p1.x) * 0.5f - (p1.y - p0.y) / l * s, (p0.y + p1.y) * 0.5f + (p1.x - p0.x) / l * s};
+            }
+        }
+        SketchCurve made;
+        std::string why;
+        if (!offsetCurve(c, static_cast<float>(std::fabs(*dist)), side, made, &why)) return out.fail(why);
+        const SketchCurve& added = sketch.add(made);
+        doc.selectedCurve = static_cast<int>(sketch.curves().size()) - 1;
+        doc.dirty = true;
+        out.say("Offset " + c.name + " by " + lengthText(std::fabs(*dist)) + ": " + added.name + "  " + added.measure());
+        return out;
+    }
 
     if (cmd == "CONSTRAINTS") {
         if (sketch.constraints().empty()) {
@@ -236,7 +402,7 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
     if (refs.empty()) return out.fail("Name the curves: " + cmd + " ... \"Line 1\" ...");
     if (dim && cmd == "DIM" && kind == ConstraintKind::Distance && refs.size() == 1) {
         const SketchCurve* c = curveNamed(sketch, refs[0].curve);
-        if (c && c->kind == CurveKind::Circle && refs[0].point < 0) kind = ConstraintKind::Radius;
+        if (c && (c->kind == CurveKind::Circle || c->kind == CurveKind::Arc) && refs[0].point < 0) kind = ConstraintKind::Radius;
     }
     if (!dim && value) return out.fail(std::string(constraintKey(kind)) + " takes no value");
     SketchConstraint c;
@@ -261,7 +427,7 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         } else if (refs.size() == 2) {
             const SketchCurve* a0 = curveNamed(sketch, refs[0].curve);
             const SketchCurve* a1 = curveNamed(sketch, refs[1].curve);
-            if (a0 && a1 && a0->kind == CurveKind::Circle && a1->kind == CurveKind::Circle) {
+            if (a0 && a1 && (a0->kind == CurveKind::Circle || a0->kind == CurveKind::Arc) && (a1->kind == CurveKind::Circle || a1->kind == CurveKind::Arc)) {
                 const double d = std::hypot(a1->pts[0].x - a0->pts[0].x, a1->pts[0].y - a0->pts[0].y);
                 c.value = std::fabs(d - (a0->radius + a1->radius)) <= std::fabs(d - std::fabs(a0->radius - a1->radius)) ? 1.0 : -1.0;
             }

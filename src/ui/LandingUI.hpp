@@ -32,6 +32,11 @@ struct UiState {
     // The drawing sheet window; the app keeps `sheet` drawn while it is open.
     bool showSheet = false;
     const SheetGraphics* sheet = nullptr;
+    std::string sketchConstraintStatus; // "3 fully constrained, 2 free" ("" with no constraints)
+    // Sketch tool options.
+    bool sketchConstruction = false; // new curves are construction curves
+    int polygonSides = 6;
+    float sketchOffset = 5.0f;       // mm, the offset tool's distance
     // Assembly: the mates (the app points this at the document's), and the mate tool:
     // its type (COINCIDENT, FLUSH... ; empty: off), value, and the face picked first.
     const AssemblyState* assembly = nullptr;

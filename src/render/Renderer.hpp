@@ -23,6 +23,7 @@ struct ViewportSettings {
     SketchPlane gridPlane = SketchPlane::Top;
     float gridStrength = 1.0f;
     bool sketchOnTop = false; // draw sketch curves over bodies (2D drawing view)
+    std::vector<Vec3> sketchColors; // per curve, in place of sketchColor (constraint status); empty: all sketchColor
 };
 
 // GPU-side copy of one body.
@@ -81,6 +82,7 @@ private:
         GLint first;
         GLsizei count;
         bool point;
+        bool dashed; // construction: dash pairs (GL_LINES)
     };
     GLuint m_sketchVao = 0, m_sketchVbo = 0;
     std::vector<SketchRange> m_sketchRanges;

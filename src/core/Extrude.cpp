@@ -1,4 +1,5 @@
 #include "core/Extrude.hpp"
+#include "core/SketchEdit.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -116,6 +117,7 @@ std::optional<Profile> profileFromCurve(const SketchCurve& c, std::string* why) 
         if (why) *why = std::move(msg);
         return std::nullopt;
     };
+    if (c.construction) return fail(c.name + " is a construction curve: it guides the sketch but is no profile");
     Profile p;
     switch (c.kind) {
     case CurveKind::Circle:
@@ -133,6 +135,13 @@ std::optional<Profile> profileFromCurve(const SketchCurve& c, std::string* why) 
             return fail(c.name + " is an open polyline: close it (click its first point) to extrude");
         p.points = c.pts;
         break;
+    case CurveKind::Spline:
+    case CurveKind::Ellipse:
+    case CurveKind::Slot:
+        if (!c.isClosed()) return fail(c.name + " is an open spline: close it to extrude");
+        p.points = c.planeStrip(0.01f);
+        if (!p.points.empty()) p.points.pop_back(); // no repeated closing point
+        break;
     default: return fail(std::string(kindName(c.kind)) + " is not a closed profile");
     }
     p.points = cleanPolygon(p.points);
@@ -140,6 +149,34 @@ std::optional<Profile> profileFromCurve(const SketchCurve& c, std::string* why) 
     if (!isSimplePolygon(p.points)) return fail(c.name + " crosses itself and cannot be extruded");
     if (signedArea(p.points) < 0) std::reverse(p.points.begin(), p.points.end()); // counter-clockwise
     return p;
+}
+
+std::optional<Profile> profileFromSketch(const Sketch& sketch, std::size_t index, std::string* why) {
+    if (index >= sketch.curves().size()) {
+        if (why) *why = "No such curve";
+        return std::nullopt;
+    }
+    const SketchCurve& c = sketch.curves()[index];
+    std::string first;
+    if (auto p = profileFromCurve(c, &first)) return p;
+    // An open curve: the loop it closes with others, end to end.
+    if (!c.construction && !c.isClosed()) {
+        std::vector<Vec2> loop = chainLoop(sketch, index);
+        if (!loop.empty()) {
+            Profile p;
+            p.points = cleanPolygon(loop);
+            if (p.points.size() >= 3 && std::fabs(signedArea(p.points)) > 1e-6f && isSimplePolygon(p.points)) {
+                if (signedArea(p.points) < 0) std::reverse(p.points.begin(), p.points.end());
+                return p;
+            }
+            if (why) *why = "The curves joined to " + c.name + " cross each other";
+            return std::nullopt;
+        }
+        if (why) *why = c.name + " is open and doesn't join other curves end to end into a closed loop";
+        return std::nullopt;
+    }
+    if (why) *why = first;
+    return std::nullopt;
 }
 
 std::vector<float> extrudeParams(const Profile& p, SketchPlane plane, float distance, bool symmetric) {

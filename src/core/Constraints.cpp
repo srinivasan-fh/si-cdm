@@ -1,4 +1,5 @@
 #include "core/Constraints.hpp"
+#include "core/SketchEdit.hpp"
 
 #include "core/Json.hpp"
 #include "core/Sketch.hpp"
@@ -39,8 +40,9 @@ double dot(V2 a, V2 b) { return a.x * b.x + a.y * b.y; }
 double len(V2 a) { return std::hypot(a.x, a.y); }
 
 // The curves' parameters, laid out in one vector.
-//   Point (x, y); Line (x0 y0 x1 y1); Polyline (x y per vertex); Rectangle (x0 y0 x1 y1);
-//   Circle (cx cy r)
+//   Point (x, y); Line (x0 y0 x1 y1); Polyline, Spline (x y per point); Rectangle (x0 y0
+//   x1 y1); Circle (cx cy r); Arc (cx cy r a0 a1: the start and end angles); Ellipse
+//   (cx cy, the major axis end x y, minor radius); Slot (x0 y0 x1 y1 r)
 struct Params {
     std::vector<double> x;
     std::map<std::string, std::pair<int, int>> at; // curve -> (index of the curve in the sketch, first parameter)
@@ -56,10 +58,63 @@ int paramCount(const SketchCurve& c) {
     case CurveKind::Point: return 2;
     case CurveKind::Line: return 4;
     case CurveKind::Polyline: return static_cast<int>(c.pts.size() - (closedPolyline(c) ? 1 : 0)) * 2;
+    case CurveKind::Spline: return static_cast<int>(c.pts.size()) * 2;
     case CurveKind::Rectangle: return 4;
     case CurveKind::Circle: return 3;
+    case CurveKind::Arc: return 5;
+    case CurveKind::Ellipse: return 5;
+    case CurveKind::Slot: return 5;
     }
     return 0;
+}
+
+// A curve's parameters onto the end of x.
+void appendParams(const SketchCurve& cv, std::vector<double>& x) {
+    switch (cv.kind) {
+    case CurveKind::Rectangle: x.insert(x.end(), {cv.pts[0].x, cv.pts[0].y, cv.pts[1].x, cv.pts[1].y}); return;
+    case CurveKind::Circle: x.insert(x.end(), {cv.pts[0].x, cv.pts[0].y, cv.radius}); return;
+    case CurveKind::Arc: {
+        float a0, a1;
+        cv.arcAngles(a0, a1);
+        x.insert(x.end(), {cv.pts[0].x, cv.pts[0].y, std::hypot(cv.pts[1].x - cv.pts[0].x, cv.pts[1].y - cv.pts[0].y), a0, a1});
+        return;
+    }
+    case CurveKind::Ellipse: x.insert(x.end(), {cv.pts[0].x, cv.pts[0].y, cv.pts[1].x, cv.pts[1].y, cv.radius}); return;
+    case CurveKind::Slot: x.insert(x.end(), {cv.pts[0].x, cv.pts[0].y, cv.pts[1].x, cv.pts[1].y, cv.radius}); return;
+    default:
+        for (int k = 0; k < paramCount(cv) / 2; ++k) x.insert(x.end(), {cv.pts[static_cast<std::size_t>(k)].x, cv.pts[static_cast<std::size_t>(k)].y});
+    }
+}
+
+// Parameters back into the curve.
+void writeParams(SketchCurve& c, const double* x) {
+    const auto f = [&](int k) { return static_cast<float>(x[k]); };
+    switch (c.kind) {
+    case CurveKind::Rectangle: c.pts[0] = {f(0), f(1)}, c.pts[1] = {f(2), f(3)}; return;
+    case CurveKind::Circle:
+        c.pts[0] = {f(0), f(1)};
+        c.radius = std::max(f(2), 1e-4f);
+        return;
+    case CurveKind::Arc: {
+        const double r = std::max(x[2], 1e-4);
+        c.pts[0] = {f(0), f(1)};
+        c.pts[1] = {static_cast<float>(x[0] + r * std::cos(x[3])), static_cast<float>(x[1] + r * std::sin(x[3]))};
+        c.pts[2] = {static_cast<float>(x[0] + r * std::cos(x[4])), static_cast<float>(x[1] + r * std::sin(x[4]))};
+        c.radius = static_cast<float>(r);
+        return;
+    }
+    case CurveKind::Ellipse:
+    case CurveKind::Slot:
+        c.pts[0] = {f(0), f(1)}, c.pts[1] = {f(2), f(3)};
+        c.radius = std::max(f(4), 1e-4f);
+        return;
+    default: {
+        const bool closed = closedPolyline(c);
+        const int count = paramCount(c) / 2; // before the points move (moving the first opens the loop)
+        for (int k = 0; k < count; ++k) c.pts[static_cast<std::size_t>(k)] = {f(2 * k), f(2 * k + 1)};
+        if (closed) c.pts.back() = c.pts.front(); // still closed
+    }
+    }
 }
 
 int findCurve(const Sketch& s, const std::string& name) {
@@ -105,6 +160,20 @@ public:
             if (k != 0) return false;
             *out = {v(r, 0), v(r, 1)};
             return true;
+        case CurveKind::Arc: // 0 centre, 1 start, 2 end
+            if (k == 0) *out = {v(r, 0), v(r, 1)};
+            else if (k == 1 || k == 2) *out = {v(r, 0) + v(r, 2) * std::cos(v(r, 2 + k)), v(r, 1) + v(r, 2) * std::sin(v(r, 2 + k))};
+            else return false;
+            return true;
+        case CurveKind::Spline:
+            if (k < 0 || k >= static_cast<int>(c.pts.size())) return false;
+            *out = {v(r, 2 * k), v(r, 2 * k + 1)};
+            return true;
+        case CurveKind::Ellipse: // 0 centre, 1 the major axis end
+        case CurveKind::Slot:    // 0, 1 the centres of the ends
+            if (k != 0 && k != 1) return false;
+            *out = {v(r, 2 * k), v(r, 2 * k + 1)};
+            return true;
         }
         return false;
     }
@@ -125,7 +194,7 @@ public:
         return point(p0, a) && point(p1, b);
     }
     bool circle(const SketchRef& r, V2* c, double* rad) const {
-        if (!valid(r) || curve(r).kind != CurveKind::Circle || r.point >= 0) return false;
+        if (!valid(r) || (curve(r).kind != CurveKind::Circle && curve(r).kind != CurveKind::Arc) || r.point >= 0) return false;
         *c = {v(r, 0), v(r, 1)};
         *rad = v(r, 2);
         return true;
@@ -247,13 +316,7 @@ Params gather(const Sketch& s) {
             if (ci < 0) continue;
             const SketchCurve& cv = s.curves()[static_cast<std::size_t>(ci)];
             p.at[r.curve] = {ci, static_cast<int>(p.x.size())};
-            if (cv.kind == CurveKind::Rectangle) {
-                p.x.insert(p.x.end(), {cv.pts[0].x, cv.pts[0].y, cv.pts[1].x, cv.pts[1].y});
-            } else if (cv.kind == CurveKind::Circle) {
-                p.x.insert(p.x.end(), {cv.pts[0].x, cv.pts[0].y, cv.radius});
-            } else {
-                for (int k = 0; k < paramCount(cv) / 2; ++k) p.x.insert(p.x.end(), {cv.pts[static_cast<std::size_t>(k)].x, cv.pts[static_cast<std::size_t>(k)].y});
-            }
+            appendParams(cv, p.x);
         }
     return p;
 }
@@ -261,18 +324,7 @@ Params gather(const Sketch& s) {
 void scatter(Sketch& s, const Params& p, const std::vector<double>& x) {
     for (const auto& [name, at] : p.at) {
         SketchCurve& c = s.curves()[static_cast<std::size_t>(at.first)];
-        const auto xi = [&](int k) { return static_cast<float>(x[static_cast<std::size_t>(at.second + k)]); };
-        if (c.kind == CurveKind::Rectangle) {
-            c.pts[0] = {xi(0), xi(1)}, c.pts[1] = {xi(2), xi(3)};
-        } else if (c.kind == CurveKind::Circle) {
-            c.pts[0] = {xi(0), xi(1)};
-            c.radius = std::max(xi(2), 1e-4f);
-        } else {
-            const bool closed = closedPolyline(c);
-            const int count = paramCount(c) / 2; // before the points move (moving the first opens the loop)
-            for (int k = 0; k < count; ++k) c.pts[static_cast<std::size_t>(k)] = {xi(2 * k), xi(2 * k + 1)};
-            if (closed) c.pts.back() = c.pts.front(); // still closed
-        }
+        writeParams(c, &x[static_cast<std::size_t>(at.second)]);
     }
     s.touch();
 }
@@ -413,10 +465,7 @@ double constraintError(const Sketch& sketch, const SketchConstraint& c) {
         if (ci < 0) return std::numeric_limits<double>::quiet_NaN();
         const SketchCurve& cv = sketch.curves()[static_cast<std::size_t>(ci)];
         p.at[r.curve] = {ci, static_cast<int>(p.x.size())};
-        if (cv.kind == CurveKind::Rectangle) p.x.insert(p.x.end(), {cv.pts[0].x, cv.pts[0].y, cv.pts[1].x, cv.pts[1].y});
-        else if (cv.kind == CurveKind::Circle) p.x.insert(p.x.end(), {cv.pts[0].x, cv.pts[0].y, cv.radius});
-        else
-            for (int k = 0; k < paramCount(cv) / 2; ++k) p.x.insert(p.x.end(), {cv.pts[static_cast<std::size_t>(k)].x, cv.pts[static_cast<std::size_t>(k)].y});
+        appendParams(cv, p.x);
     }
     const View g(sketch, p, p.x);
     const auto r = residuals(g, c);
@@ -510,6 +559,70 @@ SolveReport solveSketch(Sketch& sketch) {
     rep.ok = true;
     (void)start;
     return rep;
+}
+
+std::vector<int> curveFreedom(const Sketch& sketch) {
+    std::vector<int> out(sketch.curves().size(), -1);
+    Params p = gather(sketch);
+    if (p.x.empty()) return out;
+    const std::vector<double> r = allResiduals(sketch, p, p.x);
+    const std::size_t m = r.size(), n = p.x.size();
+    // The null space of the constraints' Jacobian: the ways the curves can move without
+    // breaking any. Reduced row echelon form; each free column gives one direction.
+    std::vector<double> R = jacobian(sketch, p, p.x, m);
+    double scale = 0;
+    for (double v : R) scale = std::max(scale, std::fabs(v));
+    const double tol = std::max(scale, 1.0) * 1e-7;
+    std::vector<int> pivotCol;
+    std::size_t row = 0;
+    for (std::size_t col = 0; col < n && row < m; ++col) {
+        std::size_t best = m;
+        double bv = tol;
+        for (std::size_t i = row; i < m; ++i)
+            if (std::fabs(R[i * n + col]) > bv) bv = std::fabs(R[i * n + col]), best = i;
+        if (best == m) continue;
+        for (std::size_t c = 0; c < n; ++c) std::swap(R[row * n + c], R[best * n + c]);
+        const double pv = R[row * n + col];
+        for (std::size_t c = 0; c < n; ++c) R[row * n + c] /= pv;
+        for (std::size_t i = 0; i < m; ++i) {
+            if (i == row) continue;
+            const double f = R[i * n + col];
+            if (f == 0) continue;
+            for (std::size_t c = 0; c < n; ++c) R[i * n + c] -= f * R[row * n + c];
+        }
+        pivotCol.push_back(static_cast<int>(col));
+        ++row;
+    }
+    std::vector<char> isPivot(n, 0);
+    for (int c : pivotCol) isPivot[static_cast<std::size_t>(c)] = 1;
+    std::vector<std::vector<double>> basis; // one per free column
+    for (std::size_t f = 0; f < n; ++f) {
+        if (isPivot[f]) continue;
+        std::vector<double> v(n, 0.0);
+        v[f] = 1;
+        for (std::size_t i = 0; i < pivotCol.size(); ++i) v[static_cast<std::size_t>(pivotCol[i])] = -R[i * n + f];
+        basis.push_back(std::move(v));
+    }
+    // Each curve: how many independent ways those directions move its parameters.
+    for (const auto& [name, at] : p.at) {
+        const SketchCurve& cv = sketch.curves()[static_cast<std::size_t>(at.first)];
+        const std::size_t k0 = static_cast<std::size_t>(at.second), kn = static_cast<std::size_t>(paramCount(cv));
+        std::vector<double> M; // kn x basis
+        const std::size_t b = basis.size();
+        for (std::size_t i = 0; i < kn; ++i)
+            for (std::size_t j = 0; j < b; ++j) M.push_back(basis[j][k0 + i]);
+        out[static_cast<std::size_t>(at.first)] = b == 0 ? 0 : rankOf(M, kn, b);
+    }
+    // A constraint that isn't met marks its curves.
+    for (const SketchConstraint& c : sketch.constraints()) {
+        const double e = constraintError(sketch, c);
+        if (std::isnan(e) || e <= 1e-4) continue;
+        for (const SketchRef& rf : c.refs) {
+            const int ci = findCurve(sketch, rf.curve);
+            if (ci >= 0) out[static_cast<std::size_t>(ci)] = -2;
+        }
+    }
+    return out;
 }
 
 Json constraintsToJson(const Sketch& sketch) {

@@ -111,6 +111,10 @@ const char* curveKindKey(CurveKind k) {
     case CurveKind::Polyline: return "polyline";
     case CurveKind::Rectangle: return "rectangle";
     case CurveKind::Circle: return "circle";
+    case CurveKind::Arc: return "arc";
+    case CurveKind::Spline: return "spline";
+    case CurveKind::Ellipse: return "ellipse";
+    case CurveKind::Slot: return "slot";
     }
     return "line";
 }
@@ -131,9 +135,10 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
-        p.set("kind", enumProp({"point", "line", "polyline", "rectangle", "circle"}, "Curve type"));
+        p.set("kind", enumProp({"point", "line", "polyline", "rectangle", "circle", "arc", "spline", "ellipse", "slot", "polygon"}, "Curve type"));
         Json pts = prop("array", "2D points [[u,v], ...] in plane mm. line: 2 or more (connected segments); "
-                                 "rectangle: 2 opposite corners; circle: centre; point: 1");
+                                 "rectangle: 2 opposite corners; circle, polygon: centre; point: 1; arc: start, a point on it, end; "
+                                 "spline: the points it passes through; ellipse: centre, major axis end; slot: the centres of its ends");
         Json pair = Json::object();
         pair.set("type", "array");
         Json num1 = Json::object();
@@ -141,9 +146,11 @@ Json McpServer::toolDefinitions() {
         pair.set("items", num1).set("minItems", 2).set("maxItems", 2);
         pts.set("items", pair);
         p.set("points", pts);
-        p.set("radius", prop("number", "Circle radius (mm)"));
+        p.set("radius", prop("number", "Circle radius; ellipse minor radius; slot half width; polygon radius to the corners (mm)"));
+        p.set("sides", prop("number", "Polygon: number of sides (default 6)"));
+        p.set("construction", prop("boolean", "A construction (reference) curve: dashed, not part of profiles"));
         p.set("plane", enumProp({"top", "front", "right"}, "Sketch plane (default: active plane)"));
-        p.set("closed", prop("boolean", "Polyline: close back to the first point"));
+        p.set("closed", prop("boolean", "Polyline, spline: close back to the first point"));
         tools.push(tool("create_sketch", "Draw a 2D sketch curve on a sketch plane.", p, {"kind", "points"}));
     }
     {
@@ -726,14 +733,24 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         else if (kind == "circle") {
             if (!a["radius"].isNumber()) return textResult("circle needs 'radius'", true);
             line = "CIRCLE " + pointArg(pts[0]) + " " + num(a["radius"].asNumber());
-        } else if (kind == "line" || kind == "polyline" || kind == "rectangle") {
-            line = kind == "line" ? "LINE" : (kind == "polyline" ? "PLINE" : "RECT");
+        } else if (kind == "line" || kind == "polyline" || kind == "rectangle" || kind == "spline" || kind == "arc") {
+            line = kind == "line" ? "LINE" : kind == "polyline" ? "PLINE" : kind == "rectangle" ? "RECT" : kind == "spline" ? "SPLINE" : "ARC";
             for (const Json& p : pts) line += " " + pointArg(p);
-            if (kind == "polyline" && a["closed"].asBool()) line += " CLOSE";
+            if ((kind == "polyline" || kind == "spline") && a["closed"].asBool()) line += " CLOSE";
+        } else if (kind == "ellipse") {
+            if (!a["radius"].isNumber() || pts.size() < 2) return textResult("ellipse needs points [centre, major axis end] and 'radius' (the minor)", true);
+            line = "ELLIPSE " + pointArg(pts[0]) + " " + pointArg(pts[1]) + " " + num(a["radius"].asNumber());
+        } else if (kind == "slot") {
+            if (!a["radius"].isNumber() || pts.size() < 2) return textResult("slot needs points [end centre, end centre] and 'radius'", true);
+            line = "SKETCHSLOT " + pointArg(pts[0]) + " " + pointArg(pts[1]) + " " + num(a["radius"].asNumber());
+        } else if (kind == "polygon") {
+            if (!a["radius"].isNumber()) return textResult("polygon needs points [centre] and 'radius' (to its corners)", true);
+            line = "POLYGON " + pointArg(pts[0]) + " " + num(a["radius"].asNumber()) + " " + num(a["sides"].isNumber() ? a["sides"].asNumber() : 6);
         } else {
             m_doc.state.plane = old;
-            return textResult("kind must be point, line, polyline, rectangle or circle", true);
+            return textResult("kind must be point, line, polyline, rectangle, circle, arc, spline, ellipse, slot or polygon", true);
         }
+        if (a["construction"].asBool()) line += " CONSTRUCTION";
         Json r = runLine(line);
         m_doc.state.plane = old; // a one-off plane does not change the user's active plane
         return r;

@@ -17,6 +17,118 @@ Every model command goes into a **feature history** that can be edited and regen
 
 The picture comes from [examples/cad-demo.txt](examples/cad-demo.txt) (`RUN docs/examples/cad-demo.txt`).
 
+## Sketching
+
+### Curves
+
+```text
+LINE 0,0 40,0            PLINE 0,0 40,0 40,20 CLOSE        RECT 0,0 40,20        CIRCLE 20,10 5
+ARC 10,0 0,10 -10,0      (start, a point on it, end)       ARC CENTER 0,0 10,0 0,10
+SPLINE 0,0 10,8 20,-3 30,5 [CLOSE]                         ELLIPSE 0,0 20,0 8    (centre, major axis end, minor radius)
+SKETCHSLOT 0,0 30,0 5    (end centres, radius)             POLYGON 0,0 10 6 [CIRCUMSCRIBED] [ANGLE deg]
+```
+
+**Construction curves:** add `CONSTRUCTION` at the end of any of these to make a reference
+curve. Construction curves:
+
+- are dashed and grey;
+- guide the sketch and can be dimensioned and constrained;
+- are never part of a profile.
+
+`CONSTRUCTION "Line 3" [ON|OFF]` switches a curve either way. The tool options bar has the same
+switch for new curves.
+
+**Splines:**
+
+- A spline passes through every point it is given.
+- It is a centripetal Catmull-Rom curve, so it has no loops or cusps between close points.
+- `CLOSE` joins it into a loop.
+
+**Polygons:**
+
+- `POLYGON` makes a closed polyline with its first corner along +u.
+- The radius reaches the corners. With `CIRCUMSCRIBED` the radius reaches the middle of the sides
+  instead (a nut across flats).
+
+**What extrudes:**
+
+- closed polylines, rectangles, circles, ellipses, slots and closed splines;
+- lines, arcs, open polylines and splines that meet end to end in a closed loop. Picking any one
+  of them uses the whole loop, so a slot drawn as two lines and two arcs extrudes like a slot.
+
+### Trim, extend and offset
+
+```text
+TRIM "Line 1" AT 10,0          the piece at 10,0, back to the curves crossing it
+EXTEND "Line 2" [START|END|AT x,y]
+OFFSET "Circle 3" 2 [SIDE x,y]  (a negative distance: inside / right)
+```
+
+**Trim:**
+
+- Removes the piece of a curve between its nearest crossings on either side of the point. A
+  crossing at an end doesn't count.
+- A line becomes two lines, a circle an arc, a rectangle or closed polyline an open polyline, and
+  an ellipse or spline a spline.
+- A curve nothing crosses goes altogether.
+- `TRIM body PLANE ...` still slices a body.
+
+**Extend:**
+
+- Carries a line's or open polyline's end straight on, or an arc's end round its circle, to the
+  nearest curve it meets.
+
+**Offset:**
+
+| Curve | Offset copy |
+| --- | --- |
+| Line | Parallel |
+| Circle, arc | Concentric |
+| Rectangle, slot | Grown or shrunk |
+| Polyline | Each side moved, the corners mitred |
+| Ellipse, spline | A spline through points the distance away along the normal |
+
+The side is the one `SIDE` names. Without it, a closed curve grows outwards, an arc moves away
+from its centre, and an open curve moves to its left. A negative distance turns each of these
+around.
+
+**In the app:**
+
+- *Trim* (T): click the piece to cut away.
+- *Extend*: click near the end to carry on.
+- *Offset*: click the curve on the side to offset to; the distance is in the options bar.
+
+### Constraint status
+
+The solver works out how free each curve still is.
+
+- **Green:** fully constrained.
+- **Red:** has a constraint that can't be met.
+- **The usual colour:** can still move.
+
+The status bar sums it up, for example "Sketch: 3 fully constrained, 2 free".
+
+**Constraining arcs:**
+
+- An arc is constrained like a circle: its radius, concentric, tangent, point on.
+- `START` and `END` pick its ends, and `CENTRE` its centre.
+- `DIM "Arc 1" 15` sets its radius.
+
+### Files
+
+Projects keep every kind. DXF export handles each kind as follows:
+
+| Kind | DXF entities |
+| --- | --- |
+| Arc | `ARC` |
+| Slot | Two `LINE`s and two `ARC`s |
+| Spline, ellipse | Fine polylines (DXF R12 has neither) |
+
+Construction curves export on their own layer.
+
+DXF import reads `ARC` as an arc, `SPLINE` through its fit (or control) points, and `ELLIPSE` as an
+ellipse.
+
 ## Sketch constraints and dimensions
 
 ```text

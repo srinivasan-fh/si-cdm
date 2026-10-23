@@ -734,8 +734,35 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::SameLine();
         ImGui::Checkbox("Snap to points", &st.snapPoints);
         ImGui::SameLine();
-        ImGui::TextDisabled(tool.id == ToolId::Polyline ? "Enter / double-click to finish  ·  Esc cancels"
-                                                        : "Shift: horizontal / vertical  ·  Esc cancels");
+        ImGui::Checkbox("Construction", &st.sketchConstruction);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("New curves are construction curves: dashed references, not part of profiles");
+        if (tool.id == ToolId::Polygon) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("Sides");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputInt("##sides", &st.polygonSides);
+            st.polygonSides = std::clamp(st.polygonSides, 3, 64);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled(tool.id == ToolId::Polyline || tool.id == ToolId::Spline ? "Enter / double-click to finish  ·  click the first point to close  ·  Esc cancels"
+                            : tool.id == ToolId::Arc                                 ? "Start, end, then a point on the arc  ·  Esc cancels"
+                            : tool.id == ToolId::Ellipse                             ? "Centre, end of the major axis, then the minor radius"
+                            : tool.id == ToolId::Slot                                ? "The two end centres, then the width"
+                                                                                     : "Shift: horizontal / vertical  ·  Esc cancels");
+    } else if (isSketchEditTool(tool.id)) {
+        if (tool.id == ToolId::SketchOffset) {
+            ImGui::TextDisabled("Distance");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90);
+            lengthField("##offd", &st.sketchOffset, 0.001f, 1e5f);
+            ImGui::SameLine();
+            ImGui::TextDisabled("Click a curve on the side to offset to");
+        } else if (tool.id == ToolId::SketchTrim) {
+            ImGui::TextDisabled("Click the piece of a curve to cut away (back to the curves crossing it)");
+        } else {
+            ImGui::TextDisabled("Click near the end of a line, arc or open polyline to carry it on to the next curve");
+        }
     } else if (tool.id == ToolId::Extrude) {
         ImGui::TextDisabled("Distance");
         ImGui::SameLine();
@@ -1550,6 +1577,13 @@ void LandingUI::drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCa
     sep();
     ImGui::TextColored(theme::vec(theme::kTextDim), "Bodies %zu   Curves %zu   Images %zu", scene.bodies().size(),
                        scene.sketch().curves().size(), scene.images().size());
+    if (!st.sketchConstraintStatus.empty()) {
+        sep();
+        const bool conflict = st.sketchConstraintStatus.find("conflict") != std::string::npos;
+        ImGui::TextColored(theme::vec(conflict ? theme::kError : theme::kTextDim), "Sketch: %s", st.sketchConstraintStatus.c_str());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Curves in green are fully constrained, red ones have a constraint that can't be met;\nthe others can still move. Grey dashed: construction curves.");
+    }
     if (st.mcpRunning) {
         sep();
         ImGui::TextColored(theme::vec(theme::kSuccess), "MCP  :%d", st.mcpPort);

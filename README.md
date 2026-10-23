@@ -430,19 +430,29 @@ bodies, sketches and properties of the selection. It is hidden by default; drag 
 Slots with a small corner triangle hold several tools: right-click or hold to open the flyout.
 
 - **Navigate & select:** Move (V), Select (S), Orbit (O), Pan (H), Zoom (Z)
-- **2D sketch:** Point, Line (L), Polyline, Rectangle (R), Circle (C) on the active plane, in either
-  window. Grid and endpoint snapping, Shift locks horizontal / vertical, live dimensions,
-  Enter / double-click finishes a polyline, Esc cancels.
+- **2D sketch:** the drawing tools work on the active plane, in either window.
+  - **Curves:** Point, Line (L), Polyline, Arc (A, three points), Circle (C), Ellipse, Rectangle
+    (R), Slot, Polygon and Spline (a smooth curve through the points you click).
+  - **Editing:** Trim (T) cuts a piece back to the curves crossing it. Extend carries an end on
+    to the next curve. Offset makes a copy a set distance to one side.
+  - **Construction:** the *Construction* option makes dashed reference curves that are left out
+    of profiles.
+  - **Status colours:** a curve held fully by its constraints turns green, and red when a
+    constraint can't be met. The status bar counts them.
+  - **Drawing aids:** grid and endpoint snapping, Shift locks horizontal / vertical, live
+    dimensions. Enter or double-click finishes a polyline or spline, Esc cancels.
+  - **Details:** [docs/cad.md](docs/cad.md#sketching).
 - **3D solids:** Block (B), Wedge, Pyramid, Prism, Cylinder (Y), Cone, Sphere, Torus.
   Pick one and click the grid or a face to place it.
-- **Extrude (E):** turns a closed sketch profile (rectangle, circle or closed polyline, concave shapes
-  included) into a solid along its plane's normal. Click the profile (its outline or anywhere inside),
+- **Extrude (E):** turns a closed sketch profile into a solid along its plane's normal. A profile
+  is a rectangle, circle, ellipse, slot, closed polyline or spline, or a loop of lines and arcs
+  that meet end to end. Concave shapes are included. Click the profile (its outline or anywhere inside),
   drag to set the depth with a live preview — or type it in the options bar or command line — then
   click or press Enter. Options: symmetric (both sides of the plane), keep sketch visible. Negative
   depths go the other way. The profile is hidden after extruding (show it again in the Model panel).
   Extrusions are parametric: they save and reopen as features.
-- **Planned:** the remaining 2D tools, other form features (revolve, sweep, loft…), surfaces, Class-A, generative and mesh tools
-  are in the rail with descriptions and will be enabled in later milestones.
+- **Planned:** conic sections, surfaces, Class-A, generative and mesh tools are in the rail with
+  descriptions and will be enabled in later milestones.
 
 Shift + a tool key cycles through that slot's tools.
 

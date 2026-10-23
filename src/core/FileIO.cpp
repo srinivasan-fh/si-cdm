@@ -96,6 +96,10 @@ const char* curveKey(CurveKind k) {
     case CurveKind::Polyline: return "polyline";
     case CurveKind::Rectangle: return "rectangle";
     case CurveKind::Circle: return "circle";
+    case CurveKind::Arc: return "arc";
+    case CurveKind::Spline: return "spline";
+    case CurveKind::Ellipse: return "ellipse";
+    case CurveKind::Slot: return "slot";
     }
     return "line";
 }
@@ -106,6 +110,10 @@ std::optional<CurveKind> curveFromKey(const std::string& k) {
     if (k == "polyline") return CurveKind::Polyline;
     if (k == "rectangle") return CurveKind::Rectangle;
     if (k == "circle") return CurveKind::Circle;
+    if (k == "arc") return CurveKind::Arc;
+    if (k == "spline") return CurveKind::Spline;
+    if (k == "ellipse") return CurveKind::Ellipse;
+    if (k == "slot") return CurveKind::Slot;
     return std::nullopt;
 }
 
@@ -199,16 +207,16 @@ void dxfPolyline(std::string& out, const std::string& layer, const std::vector<V
     dxfPair(out, 8, layer);
 }
 
-std::vector<Vec2> arcPoints(Vec2 c, float r, float a0Deg, float a1Deg) {
-    while (a1Deg <= a0Deg) a1Deg += 360.0f; // DXF arcs run counter-clockwise
-    const int seg = std::max(4, static_cast<int>(std::ceil((a1Deg - a0Deg) / 5.0f)));
-    std::vector<Vec2> pts;
-    for (int i = 0; i <= seg; ++i) {
-        const float a = radians(a0Deg + (a1Deg - a0Deg) * static_cast<float>(i) / static_cast<float>(seg));
-        pts.push_back({c.x + r * std::cos(a), c.y + r * std::sin(a)});
-    }
-    return pts;
+// An ARC entity: centre, radius, start and end angles (counter-clockwise, degrees).
+void dxfArc(std::string& out, const std::string& layer, Vec2 c, float r, float a0, float a1) {
+    dxfPair(out, 0, "ARC");
+    dxfPair(out, 8, layer);
+    dxfPoint(out, 10, c);
+    dxfPair(out, 40, num(r));
+    dxfPair(out, 50, num(a0 * 57.29577951f));
+    dxfPair(out, 51, num(a1 * 57.29577951f));
 }
+
 
 } // namespace
 
@@ -450,6 +458,8 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         Json pts = Json::array();
         for (const Vec2& p : c.pts) pts.push(Json(Json::Array{p.x, p.y}));
         jc.set("points", pts).set("radius", c.radius).set("visible", c.visible);
+        if (c.closed) jc.set("closed", true);
+        if (c.construction) jc.set("construction", true);
         curves.push(jc);
     }
     doc.set("sketch", curves);
@@ -695,7 +705,10 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         c.radius = jc["radius"].asFloat();
         c.name = jc["name"].asString();
         c.visible = jc["visible"].asBool(true);
-        if (c.pts.empty()) continue;
+        c.closed = jc["closed"].asBool(false);
+        c.construction = jc["construction"].asBool(false);
+        const std::size_t need = c.kind == CurveKind::Arc ? 3 : (c.kind == CurveKind::Ellipse || c.kind == CurveKind::Slot || c.kind == CurveKind::Spline) ? 2 : 1;
+        if (c.pts.size() < need) continue;
         loaded.sketch().add(std::move(c));
     }
     constraintsFromJson((*doc)["constraints"], loaded.sketch());
@@ -954,30 +967,61 @@ int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, st
     int count = 0;
     for (const SketchCurve& c : scene.sketch().curves()) {
         if (c.plane != plane || !c.visible || c.pts.empty()) continue;
+        const std::string curveLayer = c.construction ? layer + "_CONSTRUCTION" : layer;
         switch (c.kind) {
         case CurveKind::Point:
             dxfPair(out, 0, "POINT");
-            dxfPair(out, 8, layer);
+            dxfPair(out, 8, curveLayer);
             dxfPoint(out, 10, c.pts[0]);
             break;
         case CurveKind::Line:
             if (c.pts.size() < 2) continue;
             dxfPair(out, 0, "LINE");
-            dxfPair(out, 8, layer);
+            dxfPair(out, 8, curveLayer);
             dxfPoint(out, 10, c.pts[0]);
             dxfPoint(out, 11, c.pts[1]);
             break;
         case CurveKind::Circle:
             dxfPair(out, 0, "CIRCLE");
-            dxfPair(out, 8, layer);
+            dxfPair(out, 8, curveLayer);
             dxfPoint(out, 10, c.pts[0]);
             dxfPair(out, 40, num(c.radius));
             break;
-        case CurveKind::Polyline: dxfPolyline(out, layer, c.pts, false); break;
+        case CurveKind::Polyline: dxfPolyline(out, curveLayer, c.pts, false); break;
         case CurveKind::Rectangle: {
             if (c.pts.size() < 2) continue;
             const Vec2 a = c.pts[0], b = c.pts[1];
-            dxfPolyline(out, layer, {a, {b.x, a.y}, b, {a.x, b.y}}, true);
+            dxfPolyline(out, curveLayer, {a, {b.x, a.y}, b, {a.x, b.y}}, true);
+            break;
+        }
+        case CurveKind::Arc: {
+            if (c.pts.size() < 3) continue;
+            float a0, a1;
+            c.arcAngles(a0, a1);
+            dxfArc(out, curveLayer, c.pts[0], std::hypot(c.pts[1].x - c.pts[0].x, c.pts[1].y - c.pts[0].y), a0, a1);
+            break;
+        }
+        case CurveKind::Slot: { // two lines and two half circles
+            if (c.pts.size() < 2) continue;
+            const Vec2 a = c.pts[0], b = c.pts[1];
+            const float ang = std::atan2(b.y - a.y, b.x - a.x), r = c.radius;
+            const Vec2 n{-std::sin(ang) * r, std::cos(ang) * r};
+            dxfArc(out, curveLayer, b, r, ang - 1.5707963f, ang + 1.5707963f);
+            dxfArc(out, curveLayer, a, r, ang + 1.5707963f, ang + 4.7123890f);
+            for (const auto& [p, q] : {std::pair{Vec2{b.x + n.x, b.y + n.y}, Vec2{a.x + n.x, a.y + n.y}}, std::pair{Vec2{a.x - n.x, a.y - n.y}, Vec2{b.x - n.x, b.y - n.y}}}) {
+                dxfPair(out, 0, "LINE");
+                dxfPair(out, 8, curveLayer);
+                dxfPoint(out, 10, p);
+                dxfPoint(out, 11, q);
+            }
+            break;
+        }
+        case CurveKind::Spline:
+        case CurveKind::Ellipse: { // R12 has neither: a fine polyline
+            std::vector<Vec2> s = c.planeStrip(0.01f);
+            const bool loop = c.isClosed();
+            if (loop && s.size() > 2) s.pop_back();
+            dxfPolyline(out, curveLayer, s, loop);
             break;
         }
         }
@@ -999,6 +1043,7 @@ int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, st
         if (c.plane != plane || !c.visible || c.pts.empty()) continue;
         ++count;
         for (const Vec2& p : c.pts) b.expand(Vec3{p.x, p.y, 0});
+        for (const Vec2& p : c.planeStrip(0.1f)) b.expand(Vec3{p.x, p.y, 0});
         if (c.kind == CurveKind::Circle) {
             b.expand(Vec3{c.pts[0].x - c.radius, c.pts[0].y - c.radius, 0});
             b.expand(Vec3{c.pts[0].x + c.radius, c.pts[0].y + c.radius, 0});
@@ -1054,6 +1099,12 @@ int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, st
             out += "<polygon points=\"" + pts({a, {q.x, a.y}, q, {a.x, q.y}}) + "\"/>\n";
             continue;
         }
+        case CurveKind::Arc:
+        case CurveKind::Spline:
+        case CurveKind::Ellipse:
+        case CurveKind::Slot:
+            out += "<polyline points=\"" + pts(c.planeStrip(0.01f)) + "\"" + (c.construction ? " stroke-dasharray=\"2,1\"" : "") + "/>\n";
+            continue;
         }
         out += buf;
     }
@@ -1121,7 +1172,54 @@ int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::str
             } else if (type == "CIRCLE") {
                 if (g(40) > 0) addCurve(CurveKind::Circle, {{g(10), g(20)}}, g(40));
             } else if (type == "ARC") {
-                if (g(40) > 0) addCurve(CurveKind::Polyline, arcPoints({g(10), g(20)}, g(40), g(50), g(51)));
+                if (g(40) > 0) {
+                    const Vec2 c{g(10), g(20)};
+                    const float r = g(40), a0 = radians(g(50)), a1 = radians(g(51));
+                    addCurve(CurveKind::Arc, {c, {c.x + r * std::cos(a0), c.y + r * std::sin(a0)}, {c.x + r * std::cos(a1), c.y + r * std::sin(a1)}}, r);
+                }
+            } else if (type == "SPLINE") {
+                // Its fit points when it has them, else its control points (a close match).
+                std::vector<Vec2> pts;
+                for (int code : {11, 10}) {
+                    for (std::size_t n = 0;; ++n) {
+                        const std::string* x = group(code, n);
+                        const std::string* y = group(code + 10, n);
+                        if (!x || !y) break;
+                        pts.push_back({f(*x), f(*y)});
+                    }
+                    if (pts.size() >= 2) break;
+                    pts.clear();
+                }
+                const bool closedFlag = (static_cast<int>(g(70)) & 1) != 0;
+                if (closedFlag && pts.size() > 2 && std::hypot(pts.front().x - pts.back().x, pts.front().y - pts.back().y) < 1e-6f) pts.pop_back();
+                if (pts.size() >= 2) {
+                    SketchCurve c;
+                    c.kind = CurveKind::Spline;
+                    c.plane = plane;
+                    c.pts = std::move(pts);
+                    c.closed = closedFlag;
+                    scene.sketch().add(std::move(c));
+                    ++added;
+                }
+            } else if (type == "ELLIPSE") {
+                const Vec2 c{g(10), g(20)}, m{g(11), g(21)};
+                const float ratio = g(40), t0 = g(41), t1 = group(42) ? g(42) : 6.2831853f;
+                const float rx = std::hypot(m.x, m.y);
+                if (rx > 0 && ratio > 0) {
+                    if (std::fabs(t1 - t0 - 6.2831853f) < 1e-4f || (t0 == 0 && t1 == 0)) {
+                        addCurve(CurveKind::Ellipse, {c, {c.x + m.x, c.y + m.y}}, rx * ratio);
+                    } else { // part of one: a spline through it
+                        std::vector<Vec2> pts;
+                        float e1 = t1;
+                        while (e1 <= t0) e1 += 6.2831853f;
+                        const Vec2 n{-m.y * ratio, m.x * ratio};
+                        for (int k = 0; k <= 24; ++k) {
+                            const float t = t0 + (e1 - t0) * static_cast<float>(k) / 24.0f;
+                            pts.push_back({c.x + m.x * std::cos(t) + n.x * std::sin(t), c.y + m.y * std::cos(t) + n.y * std::sin(t)});
+                        }
+                        addCurve(CurveKind::Spline, std::move(pts));
+                    }
+                }
             } else if (type == "POINT") {
                 addCurve(CurveKind::Point, {{g(10), g(20)}});
             } else if (type == "LWPOLYLINE") {
@@ -1156,7 +1254,7 @@ int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::str
         }
         i = j;
     }
-    if (added == 0) setError(error, "No supported entities (LINE, CIRCLE, ARC, POINT, POLYLINE) in " + path);
+    if (added == 0) setError(error, "No supported entities (LINE, CIRCLE, ARC, ELLIPSE, SPLINE, POINT, POLYLINE) in " + path);
     return added;
 }
 

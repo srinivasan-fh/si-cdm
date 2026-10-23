@@ -57,6 +57,7 @@ add_library(sicdm_core STATIC
     src/core/Iges.cpp
     src/core/Assembly.cpp
     src/core/Bvh.cpp
+    src/core/SketchEdit.cpp
     src/core/AssemblyCommand.cpp
     src/core/Drawing.cpp
     src/core/DrawingCommand.cpp

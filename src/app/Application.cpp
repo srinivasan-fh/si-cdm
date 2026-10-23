@@ -14,6 +14,7 @@
 #include "ui/Theme.hpp"
 #include "core/Extrude.hpp"
 #include "core/Json.hpp"
+#include "core/SketchEdit.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -336,6 +337,7 @@ int Application::pickCurve(float x, float y) const {
 }
 
 void Application::addCurve(SketchCurve curve) {
+    curve.construction = m_uiState.sketchConstruction;
     const SketchCurve& c = m_doc.scene.sketch().add(std::move(curve));
     m_uiState.selectedCurve = static_cast<int>(m_doc.scene.sketch().curves().size()) - 1;
     m_uiState.selectedBody = m_uiState.selectedImage = -1;
@@ -368,8 +370,9 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
             return;
         }
         const Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)];
-        char at[96];
-        std::snprintf(at, sizeof at, "%.4f,%.4f,%.4f", hit->point.x, hit->point.y, hit->point.z);
+        // Millimetres stated, whatever units the document shows.
+        char at[160];
+        std::snprintf(at, sizeof at, "%.6gmm,%.6gmm,%.6gmm", static_cast<double>(hit->point.x), static_cast<double>(hit->point.y), static_cast<double>(hit->point.z));
         if (m_uiState.mateFirst.empty()) {
             m_uiState.mateFirst = b.name;
             m_uiState.mateFirstPoint = hit->point;
@@ -380,12 +383,13 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
             setStatus("Pick a face on another part");
             return;
         }
-        char first[96];
-        std::snprintf(first, sizeof first, "%.4f,%.4f,%.4f", m_uiState.mateFirstPoint.x, m_uiState.mateFirstPoint.y, m_uiState.mateFirstPoint.z);
+        char first[160];
+        std::snprintf(first, sizeof first, "%.6gmm,%.6gmm,%.6gmm", static_cast<double>(m_uiState.mateFirstPoint.x), static_cast<double>(m_uiState.mateFirstPoint.y),
+                      static_cast<double>(m_uiState.mateFirstPoint.z));
         std::string line = "MATE " + m_uiState.mateTool;
         if (m_uiState.mateTool == "DISTANCE" || m_uiState.mateTool == "ANGLE") {
-            char v[32];
-            std::snprintf(v, sizeof v, " %g", static_cast<double>(m_uiState.mateValue));
+            char v[48];
+            std::snprintf(v, sizeof v, m_uiState.mateTool == "DISTANCE" ? " %gmm" : " %g", static_cast<double>(m_uiState.mateValue));
             line += v;
         }
         line += " \"" + m_uiState.mateFirst + "\" AT " + first + " \"" + b.name + "\" AT " + at;
@@ -395,7 +399,36 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
     }
 
     if (isSketchTool(tool)) {
+        m_sketcher.setPolygonSides(m_uiState.polygonSides);
         if (auto c = m_sketcher.click(tool, doubleClick)) addCurve(std::move(*c));
+        return;
+    }
+    if (isSketchEditTool(tool)) { // trim, extend, offset: the curve under the cursor
+        const int ci = pickCurve(x, y);
+        if (ci < 0) {
+            setStatus("Click a sketch curve");
+            return;
+        }
+        const SketchCurve& c = m_doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
+        const ImGuiIO& io = ImGui::GetIO();
+        const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+        const PlaneFrame f = planeFrame(c.plane);
+        const float dn = dot(ray.dir, f.normal);
+        if (std::fabs(dn) < 1e-6f) {
+            setStatus("Look at the sketch plane to edit its curves");
+            return;
+        }
+        const Vec2 q = f.toPlane(ray.at(dot(f.origin - ray.origin, f.normal) / dn));
+        char at[96];
+        std::snprintf(at, sizeof at, "%.6gmm,%.6gmm", static_cast<double>(q.x), static_cast<double>(q.y));
+        std::string name = "\"" + c.name + "\"";
+        if (tool == ToolId::SketchTrim) runCommandLine("TRIM " + name + " AT " + at);
+        else if (tool == ToolId::SketchExtend) runCommandLine("EXTEND " + name + " AT " + at);
+        else {
+            char d[48];
+            std::snprintf(d, sizeof d, "%.6gmm", static_cast<double>(m_uiState.sketchOffset));
+            runCommandLine("OFFSET " + name + " " + d + " SIDE " + at);
+        }
         return;
     }
 
@@ -1348,6 +1381,7 @@ void Application::frame(float dt) {
         m_framesToRender = std::max(m_framesToRender, 2);
     if (!m_uiState.statusMessage.empty() && glfwGetTime() > m_statusUntil) m_uiState.statusMessage.clear();
     m_renderer->sync(m_doc.scene);
+    updateSketchColors();
 
     int fbw = 0, fbh = 0;
     glfwGetFramebufferSize(m_window, &fbw, &fbh);
@@ -1649,7 +1683,7 @@ int Application::pickProfile(float x, float y) const {
     float bestArea = 1e30f;
     for (std::size_t i = 0; i < curves.size(); ++i) {
         if (!curves[i].visible) continue;
-        const auto p = profileFromCurve(curves[i]);
+        const auto p = profileFromSketch(m_doc.scene.sketch(), i);
         if (!p) continue;
         const PlaneFrame f = planeFrame(curves[i].plane);
         const float d = dot(ray.dir, f.normal);
@@ -1679,7 +1713,7 @@ int Application::pickProfile(float x, float y) const {
 void Application::beginExtrude(int curve) {
     const SketchCurve& c = m_doc.scene.sketch().curves()[static_cast<std::size_t>(curve)];
     std::string why;
-    if (!profileFromCurve(c, &why)) {
+    if (!profileFromSketch(m_doc.scene.sketch(), static_cast<std::size_t>(curve), &why)) {
         setStatus("Cannot extrude: " + why);
         log("Cannot extrude: " + why, UiState::LogLine::Error);
         return;
@@ -1700,7 +1734,7 @@ void Application::updateExtrudeFromMouse() {
     if (!m_uiState.extrudeLive) return;
     const auto& curves = m_doc.scene.sketch().curves();
     const SketchCurve& c = curves[static_cast<std::size_t>(m_extrudeCurve)];
-    const auto profile = profileFromCurve(c);
+    const auto profile = profileFromSketch(m_doc.scene.sketch(), static_cast<std::size_t>(m_extrudeCurve));
     if (!profile) return;
     const ImGuiIO& io = ImGui::GetIO();
     const PlaneFrame f = planeFrame(c.plane);
@@ -1751,7 +1785,7 @@ void Application::drawExtrudePreview() const {
     const auto& curves = m_doc.scene.sketch().curves();
     if (m_extrudeCurve < 0 || m_extrudeCurve >= static_cast<int>(curves.size())) return;
     const SketchCurve& c = curves[static_cast<std::size_t>(m_extrudeCurve)];
-    const auto profile = profileFromCurve(c);
+    const auto profile = profileFromSketch(m_doc.scene.sketch(), static_cast<std::size_t>(m_extrudeCurve));
     if (!profile) return;
     const PlaneFrame f = planeFrame(c.plane);
     const float d = m_uiState.extrudeDistance;
@@ -2621,6 +2655,36 @@ void Application::setDisplay(int mode) { m_vp3D.displayMode = static_cast<Displa
 void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.value_or(!viewport().showGrid); }
 
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
+
+void Application::updateSketchColors() {
+    // Each curve's colour from how the constraints hold it: construction grey, fully
+    // constrained green, a constraint that can't be met red, free the usual colour.
+    const Sketch& sk = m_doc.scene.sketch();
+    const std::uint64_t key = sk.revision() * 1000003u + sk.constraints().size();
+    if (key == m_sketchColorKey && m_vp3D.sketchColors.size() == sk.curves().size()) return;
+    m_sketchColorKey = key;
+    const std::vector<int> freedom = curveFreedom(sk);
+    std::vector<Vec3> colors;
+    int full = 0, free = 0, conflict = 0;
+    for (std::size_t i = 0; i < sk.curves().size(); ++i) {
+        const SketchCurve& c = sk.curves()[i];
+        const int f = i < freedom.size() ? freedom[i] : -1;
+        Vec3 col = m_vp3D.sketchColor;
+        if (c.construction) col = {0.62f, 0.66f, 0.74f};
+        if (f == 0) col = {0.42f, 0.86f, 0.50f}, ++full;
+        else if (f == -2) col = {1.0f, 0.36f, 0.32f}, ++conflict;
+        else if (f > 0) ++free;
+        colors.push_back(col);
+    }
+    m_vp3D.sketchColors = colors;
+    m_vp2D.sketchColors = colors;
+    m_uiState.sketchConstraintStatus.clear();
+    if (!sk.constraints().empty()) {
+        m_uiState.sketchConstraintStatus = std::to_string(full) + " fully constrained";
+        if (free) m_uiState.sketchConstraintStatus += ", " + std::to_string(free) + " free";
+        if (conflict) m_uiState.sketchConstraintStatus += ", " + std::to_string(conflict) + " in conflict";
+    }
+}
 
 bool Application::showSheet(bool on) {
     m_uiState.showSheet = on;

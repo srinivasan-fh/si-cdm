@@ -207,6 +207,23 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
         g.dot(0.85f, -0.5f);
         g.dashed(-0.85f, 0.5f, -0.3f, -1.1f, 3);
         break;
+    case ToolId::SketchTrim: // a crossing, one arm cut away (dashed)
+        g.line(-0.85f, -0.6f, 0.85f, -0.6f);
+        g.line(0.0f, -0.95f, 0.0f, -0.6f);
+        g.dashed(0.0f, -0.6f, 0.0f, 0.9f, 4);
+        g.line(0.35f, 0.25f, -0.35f, 0.75f);
+        g.line(-0.35f, 0.25f, 0.35f, 0.75f);
+        break;
+    case ToolId::SketchExtend: // a line carried on (dashed) to a wall
+        g.line(0.8f, -0.9f, 0.8f, 0.9f);
+        g.line(-0.9f, 0.0f, -0.1f, 0.0f);
+        g.dashed(-0.1f, 0.0f, 0.8f, 0.0f, 3);
+        g.dot(-0.9f, 0.0f);
+        break;
+    case ToolId::SketchOffset: // a curve and its copy beside it
+        g.bezier(-0.85f, 0.2f, -0.3f, -0.7f, 0.3f, 0.7f, 0.85f, -0.2f);
+        g.bezier(-0.85f, 0.65f, -0.3f, -0.25f, 0.3f, 1.15f, 0.85f, 0.25f);
+        break;
 
     // ---- 3D solids ----------------------------------------------------------
     case ToolId::Block: isoBox(g, 1.1f, 1.0f, 0.7f); break;

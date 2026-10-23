@@ -171,6 +171,9 @@ private:
     SheetGraphics m_sheet;
     std::uint64_t m_sheetKey = 0;
     void updateSheet();
+    // Sketch curves coloured by how the constraints hold them.
+    std::uint64_t m_sketchColorKey = 0;
+    void updateSketchColors();
 
     // Input state
     enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife };

@@ -10,7 +10,7 @@ enum class ToolId {
     // Navigate & select
     Move, Select, BoxSelect, LassoSelect, Orbit, Pan, Zoom,
     // I. 2D sketches & profiles
-    Point, Line, Polyline, Arc, Conic, Circle, Ellipse, Rectangle, Slot, Polygon, Spline,
+    Point, Line, Polyline, Arc, Conic, Circle, Ellipse, Rectangle, Slot, Polygon, Spline, SketchTrim, SketchExtend, SketchOffset,
     // II. 3D solid primitives
     Block, Wedge, Pyramid, Prism, Cylinder, Cone, Sphere, Torus,
     // III. Form features
@@ -67,6 +67,8 @@ bool commandModifierHeld();
 
 // True for the 2D sketch tools that are implemented (draw on the active sketch plane).
 bool isSketchTool(ToolId id);
+// Trim, extend and offset: click on a sketch curve to edit it.
+bool isSketchEditTool(ToolId id);
 
 // Sculpting brushes (drag over a body) and the cut / boolean tools.
 bool isSculptTool(ToolId id);

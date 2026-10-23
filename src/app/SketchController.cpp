@@ -90,10 +90,108 @@ SketchCurve SketchController::makeCurve(CurveKind kind, std::vector<Vec2> pts, f
     return c;
 }
 
+std::optional<SketchCurve> SketchController::pending(ToolId tool, Vec2 q) const {
+    const std::size_t n = m_points.size();
+    auto distToSegment = [](Vec2 p, Vec2 a, Vec2 b) {
+        const float dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+        const float t = l2 > 0 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / l2, 0.0f, 1.0f) : 0.0f;
+        return std::hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+    };
+    switch (tool) {
+    case ToolId::Arc: // start, end, then a point on it
+        if (n == 2) {
+            Vec2 c;
+            float r;
+            bool ccw;
+            if (!arcThrough(m_points[0], q, m_points[1], c, r, ccw)) return std::nullopt;
+            return makeCurve(CurveKind::Arc, ccw ? std::vector<Vec2>{c, m_points[0], m_points[1]} : std::vector<Vec2>{c, m_points[1], m_points[0]}, r);
+        }
+        return std::nullopt;
+    case ToolId::Ellipse: // centre, major axis end, then the minor radius
+        if (n == 1 && dist(m_points[0], q) > 0) return makeCurve(CurveKind::Ellipse, {m_points[0], q}, dist(m_points[0], q) * 0.5f);
+        if (n == 2) {
+            const Vec2 c = m_points[0], m = m_points[1];
+            const float l = dist(c, m);
+            if (!(l > 0)) return std::nullopt;
+            const float ry = std::fabs((m.x - c.x) * (q.y - c.y) - (m.y - c.y) * (q.x - c.x)) / l;
+            if (!(ry > 0)) return std::nullopt;
+            return makeCurve(CurveKind::Ellipse, {c, m}, ry);
+        }
+        return std::nullopt;
+    case ToolId::Slot: // the two end centres, then the width
+        if (n == 1 && dist(m_points[0], q) > 0) return makeCurve(CurveKind::Slot, {m_points[0], q}, dist(m_points[0], q) * 0.15f);
+        if (n == 2 && dist(m_points[0], m_points[1]) > 0) {
+            const float r = distToSegment(q, m_points[0], m_points[1]);
+            if (!(r > 0)) return std::nullopt;
+            return makeCurve(CurveKind::Slot, {m_points[0], m_points[1]}, r);
+        }
+        return std::nullopt;
+    case ToolId::Polygon: // centre, then a corner
+        if (n == 1 && dist(m_points[0], q) > 0) {
+            const Vec2 c = m_points[0];
+            const float r = dist(c, q), a0 = std::atan2(q.y - c.y, q.x - c.x);
+            std::vector<Vec2> pts;
+            for (int k = 0; k <= m_polygonSides; ++k) {
+                const float a = a0 + 2.0f * kPi * static_cast<float>(k % m_polygonSides) / static_cast<float>(m_polygonSides);
+                pts.push_back({c.x + r * std::cos(a), c.y + r * std::sin(a)});
+            }
+            return makeCurve(CurveKind::Polyline, pts);
+        }
+        return std::nullopt;
+    case ToolId::Spline:
+        if (n >= 1) {
+            std::vector<Vec2> pts = m_points;
+            if (dist(pts.back(), q) > 1e-6f) pts.push_back(q);
+            if (pts.size() >= 2) return makeCurve(CurveKind::Spline, pts);
+        }
+        return std::nullopt;
+    default: return std::nullopt;
+    }
+}
+
 std::optional<SketchCurve> SketchController::click(ToolId tool, bool doubleClick) {
     if (!m_hasHover) return std::nullopt;
     const Vec2 p = m_hover;
+    if (tool != m_tool) {
+        m_points.clear();
+        m_tool = tool;
+    }
     switch (tool) {
+    case ToolId::Arc:
+    case ToolId::Ellipse:
+    case ToolId::Slot:
+        if (m_points.size() < 2) {
+            if (m_points.empty() || dist(p, m_points.back()) > 1e-6f) m_points.push_back(p);
+            return std::nullopt;
+        }
+        if (auto c = pending(tool, p)) {
+            m_points.clear();
+            return c;
+        }
+        return std::nullopt;
+    case ToolId::Polygon:
+        if (m_points.empty()) {
+            m_points.push_back(p);
+            return std::nullopt;
+        }
+        if (auto c = pending(tool, p)) {
+            m_points.clear();
+            return c;
+        }
+        return std::nullopt;
+    case ToolId::Spline: {
+        // Like a polyline: clicking the first point closes it, double-click finishes.
+        const bool closes = m_points.size() >= 3 && m_snappedToPoint && dist(p, m_points[0]) < 1e-6f;
+        if (closes) {
+            auto c = makeCurve(CurveKind::Spline, m_points);
+            c.closed = true;
+            m_points.clear();
+            return c;
+        }
+        if (m_points.empty() || dist(p, m_points.back()) > 1e-6f) m_points.push_back(p);
+        if (doubleClick) return finish();
+        return std::nullopt;
+    }
     case ToolId::Point: return makeCurve(CurveKind::Point, {p});
     case ToolId::Line:
         if (m_points.empty()) {
@@ -146,17 +244,17 @@ std::optional<SketchCurve> SketchController::typedPoint(ToolId tool, SketchPlane
     }
     m_hover = p;
     m_hasHover = true;
-    // Typing the first point of a polyline again closes it, like clicking it.
-    m_snappedToPoint = tool == ToolId::Polyline && m_points.size() >= 2 && dist(p, m_points[0]) < 1e-6f;
+    // Typing the first point of a polyline or spline again closes it, like clicking it.
+    m_snappedToPoint = (tool == ToolId::Polyline || tool == ToolId::Spline) && m_points.size() >= 2 && dist(p, m_points[0]) < 1e-6f;
     return click(tool, false);
 }
 
 std::optional<SketchCurve> SketchController::finish() {
-    if (m_points.size() < 2) {
+    if (m_points.size() < 2 || (m_tool != ToolId::Polyline && m_tool != ToolId::Spline)) {
         m_points.clear();
         return std::nullopt;
     }
-    auto c = makeCurve(CurveKind::Polyline, m_points);
+    auto c = makeCurve(m_tool == ToolId::Spline ? CurveKind::Spline : CurveKind::Polyline, m_points);
     m_points.clear();
     return c;
 }
@@ -209,7 +307,17 @@ void SketchController::drawOverlay(ImDrawList* dl, const OrbitCamera& cam, ImVec
             std::snprintf(label, sizeof(label), "R %s", lengthText(r).c_str());
             break;
         }
-        default: break;
+        default:
+            if (const auto c = pending(tool, m_hover)) { // the curve as the next click would make it
+                const std::vector<Vec2> strip = c->planeStrip(0.05f);
+                for (std::size_t i = 1; i < strip.size(); ++i) {
+                    auto s0 = scr(strip[i - 1]), s1 = scr(strip[i]);
+                    if (s0 && s1) dl->AddLine(*s0, *s1, kPreview, 1.5f);
+                }
+                const std::string m = c->measure();
+                std::snprintf(label, sizeof(label), "%s", m.c_str());
+            } else if (auto s = scr(m_points.back())) dl->AddLine(*s, *h, kPreview, 1.0f);
+            break;
         }
         for (Vec2 q : m_points)
             if (auto s = scr(q)) dl->AddCircleFilled(*s, 3.0f, kPreview);

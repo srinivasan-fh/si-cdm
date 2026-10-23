@@ -6,6 +6,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <optional>
 #include <vector>
 
@@ -51,14 +52,22 @@ public:
 
     std::optional<Vec2> cursor() const noexcept { return m_hasHover ? std::optional<Vec2>(m_hover) : std::nullopt; }
 
+    // Sides of the polygon tool's polygons.
+    void setPolygonSides(int n) noexcept { m_polygonSides = std::max(3, n); }
+
 private:
     SketchCurve makeCurve(CurveKind kind, std::vector<Vec2> pts, float radius = 0.0f) const;
+    // The curve the clicks so far and the cursor would make (arc, ellipse, slot, polygon,
+    // spline), for the preview and the last click.
+    std::optional<SketchCurve> pending(ToolId tool, Vec2 cursor) const;
 
     SketchPlane m_plane = SketchPlane::Top;
     std::vector<Vec2> m_points; // clicked so far (plane coordinates)
     Vec2 m_hover{};
     bool m_hasHover = false;
     bool m_snappedToPoint = false;
+    ToolId m_tool = ToolId::Line; // the tool the points belong to
+    int m_polygonSides = 6;
 };
 
 // World point to window coordinates; nullopt when behind the camera.

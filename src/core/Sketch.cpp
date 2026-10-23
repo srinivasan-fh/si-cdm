@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 
 namespace sicdm {
@@ -37,8 +38,147 @@ const char* curveKindName(CurveKind k) noexcept {
     case CurveKind::Polyline: return "Polyline";
     case CurveKind::Rectangle: return "Rectangle";
     case CurveKind::Circle: return "Circle";
+    case CurveKind::Arc: return "Arc";
+    case CurveKind::Spline: return "Spline";
+    case CurveKind::Ellipse: return "Ellipse";
+    case CurveKind::Slot: return "Slot";
     }
     return "";
+}
+
+Vec2 splinePoint(const std::vector<Vec2>& pts, bool closed, std::size_t span, float t) {
+    const std::size_t n = pts.size();
+    if (n == 0) return {};
+    if (n == 1) return pts[0];
+    auto at = [&](long i) -> Vec2 {
+        if (closed) return pts[static_cast<std::size_t>(((i % static_cast<long>(n)) + static_cast<long>(n)) % static_cast<long>(n))];
+        if (i < 0) return {2 * pts[0].x - pts[1].x, 2 * pts[0].y - pts[1].y}; // the ends carry on straight
+        if (i >= static_cast<long>(n)) return {2 * pts[n - 1].x - pts[n - 2].x, 2 * pts[n - 1].y - pts[n - 2].y};
+        return pts[static_cast<std::size_t>(i)];
+    };
+    const long i = static_cast<long>(span);
+    const Vec2 p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    // Centripetal knots (alpha 1/2).
+    auto knot = [](Vec2 a, Vec2 b) { return std::max(std::sqrt(std::hypot(b.x - a.x, b.y - a.y)), 1e-6f); };
+    const float t0 = 0, t1 = t0 + knot(p0, p1), t2 = t1 + knot(p1, p2), t3 = t2 + knot(p2, p3);
+    const float u = t1 + (t2 - t1) * t;
+    auto lerp = [](Vec2 a, Vec2 b, float ta, float tb, float x) {
+        const float wa = (tb - x) / (tb - ta), wb = (x - ta) / (tb - ta);
+        return Vec2{a.x * wa + b.x * wb, a.y * wa + b.y * wb};
+    };
+    const Vec2 q1 = lerp(p0, p1, t0, t1, u), q2 = lerp(p1, p2, t1, t2, u), q3 = lerp(p2, p3, t2, t3, u);
+    const Vec2 r1 = lerp(q1, q2, t0, t2, u), r2 = lerp(q2, q3, t1, t3, u);
+    return lerp(r1, r2, t1, t2, u);
+}
+
+bool arcThrough(Vec2 a, Vec2 m, Vec2 b, Vec2& centre, float& radius, bool& ccw) {
+    const double ax = a.x, ay = a.y, bx = m.x, by = m.y, cx = b.x, cy = b.y;
+    const double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    const double scale = std::max({std::fabs(ax - cx), std::fabs(ay - cy), std::fabs(bx - ax), std::fabs(by - ay), 1e-9});
+    if (std::fabs(d) < 1e-9 * scale * scale) return false;
+    const double a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+    centre = {static_cast<float>((a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d), static_cast<float>((a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d)};
+    radius = std::hypot(a.x - centre.x, a.y - centre.y);
+    // Counter-clockwise when the middle point lies to the right of the chord from a to b.
+    ccw = (m.x - a.x) * (b.y - a.y) - (m.y - a.y) * (b.x - a.x) > 0;
+    return radius > 0;
+}
+
+void SketchCurve::arcAngles(float& a0, float& a1) const {
+    a0 = a1 = 0;
+    if (pts.size() < 3) return;
+    a0 = std::atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+    a1 = std::atan2(pts[2].y - pts[0].y, pts[2].x - pts[0].x);
+    while (a1 <= a0 + 1e-7f) a1 += 2.0f * kPi;
+}
+
+bool SketchCurve::isClosed() const {
+    switch (kind) {
+    case CurveKind::Rectangle:
+    case CurveKind::Circle:
+    case CurveKind::Ellipse:
+    case CurveKind::Slot: return true;
+    case CurveKind::Polyline: return pts.size() > 3 && std::hypot(pts.front().x - pts.back().x, pts.front().y - pts.back().y) < 1e-6f;
+    case CurveKind::Spline: return closed && pts.size() >= 3;
+    default: return false;
+    }
+}
+
+std::vector<Vec2> SketchCurve::planeStrip(float chord) const {
+    std::vector<Vec2> out;
+    auto arcSegments = [&](float r, float sweep) {
+        float step = 0.3f;
+        if (chord > 0 && chord < r) step = std::min(step, 2.0f * std::acos(1.0f - chord / r));
+        return std::clamp(static_cast<int>(std::ceil(std::fabs(sweep) / std::max(step, 1e-3f))), 2, 4096);
+    };
+    auto arc = [&](Vec2 c, float r, float a0, float a1, bool first) {
+        const int n = arcSegments(r, a1 - a0);
+        for (int i = first ? 0 : 1; i <= n; ++i) {
+            const float a = a0 + (a1 - a0) * static_cast<float>(i) / static_cast<float>(n);
+            out.push_back({c.x + r * std::cos(a), c.y + r * std::sin(a)});
+        }
+    };
+    switch (kind) {
+    case CurveKind::Point:
+    case CurveKind::Line:
+    case CurveKind::Polyline: return pts;
+    case CurveKind::Rectangle:
+        if (pts.size() >= 2) {
+            const Vec2 a = pts[0], b = pts[1];
+            out = {a, Vec2{b.x, a.y}, b, Vec2{a.x, b.y}, a};
+        }
+        break;
+    case CurveKind::Circle:
+        if (!pts.empty()) arc(pts[0], radius, 0.0f, 2.0f * kPi, true);
+        break;
+    case CurveKind::Arc:
+        if (pts.size() >= 3) {
+            float a0, a1;
+            arcAngles(a0, a1);
+            const float r = std::hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+            arc(pts[0], r, a0, a1, true);
+            // The ends exactly: the start point, and the end's direction at the start's radius.
+            out.front() = pts[1];
+            const float re = std::hypot(pts[2].x - pts[0].x, pts[2].y - pts[0].y);
+            if (re > 0) out.back() = {pts[0].x + (pts[2].x - pts[0].x) * r / re, pts[0].y + (pts[2].y - pts[0].y) * r / re};
+        }
+        break;
+    case CurveKind::Spline: {
+        const std::size_t n = pts.size();
+        if (n < 2) return pts;
+        const std::size_t spans = closed && n >= 3 ? n : n - 1;
+        out.push_back(pts[0]);
+        for (std::size_t sp = 0; sp < spans; ++sp) {
+            const Vec2 a = pts[sp], b = pts[(sp + 1) % n];
+            const float len = std::hypot(b.x - a.x, b.y - a.y);
+            const int steps = std::clamp(static_cast<int>(std::ceil(len / std::max(std::sqrt(8.0f * std::max(chord, 1e-3f) * len), 1e-3f) * 2.0f)), 4, 64);
+            for (int i = 1; i <= steps; ++i) out.push_back(splinePoint(pts, closed && n >= 3, sp, static_cast<float>(i) / static_cast<float>(steps)));
+        }
+        break;
+    }
+    case CurveKind::Ellipse:
+        if (pts.size() >= 2) {
+            const Vec2 c = pts[0], m = {pts[1].x - pts[0].x, pts[1].y - pts[0].y};
+            const float rx = std::hypot(m.x, m.y), rot = std::atan2(m.y, m.x), ry = radius;
+            const int n = arcSegments(std::max(rx, ry), 2.0f * kPi);
+            for (int i = 0; i <= n; ++i) {
+                const float a = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(n);
+                const float x = rx * std::cos(a), y = ry * std::sin(a);
+                out.push_back({c.x + x * std::cos(rot) - y * std::sin(rot), c.y + x * std::sin(rot) + y * std::cos(rot)});
+            }
+        }
+        break;
+    case CurveKind::Slot:
+        if (pts.size() >= 2) {
+            const Vec2 a = pts[0], b = pts[1];
+            const float ang = std::atan2(b.y - a.y, b.x - a.x);
+            arc(b, radius, ang - 0.5f * kPi, ang + 0.5f * kPi, true);
+            arc(a, radius, ang + 0.5f * kPi, ang + 1.5f * kPi, true);
+            out.push_back(out.front());
+        }
+        break;
+    }
+    return out;
 }
 
 std::vector<Vec3> SketchCurve::worldStrip(int circleSegments) const {
@@ -66,11 +206,37 @@ std::vector<Vec3> SketchCurve::worldStrip(int circleSegments) const {
             }
         }
         break;
+    default: { // round parts as finely as a circle of `circleSegments`
+        float size = radius;
+        for (const Vec2& p : pts) size = std::max({size, std::fabs(p.x - pts[0].x), std::fabs(p.y - pts[0].y)});
+        const float chord = std::max(size, 1e-3f) * (1.0f - std::cos(kPi / static_cast<float>(std::max(circleSegments, 3))));
+        for (const Vec2& p : planeStrip(chord)) out.push_back(f.toWorld(p));
+        break;
+    }
     }
     return out;
 }
 
 std::vector<Vec2> SketchCurve::keyPoints() const {
+    if (kind == CurveKind::Arc && pts.size() >= 3) {
+        const std::vector<Vec2> strip = planeStrip(1e9f); // ends exact
+        float a0, a1;
+        arcAngles(a0, a1);
+        const float r = std::hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y), am = 0.5f * (a0 + a1);
+        return {pts[0], strip.front(), strip.back(), {pts[0].x + r * std::cos(am), pts[0].y + r * std::sin(am)}};
+    }
+    if (kind == CurveKind::Ellipse && pts.size() >= 2) {
+        const Vec2 c = pts[0], m = {pts[1].x - pts[0].x, pts[1].y - pts[0].y};
+        const float rx = std::hypot(m.x, m.y);
+        const Vec2 n = rx > 0 ? Vec2{-m.y / rx * radius, m.x / rx * radius} : Vec2{0, radius};
+        return {c, {c.x + m.x, c.y + m.y}, {c.x - m.x, c.y - m.y}, {c.x + n.x, c.y + n.y}, {c.x - n.x, c.y - n.y}};
+    }
+    if (kind == CurveKind::Slot && pts.size() >= 2) {
+        const Vec2 a = pts[0], b = pts[1];
+        const float l = std::hypot(b.x - a.x, b.y - a.y);
+        const Vec2 n = l > 0 ? Vec2{-(b.y - a.y) / l * radius, (b.x - a.x) / l * radius} : Vec2{0, radius};
+        return {a, b, {a.x + n.x, a.y + n.y}, {a.x - n.x, a.y - n.y}, {b.x + n.x, b.y + n.y}, {b.x - n.x, b.y - n.y}};
+    }
     if (kind == CurveKind::Rectangle && pts.size() >= 2)
         return {pts[0], {pts[1].x, pts[0].y}, pts[1], {pts[0].x, pts[1].y},
                 {(pts[0].x + pts[1].x) * 0.5f, (pts[0].y + pts[1].y) * 0.5f}};
@@ -98,6 +264,27 @@ std::string SketchCurve::measure() const {
         if (pts.size() >= 2) return lengthsText({std::fabs(pts[1].x - pts[0].x), std::fabs(pts[1].y - pts[0].y)}, " x ");
         break;
     case CurveKind::Circle: return "R " + lengthText(radius);
+    case CurveKind::Arc:
+        if (pts.size() >= 3) {
+            float a0, a1;
+            arcAngles(a0, a1);
+            char b[32];
+            std::snprintf(b, sizeof b, " %.1f deg", static_cast<double>((a1 - a0) * 180.0f / kPi));
+            return "R " + lengthText(len(pts[0], pts[1])) + b;
+        }
+        break;
+    case CurveKind::Spline: {
+        const std::vector<Vec2> s = planeStrip(0.01f);
+        double total = 0.0;
+        for (std::size_t i = 1; i < s.size(); ++i) total += len(s[i - 1], s[i]);
+        return "L " + lengthText(total) + " (" + std::to_string(pts.size()) + " points" + (closed ? ", closed)" : ")");
+    }
+    case CurveKind::Ellipse:
+        if (pts.size() >= 2) return lengthsText({len(pts[0], pts[1]), radius}, " x ", "R ");
+        break;
+    case CurveKind::Slot:
+        if (pts.size() >= 2) return lengthsText({len(pts[0], pts[1]) + 2.0 * radius, 2.0 * radius}, " x ");
+        break;
     }
     return "";
 }

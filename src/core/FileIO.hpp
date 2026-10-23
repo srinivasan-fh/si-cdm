@@ -61,7 +61,9 @@ struct ProjectState {
 //   5  large meshes (20000 vertices or more) as base64 binary arrays ("positions_b64"...),
 //      written once and referred to by later bodies of the same shape ("mesh_same_as"); a
 //      file with either has reader_version 5, others still 1
-constexpr int kProjectVersion = 5;
+//   6  adds sketch arcs, splines, ellipses and slots, and construction curves (a reader
+//      before 6 leaves those curves out)
+constexpr int kProjectVersion = 6;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

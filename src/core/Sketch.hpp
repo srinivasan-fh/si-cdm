@@ -31,14 +31,20 @@ struct PlaneFrame {
 PlaneFrame planeFrame(SketchPlane plane) noexcept;
 const char* planeName(SketchPlane plane) noexcept;
 
-enum class CurveKind { Point, Line, Polyline, Rectangle, Circle };
+enum class CurveKind { Point, Line, Polyline, Rectangle, Circle, Arc, Spline, Ellipse, Slot };
 
 // One sketch entity, stored in its plane's 2D coordinates (mm).
 //   Point:     pts[0]
 //   Line:      pts[0] -> pts[1]
-//   Polyline:  pts[0..n], open
+//   Polyline:  pts[0..n], open (closed when the last point is the first)
 //   Rectangle: opposite corners pts[0], pts[1]
 //   Circle:    centre pts[0], radius
+//   Arc:       centre pts[0], start pts[1], end pts[2] (counter-clockwise from start to
+//              end), radius
+//   Spline:    the points it passes through, pts[0..n] (a smooth curve through them;
+//              `closed` joins the last back to the first)
+//   Ellipse:   centre pts[0], the end of its major axis pts[1], minor radius `radius`
+//   Slot:      the centres of its round ends pts[0], pts[1], radius (half its width)
 struct SketchCurve {
     CurveKind kind = CurveKind::Line;
     SketchPlane plane = SketchPlane::Top;
@@ -46,9 +52,17 @@ struct SketchCurve {
     float radius = 0.0f;
     std::string name;
     bool visible = true;
+    bool closed = false;       // Spline: a closed loop
+    bool construction = false; // a reference curve: drawn dashed, not part of profiles
 
     // Line-strip vertices in world space (closed shapes repeat the first point).
     std::vector<Vec3> worldStrip(int circleSegments = 96) const;
+    // The same in plane coordinates, round parts sampled to `chord` mm (closed shapes
+    // repeat the first point).
+    std::vector<Vec2> planeStrip(float chord = 0.05f) const;
+    bool isClosed() const; // Rectangle, Circle, Ellipse, Slot, a closed Polyline or Spline
+    // Arcs: the start and end angles (radians, end > start, counter-clockwise).
+    void arcAngles(float& a0, float& a1) const;
 
     // Snap targets in plane coordinates: endpoints, corners, centres.
     std::vector<Vec2> keyPoints() const;
@@ -89,5 +103,13 @@ private:
 };
 
 const char* curveKindName(CurveKind k) noexcept;
+
+// A point on the smooth curve through `pts` (centripetal Catmull-Rom: no loops or cusps
+// between close points), at t in [0, 1] along span `span` (pts[span] to pts[span + 1];
+// a closed curve's last span runs back to pts[0]).
+Vec2 splinePoint(const std::vector<Vec2>& pts, bool closed, std::size_t span, float t);
+// The arc through three points (start, a point on it, end): its centre and radius, and
+// whether it runs counter-clockwise from start to end. False when they are in line.
+bool arcThrough(Vec2 a, Vec2 m, Vec2 b, Vec2& centre, float& radius, bool& ccw);
 
 } // namespace sicdm
