@@ -540,6 +540,34 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("operation", prop("string", "new | list | view_add | view_move | view_delete | view_scale | view_hidden | section | dim | dim_delete | "
+                                          "autodim | title | note | scale | size | projection | export | delete"));
+        p.set("bodies", prop("array", "new: the bodies to draw (default: every visible body)"));
+        p.set("size", prop("string", "new / size: A4, A3, A2, A1, A0, LETTER, TABLOID, ANSI C, ANSI D (default A3)"));
+        p.set("portrait", prop("boolean", "new / size: portrait instead of landscape"));
+        p.set("third_angle", prop("boolean", "new / projection: third-angle (ASME) instead of first-angle (ISO)"));
+        p.set("scale", prop("string", "new / scale / view_add / view_scale: 1:2, 2:1 ... (default: a standard scale that fits)"));
+        p.set("view", prop("string", "view_*: the view's name; view_add: front, back, top, bottom, left, right or iso; section / dim / autodim: the view"));
+        p.set("at", prop("array", "view_add / view_move / note: [x, y] on the sheet, mm from the bottom-left corner; section: the cut's position, model mm"));
+        p.set("horizontal", prop("boolean", "section: cut across horizontally (default vertically)"));
+        p.set("flip", prop("boolean", "section: look the other way"));
+        p.set("hidden", prop("boolean", "view_add / view_hidden: show hidden lines dashed"));
+        p.set("kind", prop("string", "dim: horizontal, vertical, aligned, diameter or radius"));
+        p.set("from", prop("array", "dim: the first model point [x, y, z] (diameter / radius: the centre)"));
+        p.set("to", prop("array", "dim: the second model point [x, y, z] (diameter / radius: on the circle)"));
+        p.set("offset", prop("number", "dim: sheet mm from the feature (negative: below / left)"));
+        p.set("index", prop("number", "dim_delete: the dimension's number (1-based)"));
+        p.set("field", prop("string", "title: TITLE, PART, MATERIAL, DRAWN, CHECKED, DATE, REV, SHEET"));
+        p.set("text", prop("string", "title / note / dim: the text"));
+        p.set("path", prop("string", "export: the file (.pdf, .svg or .dxf)"));
+        tools.push(tool("drawing",
+                        "2D engineering drawings of the model: front, top, right and isometric views laid out on an ISO or ANSI sheet "
+                        "(first or third angle) with hidden lines dashed, section views hatched, centre marks, dimensions (automatic overall "
+                        "sizes and hole diameters, or by hand), a title block and notes; exported to PDF, SVG or DXF.",
+                        p, {"operation"}));
+    }
+    {
+        Json p = Json::object();
         p.set("path", prop("string", "File path (.sicdm). Optional for save when the project already has a path"));
         tools.push(tool("save_project", "Save the project.", p, {}));
         Json o = Json::object();
@@ -981,6 +1009,78 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         }
         return textResult("operation is one of revolve, sweep, loft, pattern, mirror, edges, fillet, chamfer, massprops, measure, history, regen, "
                           "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete",
+                          true);
+    }
+    if (name == "drawing") {
+        const std::string op = a["operation"].asString();
+        auto vec = [&](const Json& v, std::size_t n) {
+            std::string s;
+            for (std::size_t i = 0; i < n && i < v.size(); ++i) s += (i ? "," : "") + num(v[i].asNumber());
+            return s;
+        };
+        auto text = [&](const char* key) { return a[key].isString() ? " " + quote(a[key].asString()) : std::string(); };
+        const std::string view = text("view");
+        if (op == "list") return runLine("SHEET");
+        if (op == "delete") return runLine("SHEET DELETE");
+        if (op == "autodim") return runLine("SHEET AUTODIM" + view);
+        if (op == "new") {
+            std::string line = "SHEET NEW";
+            if (a["bodies"].isArray())
+                for (std::size_t i = 0; i < a["bodies"].size(); ++i) line += " " + quote(a["bodies"][i].asString());
+            if (a["size"].isString()) line += " " + a["size"].asString();
+            if (a["portrait"].asBool()) line += " PORTRAIT";
+            if (a["third_angle"].asBool()) line += " THIRD";
+            if (a["scale"].isString()) line += " SCALE " + a["scale"].asString();
+            return runLine(line);
+        }
+        if (op == "view_add") {
+            if (!a["view"].isString()) return textResult("view_add needs view (front, top, right, iso...)", true);
+            std::string line = "SHEET VIEW ADD " + a["view"].asString();
+            if (a["at"].isArray()) line += " AT " + vec(a["at"], 2);
+            if (a["scale"].isString()) line += " SCALE " + a["scale"].asString();
+            if (a["hidden"].isBool()) line += a["hidden"].asBool() ? " HIDDEN" : " NOHIDDEN";
+            return runLine(line);
+        }
+        if (op == "view_move") {
+            if (!a["view"].isString() || !a["at"].isArray()) return textResult("view_move needs view and at [x, y]", true);
+            return runLine("SHEET VIEW MOVE" + view + " " + vec(a["at"], 2));
+        }
+        if (op == "view_delete") return runLine("SHEET VIEW DELETE" + view);
+        if (op == "view_scale") return runLine("SHEET VIEW SCALE" + view + " " + a["scale"].asString());
+        if (op == "view_hidden") return runLine("SHEET VIEW HIDDEN" + view + (a["hidden"].asBool() ? " ON" : " OFF"));
+        if (op == "section") {
+            std::string line = "SHEET SECTION" + view + (a["horizontal"].asBool() ? " HORIZONTAL" : "");
+            if (a["at"].isNumber()) line += " AT " + num(a["at"].asNumber());
+            if (a["flip"].asBool()) line += " FLIP";
+            return runLine(line);
+        }
+        if (op == "dim") {
+            if (!a["kind"].isString() || !a["view"].isString() || !a["from"].isArray() || !a["to"].isArray())
+                return textResult("dim needs kind, view, from [x, y, z] and to [x, y, z]", true);
+            std::string line = "SHEET DIM " + a["kind"].asString() + view + " " + vec(a["from"], 3) + " " + vec(a["to"], 3);
+            if (a["offset"].isNumber()) line += " OFFSET " + num(a["offset"].asNumber());
+            if (a["text"].isString()) line += " TEXT " + quote(a["text"].asString());
+            return runLine(line);
+        }
+        if (op == "dim_delete") return runLine("SHEET DIM DELETE " + num(a["index"].asNumber()));
+        if (op == "title") {
+            if (!a["field"].isString()) return textResult("title needs field and text", true);
+            return runLine("SHEET TITLE " + a["field"].asString() + text("text"));
+        }
+        if (op == "note") {
+            std::string line = "SHEET NOTE" + text("text");
+            if (a["at"].isArray()) line += " AT " + vec(a["at"], 2);
+            return runLine(line);
+        }
+        if (op == "scale") return runLine("SHEET SCALE " + a["scale"].asString());
+        if (op == "size") return runLine("SHEET SIZE " + a["size"].asString() + (a["portrait"].asBool() ? " PORTRAIT" : ""));
+        if (op == "projection") return runLine(std::string("SHEET PROJECTION ") + (a["third_angle"].asBool() ? "THIRD" : "FIRST"));
+        if (op == "export") {
+            if (!a["path"].isString()) return textResult("export needs path (.pdf, .svg or .dxf)", true);
+            return runLine("SHEET EXPORT " + quote(a["path"].asString()));
+        }
+        return textResult("operation is one of new, list, view_add, view_move, view_delete, view_scale, view_hidden, section, dim, dim_delete, "
+                          "autodim, title, note, scale, size, projection, export, delete",
                           true);
     }
     if (name == "cam") {

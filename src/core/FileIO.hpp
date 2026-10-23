@@ -9,6 +9,7 @@
 //   images      .png .jpg .jpeg .bmp .tga .gif .psd .hdr .pnm: reference images
 
 #include "core/Cam.hpp"
+#include "core/Drawing.hpp"
 #include "core/Scene.hpp"
 #include "core/Units.hpp"
 
@@ -41,6 +42,7 @@ struct ProjectState {
     UnitSettings units{};     // display / input units (geometry is always stored in mm)
     float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
     CamJob cam;               // CAM: setup, tools and operations (toolpaths are remade)
+    Drawing drawing;          // the drawing sheet: views, dimensions, title block
     std::vector<HistoryStep> history;     // the feature history
     std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)
     bool historyComplete = true;          // false: the model was also changed outside commands
@@ -52,7 +54,8 @@ struct ProjectState {
 // file whose reader_version this build knows still opens; what it adds is left out.
 //   1  the first format
 //   2  adds exact geometry ("brep_step"), "reader_version" and "saved_by"
-constexpr int kProjectVersion = 2;
+//   3  adds the drawing sheet ("drawing")
+constexpr int kProjectVersion = 3;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

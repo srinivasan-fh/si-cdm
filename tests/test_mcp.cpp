@@ -270,6 +270,29 @@ TEST_CASE("MCP cam sets up, adds tools and operations, simulates and posts") {
     CHECK(tool(s, "cam", R"({"operation":"tool","number":2})")["isError"].asBool());
 }
 
+TEST_CASE("MCP drawing lays out views, dimensions them and exports the sheet") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "create_solid", R"({"kind":"box","width":60,"depth":40,"height":15,"name":"Plate"})")["isError"].asBool());
+    Json r = tool(s, "drawing", R"({"operation":"new","size":"A3","third_angle":true})");
+    CHECK(!r["isError"].asBool());
+    CHECK(d.state.drawing.views.size() == 4);
+    CHECK(d.state.drawing.thirdAngle);
+    CHECK(!tool(s, "drawing", R"({"operation":"section","view":"Front"})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"autodim"})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"dim","kind":"horizontal","view":"Front","from":[-30,0,0],"to":[0,0,0],"offset":-20})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"title","field":"MATERIAL","text":"Steel"})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"note","text":"DEBURR","at":[30,40]})")["isError"].asBool());
+    r = tool(s, "drawing", R"({"operation":"list"})");
+    CHECK(r["content"][0]["text"].asString().find("= 30.0 mm") != std::string::npos);
+    const std::string pdf = (std::filesystem::temp_directory_path() / "sicdm mcp drawing.pdf").string();
+    CHECK(!tool(s, "drawing", R"({"operation":"export","path":")" + pdf + R"("})")["isError"].asBool());
+    CHECK(std::filesystem::exists(pdf));
+    std::filesystem::remove(pdf);
+    CHECK(tool(s, "drawing", R"({"operation":"dim","kind":"horizontal"})")["isError"].asBool());
+    CHECK(tool(s, "drawing", R"({"operation":"scribble"})")["isError"].asBool());
+}
+
 TEST_CASE("MCP cad revolves, patterns, fillets, weighs and edits the history") {
     Document d;
     McpServer s(d, nullptr);

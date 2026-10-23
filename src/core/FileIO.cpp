@@ -266,7 +266,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     Json doc = Json::object();
     doc.set("format", "sicdm-project");
     doc.set("version", kProjectVersion);
-    doc.set("reader_version", 1); // what 2 added is optional: a format-1 reader can open it
+    doc.set("reader_version", 1); // what 2 and 3 added is optional: a format-1 reader can open it
 #ifdef SICDM_VERSION
     doc.set("saved_by", std::string("SI CDM ") + SICDM_VERSION);
 #endif
@@ -408,6 +408,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     }
     if (state.simDuration > 0.0f) doc.set("simulation_duration", state.simDuration);
     if (!state.cam.empty()) doc.set("cam", camToJson(state.cam));
+    if (!state.drawing.empty()) doc.set("drawing", drawingToJson(state.drawing));
     if (!state.history.empty()) {
         Json h = Json::array();
         for (const HistoryStep& step : state.history) {
@@ -622,6 +623,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     }
     st.simDuration = std::max((*doc)["simulation_duration"].asFloat(), 0.0f);
     if (const Json& cj = (*doc)["cam"]; cj.isObject()) camFromJson(cj, st.cam);
+    if (const Json& dj = (*doc)["drawing"]; dj.isObject()) drawingFromJson(dj, st.drawing);
     for (const Json& j : (*doc)["history"].items()) {
         HistoryStep step;
         step.line = j["line"].asString("");

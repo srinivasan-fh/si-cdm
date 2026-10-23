@@ -13,6 +13,7 @@
 #include "core/Units.hpp"
 #include "ui/Theme.hpp"
 #include "core/Extrude.hpp"
+#include "core/Json.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -1206,6 +1207,7 @@ void Application::frame(float dt) {
     handleViewportInput();
     updatePrompt();
     refreshFileTabs();
+    updateSheet();
     const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
 
@@ -2583,6 +2585,25 @@ void Application::setDisplay(int mode) { m_vp3D.displayMode = static_cast<Displa
 void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.value_or(!viewport().showGrid); }
 
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
+
+bool Application::showSheet(bool on) {
+    m_uiState.showSheet = on;
+    return true;
+}
+
+void Application::updateSheet() {
+    if (!m_uiState.showSheet || m_doc.state.drawing.empty()) {
+        m_uiState.sheet = nullptr;
+        return;
+    }
+    const std::string text = drawingToJson(m_doc.state.drawing).dump();
+    const std::uint64_t key = std::hash<std::string>{}(text) * 1000003u ^ m_doc.scene.revision();
+    if (key != m_sheetKey || m_uiState.sheet == nullptr) {
+        m_sheet = renderDrawing(m_doc.state.drawing, m_doc.scene, 1);
+        m_sheetKey = key;
+    }
+    m_uiState.sheet = &m_sheet;
+}
 
 std::string Application::describe() const {
     const OrbitCamera& c = camera();

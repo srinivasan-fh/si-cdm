@@ -5,6 +5,7 @@
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
 #include "core/CamCommand.hpp"
+#include "core/DrawingCommand.hpp"
 #include "core/FeatureCommand.hpp"
 #include "core/SketchCommand.hpp"
 #include "core/Iges.hpp"
@@ -1475,6 +1476,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         return out;
     }
     if (cmd == "CAM") return runCamCommand(doc, a, pc.quoted);
+    if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
         cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES")
         return runFeatureCommand(doc, cmd, a, pc.quoted);

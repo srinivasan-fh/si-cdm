@@ -57,6 +57,7 @@ public:
     void setPanel(std::optional<bool> on) override;
     std::string describe() const override;
     bool simulation(const std::string& action, float value, std::string* reply) override;
+    bool showSheet(bool on) override;
 
     // ViewHost: file tabs.
     bool prepareDocument(const std::string& path) override;
@@ -166,6 +167,10 @@ private:
     std::unique_ptr<Splash> m_splash; // only while launching
     LandingUI m_ui;
     UiState m_uiState;
+    // The drawing sheet's graphics, redrawn when the drawing or the model changes.
+    SheetGraphics m_sheet;
+    std::uint64_t m_sheetKey = 0;
+    void updateSheet();
 
     // Input state
     enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife };

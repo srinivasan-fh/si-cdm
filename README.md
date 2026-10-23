@@ -238,6 +238,27 @@ HISTORY      HISTORY EDIT 2 HOLE "Block 1" AT -20,0,15 DIAMETER 10 THROUGH      
 
 Details: [docs/cad.md](docs/cad.md).
 
+## Drawings
+
+*Drawing → New Drawing* (or `SHEET NEW`) makes a 2D engineering drawing of the model.
+
+- **Views:** front, top, right and isometric views on an ISO or ANSI sheet, at a standard
+  scale that fits. First-angle or third-angle projection, with the views lined up.
+- **Lines:** hidden lines are dashed. Centre marks and centre lines are drawn on holes and
+  bosses.
+- **Sections:** hatched where the cut meets material.
+- **Dimensions:** automatic overall sizes and hole diameters, or picked by hand. They are tied to
+  the model.
+- **Sheet:** a title block, notes, and export to PDF, SVG or DXF.
+
+```text
+SHEET NEW A3      SHEET SECTION      SHEET AUTODIM      SHEET TITLE MATERIAL 6061-T6      SHEET EXPORT part.pdf
+```
+
+![Drawing sheet](docs/drawing-sheet.png)
+
+Details: [docs/drawing.md](docs/drawing.md).
+
 ## 3D printing
 
 *Manufacture → 3D Print* (or the command line) gets a part ready for a printer.
@@ -470,6 +491,7 @@ With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,d
 | **New / Open / Save / Save As** (Ctrl/⌘ N, O, S, Shift+S) | `.sicdm` project (JSON): parametric solids, meshes, sketches, reference images |
 | **Import** (Ctrl/⌘ I) | `.step` `.stp` → exact solids (assemblies placed, units converted) · `.igs` `.iges` → exact solids (trimmed surfaces sewn) or surfaces · `.stl` `.obj` → body · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
 | **Export** (Ctrl/⌘ E) | `.step` (AP214: exact B-reps, other meshes as planar faces) · `.igs` (IGES 5.3 trimmed surfaces) · `.stl` `.obj` `.3mf` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
+| **Drawing → Export...** | `.pdf` `.svg` `.dxf` (the drawing sheet: views, sections, dimensions, title block) |
 
 **STEP and IGES:** imports keep their exact geometry (planes, cylinders, cones, spheres, tori, NURBS),
 tessellated watertight for display and written back unchanged. IGES trimmed surfaces are sewn into
@@ -512,6 +534,7 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 `print` (printability check, repair, orient, slice to G-code, 3MF),
 `cam` (CNC milling: setup, tools, operations, simulation, G-code post),
 `cad` (sketch constraints and dimensions, revolve, sweep, loft, pattern, mirror, edge fillets and chamfers, mass properties, measure, feature history),
+`drawing` (2D drawings: views, sections, dimensions, title block, PDF / SVG / DXF export),
 `set_view`, `run_command`, `list_commands`, `new_project`, `open_project`, `save_project`,
 `import_file`, `export_file`.
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Camera.hpp"
+#include "core/Drawing.hpp"
 #include "core/Scene.hpp"
 #include "render/Renderer.hpp"
 #include "ui/FileDialog.hpp"
@@ -27,6 +28,9 @@ struct UiState {
     int dockTab = 0;            // its page: 0 Model, 1 Library
     bool showControls = false;
     bool showAbout = false;
+    // The drawing sheet window; the app keeps `sheet` drawn while it is open.
+    bool showSheet = false;
+    const SheetGraphics* sheet = nullptr;
     bool snapGrid = true;
     bool snapPoints = true;
     int selectedBody = -1;
@@ -178,6 +182,13 @@ private:
     void drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCamera& cam, const UiState& st);
     void drawControlsWindow(UiState& st);
     void drawAboutWindow(UiState& st);
+    void drawSheetWindow(UiCommands& cmd, UiState& st);
+    // Drawing sheet window: zoom (pixels per mm), pan (mm at the canvas's top left), and
+    // the dimension tool's first point.
+    float m_sheetZoom = 0.0f;
+    float m_sheetPanX = 0.0f, m_sheetPanY = 0.0f;
+    bool m_sheetDimTool = false;
+    int m_sheetDimFirst = -1;
 
     Toolbox m_toolbox;
     ViewCube m_viewCube;
@@ -203,7 +214,7 @@ private:
     int m_recallPos = -1;
 
     // File menu.
-    enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep };
+    enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
     // Design menu inputs.

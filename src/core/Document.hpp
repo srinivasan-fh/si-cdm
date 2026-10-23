@@ -84,6 +84,11 @@ public:
         (void)discard;
         return false;
     }
+    // The drawing sheet window (SHEET SHOW / HIDE). False when headless.
+    virtual bool showSheet(bool on) {
+        (void)on;
+        return false;
+    }
 };
 
 struct CommandOutput {

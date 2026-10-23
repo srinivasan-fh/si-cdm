@@ -113,6 +113,10 @@ constexpr CommandSpec kCommands[] = {
      "CHAMFER|TAP d [STICKOUT l] [HOLDER d]; operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d] [ADAPTIVE] [REST] [INDEX a c]...; CAM ROTARY [ALONG] [STEPOVER s] [STEPDOWN d]; CAM SIMULATE [SHOW]; "
      "CAM POST file.nc [FANUC|HAAS|GRBL|LINUXCNC] [FORCE] (read back and checked first); CAM CHECK [post | file.nc [post]]; "
      "CAM MACHINE [PRESET vmc|vmc-4th|trunnion|benchtop|router] [TRAVEL x y z] [ZERO x,y,z] [A min max] [C min max] [POCKETS n] [MAXRPM n]"},
+    {"SHEET", "DWG", "SHEET NEW|VIEW|SECTION|DIM|AUTODIM|TITLE|NOTE|SCALE|SIZE|PROJECTION|EXPORT|SHOW ...",
+     "Drawings: SHEET NEW [bodies] [SIZE A3] [PORTRAIT] [THIRD] [SCALE 1:2] lays out front, top, right and isometric views; SHEET VIEW ADD kind [AT x,y]; "
+     "SHEET SECTION [view] [VERTICAL|HORIZONTAL] [AT pos] [FLIP]; SHEET DIM HORIZONTAL|VERTICAL|ALIGNED|DIAMETER|RADIUS view x,y,z x,y,z [OFFSET mm]; "
+     "SHEET AUTODIM; SHEET TITLE field text; SHEET NOTE text [AT x,y]; SHEET EXPORT file.pdf|.svg|.dxf"},
     {"PRINTCHECK", "PRINTABILITY", "PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]",
      "Check a part for printing: holes, non-manifold edges, inside out, overhangs, thin walls, size, material, time"},
     {"REPAIR", "FIX", "REPAIR [body]", "Make a mesh printable: weld, drop bad faces, fix the winding, fill holes, drop specks"},

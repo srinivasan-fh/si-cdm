@@ -18,6 +18,7 @@
 #include <functional>
 #include <array>
 #include <map>
+#include <cfloat>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -343,6 +344,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (m_showMcp) drawMcpWindow(st);
     if (st.showControls) drawControlsWindow(st);
     if (st.showAbout) drawAboutWindow(st);
+    if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
     return cmd;
 }
 
@@ -502,6 +504,35 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::Separator();
         if (ImGui::MenuItem("Feature History")) cmd.commands.push_back("HISTORY");
         if (ImGui::MenuItem("Regenerate")) cmd.commands.push_back("REGEN");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Drawing")) {
+        if (ImGui::MenuItem("New Drawing (A3)")) cmd.commands.push_back("SHEET NEW A3");
+        if (ImGui::BeginMenu("New Drawing On")) {
+            for (const char* sz : {"A4", "A3", "A2", "A1", "A0", "LETTER", "TABLOID"})
+                if (ImGui::MenuItem(sz)) cmd.commands.push_back(std::string("SHEET NEW ") + sz);
+            ImGui::Separator();
+            if (ImGui::MenuItem("A3, Third-Angle (ASME)")) cmd.commands.push_back("SHEET NEW A3 THIRD");
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Show Drawing", nullptr, st.showSheet)) cmd.commands.push_back(st.showSheet ? "SHEET HIDE" : "SHEET SHOW");
+        if (ImGui::MenuItem("Dimension Automatically")) cmd.commands.push_back("SHEET AUTODIM");
+        if (ImGui::MenuItem("Section Through the Front View")) cmd.commands.push_back("SHEET SECTION FRONT VERTICAL");
+        if (ImGui::MenuItem("Section Through the Top View")) cmd.commands.push_back("SHEET SECTION TOP HORIZONTAL");
+        if (ImGui::BeginMenu("Add View")) {
+            for (const char* v : {"Front", "Back", "Top", "Bottom", "Left", "Right", "Iso"})
+                if (ImGui::MenuItem(v)) cmd.commands.push_back(std::string("SHEET VIEW ADD ") + v);
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Scale")) {
+            for (const char* sc : {"5:1", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20"})
+                if (ImGui::MenuItem(sc)) cmd.commands.push_back(std::string("SHEET SCALE ") + sc);
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Export Drawing (PDF, SVG, DXF)...")) requestFile(FileSheetExport, st);
+        if (ImGui::MenuItem("Delete Drawing")) cmd.commands.push_back("SHEET DELETE");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Manufacture")) {
@@ -1685,6 +1716,7 @@ void LandingUI::requestFile(int action, const UiState& st) {
         break;
     case File3mf: m_fileDialog.open(FileDialog::Mode::Save, "Export 3MF", {".3mf"}, dir, projectStem(st) + ".3mf"); break;
     case FilePost: m_fileDialog.open(FileDialog::Mode::Save, "Post Process to G-code", {".nc", ".tap", ".gcode"}, dir, projectStem(st) + ".nc"); break;
+    case FileSheetExport: m_fileDialog.open(FileDialog::Mode::Save, "Export Drawing", {".pdf", ".svg", ".dxf"}, dir, projectStem(st) + ".pdf"); break;
     default: m_fileAction = FileNone;
     }
 }
@@ -1705,6 +1737,7 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case FileImport:
         case FileImportImage:
         case FileImportStep: cmd.commands.push_back("IMPORT " + quoted(*path)); break;
+        case FileSheetExport: cmd.commands.push_back("SHEET EXPORT " + quoted(*path)); break;
         case FileExportStep:
         case FileExport:
         case File3mf: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
@@ -2977,6 +3010,156 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
     ImGui::End();
     ImGui::PopStyleVar();
     return kWidth;
+}
+
+// --- the drawing sheet window -------------------------------------------------------------
+
+void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
+    const SheetGraphics& g = *st.sheet;
+    ImGui::SetNextWindowSize({980, 720}, ImGuiCond_FirstUseEver);
+    bool open = true;
+    if (!ImGui::Begin("Drawing Sheet", &open)) {
+        ImGui::End();
+        if (!open) cmd.commands.push_back("SHEET HIDE");
+        return;
+    }
+    if (!open) cmd.commands.push_back("SHEET HIDE");
+    // Toolbar.
+    bool fit = m_sheetZoom <= 0.0f;
+    if (ImGui::Button("Fit")) fit = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Auto Dimension")) cmd.commands.push_back("SHEET AUTODIM");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Dimension Tool", &m_sheetDimTool)) m_sheetDimFirst = -1;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click two points of a view: horizontal, vertical or aligned by how they lie");
+    ImGui::SameLine();
+    if (ImGui::Button("Section")) cmd.commands.push_back("SHEET SECTION FRONT VERTICAL");
+    ImGui::SameLine();
+    if (ImGui::Button("Export...")) requestFile(FileSheetExport, st);
+    for (const std::string& w : g.warnings) ImGui::TextColored({0.95f, 0.6f, 0.3f, 1}, "%s", w.c_str());
+
+    // Canvas: the sheet, y up, scaled and panned.
+    const ImVec2 c0 = ImGui::GetCursorScreenPos();
+    ImVec2 size = ImGui::GetContentRegionAvail();
+    size.x = std::max(size.x, 100.0f), size.y = std::max(size.y, 100.0f);
+    ImGui::InvisibleButton("##sheetcanvas", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle | ImGuiButtonFlags_MouseButtonRight);
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (fit) {
+        m_sheetZoom = std::min((size.x - 20) / static_cast<float>(g.width), (size.y - 20) / static_cast<float>(g.height));
+        m_sheetPanX = -10 / m_sheetZoom - (size.x / m_sheetZoom - static_cast<float>(g.width) - 20 / m_sheetZoom) / 2;
+        m_sheetPanY = static_cast<float>(g.height) + 10 / m_sheetZoom + (size.y / m_sheetZoom - static_cast<float>(g.height) - 20 / m_sheetZoom) / 2;
+    }
+    auto toScreen = [&](double x, double y) { return ImVec2(c0.x + (static_cast<float>(x) - m_sheetPanX) * m_sheetZoom, c0.y + (m_sheetPanY - static_cast<float>(y)) * m_sheetZoom); };
+    const ImGuiIO& io = ImGui::GetIO();
+    if (hovered && io.MouseWheel != 0.0f) { // zoom about the cursor
+        const float mx = m_sheetPanX + (io.MousePos.x - c0.x) / m_sheetZoom, my = m_sheetPanY - (io.MousePos.y - c0.y) / m_sheetZoom;
+        m_sheetZoom = std::clamp(m_sheetZoom * std::pow(1.15f, io.MouseWheel), 0.2f, 60.0f);
+        m_sheetPanX = mx - (io.MousePos.x - c0.x) / m_sheetZoom;
+        m_sheetPanY = my + (io.MousePos.y - c0.y) / m_sheetZoom;
+    }
+    if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Right) ||
+                                  (!m_sheetDimTool && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))) {
+        m_sheetPanX -= io.MouseDelta.x / m_sheetZoom;
+        m_sheetPanY += io.MouseDelta.y / m_sheetZoom;
+    }
+    dl->PushClipRect(c0, {c0.x + size.x, c0.y + size.y}, true);
+    dl->AddRectFilled(c0, {c0.x + size.x, c0.y + size.y}, IM_COL32(70, 74, 82, 255));
+    dl->AddRectFilled(toScreen(0, g.height), toScreen(g.width, 0), IM_COL32(255, 255, 255, 255));
+    const ImU32 ink = IM_COL32(20, 22, 28, 255);
+    for (const SheetLine& l : g.lines) {
+        float w = 1.0f;
+        float dash = 0, gap = 0, dot = 0;
+        switch (l.style) {
+        case SheetLine::Visible: w = std::max(1.0f, 0.5f * m_sheetZoom); break;
+        case SheetLine::Hidden: w = std::max(1.0f, 0.25f * m_sheetZoom), dash = 3, gap = 1.5f; break;
+        case SheetLine::Center: w = std::max(1.0f, 0.25f * m_sheetZoom), dash = 8, gap = 1.5f, dot = 1; break;
+        case SheetLine::Thin: w = std::max(1.0f, 0.18f * m_sheetZoom); break;
+        case SheetLine::Border: w = std::max(1.0f, 0.7f * m_sheetZoom); break;
+        case SheetLine::Cut: w = std::max(1.0f, 0.35f * m_sheetZoom), dash = 10, gap = 1.5f, dot = 1.5f; break;
+        }
+        const ImU32 col = l.style == SheetLine::Center ? IM_COL32(40, 90, 160, 255) : ink;
+        const ImVec2 a = toScreen(l.x0, l.y0), b = toScreen(l.x1, l.y1);
+        if (dash <= 0) {
+            dl->AddLine(a, b, col, w);
+            continue;
+        }
+        // Dashes in sheet millimetres: dash, gap (, dot, gap).
+        const double len = std::hypot(l.x1 - l.x0, l.y1 - l.y0);
+        if (len <= 0) continue;
+        const double ux = (l.x1 - l.x0) / len, uy = (l.y1 - l.y0) / len;
+        double t = 0;
+        int phase = 0;
+        const float pattern[4] = {dash, gap, dot > 0 ? dot : 0, dot > 0 ? gap : 0};
+        while (t < len) {
+            const float seg = pattern[phase & 3];
+            const double t1 = std::min(len, t + seg);
+            if ((phase & 1) == 0 && seg > 0) dl->AddLine(toScreen(l.x0 + ux * t, l.y0 + uy * t), toScreen(l.x0 + ux * t1, l.y0 + uy * t1), col, w);
+            t = t1;
+            phase = dot > 0 ? phase + 1 : (phase + 1) % 2;
+            if (seg <= 0 && t >= len) break;
+        }
+    }
+    for (const auto& f : g.fills) {
+        std::vector<ImVec2> pts;
+        for (const auto& [x, y] : f) pts.push_back(toScreen(x, y));
+        dl->AddConvexPolyFilled(pts.data(), static_cast<int>(pts.size()), ink);
+    }
+    ImFont* font = ImGui::GetFont();
+    for (const SheetText& t : g.texts) {
+        const float px = static_cast<float>(t.height / 0.72) * m_sheetZoom;
+        if (px < 3.0f) continue;
+        const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0, t.text.c_str());
+        const float shift = t.align == 1 ? sz.x / 2 : t.align == 2 ? sz.x : 0;
+        const ImVec2 base = toScreen(t.x, t.y);
+        const int v0 = dl->VtxBuffer.Size;
+        dl->AddText(font, px, {base.x - shift, base.y - sz.y * 0.8f}, ink, t.text.c_str());
+        if (std::fabs(t.angle) > 0.01) { // turn the glyphs about the text's anchor
+            const float a = static_cast<float>(-t.angle * 3.14159265358979 / 180), ca = std::cos(a), sa = std::sin(a);
+            for (int i = v0; i < dl->VtxBuffer.Size; ++i) {
+                ImVec2& p = dl->VtxBuffer[i].pos;
+                const float dx = p.x - base.x, dy = p.y - base.y;
+                p = {base.x + dx * ca - dy * sa, base.y + dx * sa + dy * ca};
+            }
+        }
+    }
+    // The dimension tool: the snap point nearest the cursor.
+    if (m_sheetDimTool && hovered && !g.snaps.empty()) {
+        int best = -1;
+        float bd = 10.0f;
+        for (std::size_t i = 0; i < g.snaps.size(); ++i) {
+            const ImVec2 p = toScreen(g.snaps[i].x, g.snaps[i].y);
+            const float dd = std::hypot(p.x - io.MousePos.x, p.y - io.MousePos.y);
+            if (dd < bd && (m_sheetDimFirst < 0 || g.snaps[i].view == g.snaps[static_cast<std::size_t>(std::min<int>(m_sheetDimFirst, static_cast<int>(g.snaps.size()) - 1))].view))
+                bd = dd, best = static_cast<int>(i);
+        }
+        if (m_sheetDimFirst >= static_cast<int>(g.snaps.size())) m_sheetDimFirst = -1;
+        if (m_sheetDimFirst >= 0) {
+            const SheetPoint& a = g.snaps[static_cast<std::size_t>(m_sheetDimFirst)];
+            dl->AddCircleFilled(toScreen(a.x, a.y), 4, IM_COL32(220, 80, 40, 255));
+            dl->AddLine(toScreen(a.x, a.y), best >= 0 ? toScreen(g.snaps[static_cast<std::size_t>(best)].x, g.snaps[static_cast<std::size_t>(best)].y) : io.MousePos,
+                        IM_COL32(220, 80, 40, 160), 1.0f);
+        }
+        if (best >= 0) {
+            dl->AddCircle(toScreen(g.snaps[static_cast<std::size_t>(best)].x, g.snaps[static_cast<std::size_t>(best)].y), 6, IM_COL32(220, 80, 40, 255), 0, 2.0f);
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                if (m_sheetDimFirst < 0) m_sheetDimFirst = best;
+                else if (best != m_sheetDimFirst) {
+                    const SheetPoint &a = g.snaps[static_cast<std::size_t>(m_sheetDimFirst)], &b = g.snaps[static_cast<std::size_t>(best)];
+                    const double dx = std::fabs(b.x - a.x), dy = std::fabs(b.y - a.y);
+                    const char* kind = dx > 3 * dy ? "HORIZONTAL" : dy > 3 * dx ? "VERTICAL" : "ALIGNED";
+                    char pa[96], pb[96];
+                    std::snprintf(pa, sizeof pa, "%.6g,%.6g,%.6g", a.model.x, a.model.y, a.model.z);
+                    std::snprintf(pb, sizeof pb, "%.6g,%.6g,%.6g", b.model.x, b.model.y, b.model.z);
+                    cmd.commands.push_back(std::string("SHEET DIM ") + kind + " \"" + a.view + "\" " + pa + " " + pb);
+                    m_sheetDimFirst = -1;
+                }
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_sheetDimFirst = -1;
+    }
+    dl->PopClipRect();
+    ImGui::End();
 }
 
 } // namespace sicdm
