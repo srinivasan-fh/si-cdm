@@ -1,6 +1,7 @@
 #include "core/Brep.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <charconv>
 #include <cstdio>
@@ -9,6 +10,8 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <stdexcept>
+#include <thread>
 #include <unordered_map>
 
 namespace sicdm {
@@ -70,6 +73,24 @@ double decimal(float f) {
     if (res.ec != std::errc()) return static_cast<double>(f);
     *res.ptr = '\0';
     return std::strtod(buf, nullptr);
+}
+
+DVec3 eulerDegrees(const Placement& p) {
+    const double* m = p.r; // R = Rz Ry Rx
+    const double ry = std::asin(std::clamp(-m[6], -1.0, 1.0));
+    double rx, rz;
+    if (std::fabs(std::cos(ry)) > 1e-9) {
+        rx = std::atan2(m[7], m[8]);
+        rz = std::atan2(m[3], m[0]);
+    } else { // gimbal lock: all the turn about x
+        rx = std::atan2(-m[5], m[4]);
+        rz = 0;
+    }
+    auto deg = [](double a) {
+        const double d = std::round(a * 360.0 / kPi2 * 1e7) / 1e7;
+        return d == 0 ? 0.0 : d; // no -0
+    };
+    return {deg(rx), deg(ry), deg(rz)};
 }
 
 Placement eulerPlacement(const DVec3& degrees) {
@@ -497,6 +518,7 @@ public:
         const double cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
         pts = {{cx - d, cy - d}, {cx + d, cy - d}, {cx, cy + d}};
         tris.push_back({{0, 1, 2}, {-1, -1, -1}, {false, false, false}, false});
+        touch(0);
         m_eps = 1e-12 * d * d;
     }
 
@@ -564,6 +586,15 @@ public:
 
 private:
     double m_eps = 0, m_tiny = 0;
+    // A triangle holding each vertex. Every change rewrites triangles that between them
+    // hold all the vertices the old ones did, so touching them keeps this right.
+    std::vector<int> m_vt;
+    void touch(int t) {
+        for (int v : T(t).v) {
+            if (static_cast<std::size_t>(v) >= m_vt.size()) m_vt.resize(static_cast<std::size_t>(v) + 1, -1);
+            m_vt[static_cast<std::size_t>(v)] = t;
+        }
+    }
 
     Tri& T(int t) { return tris[static_cast<std::size_t>(t)]; }
     const P2& P(int v) const { return pts[static_cast<std::size_t>(v)]; }
@@ -621,6 +652,7 @@ private:
         T(t0) = {{a, b, id}, {t1, t2, old.n[2]}, {false, false, old.c[2]}, false};
         tris.push_back({{b, c, id}, {t2, t0, old.n[0]}, {false, false, old.c[0]}, false});
         tris.push_back({{c, a, id}, {t0, t1, old.n[1]}, {false, false, old.c[1]}, false});
+        touch(t0), touch(t1), touch(t2);
         setNeighbour(old.n[0], b, c, t1);
         setNeighbour(old.n[1], c, a, t2);
         setNeighbour(old.n[2], a, b, t0);
@@ -657,11 +689,13 @@ private:
         // t0 = a b id, t1 = a id c (and t2 = d c id, t3 = d id b on the other side).
         T(t0) = {{a, b, id}, {t3, t1, nab}, {con, false, cab}, false};
         T(t1) = {{a, id, c}, {t2, nca, t0}, {con, cca, false}, false};
+        touch(t0), touch(t1);
         setNeighbour(nca, c, a, t1);
         std::vector<std::pair<int, int>> stack{{t0, 2}, {t1, 1}};
         if (t2 >= 0) {
             T(t2) = {{d, c, id}, {t1, t3, ndc}, {con, false, cdc}, false};
             T(t3) = {{d, id, b}, {t0, nbd, t2}, {con, cbd, false}, false};
+            touch(t2), touch(t3);
             setNeighbour(nbd, b, d, t3);
             stack.push_back({t2, 2});
             stack.push_back({t3, 1});
@@ -681,6 +715,29 @@ private:
     }
 
     bool findEdge(int a, int b, int& t, int& k) {
+        // Round the triangles about a, one way and then the other.
+        const int start = static_cast<std::size_t>(a) < m_vt.size() ? m_vt[static_cast<std::size_t>(a)] : -1;
+        bool lost = start < 0 || T(start).dead;
+        for (int dir = 1; dir <= 2 && !lost; ++dir) {
+            int cur = start;
+            for (int steps = 0; cur >= 0 && steps < 100000; ++steps) {
+                const Tri& tr = T(cur);
+                int ia = 0;
+                while (ia < 3 && tr.v[ia] != a) ++ia;
+                if (ia == 3 || tr.dead) { // not round a after all: search everything
+                    lost = true;
+                    break;
+                }
+                for (int j = 1; j <= 2; ++j)
+                    if (tr.v[(ia + j) % 3] == b) {
+                        t = cur, k = (ia + 3 - j) % 3; // the edge a-b is opposite the third vertex
+                        return true;
+                    }
+                cur = tr.n[(ia + dir) % 3];
+                if (cur == start) return false; // all the way round
+            }
+        }
+        if (!lost) return false;
         for (int i = 0; i < static_cast<int>(tris.size()); ++i) {
             if (T(i).dead) continue;
             for (int j = 0; j < 3; ++j) {
@@ -748,6 +805,7 @@ private:
         // t: a b d, u: a d c
         T(t) = {{a, b, d}, {nbd, u, nab}, {cbd, false, cab}, false};
         T(u) = {{a, d, c}, {ndc, nca, t}, {cdc, cca, false}, false};
+        touch(t), touch(u);
         setNeighbour(nbd, b, d, t);
         setNeighbour(ndc, d, c, u);
         setNeighbour(nca, c, a, u);
@@ -1494,11 +1552,34 @@ bool tessellateFace(TessContext& tc, const BFace& face, FaceMesh& out, std::stri
     std::vector<std::vector<P2>> sr(rings.size());
     for (std::size_t r = 0; r < rings.size(); ++r)
         for (const P2& q : rings[r]) sr[r].push_back(toS(q));
+    // The ring edges binned by their span in y, so a crossing test looks only at the edges
+    // level with the point (a face with a thousand holes would otherwise test every edge
+    // for every triangle).
+    struct RingEdge {
+        P2 a, b;
+    };
+    std::vector<RingEdge> redges;
+    double ey0 = 1e300, ey1 = -1e300;
+    for (const auto& r : sr)
+        for (std::size_t i = 0, j = r.size() - 1; i < r.size(); j = i++) {
+            redges.push_back({r[i], r[j]});
+            ey0 = std::min({ey0, r[i].y, r[j].y}), ey1 = std::max({ey1, r[i].y, r[j].y});
+        }
+    const std::size_t nbins = std::clamp<std::size_t>(redges.size() / 8, 1, 4096);
+    const double binH = std::max((ey1 - ey0) / static_cast<double>(nbins), 1e-300);
+    std::vector<std::vector<std::uint32_t>> bins(nbins);
+    auto binOf = [&](double y) { return static_cast<std::size_t>(std::clamp((y - ey0) / binH, 0.0, static_cast<double>(nbins - 1))); };
+    for (std::size_t k = 0; k < redges.size(); ++k) {
+        const auto& e = redges[k];
+        for (std::size_t bi = binOf(std::min(e.a.y, e.b.y)), b1 = binOf(std::max(e.a.y, e.b.y)); bi <= b1; ++bi) bins[bi].push_back(static_cast<std::uint32_t>(k));
+    }
     auto inside = [&](const P2& q) {
+        if (redges.empty() || q.y < ey0 || q.y > ey1) return false;
         bool in = false;
-        for (const auto& r : sr)
-            for (std::size_t i = 0, j = r.size() - 1; i < r.size(); j = i++)
-                if ((r[i].y > q.y) != (r[j].y > q.y) && q.x < (r[j].x - r[i].x) * (q.y - r[i].y) / (r[j].y - r[i].y) + r[i].x) in = !in;
+        for (std::uint32_t k : bins[binOf(q.y)]) {
+            const P2 &ea = redges[k].a, &eb = redges[k].b;
+            if ((ea.y > q.y) != (eb.y > q.y) && q.x < (eb.x - ea.x) * (q.y - ea.y) / (eb.y - ea.y) + ea.x) in = !in;
+        }
         return in;
     };
     auto isOut = [&](const Cdt::Tri& t) {
@@ -1659,15 +1740,48 @@ MeshData tessellate(const Brep& brep, const TessellateOptions& o, TessellateRepo
     tc.edgePts.resize(brep.edges.size());
     tc.edgeDone.assign(brep.edges.size(), 0);
     TessellateReport rep;
+    std::vector<const BFace*> faces;
     for (const BShell& sh : brep.shells)
-        for (const BFace& f : sh.faces) {
+        for (const BFace& f : sh.faces) faces.push_back(&f);
+    // Edges first: faces share them (so neighbours meet point for point), and with every
+    // edge sampled the faces read them only and can be meshed side by side.
+    for (std::size_t e = 0; e < brep.edges.size(); ++e) edgeSamples(tc, static_cast<int>(e));
+    for (const BCurve& c : brep.curves)
+        if (c.kind == BCurveKind::BSpline && !c.bs.knots.empty()) (void)c.bs.closed(); // fill the lazy caches up front
+    for (const BSurface& su : brep.surfaces)
+        if (su.kind == BSurfaceKind::BSpline && !su.bs.ku.empty() && !su.bs.kv.empty()) (void)su.bs.closedU(), (void)su.bs.closedV();
+    std::vector<FaceMesh> meshes(faces.size());
+    std::vector<std::string> errors(faces.size());
+    std::vector<char> ok(faces.size(), 0);
+    auto work = [&](std::size_t i) {
+        try {
+            ok[i] = tessellateFace(tc, *faces[i], meshes[i], errors[i]) ? 1 : 0;
+        } catch (const std::exception& ex) {
+            errors[i] = ex.what();
+        }
+    };
+    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    const std::size_t threads = std::min<std::size_t>({hw, 16, (faces.size() + 7) / 8});
+    if (threads > 1) {
+        std::atomic<std::size_t> next{0};
+        std::vector<std::thread> pool;
+        for (std::size_t k = 0; k < threads; ++k)
+            pool.emplace_back([&] {
+                tCurves = &brep.curves; // per thread
+                for (std::size_t i; (i = next.fetch_add(1)) < faces.size();) work(i);
+            });
+        for (std::thread& t : pool) t.join();
+    } else {
+        for (std::size_t i = 0; i < faces.size(); ++i) work(i);
+    }
+    for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+        {
             ++rep.faces;
-            FaceMesh fm;
-            std::string err;
+            FaceMesh& fm = meshes[fi];
             const std::size_t before = m.indices.size();
-            if (!tessellateFace(tc, f, fm, err)) {
+            if (!ok[fi]) {
                 ++rep.failedFaces;
-                if (rep.firstError.empty()) rep.firstError = err;
+                if (rep.firstError.empty()) rep.firstError = errors[fi];
                 rep.faceTriangles.push_back(0);
                 continue;
             }
@@ -1714,6 +1828,7 @@ MeshData tessellate(const Brep& brep, const TessellateOptions& o, TessellateRepo
             }
             rep.faceTriangles.push_back((m.indices.size() - before) / 3);
         }
+    }
     tCurves = saved;
     if (report) *report = rep;
     m.computeFeatureEdges();

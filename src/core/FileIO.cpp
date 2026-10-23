@@ -8,6 +8,7 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 #if defined(_WIN32)
 #include <io.h>
@@ -259,6 +261,74 @@ const char* fileKindName(FileKind k) {
 }
 
 // ---------------------------------------------------------------------------
+// Large meshes go in as little-endian binary arrays in base64 (a number per vertex
+// coordinate as text would make a part of half a million triangles some 30 MB of JSON).
+constexpr std::size_t kBinaryMeshVertices = 20000;
+
+namespace {
+
+const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string base64(const std::vector<unsigned char>& in) {
+    std::string out;
+    out.reserve((in.size() + 2) / 3 * 4);
+    std::size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        const unsigned v = (unsigned{in[i]} << 16) | (unsigned{in[i + 1]} << 8) | in[i + 2];
+        out += kB64[(v >> 18) & 63], out += kB64[(v >> 12) & 63], out += kB64[(v >> 6) & 63], out += kB64[v & 63];
+    }
+    if (i < in.size()) {
+        const unsigned v = (unsigned{in[i]} << 16) | (i + 1 < in.size() ? unsigned{in[i + 1]} << 8 : 0u);
+        out += kB64[(v >> 18) & 63], out += kB64[(v >> 12) & 63];
+        out += i + 1 < in.size() ? kB64[(v >> 6) & 63] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+bool unbase64(const std::string& s, std::vector<unsigned char>& out) {
+    static const auto table = [] {
+        std::array<int, 256> t{};
+        t.fill(-1);
+        for (int k = 0; k < 64; ++k) t[static_cast<unsigned char>(kB64[k])] = k;
+        return t;
+    }();
+    out.clear();
+    out.reserve(s.size() / 4 * 3);
+    unsigned v = 0;
+    int bits = 0;
+    for (char c : s) {
+        if (c == '=') break;
+        const int d = table[static_cast<unsigned char>(c)];
+        if (d < 0) return false;
+        v = (v << 6) | static_cast<unsigned>(d);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<unsigned char>((v >> bits) & 0xFF));
+        }
+    }
+    return true;
+}
+
+void putU32(std::vector<unsigned char>& b, std::uint32_t u) {
+    for (int k = 0; k < 4; ++k) b.push_back(static_cast<unsigned char>((u >> (8 * k)) & 0xFF));
+}
+void putF32(std::vector<unsigned char>& b, float f) {
+    std::uint32_t u;
+    std::memcpy(&u, &f, 4);
+    putU32(b, u);
+}
+std::uint32_t getU32(const unsigned char* p) { return std::uint32_t{p[0]} | (std::uint32_t{p[1]} << 8) | (std::uint32_t{p[2]} << 16) | (std::uint32_t{p[3]} << 24); }
+float getF32(const unsigned char* p) {
+    const std::uint32_t u = getU32(p);
+    float f;
+    std::memcpy(&f, &u, 4);
+    return f;
+}
+
+} // namespace
+
 // Project
 
 bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error) {
@@ -266,7 +336,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     Json doc = Json::object();
     doc.set("format", "sicdm-project");
     doc.set("version", kProjectVersion);
-    doc.set("reader_version", 1); // what 2 to 4 added is optional: a format-1 reader can open it
+    doc.set("reader_version", 1); // what 2 to 4 added is optional: a format-1 reader can open it (5: see below)
+    bool binaryMeshes = false;
+    std::unordered_map<std::uint64_t, std::pair<std::string, bool>> written; // shape key -> the body holding it, exact
+    std::unordered_map<std::string, int> nameCount; // only a body with a name of its own can be referred to
+    for (const Body& b : scene.bodies()) ++nameCount[b.name];
 #ifdef SICDM_VERSION
     doc.set("saved_by", std::string("SI CDM ") + SICDM_VERSION);
 #endif
@@ -315,7 +389,37 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             }
             jb.set("physics", ph);
         }
-        if (!isPrimitiveKind(b.kind)) {
+        // A large shape already written for another body (pattern copies, repeated parts):
+        // a reference to it.
+        const std::uint64_t shapeKey = !isPrimitiveKind(b.kind) && b.mesh.vertices.size() >= kBinaryMeshVertices ? meshContentKey(b.mesh) : 0;
+        const auto sameAs = shapeKey ? written.find(shapeKey) : written.end();
+        if (sameAs != written.end() && sameAs->second.second == b.exact()) {
+            jb.set("mesh_same_as", sameAs->second.first);
+            binaryMeshes = true;
+        } else if (!isPrimitiveKind(b.kind) && b.mesh.vertices.size() >= kBinaryMeshVertices) {
+            if (nameCount[b.name] == 1) written.emplace(shapeKey, std::make_pair(b.name, b.exact()));
+            std::vector<unsigned char> pos, nrm, idx, edges, mask;
+            pos.reserve(b.mesh.vertices.size() * 12), nrm.reserve(b.mesh.vertices.size() * 12);
+            bool masked = false;
+            for (const Vertex& v : b.mesh.vertices) {
+                putF32(pos, v.position.x), putF32(pos, v.position.y), putF32(pos, v.position.z);
+                putF32(nrm, v.normal.x), putF32(nrm, v.normal.y), putF32(nrm, v.normal.z);
+                masked = masked || v.mask > 0.0f;
+            }
+            idx.reserve(b.mesh.indices.size() * 4);
+            for (std::uint32_t i : b.mesh.indices) putU32(idx, i);
+            for (const Vec3& e : b.mesh.edgeVertices) putF32(edges, e.x), putF32(edges, e.y), putF32(edges, e.z);
+            Json mesh = Json::object();
+            mesh.set("encoding", "binary-le").set("positions_b64", base64(pos)).set("normals_b64", base64(nrm)).set("indices_b64", base64(idx));
+            mesh.set("edges_b64", base64(edges));
+            if (masked) {
+                for (const Vertex& v : b.mesh.vertices) putF32(mask, v.mask);
+                mesh.set("mask_b64", base64(mask));
+            }
+            jb.set("mesh", mesh);
+            binaryMeshes = true;
+            if (b.exact()) jb.set("brep_step", writeStep({StepPart{b.name, std::const_pointer_cast<Brep>(b.brep), ""}}, b.name + ".step"));
+        } else if (!isPrimitiveKind(b.kind)) {
             Json pos = Json::array(), nrm = Json::array(), idx = Json::array(), edges = Json::array();
             for (const Vertex& v : b.mesh.vertices) {
                 pos.push(v.position.x).push(v.position.y).push(v.position.z);
@@ -337,6 +441,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         bodies.push(jb);
     }
     doc.set("bodies", bodies);
+    if (binaryMeshes) doc.set("reader_version", 5); // a reader before 5 can't read those meshes
 
     Json curves = Json::array();
     for (const SketchCurve& c : scene.sketch().curves()) {
@@ -469,8 +574,48 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         Body b;
         if (isPrimitiveKind(kind)) {
             b = makeBody(jb["name"].asString("Body"), kind, params);
+        } else if (jb["mesh_same_as"].isString()) { // the shape of a body before it
+            const std::string other = jb["mesh_same_as"].asString();
+            const Body* src = nullptr;
+            for (const Body& o : loaded.bodies())
+                if (o.name == other) src = &o;
+            if (!src) {
+                setError(error, "Body " + jb["name"].asString() + " has the shape of " + other + ", which isn't before it in the file");
+                return false;
+            }
+            b.mesh = src->mesh;
+            b.brep = src->brep;
+            b.brepKey = src->brepKey;
+            b.name = jb["name"].asString("Mesh");
+            b.kind = "mesh";
         } else {
             const Json& m = jb["mesh"];
+            if (m["positions_b64"].isString()) {
+                std::vector<unsigned char> pos, nrm, idx, edges, mask;
+                if (!unbase64(m["positions_b64"].asString(), pos) || !unbase64(m["normals_b64"].asString(), nrm) || !unbase64(m["indices_b64"].asString(), idx) ||
+                    !unbase64(m["edges_b64"].asString(), edges) || !unbase64(m["mask_b64"].asString(), mask) || pos.size() % 12 || idx.size() % 12) {
+                    setError(error, "Corrupt mesh in body " + jb["name"].asString());
+                    return false;
+                }
+                const std::size_t nv = pos.size() / 12;
+                b.mesh.vertices.resize(nv);
+                for (std::size_t i = 0; i < nv; ++i) {
+                    Vertex& v = b.mesh.vertices[i];
+                    v.position = {getF32(&pos[12 * i]), getF32(&pos[12 * i + 4]), getF32(&pos[12 * i + 8])};
+                    if (nrm.size() >= 12 * (i + 1)) v.normal = {getF32(&nrm[12 * i]), getF32(&nrm[12 * i + 4]), getF32(&nrm[12 * i + 8])};
+                    if (mask.size() >= 4 * (i + 1)) v.mask = std::clamp(getF32(&mask[4 * i]), 0.0f, 1.0f);
+                }
+                b.mesh.indices.resize(idx.size() / 4);
+                for (std::size_t i = 0; i < b.mesh.indices.size(); ++i) {
+                    const std::uint32_t k = getU32(&idx[4 * i]);
+                    if (k >= nv) {
+                        setError(error, "Corrupt mesh in body " + jb["name"].asString());
+                        return false;
+                    }
+                    b.mesh.indices[i] = k;
+                }
+                for (std::size_t i = 0; i + 12 <= edges.size(); i += 12) b.mesh.edgeVertices.push_back({getF32(&edges[i]), getF32(&edges[i + 4]), getF32(&edges[i + 8])});
+            }
             const auto& pos = m["positions"].items();
             const auto& nrm = m["normals"].items();
             const auto& mask = m["mask"].items();

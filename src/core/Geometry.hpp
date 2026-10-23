@@ -30,6 +30,15 @@ struct MeshData {
     void computeFeatureEdges(float angleDeg = 30.0f);
 };
 
+// A fast 64-bit key of a mesh's vertices and triangles (equal meshes, equal keys): tells
+// a renderer or a picker whether a body's shape is the one it has a copy of.
+std::uint64_t meshContentKey(const MeshData& m) noexcept;
+
+// A coarser copy for drawing far away (level of detail): vertices within one `cell`
+// (and facing roughly the same way) merge into one, and triangles that collapse go. It
+// has no edge lines (draw the full shape's).
+MeshData clusterMesh(const MeshData& m, float cell);
+
 // Parametric description of a body, so projects can be saved and edited.
 // Parameters per kind (all mm, body-local; Body::offset places it):
 //   box, wedge: x0 y0 z0 x1 y1 z1     cylinder: r h      tube: R r h

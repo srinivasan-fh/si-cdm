@@ -1361,6 +1361,7 @@ void Application::frame(float dt) {
                            : (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) && sculptTargetValid()
                                ? &m_sculptOverrides
                                                                        : nullptr);
+        if (m_renderer->wantsRefine()) m_framesToRender = std::max(m_framesToRender, 2); // fine again once the view stops
     }
 
     ImGui::Render();
@@ -2699,6 +2700,7 @@ int Application::run() {
             // or an autosave falls due.
             double wake = m_uiState.statusMessage.empty() ? -1.0 : m_statusUntil;
             if (const double due = m_autosaver.nextDue(); due >= 0) wake = wake < 0 ? std::max(due, m_autosaveCheck) : std::min(wake, std::max(due, m_autosaveCheck));
+            if (m_renderer && m_renderer->pendingWork()) wake = wake < 0 ? glfwGetTime() + 0.25 : std::min(wake, glfwGetTime() + 0.25); // coarser copies on the way
             if (wake >= 0) glfwWaitEventsTimeout(std::max(wake - glfwGetTime(), 0.0) + 0.05);
             else glfwWaitEvents();
         }

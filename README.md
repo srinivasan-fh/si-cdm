@@ -542,6 +542,17 @@ Unsaved changes are tracked (`*` in the tab and title); closing a tab or quittin
 both windows: under the sketch in 2D for tracing, in place in 3D. Select one to set its width (mm),
 centre and opacity in the Model panel, or drag it with the Move tool.
 
+## Large models
+
+| Area | What SI CDM does | Measured |
+| --- | --- | --- |
+| STEP and IGES import | Tessellates the faces on all CPU cores. Faces with many holes are meshed in close to linear time | 900 holes: 0.7 s import, was 9.4 s |
+| Drawing | Uploads to the GPU only the bodies whose shape changed. Bodies with the same shape share one copy | |
+| Distant parts | Parts of 60,000 triangles or more get coarser copies in the background. These are drawn when their detail would be under about 2 pixels, or 6 pixels while the view moves; the next still frame is drawn fine again | 25 such parts (11 M triangles), software GL: 2.1 s → 0.5 s per frame |
+| Picking | A bounding volume hierarchy per body, built once the model holds still | Under 0.01 ms per click, was milliseconds |
+| Patterns | `PATTERN` copies keep their kind and their exact geometry, and share the mesh | 24 copies of a 440,000-triangle part: 0.24 s, was about 2 minutes |
+| Project files | Large meshes are stored as binary, once per distinct shape | 25 such parts: 18 MB, saved in 0.9 s and opened in 0.4 s (was 650 MB) |
+
 ## AI agents (MCP)
 
 SI CDM includes a [Model Context Protocol](https://modelcontextprotocol.io) server so AI agents can read

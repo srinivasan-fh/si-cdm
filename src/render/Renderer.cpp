@@ -1,5 +1,10 @@
 #include "render/Renderer.hpp"
 
+#include <unordered_map>
+#include <thread>
+#include <chrono>
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 
@@ -314,17 +319,107 @@ void releaseMesh(GpuMesh& g) {
 
 } // namespace
 
+namespace {
+
+constexpr std::size_t kLodTriangles = 60000; // shapes this big get coarser copies
+constexpr std::chrono::milliseconds kLodSettle{400}; // ...once unchanged this long
+
+// How big a coarser copy's cells may look on screen (pixels): still, so the change can't be
+// seen (vertices move about half a cell), and while the view moves.
+constexpr float kLodCellPixels = 2.0f, kLodCellPixelsMoving = 6.0f;
+
+// Coarser copies of a shape: cells of 1/200, 1/80 and 1/30 of its size, each kept only
+// when it cuts the triangles of the one before to 60% or fewer.
+std::vector<std::pair<float, MeshData>> buildLods(const MeshData& m) {
+    std::vector<std::pair<float, MeshData>> out;
+    const AABB b = m.bounds();
+    if (!b.valid()) return out;
+    const float diag = length(b.max - b.min);
+    std::size_t prev = m.indices.size() / 3;
+    for (float div : {200.0f, 80.0f, 30.0f}) {
+        MeshData c = clusterMesh(m, diag / div);
+        const std::size_t n = c.indices.size() / 3;
+        if (n == 0 || n * 10 > prev * 6) continue;
+        prev = n;
+        out.push_back({diag / div, std::move(c)});
+    }
+    return out;
+}
+
+} // namespace
+
 void Renderer::releaseMeshes() {
-    for (GpuMesh& g : m_meshes) releaseMesh(g);
-    m_meshes.clear();
+    std::vector<MeshEntry*> done; // bodies with the same shape share an entry: free it once
+    for (auto& e : m_entries)
+        if (e && std::find(done.begin(), done.end(), e.get()) == done.end()) {
+            done.push_back(e.get());
+            releaseMesh(e->full);
+            for (auto& [cell, g] : e->lods) releaseMesh(g);
+            if (e->job.valid()) m_orphanJobs.push_back(std::move(e->job));
+        }
+    m_entries.clear();
     for (GpuMesh& g : m_streamed) releaseMesh(g);
     m_streamed.clear();
 }
 
+bool Renderer::pendingWork() const noexcept {
+    for (const auto& e : m_entries)
+        if (e && ((!e->lodStarted && e->triangles >= kLodTriangles) || e->job.valid())) return true;
+    return false;
+}
+
 void Renderer::upload(const Scene& scene) {
-    releaseMeshes();
-    m_meshes.reserve(scene.bodies().size());
-    for (const Body& b : scene.bodies()) m_meshes.push_back(uploadMesh(b.mesh));
+    const auto& bodies = scene.bodies();
+    // Each body's shape key (in parallel for big scenes: it reads every vertex).
+    std::vector<std::uint64_t> keys(bodies.size());
+    std::size_t total = 0;
+    for (const Body& b : bodies) total += b.mesh.vertices.size();
+    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    if (total > 400000 && bodies.size() > 1 && hw > 1) {
+        std::atomic<std::size_t> next{0};
+        std::vector<std::thread> pool;
+        for (unsigned k = 0; k < std::min<unsigned>(hw, 8); ++k)
+            pool.emplace_back([&] {
+                for (std::size_t i; (i = next.fetch_add(1)) < bodies.size();) keys[i] = meshContentKey(bodies[i].mesh);
+            });
+        for (std::thread& t : pool) t.join();
+    } else {
+        for (std::size_t i = 0; i < bodies.size(); ++i) keys[i] = meshContentKey(bodies[i].mesh);
+    }
+    std::unordered_map<std::uint64_t, std::shared_ptr<MeshEntry>> old, kept;
+    for (const auto& e : m_entries)
+        if (e) old.emplace(e->key, e);
+    std::vector<std::shared_ptr<MeshEntry>> entries;
+    entries.reserve(bodies.size());
+    int uploads = 0;
+    for (std::size_t i = 0; i < bodies.size(); ++i) {
+        const std::uint64_t key = keys[i];
+        if (const auto it = kept.find(key); it != kept.end()) {
+            entries.push_back(it->second);
+            continue;
+        }
+        std::shared_ptr<MeshEntry> e;
+        if (const auto it = old.find(key); it != old.end()) e = it->second;
+        else {
+            e = std::make_shared<MeshEntry>();
+            e->key = key;
+            e->full = uploadMesh(bodies[i].mesh);
+            e->triangles = bodies[i].mesh.indices.size() / 3;
+            e->box = bodies[i].mesh.bounds();
+            e->born = std::chrono::steady_clock::now();
+            ++uploads;
+        }
+        kept.emplace(key, e);
+        entries.push_back(std::move(e));
+    }
+    for (auto& [key, e] : old)
+        if (!kept.count(key)) {
+            releaseMesh(e->full);
+            for (auto& [cell, g] : e->lods) releaseMesh(g);
+            if (e->job.valid()) m_orphanJobs.push_back(std::move(e->job)); // finishes on its own
+        }
+    m_entries = std::move(entries);
+    m_stats.uploads = uploads;
     m_uploadedRevision = scene.revision();
 }
 
@@ -510,7 +605,21 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
 
     const Mat4 vp = cam.viewProjection();
     const auto& bodies = scene.bodies();
-    const std::size_t count = std::min(bodies.size(), m_meshes.size());
+    const std::size_t count = std::min(bodies.size(), m_entries.size());
+    ++m_frame;
+    // Coarser copies: finished ones uploaded, new ones started for big shapes that have
+    // stopped changing; jobs of shapes since replaced let go once done.
+    std::erase_if(m_orphanJobs, [](auto& f) { return !f.valid() || f.wait_for(std::chrono::seconds(0)) == std::future_status::ready; });
+    for (std::size_t i = 0; i < count; ++i) {
+        MeshEntry& e = *m_entries[i];
+        if (!e.lodStarted && e.triangles >= kLodTriangles && std::chrono::steady_clock::now() - e.born >= kLodSettle) {
+            e.lodStarted = true;
+            e.job = std::async(std::launch::async, [m = bodies[i].mesh]() { return buildLods(m); });
+        }
+        if (e.job.valid() && e.job.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            for (auto& [cell, mesh] : e.job.get()) e.lods.push_back({cell, uploadMesh(mesh)});
+        }
+    }
     // Shapes that change while simulating (chains / belts moving along their loop)
     // are streamed each frame in place of the uploaded mesh.
     for (std::size_t i = count; i < m_streamed.size(); ++i) releaseMesh(m_streamed[i]); // bodies gone: free their buffers first
@@ -519,11 +628,49 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         releaseMesh(m_streamed[i]);
         if (overrides && i < overrides->size() && (*overrides)[i]) m_streamed[i] = uploadMesh(*(*overrides)[i]);
     }
-    auto gpu = [&](std::size_t i) -> const GpuMesh& { return m_streamed[i].vao ? m_streamed[i] : m_meshes[i]; };
     auto model = [&](std::size_t i) {
         const Mat4 at = translate(bodies[i].offset);
         return motion && i < motion->size() ? (*motion)[i] * at : at;
     };
+    // What each body is drawn from: its streamed shape, or the coarsest copy whose cells
+    // come out under a pixel at its size on screen, or its own shape.
+    std::vector<const GpuMesh*> drawn(count, nullptr);
+    m_stats.triangles = m_stats.fullTriangles = 0;
+    m_stats.coarseBodies = 0;
+    // The view moving (orbit, pan, zoom): coarser copies may be drawn, and once it stops the
+    // next frame draws them fine again.
+    bool moving = false;
+    for (int c = 0; c < 4 && !moving; ++c)
+        for (int r = 0; r < 4 && !moving; ++r) moving = std::fabs(vp.m[c][r] - m_lastViewProj.m[c][r]) > 1e-7f * (1.0f + std::fabs(vp.m[c][r]));
+    m_lastViewProj = vp;
+    const float cellLimit = moving ? kLodCellPixelsMoving : kLodCellPixels;
+    m_refine = false;
+    for (std::size_t i = 0; i < count; ++i) {
+        const MeshEntry& e = *m_entries[i];
+        drawn[i] = m_streamed[i].vao ? &m_streamed[i] : &e.full;
+        if (!bodies[i].visible) continue;
+        m_stats.fullTriangles += e.triangles;
+        if (!m_streamed[i].vao && !e.lods.empty() && e.box.valid()) {
+            const Mat4 mdl = model(i);
+            const Vec3 c = mdl.transformPoint((e.box.min + e.box.max) * 0.5f);
+            const float R = 0.5f * length(e.box.max - e.box.min);
+            const Vec4 c0 = vp * Vec4{c.x, c.y, c.z, 1.0f};
+            const Vec3 up = c + cam.up() * R;
+            const Vec4 c1 = vp * Vec4{up.x, up.y, up.z, 1.0f};
+            if (c0.w > 1e-6f && c1.w > 1e-6f && R > 0) {
+                const float px = std::hypot(c1.x / c1.w - c0.x / c0.w, c1.y / c1.w - c0.y / c0.w) * 0.5f * static_cast<float>(fbHeight);
+                const float perUnit = px / R; // pixels per mesh unit
+                for (const auto& [cell, g] : e.lods) {
+                    if (cell * perUnit > cellLimit) break;
+                    drawn[i] = &g;
+                    if (cell * perUnit > kLodCellPixels) m_refine = true; // coarser than a still view takes
+                }
+                if (drawn[i] != &e.full) ++m_stats.coarseBodies;
+            }
+        }
+        m_stats.triangles += static_cast<std::size_t>(drawn[i]->indexCount) / 3;
+    }
+    auto gpu = [&](std::size_t i) -> const GpuMesh& { return *drawn[i]; };
 
     // Solid pass, pushed back slightly so edges win the depth test.
     const bool hidden = s.displayMode == DisplayMode::HiddenLine;
@@ -567,11 +714,11 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                 glBindVertexArray(gpu(i).vao);
                 glDrawElements(GL_TRIANGLES, gpu(i).indexCount, GL_UNSIGNED_INT, nullptr);
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            } else if (gpu(i).edgeVao) {
+            } else if (const GpuMesh& em = m_streamed[i].vao ? m_streamed[i] : m_entries[i]->full; em.edgeVao) { // a coarser copy keeps the full edges
                 const Vec3 c = sel ? (hidden ? Vec3{0.35f, 0.70f, 1.0f} : Vec3{0.10f, 0.45f, 0.95f}) : s.edgeColor;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
-                glBindVertexArray(gpu(i).edgeVao);
-                glDrawArrays(GL_LINES, 0, gpu(i).edgeVertexCount);
+                glBindVertexArray(em.edgeVao);
+                glDrawArrays(GL_LINES, 0, em.edgeVertexCount);
             }
         }
     }

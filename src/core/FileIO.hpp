@@ -58,7 +58,10 @@ struct ProjectState {
 //   2  adds exact geometry ("brep_step"), "reader_version" and "saved_by"
 //   3  adds the drawing sheet ("drawing")
 //   4  adds assemblies: each body's "assembly" path and the mates ("assembly")
-constexpr int kProjectVersion = 4;
+//   5  large meshes (20000 vertices or more) as base64 binary arrays ("positions_b64"...),
+//      written once and referred to by later bodies of the same shape ("mesh_same_as"); a
+//      file with either has reader_version 5, others still 1
+constexpr int kProjectVersion = 5;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

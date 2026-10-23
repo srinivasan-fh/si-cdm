@@ -79,24 +79,9 @@ Rot bodyRot(const Body& b) {
 
 // Degrees about x, then y, then z (R = Rz Ry Rx), as eulerRotation() takes them.
 DVec3 eulerOf(const Rot& R) {
-    const auto& m = R.m;
-    const double sy = std::clamp(-m[6], -1.0, 1.0);
-    const double ry = std::asin(sy);
-    double rx, rz;
-    if (std::fabs(std::cos(ry)) > 1e-9) {
-        rx = std::atan2(m[7], m[8]);
-        rz = std::atan2(m[3], m[0]);
-    } else { // gimbal lock: all the turn about x
-        rx = std::atan2(-m[5], m[4]);
-        rz = 0;
-    }
-    auto deg = [](double a) {
-        // To a ten-millionth of a degree (far finer than a float holds), so quarter turns
-        // come out exact and nothing turns by rounding noise.
-        const double d = std::round(a * 180.0 / kPiA * 1e7) / 1e7;
-        return d == 0 ? 0.0 : d; // no -0
-    };
-    return {deg(rx), deg(ry), deg(rz)};
+    Placement p;
+    for (std::size_t i = 0; i < 9; ++i) p.r[i] = R.m[i];
+    return eulerDegrees(p);
 }
 
 double bodyScale(const Body& b) { return b.scale > 0 ? decimal(b.scale) : 1.0; }

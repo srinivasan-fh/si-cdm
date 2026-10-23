@@ -72,6 +72,9 @@ inline DVec3 decimal(const Vec3& v) { return {decimal(v.x), decimal(v.y), decima
 // The rotation eulerRotation() makes (degrees about x, then y, then z), in double; quarter
 // turns are exact.
 Placement eulerPlacement(const DVec3& degrees);
+// The other way: the degrees about x, then y, then z of a placement's rotation, to a
+// ten-millionth of a degree (so quarter turns come out exact).
+DVec3 eulerDegrees(const Placement& p);
 
 struct BSplineCurve {
     int degree = 1;

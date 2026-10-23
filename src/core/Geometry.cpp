@@ -3,6 +3,9 @@
 #include "core/Extrude.hpp"
 #include "core/Library.hpp"
 
+#include <cmath>
+#include <unordered_set>
+#include <cstring>
 #include <algorithm>
 #include <cstdint>
 #include <unordered_map>
@@ -39,6 +42,89 @@ void MeshData::append(const MeshData& o) {
     indices.reserve(indices.size() + o.indices.size());
     for (std::uint32_t i : o.indices) indices.push_back(base + i);
     edgeVertices.insert(edgeVertices.end(), o.edgeVertices.begin(), o.edgeVertices.end());
+}
+
+std::uint64_t meshContentKey(const MeshData& m) noexcept {
+    // Word at a time (a few GB/s): multiply-rotate mixing, as in the common 64-bit hashes.
+    constexpr std::uint64_t P1 = 0x9E3779B185EBCA87ull, P2 = 0xC2B2AE3D27D4EB4Full;
+    std::uint64_t h = 0x27D4EB2F165667C5ull ^ (m.vertices.size() * P1) ^ (m.indices.size() * P2);
+    auto mix = [&](const void* data, std::size_t bytes) {
+        const auto* c = static_cast<const unsigned char*>(data);
+        std::size_t i = 0;
+        for (; i + 8 <= bytes; i += 8) {
+            std::uint64_t w;
+            std::memcpy(&w, c + i, 8);
+            w *= P2;
+            w = (w << 31) | (w >> 33);
+            h ^= w * P1;
+            h = ((h << 27) | (h >> 37)) * P1 + 0x85EBCA77C2B2AE63ull;
+        }
+        std::uint64_t tail = 0;
+        if (i < bytes) std::memcpy(&tail, c + i, bytes - i);
+        h ^= tail * P2;
+    };
+    if (!m.vertices.empty()) mix(m.vertices.data(), m.vertices.size() * sizeof(Vertex));
+    if (!m.indices.empty()) mix(m.indices.data(), m.indices.size() * sizeof(std::uint32_t));
+    h ^= h >> 33;
+    h *= P2;
+    h ^= h >> 29;
+    return h;
+}
+
+MeshData clusterMesh(const MeshData& m, float cell) {
+    MeshData out;
+    if (m.indices.empty() || !(cell > 0)) return m;
+    const AABB b = m.bounds();
+    const Vec3 ext = b.max - b.min;
+    cell = std::max(cell, std::max({ext.x, ext.y, ext.z}) / 200000.0f); // 18 bits of cells a side
+    // The cell, and which way the vertex faces (so the two sides of a thin wall don't merge).
+    auto key = [&](const Vertex& v) {
+        const auto q = [&](float x, float lo) { return std::min<std::uint64_t>(static_cast<std::uint64_t>(std::max(0.0f, std::floor((x - lo) / cell))), 0x3FFFF); };
+        // The normal rounded to one of 5 x 5 x 5 directions: faces meeting at more than about
+        // 35 degrees keep their own vertices (and their shading).
+        const auto d = [](float c) { return static_cast<std::uint64_t>(std::lround(std::clamp(c, -1.0f, 1.0f) * 2.0f) + 2); };
+        const std::uint64_t side = d(v.normal.x) * 25 + d(v.normal.y) * 5 + d(v.normal.z); // 0..124
+        return (side << 54) | (q(v.position.x, b.min.x) << 36) | (q(v.position.y, b.min.y) << 18) | q(v.position.z, b.min.z);
+    };
+    std::unordered_map<std::uint64_t, std::uint32_t> cluster;
+    cluster.reserve(m.vertices.size() / 4 + 16);
+    std::vector<std::uint32_t> id(m.vertices.size());
+    std::vector<Vec3> sumP, sumN;
+    std::vector<float> count;
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+        const auto [it, fresh] = cluster.try_emplace(key(m.vertices[i]), static_cast<std::uint32_t>(sumP.size()));
+        if (fresh) sumP.push_back({}), sumN.push_back({}), count.push_back(0);
+        const std::uint32_t c = it->second;
+        sumP[c] += m.vertices[i].position;
+        sumN[c] += m.vertices[i].normal;
+        count[c] += 1;
+        id[i] = c;
+    }
+    out.vertices.resize(sumP.size());
+    for (std::size_t c = 0; c < sumP.size(); ++c) {
+        out.vertices[c].position = sumP[c] / count[c];
+        out.vertices[c].normal = normalize(sumN[c]);
+    }
+    struct Tri3 {
+        std::uint32_t a, b, c;
+        bool operator==(const Tri3& o) const { return a == o.a && b == o.b && c == o.c; }
+    };
+    struct TriHash {
+        std::size_t operator()(const Tri3& t) const { return (static_cast<std::size_t>(t.a) * 73856093u) ^ (static_cast<std::size_t>(t.b) * 19349663u) ^ (static_cast<std::size_t>(t.c) * 83492791u); }
+    };
+    std::unordered_set<Tri3, TriHash> seen;
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        std::uint32_t a = id[m.indices[t]], c1 = id[m.indices[t + 1]], c2 = id[m.indices[t + 2]];
+        if (a == c1 || c1 == c2 || c2 == a) continue;
+        // The same triangle turned round to start at its least index (keeps its winding).
+        while (a > c1 || a > c2) {
+            const std::uint32_t x = a;
+            a = c1, c1 = c2, c2 = x;
+        }
+        if (!seen.insert({a, c1, c2}).second) continue;
+        out.indices.insert(out.indices.end(), {a, c1, c2});
+    }
+    return out; // no edge lines: a drawing keeps the full shape's
 }
 
 void MeshData::computeFeatureEdges(float angleDeg) {

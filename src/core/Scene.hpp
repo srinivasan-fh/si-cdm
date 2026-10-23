@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Bvh.hpp"
 #include "core/Geometry.hpp"
 #include "core/Motion.hpp"
 #include "core/Physics.hpp"
@@ -10,6 +11,7 @@
 #include <optional>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -165,6 +167,19 @@ public:
 private:
     std::vector<Body> m_bodies;
     std::uint64_t m_revision = nextRevision();
+    // Picking: a BVH per body, for the revision it was built at. It is built the second
+    // time a ray is cast at one revision, so a shape changing every frame (a sculpt
+    // stroke) doesn't rebuild it each time. Copies of the scene start without one.
+    struct PickCache {
+        std::mutex lock;
+        std::uint64_t built = ~std::uint64_t{0}, seen = ~std::uint64_t{0};
+        std::vector<std::shared_ptr<const MeshBvh>> bvh; // per body (null: small enough to test directly)
+        std::vector<std::uint64_t> keys;                 // meshContentKey() of each
+        PickCache() = default;
+        PickCache(const PickCache&) {}
+        PickCache& operator=(const PickCache&) { return *this; }
+    };
+    mutable PickCache m_pick;
     Sketch m_sketch;
     std::vector<ImageRef> m_images;
     std::vector<Motion> m_motions;

@@ -306,6 +306,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         const MeshData world = worldMesh(src);
         if (world.indices.empty()) return out.fail(src.name + " has no surface");
         std::vector<MeshData> copies;
+        std::vector<Mat4> placements; // PATTERN: where each copy goes
         std::string what;
         std::string into;
         BooleanOp op = BooleanOp::Union;
@@ -361,8 +362,11 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 for (int r = 0; r < rows; ++r)
                     for (int k = 0; k < n; ++k) {
                         if (r == 0 && k == 0) continue;
+                        const Mat4 move = translate(dir * (spacing * static_cast<float>(k)) + dir2 * (spacing2 * static_cast<float>(r)));
+                        placements.push_back(move);
+                        if (!merge) continue; // copies of the body itself, below
                         MeshData m = world;
-                        m.transform(translate(dir * (spacing * static_cast<float>(k)) + dir2 * (spacing2 * static_cast<float>(r))));
+                        m.transform(move);
                         copies.push_back(std::move(m));
                     }
                 what = std::to_string(n) + (rows > 1 ? " x " + std::to_string(rows) : std::string()) + " linear";
@@ -371,9 +375,12 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 const bool full = std::fabs(angle) >= 359.999f;
                 const float step = angle / static_cast<float>(full ? n : n - 1);
                 for (int k = 1; k < n; ++k) {
-                    MeshData m = world;
                     const float t = step * static_cast<float>(k) * 3.14159265f / 180.0f;
-                    m.transform(translate(at) * rotateAxis(axis, t) * translate(-at));
+                    const Mat4 turn = translate(at) * rotateAxis(axis, t) * translate(-at);
+                    placements.push_back(turn);
+                    if (!merge) continue;
+                    MeshData m = world;
+                    m.transform(turn);
                     copies.push_back(std::move(m));
                 }
                 what = std::to_string(n) + " circular";
@@ -461,9 +468,32 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             b.assembly = src.assembly;
             doc.scene.add(std::move(b));
         }
+        // Pattern copies: the body itself, moved rigidly. Its kind, exact geometry and
+        // normals stay; a shifted copy keeps the very same mesh.
+        for (const Mat4& w : placements) {
+            if (cmd != "PATTERN") break;
+            while (bodyNamed(doc, src.name + " (" + std::to_string(next) + ")") >= 0) ++next;
+            Body b = src;
+            b.name = src.name + " (" + std::to_string(next++) + ")";
+            b.attachedTo.clear();
+            const Vec3 shift = w.transformPoint(src.offset) - src.offset;
+            const bool turned = std::fabs(w.m[0][0] - 1) > 1e-7f || std::fabs(w.m[1][1] - 1) > 1e-7f || std::fabs(w.m[2][2] - 1) > 1e-7f;
+            if (turned) {
+                // World = offset + R_body p: turning about the pattern's axis turns the body
+                // (about its origin) and carries its origin round.
+                Placement turn;
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < 3; ++c) turn.r[r * 3 + c] = w.m[c][r];
+                const Placement now = eulerPlacement(decimal(src.rotation)).then(turn);
+                b.setRotation(eulerDegrees(now).f());
+            }
+            b.offset = src.offset + shift;
+            doc.scene.add(std::move(b));
+        }
         doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
         doc.dirty = true;
-        out.say("Made " + std::to_string(copies.size()) + (copies.size() == 1 ? " copy" : " copies") + " of " + src.name + " (" + what +
+        const std::size_t made = copies.size() + (cmd == "PATTERN" ? placements.size() : 0);
+        out.say("Made " + std::to_string(made) + (made == 1 ? " copy" : " copies") + " of " + src.name + " (" + what +
                 (cmd == "PATTERN" ? " pattern)" : ")"));
         return out;
     }

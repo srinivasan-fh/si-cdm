@@ -1,5 +1,7 @@
 #include "core/Scene.hpp"
 
+#include <unordered_map>
+
 #include "core/Brep.hpp"
 #include "core/Step.hpp"
 
@@ -291,6 +293,32 @@ void Scene::renameBody(std::size_t index, const std::string& name) {
 
 std::optional<RayHit> Scene::raycast(const Ray& ray, const std::vector<Mat4>* transforms) const noexcept {
     std::optional<RayHit> best;
+    std::vector<std::shared_ptr<const MeshBvh>> bvh; // this revision's, or none yet
+    try {
+        std::lock_guard<std::mutex> guard(m_pick.lock);
+        if (m_pick.built != m_revision || m_pick.bvh.size() != m_bodies.size()) {
+            if (m_pick.seen == m_revision) {
+                // Built now; bodies whose shape is the same keep theirs.
+                std::unordered_map<std::uint64_t, std::shared_ptr<const MeshBvh>> old;
+                for (std::size_t i = 0; i < m_pick.bvh.size() && i < m_pick.keys.size(); ++i)
+                    if (m_pick.bvh[i]) old[m_pick.keys[i]] = m_pick.bvh[i];
+                m_pick.bvh.assign(m_bodies.size(), nullptr);
+                m_pick.keys.assign(m_bodies.size(), 0);
+                for (std::size_t i = 0; i < m_bodies.size(); ++i) {
+                    const MeshData& m = m_bodies[i].mesh;
+                    if (m.indices.size() / 3 < 2048) continue; // quick enough as it is
+                    const std::uint64_t key = meshContentKey(m);
+                    m_pick.keys[i] = key;
+                    const auto it = old.find(key);
+                    m_pick.bvh[i] = it != old.end() ? it->second : std::make_shared<const MeshBvh>(m);
+                }
+                m_pick.built = m_revision;
+            } else m_pick.seen = m_revision;
+        }
+        if (m_pick.built == m_revision) bvh = m_pick.bvh;
+    } catch (...) {
+        bvh.clear(); // test every triangle
+    }
     for (std::size_t i = 0; i < m_bodies.size(); ++i) {
         const Body& b = m_bodies[i];
         if (!b.visible) continue;
@@ -300,12 +328,22 @@ std::optional<RayHit> Scene::raycast(const Ray& ray, const std::vector<Mat4>* tr
             const Mat4 inv = inverse((*transforms)[i]);
             r = Ray{inv.transformPoint(ray.origin), inv.transformDir(ray.dir)};
         }
+        const MeshBvh* tree = i < bvh.size() ? bvh[i].get() : nullptr;
+        AABB box = tree ? tree->bounds() : b.mesh.bounds();
+        if (!box.valid()) continue;
+        box.min += b.offset;
+        box.max += b.offset;
         float tBox = 0.0f;
-        if (!intersectAABB(r, b.bounds(), tBox)) continue;
+        if (!intersectAABB(r, box, tBox)) continue;
         if (best && tBox > best->t) continue;
 
         // Test in the body's local frame.
         const Ray local{r.origin - b.offset, r.dir};
+        if (tree) {
+            float t = best ? best->t : 1e30f;
+            if (tree->raycast(local, t)) best = RayHit{static_cast<int>(i), t, ray.at(t)};
+            continue;
+        }
         const auto& v = b.mesh.vertices;
         const auto& idx = b.mesh.indices;
         for (std::size_t k = 0; k + 2 < idx.size(); k += 3) {

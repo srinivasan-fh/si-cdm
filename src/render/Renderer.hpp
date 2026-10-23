@@ -4,6 +4,9 @@
 #include "core/Scene.hpp"
 #include "render/Shader.hpp"
 
+#include <chrono>
+#include <future>
+#include <memory>
 #include <vector>
 
 namespace sicdm {
@@ -84,9 +87,45 @@ private:
     std::uint64_t m_sketchRevision = ~std::uint64_t{0};
 
     GLuint m_emptyVao = 0;
-    std::vector<GpuMesh> m_meshes;
+    // A body's shape on the GPU, shared by bodies with the same shape and kept across
+    // uploads while the shape stays the same (only changed bodies are uploaded again).
+    // Large ones get coarser copies for drawing small on screen, made in the background
+    // once the shape has stopped changing.
+    struct MeshEntry {
+        std::uint64_t key = 0;
+        GpuMesh full;
+        std::size_t triangles = 0;
+        AABB box; // mesh coordinates
+        std::chrono::steady_clock::time_point born;
+        bool lodStarted = false;
+        std::future<std::vector<std::pair<float, MeshData>>> job; // cell size, mesh: finer first
+        std::vector<std::pair<float, GpuMesh>> lods;
+    };
+    std::vector<std::shared_ptr<MeshEntry>> m_entries; // per body
+    std::vector<std::future<std::vector<std::pair<float, MeshData>>>> m_orphanJobs; // of shapes since replaced
+    std::uint64_t m_frame = 0;
     std::vector<GpuMesh> m_streamed; // per-frame overrides (simulated chains / belts)
     std::uint64_t m_uploadedRevision = ~std::uint64_t{0};
+
+public:
+    // What the last frame drew (for the status bar and tests).
+    struct FrameStats {
+        std::size_t triangles = 0;     // drawn
+        std::size_t fullTriangles = 0; // the bodies' own
+        int coarseBodies = 0;          // drawn from a coarser copy
+        int uploads = 0;               // shapes uploaded by the last upload()
+    };
+    const FrameStats& stats() const noexcept { return m_stats; }
+    // The last frame drew some shape coarser than a still view allows (the view was
+    // moving): draw another once it stops.
+    bool wantsRefine() const noexcept { return m_refine; }
+    // Coarser copies are waiting to be made or uploaded: draw a frame now and then.
+    bool pendingWork() const noexcept;
+
+private:
+    FrameStats m_stats;
+    Mat4 m_lastViewProj{};
+    bool m_refine = false;
 };
 
 } // namespace sicdm
