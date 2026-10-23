@@ -346,10 +346,11 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         Sketch moved = sketch;
         const SolveReport r = dragSketch(moved, grip, f, t);
         if (!r.ok) return out.fail("Can't drag " + c.name + ": " + (r.conflict.empty() ? std::string("the constraints can't all be met") : r.conflict + " can't be met there"));
+        // (c belongs to the sketch being replaced: name what moved first.)
+        const std::string what = grip.rim ? c.name + " rim" : whole ? c.name : grip.ref.describe();
         sketch = std::move(moved);
         sketch.touch();
         doc.dirty = true;
-        const std::string what = grip.rim ? c.name + " rim" : whole ? c.name : grip.ref.describe();
         std::string line = "Dragged " + what;
         if (r.residual > 1e-3) line += ": held " + lengthText(r.residual) + " short by its constraints";
         Sketch probe = sketch;
