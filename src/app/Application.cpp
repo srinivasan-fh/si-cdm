@@ -67,10 +67,19 @@ bool Application::init() {
 
     m_window = glfwCreateWindow(m_options.width, m_options.height, "SI CDM — CAD / CAM Workbench", nullptr, nullptr);
     glfwDefaultWindowHints();
-    if (!m_window) return false;
+    if (!m_window) {
+        reportStartupError("SI CDM needs OpenGL 4.1, which this graphics driver doesn't offer. Update the graphics driver.");
+        return false;
+    }
     applyWindowIcon(m_window);
     glfwMakeContextCurrent(m_window);
     glfwSwapInterval(1);
+    if (const char* missing = nullptr; !loadGLFunctions(&missing)) {
+        const std::string why = std::string("SI CDM needs OpenGL 4.1: the graphics driver has no ") + (missing ? missing : "?") +
+                                ". Update the graphics driver.";
+        reportStartupError(why.c_str());
+        return false;
+    }
 
     glfwSetWindowUserPointer(m_window, this);
     glfwSetScrollCallback(m_window, onScroll);

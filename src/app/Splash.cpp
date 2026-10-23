@@ -674,6 +674,12 @@ Splash::Splash(float minSeconds) : m_minSeconds(minSeconds) {
     ImGuiContext* prevContext = ImGui::GetCurrentContext();
     glfwMakeContextCurrent(m_window);
     glfwSwapInterval(1);
+    if (!loadGLFunctions()) { // Windows: the functions past OpenGL 1.1; no splash without them
+        glfwMakeContextCurrent(prevWindow);
+        glfwDestroyWindow(m_window);
+        m_window = nullptr;
+        return;
+    }
 
     m_scene = std::make_unique<Shader>(kFullscreenVS, kSceneFS);
     m_blit = std::make_unique<Shader>(kFullscreenVS, kBlitFS);

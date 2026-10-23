@@ -22,6 +22,11 @@ option(SICDM_BUILD_TESTS "Build unit tests" ON)
 option(SICDM_ENABLE_LTO  "Enable link-time optimisation in Release" ON)
 option(SICDM_NATIVE_ARCH "Tune for the build machine's CPU (-march=native)" OFF)
 
+if(MINGW)
+    # Self-contained executables: no libstdc++ / libgcc / winpthread DLLs to ship beside them.
+    add_link_options(-static -static-libgcc -static-libstdc++)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CompilerOptions)
 
@@ -95,6 +100,7 @@ if(SICDM_BUILD_APP)
         src/app/McpHttpServer.cpp
         src/app/SketchController.cpp
         src/app/Splash.cpp
+        src/render/GL.cpp
         src/render/Renderer.cpp
         src/render/Shader.cpp
         src/ui/FileDialog.cpp
@@ -128,6 +134,14 @@ if(SICDM_BUILD_APP)
             XCODE_ATTRIBUTE_DEAD_CODE_STRIPPING "YES"
             XCODE_GENERATE_SCHEME ON
         )
+    elseif(WIN32)
+        # Icon and version information; a GUI program, so no console window opens with it.
+        set(SICDM_ICO "${CMAKE_CURRENT_SOURCE_DIR}/resources/windows/sicdm.ico")
+        configure_file(resources/windows/sicdm.rc.in "${CMAKE_CURRENT_BINARY_DIR}/sicdm.rc" @ONLY)
+        add_executable(sicdm WIN32 ${SICDM_APP_SOURCES} ${SICDM_FONT_SOURCE} "${CMAKE_CURRENT_BINARY_DIR}/sicdm.rc")
+        if(MSVC)
+            target_link_options(sicdm PRIVATE /ENTRY:mainCRTStartup) # keep main() as the entry point
+        endif()
     else()
         add_executable(sicdm ${SICDM_APP_SOURCES} ${SICDM_FONT_SOURCE})
     endif()
@@ -143,6 +157,9 @@ if(SICDM_BUILD_APP)
         source_group("Resources" FILES ${SICDM_ICNS})
     endif()
 endif()
+
+# ---------------------------------------------------------------------------
+include(Packaging)
 
 # ---------------------------------------------------------------------------
 if(SICDM_BUILD_TESTS)

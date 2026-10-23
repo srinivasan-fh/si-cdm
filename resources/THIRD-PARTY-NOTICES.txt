@@ -1,0 +1,24 @@
+SI CDM - third-party components
+===============================
+
+SI CDM is built with the components below. Their full licence texts are installed
+next to this file (in the "licenses" folder).
+
+GLFW 3.4                      zlib/libpng licence     windowing, input, OpenGL context
+  Copyright (c) 2002-2006 Marcus Geelnard, (c) 2006-2019 Camilla Lowy
+
+Dear ImGui 1.91.5             MIT licence             user interface
+  Copyright (c) 2014-2024 Omar Cornut
+
+stb_image                     MIT or public domain    image import
+  Sean Barrett and contributors
+
+Inter 4.0                     SIL Open Font License   UI font
+  The Inter Project Authors
+
+JetBrains Mono                SIL Open Font License   command-line font
+  The JetBrains Mono Project Authors
+
+On Windows the executables also link the MinGW-w64 runtime statically (libstdc++ and
+libgcc under the GCC Runtime Library Exception; winpthreads and mingw-w64 CRT under
+permissive licences).

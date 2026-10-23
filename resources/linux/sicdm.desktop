@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SI CDM
+GenericName=CAD/CAM Workbench
+Comment=Design, draw, sculpt and machine parts
+Exec=sicdm %f
+Icon=sicdm
+Terminal=false
+Categories=Graphics;Engineering;3DGraphics;
+MimeType=model/step;model/stl;application/x-sicdm;

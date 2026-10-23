@@ -91,18 +91,19 @@ TEST_CASE("MCP tools build 2D and 3D geometry") {
 TEST_CASE("MCP file tools save, export and reopen") {
     Document d;
     McpServer s(d, nullptr);
+    // generic_string(): forward slashes, which JSON takes unescaped and Windows accepts.
     const auto dir = std::filesystem::temp_directory_path() / "sicdm_mcp_tests";
     std::filesystem::create_directories(dir);
-    const std::string proj = (dir / "agent project.sicdm").string();
+    const std::string proj = (dir / "agent project.sicdm").generic_string();
     tool(s, "create_solid", R"({"kind":"sphere","radius":4})");
     CHECK(!tool(s, "save_project", R"({"path":")" + proj + R"("})")["isError"].asBool());
-    CHECK(!tool(s, "export_file", R"({"path":")" + (dir / "ball.stl").string() + R"("})")["isError"].asBool());
+    CHECK(!tool(s, "export_file", R"({"path":")" + (dir / "ball.stl").generic_string() + R"("})")["isError"].asBool());
     CHECK(!tool(s, "new_project", "{}")["isError"].asBool());
     CHECK(d.scene.bodies().empty());
     CHECK(!tool(s, "open_project", R"({"path":")" + proj + R"("})")["isError"].asBool());
     CHECK(d.scene.bodies().size() == 1);
     CHECK(s.takeDocumentReplaced());
-    CHECK(!tool(s, "import_file", R"({"path":")" + (dir / "ball.stl").string() + R"("})")["isError"].asBool());
+    CHECK(!tool(s, "import_file", R"({"path":")" + (dir / "ball.stl").generic_string() + R"("})")["isError"].asBool());
     CHECK(d.scene.bodies().size() == 2);
 }
 
@@ -239,7 +240,7 @@ TEST_CASE("MCP print checks, slices and exports a part") {
     Json r = tool(s, "print", R"({"operation":"check","body":"Part"})");
     CHECK(!r["isError"].asBool());
     CHECK(r["content"][0]["text"].asString().find("ready to print") != std::string::npos);
-    const std::string gcode = (std::filesystem::temp_directory_path() / "sicdm mcp slice.gcode").string();
+    const std::string gcode = (std::filesystem::temp_directory_path() / "sicdm mcp slice.gcode").generic_string();
     r = tool(s, "print", R"({"operation":"slice","body":"Part","path":")" + gcode + R"(","layer":0.25,"infill":15})");
     CHECK(!r["isError"].asBool());
     CHECK(r["content"][0]["text"].asString().find("40 layers") != std::string::npos);
@@ -261,7 +262,7 @@ TEST_CASE("MCP cam sets up, adds tools and operations, simulates and posts") {
     r = tool(s, "cam", R"({"operation":"simulate"})");
     CHECK(!r["isError"].asBool());
     CHECK(r["content"][0]["text"].asString().find("no gouges") != std::string::npos);
-    const std::string nc = (std::filesystem::temp_directory_path() / "sicdm mcp cam.nc").string();
+    const std::string nc = (std::filesystem::temp_directory_path() / "sicdm mcp cam.nc").generic_string();
     r = tool(s, "cam", R"({"operation":"post","path":")" + nc + R"("})");
     CHECK(!r["isError"].asBool());
     CHECK(std::filesystem::exists(nc));
@@ -285,7 +286,7 @@ TEST_CASE("MCP drawing lays out views, dimensions them and exports the sheet") {
     CHECK(!tool(s, "drawing", R"({"operation":"note","text":"DEBURR","at":[30,40]})")["isError"].asBool());
     r = tool(s, "drawing", R"({"operation":"list"})");
     CHECK(r["content"][0]["text"].asString().find("= 30.0 mm") != std::string::npos);
-    const std::string pdf = (std::filesystem::temp_directory_path() / "sicdm mcp drawing.pdf").string();
+    const std::string pdf = (std::filesystem::temp_directory_path() / "sicdm mcp drawing.pdf").generic_string();
     CHECK(!tool(s, "drawing", R"({"operation":"export","path":")" + pdf + R"("})")["isError"].asBool());
     CHECK(std::filesystem::exists(pdf));
     std::filesystem::remove(pdf);

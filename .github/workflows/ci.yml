@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -15,6 +17,13 @@ jobs:
         run: cmake --build --preset xcode-release -- -quiet
       - name: Test
         run: ctest --preset xcode
+      - name: Package (.dmg)
+        run: cpack --preset xcode
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sicdm-macos
+          path: build/xcode/SICDM-*.dmg
+          if-no-files-found: error
 
   linux:
     runs-on: ubuntu-24.04
@@ -40,3 +49,78 @@ jobs:
             | ./build/release/sicdm-mcp | tee mcp.out
           grep -q '"protocolVersion"' mcp.out
           grep -q 'Created Block 1' mcp.out
+      - name: Package (.deb, .tar.gz)
+        run: |
+          cpack --preset release
+          sudo apt-get install -y ./build/release/sicdm_*.deb
+          test -x /usr/bin/sicdm && test -f /usr/share/applications/sicdm.desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sicdm-linux
+          path: |
+            build/release/sicdm_*.deb
+            build/release/sicdm-*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-nsis
+      - name: Configure
+        run: cmake --preset windows
+      - name: Build
+        run: cmake --build --preset windows
+      - name: Test
+        run: ctest --preset windows
+      - name: MCP server smoke test (stdio)
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_solid","arguments":{"kind":"box","width":10,"depth":10,"height":10}}}' \
+            | ./build/windows/sicdm-mcp.exe | tee mcp.out
+          grep -q 'Created Block 1' mcp.out
+      - name: Package (NSIS installer, .zip)
+        run: cpack --preset windows
+      - name: Installer installs silently
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem build/windows/SICDM-*-windows-x64.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S', "/D=$env:RUNNER_TEMP\SICDM" -Wait
+          if (-not (Test-Path "$env:RUNNER_TEMP\SICDM\bin\sicdm.exe")) { throw "sicdm.exe not installed" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sicdm-windows
+          path: |
+            build/windows/SICDM-*-windows-x64.exe
+            build/windows/SICDM-*-windows-x64.zip
+          if-no-files-found: error
+
+  # Tags v* publish the three platforms' packages as a GitHub release.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos-xcode, linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "SI CDM $GITHUB_REF_NAME" --generate-notes

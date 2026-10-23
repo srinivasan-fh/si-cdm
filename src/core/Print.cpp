@@ -677,7 +677,7 @@ bool sliceToGcode(const Body& body, const PrintSettings& s, const std::string& p
     g.line("G1 Z10 F600");
     g.line("G90");
     g.line("M84");
-    std::ofstream f(path);
+    std::ofstream f(path, std::ios::binary); // the same LF bytes on every platform
     if (!f) {
         if (error) *error = "Cannot write " + path;
         return false;

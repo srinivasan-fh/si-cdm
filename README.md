@@ -22,6 +22,43 @@ Requires CMake 3.24+ (`brew install cmake`) and, on macOS, Xcode 15+.
 
 In Xcode, select the **sicdm** scheme and press ⌘R.
 
+### Windows
+
+Build with MinGW-w64 in [MSYS2](https://www.msys2.org) (UCRT64 shell):
+
+```bash
+pacman -S git mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,nsis}
+cmake --preset windows && cmake --build --preset windows
+ctest --preset windows                 # unit tests
+build/windows/sicdm.exe                # the app (OpenGL 4.1 driver needed)
+```
+
+Both executables link their runtime statically and need only system DLLs. Windows'
+`opengl32` exposes OpenGL 1.1 only, so the renderer loads the later functions from the
+driver at start-up (`src/render/GL.cpp`) and says which one is missing on an old driver.
+
+From Linux, cross-build with the `x86_64-w64-mingw32` (posix threads) toolchain:
+
+```bash
+cmake --preset mingw-cross && cmake --build --preset mingw-cross
+wine build/mingw/tests/sicdm_tests.exe # all tests pass under Wine too
+```
+
+### Installers
+
+`cpack` turns a release build into the platform's installer:
+
+| Platform | Command | Output |
+|---|---|---|
+| Windows | `cpack --preset windows` (or `mingw-cross`) | `SICDM-<ver>-windows-x64.exe`: NSIS setup with Start-menu and desktop shortcuts and an uninstaller (`/S` installs silently); also a portable `.zip` |
+| macOS | `cpack --preset xcode` | `SICDM-<ver>-macos.dmg`: drag **SI CDM** to Applications; `sicdm-mcp` sits beside it |
+| Linux | `cpack --preset release` | `sicdm_<ver>_amd64.deb` (desktop entry, icons, dependencies from `dpkg-shlibdeps`) and a `.tar.gz` |
+
+Each package carries the documentation and the third-party licences
+(`resources/THIRD-PARTY-NOTICES.txt`). CI builds, tests and packages all three platforms
+on every push and keeps the packages as workflow artifacts; pushing a `v*` tag also
+publishes them as a GitHub release.
+
 ## Launch: icon and splash screen
 
 ![Launch splash](docs/splash.png)

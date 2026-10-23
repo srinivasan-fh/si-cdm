@@ -24,16 +24,41 @@
       "displayName": "Debug",
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "SICDM_ENABLE_LTO": "OFF" }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows (MinGW-w64 in MSYS2 UCRT64, Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "mingw-cross",
+      "displayName": "Windows x64 cross-build from Linux (MinGW-w64)",
+      "binaryDir": "${sourceDir}/build/mingw",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-w64.cmake",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "SICDM_ENABLE_LTO": "OFF" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     }
   ],
   "buildPresets": [
     { "name": "xcode-release", "configurePreset": "xcode", "configuration": "Release" },
     { "name": "xcode-debug", "configurePreset": "xcode", "configuration": "Debug" },
     { "name": "release", "configurePreset": "release" },
-    { "name": "debug", "configurePreset": "debug" }
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "windows", "configurePreset": "windows" },
+    { "name": "mingw-cross", "configurePreset": "mingw-cross" }
   ],
   "testPresets": [
     { "name": "xcode", "configurePreset": "xcode", "configuration": "Release", "output": { "outputOnFailure": true } },
-    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } }
+    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
+    { "name": "windows", "configurePreset": "windows", "output": { "outputOnFailure": true } }
+  ],
+  "packagePresets": [
+    { "name": "xcode", "configurePreset": "xcode", "configurations": ["Release"] },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "windows", "configurePreset": "windows" },
+    { "name": "mingw-cross", "configurePreset": "mingw-cross" }
   ]
 }

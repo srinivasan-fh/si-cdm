@@ -7,6 +7,7 @@ Outputs (checked in, so building needs no Python):
   resources/icon/sicdm_1024.png        master artwork
   resources/icon/sicdm_{256,64,32}.png window icons (embedded into the app)
   resources/macos/SICDM.icns           macOS bundle icon (Dock, Finder)
+  resources/windows/sicdm.ico          Windows executable and installer icon
 
 Design: a macOS-style rounded square holding the splash screen's scene: deep
 space with stars and a crescent Earth, the curved horizon of the Moon with
@@ -301,6 +302,8 @@ def main():
     for size in (256, 64, 32):
         master.resize((size, size), Image.LANCZOS).save(os.path.join(icon_dir, f"sicdm_{size}.png"), optimize=True)
     write_icns(master, os.path.join(ROOT, "resources", "macos", "SICDM.icns"))
+    master.resize((256, 256), Image.LANCZOS).save(os.path.join(ROOT, "resources", "windows", "sicdm.ico"),
+                                                  sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)])
     print("icons written")
 
 
