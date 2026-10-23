@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
-#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -68,10 +67,12 @@ Placement Placement::inverse() const {
 
 double decimal(float f) {
     if (!std::isfinite(f)) return static_cast<double>(f);
+    // The shortest decimal that reads back as f (std::to_chars for floats needs macOS 13.3).
     char buf[32];
-    const auto res = std::to_chars(buf, buf + sizeof(buf) - 1, f); // the shortest that reads back as f
-    if (res.ec != std::errc()) return static_cast<double>(f);
-    *res.ptr = '\0';
+    for (int digits = 1; digits <= 9; ++digits) {
+        std::snprintf(buf, sizeof(buf), "%.*g", digits, static_cast<double>(f));
+        if (std::strtof(buf, nullptr) == f) break;
+    }
     return std::strtod(buf, nullptr);
 }
 

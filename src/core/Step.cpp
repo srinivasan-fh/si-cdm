@@ -20,8 +20,6 @@ namespace sicdm {
 
 namespace {
 
-constexpr double kPiS = 3.14159265358979323846;
-
 // --- Part 21 values -----------------------------------------------------------------
 
 struct Value {
