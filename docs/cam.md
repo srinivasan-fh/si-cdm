@@ -285,8 +285,10 @@ CAM ROTARY [TOOL n] [STEPOVER s] [STEPDOWN d] [LEAVE l] [ALONG] [TOP x] [BOTTOM 
   finish. Each level rapids only to just above what the level before left.
 - **X range:** `TOP` and `BOTTOM` limit it (it is the part's length by default).
 
-**Simultaneous 5-axis.** A ball end mill finishes the surface with the tool leaning, the
-table turning on A and C as it cuts (a table-table machine: `CAM MACHINE PRESET trunnion`):
+**Simultaneous 5-axis.** A ball end mill finishes the surface with the tool leaning as it
+cuts. On a table-table machine (`CAM MACHINE PRESET trunnion`) the table turns on A and C. On
+a head-table machine (`CAM MACHINE PRESET head-table`) the head tilts on B and the table turns
+on C:
 
 ```text
 CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
@@ -300,7 +302,8 @@ CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
   It leans at most `MAXTILT` from vertical (default 60) and is smoothed along the pass.
 - **Clear of the part:** the shank and holder are checked along the axis at each point;
   where they would touch, the axis stands back up towards vertical until they don't.
-  Points that can't be cleared, or that the machine's A travel can't reach, are skipped.
+  Points that can't be cleared, or that the machine's A (or B) travel can't reach, are
+  skipped.
 - **Clear of the stock left:** the operations before are simulated (in voxels), and the
   stock they leave is checked too.
   - **The finish's to cut:** stock on top of the part, within roughing's steps and stock to
@@ -315,8 +318,8 @@ CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
 - **Links:** between runs close together the tool goes across lifted along its axis, at
   feed, where the ball, shank and holder stay clear of the part all the way. Elsewhere it
   goes up to the clearance height.
-- **Needs:** a ball end mill, and a machine with A and C. The table isn't indexed by hand
-  (no `INDEX`).
+- **Needs:** a ball end mill, and a machine with A and C, or B and C. The table isn't indexed
+  by hand (no `INDEX`).
 
 **Posts:**
 
@@ -324,6 +327,13 @@ CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
 - The table turns (`G0 A.. C..`) at the clearance height, the short way round.
 - Rotary moves use inverse-time feed (`G93`): each move's F is the feed over its length along
   the part. Then the post returns to `G94`.
+- **Head-table machines:** the 5-axis moves go out in the control's tool centre point mode,
+  `G43.4 H..` on Fanuc and `G234 H..` on Haas. X, Y and Z are the tool's tip on the part,
+  with B and C, and the control works out the head's pivot and the table's turn. Afterwards,
+  at the clearance height, the head comes upright (`G0 B0`) and `G43 H..` turns plain length
+  compensation back on. LinuxCNC has no standard tool centre point mode, so its post refuses
+  these jobs. A head-table machine can't turn the part about X, so rotary wrapping and
+  `INDEX A` are refused; `INDEX C` works.
 - GRBL posts 3 axes, so it refuses multi-axis jobs.
 
 **Simulation:** a job that turns the part is simulated in voxels instead of a height field:
@@ -413,7 +423,7 @@ Each program is read back and checked before it is written (see
 
 ```text
 CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z | OFF]
-            [A min max | CONTINUOUS | OFF] [C ...] [POCKETS n]
+            [A min max | CONTINUOUS | OFF] [B ...] [C ...] [POCKETS n]
             [MAXRPM n] [MAXFEED mm/min] [RAPID mm/min] [TOOLCHANGE s] [NAME text]
 CAM CHECK [post]                 (or Manufacture > Check the Program)
 CAM CHECK file.nc [post]         a program on disk, against the job
@@ -429,7 +439,8 @@ CAM POST file.nc [post] [FORCE]
   checked against the travel. Without it, only each axis's span is checked.
 - **Z:** Z is checked at the spindle nose, which is the tool tip plus the tool's length
   (holder and stickout).
-- **Rotary axes:** A turns about X and C about Z. Each has limits in degrees, or is
+- **Rotary axes:** A turns the table about X and C about Z. B tilts the spindle head about Y
+  (a head-table machine has B and C, and no A). Each has limits in degrees, or is
   continuous, or absent.
 - **Tool changer:** `POCKETS` is the highest T number the changer takes.
 - **Spindle and feeds:** the spindle speed and feed limits. Feeds and speeds are worked
@@ -444,6 +455,7 @@ over them.
 | `vmc` | 762 × 406 × 508 | 8100 rpm | none | 20 |
 | `vmc-4th` | the same | 8100 rpm | A unlimited | 20 |
 | `trunnion` | 610 × 406 × 394 | 12000 rpm | A -35..120, C unlimited | 30 |
+| `head-table` | 800 × 600 × 500 | 15000 rpm | B -110..110 (head), C unlimited | 40 |
 | `benchtop` | 457 × 279 × 413 | 10000 rpm | none | 10 |
 | `router` | 800 × 800 × 100 | 24000 rpm | none | manual |
 
@@ -466,7 +478,8 @@ moves: drill, dwell, peck, chip-break, tap, bore, and LinuxCNC's `G33.1`.
   - `G28` must not go down to Z0 on its way home (as `G90 G28 Z0` does).
   - The program must end with `M30` or `M2`.
 - **Machine:**
-  - travel, with each tool's length on Z;
+  - travel, with each tool's length on Z (in tool centre point mode, the tip turned with
+    the table and the length along the tilted tool);
   - which rotary axes exist, and their limits;
   - spindle speed, feed, and the tool pockets.
 - **Job:**
@@ -525,5 +538,5 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Machines:** 5-axis on head-head or head-table machines (B axes), and swarf (flank)
+- **Machines:** 5-axis on head-head machines (two tilting head axes), and swarf (flank)
   cutting. (Lathes have their own job: see [lathe.md](lathe.md).)

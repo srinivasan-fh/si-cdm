@@ -45,6 +45,7 @@ bool knownG(const Dialect& d, int g10) {
         for (int g : {430, 730, 810, 820, 830, 840, 850, 980, 990})
             if (g == g10) return true;
     if (d.linuxcnc && (g10 == 640 || g10 == 331)) return true;
+    if (d.fanuc && (d.haas ? g10 == 2340 : g10 == 434)) return true; // tool centre point control
     return false;
 }
 
@@ -60,7 +61,7 @@ bool knownLetter(const Dialect& d, char c) {
     const std::string base = "GMXYZIJKFSTPRN";
     if (base.find(c) != std::string::npos) return true;
     if (d.grbl) return false;
-    if (c == 'H' || c == 'Q' || c == 'A' || c == 'C') return true;
+    if (c == 'H' || c == 'Q' || c == 'A' || c == 'B' || c == 'C') return true;
     return c == 'O' && d.fanuc;
 }
 
@@ -155,7 +156,8 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
     };
 
     // The control's state.
-    double x = kNaN, y = kNaN, z = kNaN, a = 0, c = 0; // work coordinates; NaN: unknown (at machine home)
+    double x = kNaN, y = kNaN, z = kNaN, a = 0, c = 0, b = 0; // work coordinates; NaN: unknown (at machine home)
+    bool tcp = false; // tool centre point control: X Y Z are the tip on the part
     int motion = -1, plane = 17, units = 0;
     double scale = 1.0;
     bool absolute = true, inverseTime = false, feedSet = false, wcs = false;
@@ -172,7 +174,8 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
         if (std::isnan(x) || std::isnan(y) || std::isnan(z) || std::isnan(x1) || std::isnan(y1) || std::isnan(z1)) return;
         GcodeBackplot::Segment s;
         s.x0 = x, s.y0 = y, s.z0 = z, s.x1 = x1, s.y1 = y1, s.z1 = z1;
-        s.a = a, s.c = c;
+        s.a = a, s.c = c, s.b = b;
+        s.tcp = tcp;
         s.rapid = rapid;
         s.line = line;
         s.tool = loaded;
@@ -278,7 +281,7 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
                 continue;
             }
             if (w.count(wd.letter)) report(lineNo, true, "twice", std::string("Two ") + wd.letter + " words on one line");
-            if (d.fanuc && !wd.dot && std::string("XYZIJKRQAC").find(wd.letter) != std::string::npos && wd.value != 0)
+            if (d.fanuc && !wd.dot && std::string("XYZIJKRQABC").find(wd.letter) != std::string::npos && wd.value != 0)
                 report(lineNo, true, "nodot",
                        std::string(1, wd.letter) + fmt(wd.value) + " has no decimal point: a Fanuc-style control reads it in thousandths of a mm");
             w[wd.letter] = wd.value;
@@ -314,7 +317,7 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
                 out.tools.push_back(loaded);
             }
             spindle = 0; // the changer stops it
-            lengthComp = false;
+            lengthComp = false, tcp = false;
             needLengthComp = true;
         }
         if (hasM(3) || hasM(4)) {
@@ -332,8 +335,9 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
             units = hasG(200) ? 20 : 21;
             scale = units == 20 ? 25.4 : 1.0;
         }
-        if (hasG(490)) lengthComp = false;
-        if (hasG(430)) {
+        if (hasG(490)) lengthComp = false, tcp = false;
+        if (hasG(430) || hasG(434) || hasG(2340)) {
+            tcp = !hasG(430);
             const int h = has('H') ? static_cast<int>(std::lround(w['H'])) : -1;
             if (h < 0) report(lineNo, true, "g43h", "G43 without an H (the length offset to use)");
             else if (h != loaded) report(lineNo, true, "g43t", "G43 H" + std::to_string(h) + " while tool " + std::to_string(loaded) + " is in the spindle");
@@ -347,7 +351,7 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
         if (hasG(990)) g98 = false;
 
         // Non-modal returns to machine home.
-        const bool axisWords = has('X') || has('Y') || has('Z') || has('A') || has('C');
+        const bool axisWords = has('X') || has('Y') || has('Z') || has('A') || has('B') || has('C');
         if (hasG(280)) {
             // Through the point given (absolute or incremental), then home on those axes.
             double ix = x, iy = y, iz = z;
@@ -367,6 +371,7 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
             if (has('Y')) y = kNaN;
             if (has('Z')) z = kNaN;
             if (has('A')) a = w['A'];
+            if (has('B')) b = w['B'];
             if (has('C')) c = w['C'];
             continue;
         }
@@ -397,12 +402,16 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
         auto rotary = [&](char axis) {
             if (!has(axis)) return;
             const double v = w[axis];
-            const bool fitted = axis == 'A' ? mc.hasA : mc.hasC;
+            const bool fitted = axis == 'A' ? mc.hasA : axis == 'B' ? mc.hasB : mc.hasC;
             if (!fitted) report(lineNo, true, std::string("no") + axis, std::string("The machine has no ") + axis + " axis");
             if (axis == 'A') {
                 out.aLo = out.usesA ? std::min(out.aLo, v) : v;
                 out.aHi = out.usesA ? std::max(out.aHi, v) : v;
                 out.usesA = true;
+            } else if (axis == 'B') {
+                out.bLo = out.usesB ? std::min(out.bLo, v) : v;
+                out.bHi = out.usesB ? std::max(out.bHi, v) : v;
+                out.usesB = true;
             } else {
                 out.cLo = out.usesC ? std::min(out.cLo, v) : v;
                 out.cHi = out.usesC ? std::max(out.cHi, v) : v;
@@ -410,6 +419,7 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
             }
         };
         rotary('A');
+        rotary('B');
         rotary('C');
 
         if (axisWords || (cycle && newCycle)) {
@@ -424,6 +434,7 @@ GcodeBackplot backplotGcode(const std::string& program, const std::string& diale
             if (has('Y')) ty = absolute ? w['Y'] * scale : y + w['Y'] * scale;
             if (!cycle && has('Z')) tz = absolute ? w['Z'] * scale : z + w['Z'] * scale;
             if (has('A')) a = w['A'];
+            if (has('B')) b = w['B'];
             if (has('C')) c = w['C'];
             if (motion == -1) {
                 report(lineNo, true, "nomotion", "Axis words with no motion mode (G0 / G1)");
@@ -581,6 +592,19 @@ CamPostCheck checkPost(const CamJob& job, const std::string& post, const std::st
     for (const GcodeBackplot::Segment& s : r.plot.segments) {
         const auto it = toolLength.find(s.tool);
         const double len = it == toolLength.end() ? longest : it->second;
+        if (s.tcp) {
+            // The tip on the part: in the machine's frame the table's turn (about the work
+            // zero, the rotary centre) moves it, and the nose is a tool's length up the
+            // tilted axis.
+            const double cr = s.c * 3.14159265358979323846 / 180.0, br = s.b * 3.14159265358979323846 / 180.0;
+            for (int e = 0; e < 2; ++e) {
+                const double px = e ? s.x1 : s.x0, py = e ? s.y1 : s.y0, pz = e ? s.z1 : s.z0;
+                extend(0, px * std::cos(cr) - py * std::sin(cr) + len * std::sin(br));
+                extend(1, px * std::sin(cr) + py * std::cos(cr));
+                extend(2, pz + len * std::cos(br));
+            }
+            continue;
+        }
         for (const double* p : {&s.x0, &s.x1}) extend(0, *p);
         for (const double* p : {&s.y0, &s.y1}) extend(1, *p);
         for (const double* p : {&s.z0, &s.z1}) extend(2, *p + len);
@@ -601,6 +625,8 @@ CamPostCheck checkPost(const CamJob& job, const std::string& post, const std::st
     }
     if (r.plot.usesA && m.hasA && (r.plot.aLo < m.aMin - 1e-6 || r.plot.aHi > m.aMax + 1e-6))
         fail(true, "A turns to " + fmt(r.plot.aLo) + ".." + fmt(r.plot.aHi) + " deg, past the machine's " + fmt(m.aMin) + ".." + fmt(m.aMax));
+    if (r.plot.usesB && m.hasB && (r.plot.bLo < m.bMin - 1e-6 || r.plot.bHi > m.bMax + 1e-6))
+        fail(true, "B tilts to " + fmt(r.plot.bLo) + ".." + fmt(r.plot.bHi) + " deg, past the machine's " + fmt(m.bMin) + ".." + fmt(m.bMax));
     if (r.plot.usesC && m.hasC && (r.plot.cLo < m.cMin - 1e-6 || r.plot.cHi > m.cMax + 1e-6))
         fail(true, "C turns to " + fmt(r.plot.cLo) + ".." + fmt(r.plot.cHi) + " deg, past the machine's " + fmt(m.cMin) + ".." + fmt(m.cMax));
 
@@ -608,9 +634,12 @@ CamPostCheck checkPost(const CamJob& job, const std::string& post, const std::st
     const Vec3 o = job.origin();
     std::vector<std::pair<P3, P3>> expected, programmed;
     for (const CamOperation& op : job.ops) {
+        // Tool centre point moves are posted as the tip on the part.
+        const bool onPart = op.kind == CamOpKind::Surface5 && m.headTilts();
+        auto at = [&](const CamMove& mv) { return onPart ? camToPart(job, mv.to, mv.a, mv.c) : mv.to; };
         for (std::size_t i = 1; i < op.moves.size(); ++i) {
             if (op.moves[i].kind == CamMove::Rapid) continue;
-            const Vec3 &p = op.moves[i - 1].to, &q = op.moves[i].to;
+            const Vec3 p = at(op.moves[i - 1]), q = at(op.moves[i]);
             expected.push_back({{p.x - o.x + 0.0, p.y - o.y + 0.0, p.z - o.z + 0.0}, {q.x - o.x + 0.0, q.y - o.y + 0.0, q.z - o.z + 0.0}});
         }
     }

@@ -105,10 +105,13 @@ struct CamMachine {
     // span on each axis is checked against the travel.
     bool hasWorkOffset = false;
     double workOffset[3] = {0, 0, 0};
-    // Rotary axes (degrees): A turns about X, C about Z. The generic machine has both,
-    // without limits; the presets say what theirs have.
-    bool hasA = true, hasC = true;
-    double aMin = -99999.0, aMax = 99999.0, cMin = -99999.0, cMax = 99999.0;
+    // Rotary axes (degrees): A turns the table about X, C about Z. The generic machine has
+    // both, without limits; the presets say what theirs have. B tilts the spindle head about
+    // Y instead (a head-table machine: B and C); a machine with B tilts the tool, not the
+    // part, and its 5-axis programs use the control's tool centre point mode.
+    bool hasA = true, hasC = true, hasB = false;
+    double aMin = -99999.0, aMax = 99999.0, cMin = -99999.0, cMax = 99999.0, bMin = -99999.0, bMax = 99999.0;
+    bool headTilts() const { return hasB && !hasA; }
     int toolPockets = 0;       // highest T number the changer takes (0: any)
     bool hasTravel(int axis) const { return travelMax[axis] > travelMin[axis]; }
     std::string describe() const;
@@ -137,12 +140,14 @@ const char* drillCycleKey(DrillCycle c);
 bool drillCycleFromKey(const std::string& key, DrillCycle* out);
 
 // A move in the machine's frame. With the table turned (A about X, then C about Z, both
-// through the job's rotary centre) the part is turned with it: camToPart maps back.
+// through the job's rotary centre) the part is turned with it: camToPart maps back. On a
+// head-table machine `b` tilts the tool about Y instead; the tip is still where `to` says.
 struct CamMove {
     enum Kind : unsigned char { Rapid, Feed, Plunge } kind = Feed;
     Vec3 to;
     double feed = 0.0; // mm/min along the part (Rapid: unused)
     float a = 0.0f, c = 0.0f; // degrees
+    float b = 0.0f;
 };
 
 struct CamHole {
@@ -232,7 +237,8 @@ bool camFromJson(const Json& j, CamJob& job);
 // (machine +Z) as a direction on the part.
 Vec3 camToPart(const CamJob& job, const Vec3& machine, float a, float c);
 Vec3 camToMachine(const CamJob& job, const Vec3& part, float a, float c);
-Vec3 camToolAxis(float a, float c);
+// The tool's axis on the part (up from the tip), for the table at A and C and the head at B.
+Vec3 camToolAxis(float a, float c, float b = 0.0f);
 
 // Fills `op.moves` for the part. False (and `error`) when it can't, e.g. no stock.
 bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, std::string* error = nullptr);

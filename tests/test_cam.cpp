@@ -748,6 +748,82 @@ TEST_CASE("CAM 5-axis: a ball end mill leans along the cut over a dome, turning 
     std::filesystem::remove(path);
 }
 
+TEST_CASE("CAM 5-axis on a head-table machine: B tilts the tool, C turns the part, posted with tool centre point") {
+    Document d;
+    for (const char* l : {"BOX 40 40 8 @0,0,0", "SPHERE 15 @0,0,-7", "BOOLEAN \"Block 1\" UNION \"Sphere 2\"", "CAM SETUP \"Block 1\" STOCK 1 MATERIAL aluminium",
+                          "CAM MACHINE PRESET head-table", "CAM TOOL 1 FLAT 6 LENGTH 30", "CAM TOOL 2 BALL 4 STICKOUT 40", "CAM ROUGH TOOL 1 LEAVE 0.3"})
+        REQUIRE(run(d, l).ok);
+    CHECK(d.state.cam.setup.machine.headTilts());
+    // No A to turn the part on.
+    CHECK(!run(d, "CAM ROTARY TOOL 1").ok);
+    REQUIRE(run(d, "CAM 5AXIS TOOL 2 SCALLOP 0.1").ok);
+    const CamJob& job = d.state.cam;
+    const CamOperation& op = job.ops[1];
+    // The table never tilts; the head does, and the ball stays off the dome.
+    const Vec3 centre{0, 0, 8};
+    double nearest = 1e9, maxB = 0, leanSum = 0;
+    std::size_t onDome = 0;
+    for (const CamMove& m : op.moves) {
+        CHECK(m.a == 0.0f);
+        if (m.kind == CamMove::Rapid) continue;
+        const Vec3 axis = camToolAxis(m.a, m.c, m.b);
+        const Vec3 ball = camToPart(job, m.to, m.a, m.c) + axis * 2.0f;
+        const double rr = length(ball - centre);
+        nearest = std::min(nearest, rr);
+        maxB = std::max(maxB, std::fabs(static_cast<double>(m.b)));
+        if (std::fabs(rr - 17.0) < 0.1 && ball.z > 12.0 && std::fabs(m.b) < 45.0) {
+            const Vec3 n = (ball - centre) * static_cast<float>(1.0 / rr);
+            leanSum += std::acos(std::clamp(static_cast<double>(dot(n, axis)), -1.0, 1.0)) * 180.0 / kPi;
+            ++onDome;
+        }
+    }
+    CHECK(nearest > 17.0 - 0.1);
+    CHECK(maxB > 40.0);
+    CHECK(maxB < 60.0 + 1e-3);
+    REQUIRE(onDome > 500);
+    CHECK_NEAR(leanSum / static_cast<double>(onDome), 10.0, 2.5);
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK(sim.shankHits == 0);
+    // Fanuc: G43.4 on for the 5-axis moves, X Y Z on the part, B and C; G43 again after.
+    std::string g = postToString(d.state.cam, d.scene.bodies()[0], "fanuc");
+    CHECK(has(g, "G43.4 H02"));
+    CHECK(has(g, " B"));
+    bool aWord = false;
+    for (std::size_t q = g.find(" A"); q != std::string::npos; q = g.find(" A", q + 1))
+        aWord = aWord || (q + 2 < g.size() && (std::isdigit(static_cast<unsigned char>(g[q + 2])) || g[q + 2] == '-'));
+    CHECK(!aWord);
+    CHECK(has(g, "G00 B0.\nG43 H02"));
+    CamPostCheck pc = checkPost(d.state.cam, "fanuc", g);
+    for (const GcodeIssue& i : pc.issues)
+        if (i.error) std::printf("  line %d: %s\n", i.line, i.text.c_str());
+    CHECK(pc.errors == 0);
+    CHECK(pc.deviation <= pc.allowed);
+    CHECK(pc.plot.usesB);
+    // Haas: G234. LinuxCNC has no standard tool centre point mode: refused.
+    g = postToString(d.state.cam, d.scene.bodies()[0], "haas");
+    CHECK(has(g, "G234 H02"));
+    pc = checkPost(d.state.cam, "haas", g);
+    CHECK(pc.errors == 0);
+    std::string err;
+    CHECK(postToString(d.state.cam, d.scene.bodies()[0], "linuxcnc", nullptr, &err).empty());
+    CHECK(has(err, "tool centre point"));
+    // A head that tilts less: the axis is held within its travel.
+    REQUIRE(run(d, "CAM MACHINE B -30 30").ok);
+    REQUIRE(run(d, "CAM GENERATE").ok);
+    for (const CamMove& m : d.state.cam.ops[1].moves) CHECK(std::fabs(m.b) <= 30.0 + 1e-3);
+    // Saved with the job.
+    const std::string path = tempPath("sicdm_cam_head.sicdm");
+    REQUIRE(run(d, "SAVE " + path).ok);
+    Document e;
+    REQUIRE(run(e, "OPEN " + path).ok);
+    CHECK(e.state.cam.setup.machine.headTilts());
+    CHECK(e.state.cam.setup.machine.bMax == 30);
+    std::filesystem::remove(path);
+}
+
 namespace {
 
 void setEnv(const char* name, const std::string& value) {

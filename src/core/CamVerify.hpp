@@ -34,15 +34,16 @@ struct GcodeIssue {
 struct GcodeBackplot {
     struct Segment {
         double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0; // work coordinates, mm
-        double a = 0, c = 0; // the rotary axes at its end (degrees)
+        double a = 0, c = 0, b = 0; // the rotary axes at its end (degrees)
+        bool tcp = false;           // in tool centre point mode: the tip on the part, the table's turn undone
         bool rapid = false;
         int line = 0;
         int tool = 0;
     };
     std::vector<Segment> segments; // moves with known ends (not those to or from machine home)
     std::vector<GcodeIssue> issues;
-    bool usesA = false, usesC = false;
-    double aLo = 0, aHi = 0, cLo = 0, cHi = 0;
+    bool usesA = false, usesB = false, usesC = false;
+    double aLo = 0, aHi = 0, bLo = 0, bHi = 0, cLo = 0, cHi = 0;
     double maxRpm = 0, maxFeed = 0; // feed: mm/min (G94 moves)
     double seconds = 0;
     std::vector<int> tools; // in the order they are loaded

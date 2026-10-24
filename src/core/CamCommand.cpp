@@ -738,7 +738,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
 
     if (sub == "machine") {
         // CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z|OFF]
-        //   [A min max|OFF|CONTINUOUS] [C ...] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]
+        //   [A min max|OFF|CONTINUOUS] [B ...] [C ...] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]
         CamMachine m = job.setup.machine;
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
@@ -780,11 +780,11 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
                     m.hasWorkOffset = true;
                     m.workOffset[0] = z->x, m.workOffset[1] = z->y, m.workOffset[2] = z->z;
                 }
-            } else if (k == "a" || k == "c") {
+            } else if (k == "a" || k == "b" || k == "c") {
                 const std::string v = lower(next());
-                bool& fitted = k == "a" ? m.hasA : m.hasC;
-                double& lo = k == "a" ? m.aMin : m.cMin;
-                double& hi = k == "a" ? m.aMax : m.cMax;
+                bool& fitted = k == "a" ? m.hasA : k == "b" ? m.hasB : m.hasC;
+                double& lo = k == "a" ? m.aMin : k == "b" ? m.bMin : m.cMin;
+                double& hi = k == "a" ? m.aMax : k == "b" ? m.bMax : m.cMax;
                 if (v == "off" || v == "none") fitted = false;
                 else if (v == "continuous" || v == "on") fitted = true, lo = -99999, hi = 99999;
                 else {
@@ -803,7 +803,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
                 (k == "maxrpm" ? m.maxRpm : k == "maxfeed" ? m.maxFeed : k == "rapid" ? m.rapid : m.toolChange) = *v;
             } else {
                 return out.fail("CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z|OFF] [A min max|CONTINUOUS|OFF] "
-                                "[C ...] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]");
+                                "[B ...] [C ...] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]");
             }
         }
         if (a.size() > 1) {

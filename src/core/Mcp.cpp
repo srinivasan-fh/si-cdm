@@ -460,7 +460,7 @@ Json McpServer::toolDefinitions() {
         p.set("material", prop("string", "setup: aluminium, steel, stainless, brass, castiron, titanium, plastic, wood"));
         p.set("origin", prop("string", "setup: work zero at the stock's top 'corner' (default), 'centre', or the 'model' origin"));
         p.set("post", prop("string", "setup / post: fanuc, haas, grbl, linuxcnc"));
-        p.set("preset", prop("string", "machine: the preset - generic, vmc, vmc-4th (A: 4-axis), trunnion (A and C: 3+2 and 5-axis), benchtop, router"));
+        p.set("preset", prop("string", "machine: the preset - generic, vmc, vmc-4th (A: 4-axis), trunnion (A and C: 3+2 and 5-axis), head-table (B head and C table: 5-axis with tool centre point), benchtop, router"));
         p.set("number", prop("number", "tool: T number"));
         p.set("type", prop("string", "tool: flat, ball, bull, face, drill, spot, chamfer, tap"));
         p.set("diameter", prop("number", "tool: diameter, mm; drill/bore with points: the hole size"));
@@ -500,7 +500,7 @@ Json McpServer::toolDefinitions() {
         tools.push(tool("cam",
                         "CNC milling CAM: set up the part and stock, build a tool library with feeds and speeds, add operations "
                         "(facing, 2D contour with tabs, pocket, 3D roughing - adaptive or rest - parallel and waterline finishing, drilling "
-                        "cycles, helical boring, 3+2 indexed versions of any of them, 4-axis rotary wrapping, and simultaneous 5-axis surface finishing with a ball end mill on a table-table machine), simulate the cut "
+                        "cycles, helical boring, 3+2 indexed versions of any of them, 4-axis rotary wrapping, and simultaneous 5-axis surface finishing with a ball end mill on a table-table or head-table machine), simulate the cut "
                         "(stock left, gouges, rapid crashes, holder collisions, cycle time; voxels when the part turns) and post G-code for "
                         "Fanuc, Haas, GRBL or LinuxCNC.",
                         p, {"operation"}));

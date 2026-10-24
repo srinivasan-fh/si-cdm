@@ -130,7 +130,7 @@ constexpr CommandSpec kCommands[] = {
      "CHAMFER|TAP d [STICKOUT l] [HOLDER d]; CAM LIBRARY [LIST] | IMPORT file.csv|.json | USE #n [AS n] | STORE n|ALL | LOAD file | SAVE file "
      "[CSV|FUSION] (tool libraries, vendor catalogues, Fusion 360); operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d] [ADAPTIVE] [REST] [INDEX a c]...; CAM ROTARY [ALONG] [STEPOVER s] [STEPDOWN d]; CAM 5AXIS [LEADANGLE a] [SIDETILT a] [MAXTILT a]; CAM SIMULATE [SHOW]; "
      "CAM POST file.nc [FANUC|HAAS|GRBL|LINUXCNC] [FORCE] (read back and checked first); CAM CHECK [post | file.nc [post]]; "
-     "CAM MACHINE [PRESET vmc|vmc-4th|trunnion|benchtop|router] [TRAVEL x y z] [ZERO x,y,z] [A min max] [C min max] [POCKETS n] [MAXRPM n]"},
+     "CAM MACHINE [PRESET vmc|vmc-4th|trunnion|head-table|benchtop|router] [TRAVEL x y z] [ZERO x,y,z] [A min max] [B min max] [C min max] [POCKETS n] [MAXRPM n]"},
     {"LATHE", "TURN TURNING", "LATHE SETUP|TOOL|FACE|ROUGH|FINISH|BORE|GROOVE|DRILL|THREAD|PARTOFF|PROFILE|LIST|SIMULATE|POST ...",
      "CNC turning: LATHE SETUP [body] [AXIS X|Y|Z] [FLIP] [BAR d] [FRONT f] [MATERIAL m] [POST FANUC|HAAS|LINUXCNC] [MAXRPM n]; "
      "LATHE TOOL n TURN [NOSE r] [INSERT C|D|V|T|W] | BORE d | GROOVE w [CORNER r] [REACH l] | THREAD | DRILL d [ANGLE a]; "
