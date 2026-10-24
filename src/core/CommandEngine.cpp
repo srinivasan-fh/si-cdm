@@ -6,6 +6,9 @@
 #include "core/Pose.hpp"
 #include "core/CamCommand.hpp"
 #include "core/LatheCommand.hpp"
+#include "core/CrashReport.hpp"
+#include "core/Licence.hpp"
+#include "core/Notices.hpp"
 #include "core/AssemblyCommand.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/DrawingCommand.hpp"
@@ -26,6 +29,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 namespace sicdm {
 
@@ -370,6 +374,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
 } // namespace
 
 CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* view) {
+    setCrashContext(std::string(line)); // in the report if this command brings the program down
     // The model changed since the last command, by a brush stroke, a drag or a panel:
     // the history no longer rebuilds it exactly.
     if (!doc.replaying && doc.state.historyRevision != 0 && doc.scene.revision() != doc.state.historyRevision && !doc.state.history.empty())
@@ -760,6 +765,68 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         out.documentReplaced = true;
         out.say("Opened " + doc.path);
         if (!warn.empty()) out.say(warn);
+        return out;
+    }
+    if (cmd == "LICENCE") {
+        // LICENCE [SHOW] | INSTALL file | REMOVE
+        const std::string sub = a.empty() ? "show" : lower(a[0]);
+        std::string err;
+        if (sub == "show") {
+            const LicenceStatus st = currentLicence();
+            out.say(st.describe());
+            if (st.state != LicenceState::None && st.state != LicenceState::NoKey) out.say("  licence file: " + st.path);
+            if (buildLicenceKey().empty()) out.say("  this build was made without a licence key (SICDM_LICENCE_PUBLIC_KEY)");
+            return out;
+        }
+        if (sub == "install") {
+            if (a.size() < 2) return out.fail("LICENCE INSTALL licence.json");
+            LicenceStatus st;
+            if (!installLicence(a[1], &st, &err)) return out.fail(err);
+            out.say("Installed: " + st.describe());
+            return out;
+        }
+        if (sub == "remove") {
+            if (!removeLicence(&err)) return out.fail(err);
+            out.say("Licence removed: running as the Community edition");
+            return out;
+        }
+        return out.fail("LICENCE [SHOW] | INSTALL licence.json | REMOVE");
+    }
+    if (cmd == "CRASHES") {
+        // CRASHES [LIST] | SHOW n | CLEAR | FOLDER
+        const std::string sub = a.empty() ? "list" : lower(a[0]);
+        const std::vector<CrashReportFile> reports = crashReports();
+        if (sub == "list") {
+            if (reports.empty()) {
+                out.say("No crash reports (they go to " + crashDirectory() + ")");
+                return out;
+            }
+            out.say("Crash reports, newest first (kept on this computer; nothing is sent):");
+            for (std::size_t i = 0; i < reports.size(); ++i) out.say("  " + std::to_string(i + 1) + ". " + reports[i].path);
+            out.say("CRASHES SHOW n prints one; CRASHES CLEAR deletes them");
+            return out;
+        }
+        if (sub == "show") {
+            const long n = a.size() > 1 ? std::strtol(a[1].c_str(), nullptr, 10) : 1;
+            if (n < 1 || n > static_cast<long>(reports.size())) return out.fail(reports.empty() ? "No crash reports" : "CRASHES SHOW 1.." + std::to_string(reports.size()));
+            std::ifstream f(reports[static_cast<std::size_t>(n - 1)].path, std::ios::binary);
+            for (std::string text; std::getline(f, text);) out.say(text);
+            return out;
+        }
+        if (sub == "clear") {
+            clearCrashReports();
+            out.say("Deleted " + std::to_string(reports.size()) + " crash reports");
+            return out;
+        }
+        if (sub == "folder") {
+            out.say(crashDirectory());
+            return out;
+        }
+        return out.fail("CRASHES [LIST] | SHOW n | CLEAR | FOLDER");
+    }
+    if (cmd == "NOTICES") {
+        std::istringstream in(thirdPartyNotices());
+        for (std::string text; std::getline(in, text);) out.say(text);
         return out;
     }
     if (cmd == "RECOVER") {

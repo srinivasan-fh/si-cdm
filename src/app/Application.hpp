@@ -6,6 +6,7 @@
 #include "core/Sculpt.hpp"
 #include "core/Mcp.hpp"
 #include "core/Recovery.hpp"
+#include "core/CrashReport.hpp"
 #include "core/Scene.hpp"
 #include "app/McpHttpServer.hpp"
 #include "app/SketchController.hpp"
@@ -264,6 +265,8 @@ private:
     double m_autosaveCheck = 0.0;
     std::vector<RecoveryFile> m_recoverable;
     bool m_offerRecovery = false;
+    std::vector<CrashReportFile> m_newCrashes; // reports from earlier sessions not yet shown
+    bool m_offerCrashes = false;
 
     double m_statusUntil = 0.0;
 

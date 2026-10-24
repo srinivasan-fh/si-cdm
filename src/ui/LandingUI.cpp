@@ -1,5 +1,9 @@
 #include "ui/LandingUI.hpp"
 
+#include "core/CrashReport.hpp"
+#include "core/Licence.hpp"
+#include "core/Notices.hpp"
+
 #include "core/Cam.hpp"
 
 #include "core/Command.hpp"
@@ -2035,6 +2039,18 @@ void LandingUI::drawAboutWindow(UiState& st) {
         ImGui::Text("Renderer : %s", st.gpuName.c_str());
         ImGui::Text("OpenGL   : %s", st.glVersion.c_str());
         ImGui::Text("Dear ImGui %s", IMGUI_VERSION);
+        ImGui::Separator();
+        // The licence is read again only when the window opens (it is a small file).
+        static std::string licence;
+        if (ImGui::IsWindowAppearing() || licence.empty()) licence = currentLicence().describe();
+        ImGui::TextUnformatted(licence.c_str());
+        ImGui::TextDisabled("LICENCE INSTALL file installs a licence");
+        ImGui::TextDisabled("Crash reports stay on this computer: %s", crashDirectory().c_str());
+        if (ImGui::CollapsingHeader("Third-party components")) {
+            ImGui::BeginChild("notices", {560, 260}, true);
+            ImGui::TextUnformatted(thirdPartyNotices());
+            ImGui::EndChild();
+        }
     }
     ImGui::End();
 }

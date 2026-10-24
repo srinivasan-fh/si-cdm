@@ -1,4 +1,5 @@
 #include "app/Application.hpp"
+#include "core/CrashReport.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +33,7 @@ int main(int argc, char** argv) {
         // Unknown args (e.g. -NSDocumentRevisionsDebugMode from Xcode) are ignored.
     }
 
+    sicdm::installCrashHandler(SICDM_VERSION); // a fault from here on leaves a report
     sicdm::Application app(options);
     return app.run();
 }

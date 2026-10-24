@@ -1,5 +1,7 @@
 #include "app/Application.hpp"
 
+#include "core/CrashReport.hpp"
+
 #include "render/GL.hpp"
 
 #include <GLFW/glfw3.h>
@@ -24,6 +26,7 @@
 #include <iterator>
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 #include <vector>
 
 namespace sicdm {
@@ -197,6 +200,10 @@ bool Application::init() {
     // Unsaved work from a session that ended without closing: offered back in frame().
     m_recoverable = findRecoveryFiles();
     m_offerRecovery = !m_recoverable.empty() && m_options.screenshotPath.empty();
+    // Crash reports this computer hasn't shown yet (written by the handler main() installs).
+    for (const CrashReportFile& f : crashReports())
+        if (!f.seen) m_newCrashes.push_back(f);
+    m_offerCrashes = !m_newCrashes.empty() && m_options.screenshotPath.empty();
     progress(0.96f, "Restoring interface", "Workspace");
     return true;
 }
@@ -1463,6 +1470,32 @@ void Application::frame(float dt) {
         ImGui::SameLine();
         if (ImGui::Button("Later", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::TextDisabled("Restored files open in their own tabs, still unsaved. Later: type RECOVER.");
+        ImGui::EndPopup();
+    }
+
+    if (m_offerCrashes && !m_offerRecovery && !ImGui::IsPopupOpen("Recover Unsaved Work")) {
+        ImGui::OpenPopup("SI CDM Closed Unexpectedly");
+        m_offerCrashes = false;
+    }
+    if (ImGui::BeginPopupModal("SI CDM Closed Unexpectedly", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text(m_newCrashes.size() == 1 ? "SI CDM stopped because of a fault last time. A report was kept on this computer:"
+                                             : "SI CDM stopped because of a fault. Reports were kept on this computer:");
+        for (const CrashReportFile& f : m_newCrashes) ImGui::BulletText("%s", f.path.c_str());
+        ImGui::TextDisabled("Nothing has been sent. To report the problem, attach the report to an issue or an e-mail.");
+        ImGui::Spacing();
+        if (ImGui::Button(m_newCrashes.size() == 1 ? "Copy the Report" : "Copy the Newest Report", {180, 0})) {
+            std::ifstream f(m_newCrashes.front().path, std::ios::binary);
+            std::ostringstream text;
+            text << f.rdbuf();
+            ImGui::SetClipboardText(text.str().c_str());
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("OK", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            acknowledgeCrashReports();
+            m_newCrashes.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::TextDisabled("CRASHES lists them; CRASHES CLEAR deletes them.");
         ImGui::EndPopup();
     }
 

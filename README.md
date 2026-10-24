@@ -643,6 +643,18 @@ Unsaved changes are tracked (`*` in the tab and title); closing a tab or quittin
   was left out. A project that needs a newer reader is refused, with a message saying to
   update.
 
+**Crash reports.** If SI CDM dies on a fault, it writes a short report: what happened, the
+version, the last command and the call stack. The report stays on your computer and nothing
+is sent anywhere. The next start shows it, with a button to copy it for an issue or an e-mail.
+`CRASHES` lists the reports, `CRASHES SHOW n` prints one, and `CRASHES CLEAR` deletes them.
+They are kept beside the recovery folder (`crashes`, or `Crashes` on Windows and macOS). Set
+`SICDM_CRASH_DIR` to use another. Details: [docs/licensing.md](docs/licensing.md).
+
+**Licences.** *Help → About* and `LICENCE` show who this copy is licensed to. A copy without a
+licence runs as the Community edition, with nothing locked. Licence files are signed by the
+vendor (Ed25519) and checked offline: `LICENCE INSTALL file`. `NOTICES` lists the third-party
+components and their licences. Details: [docs/licensing.md](docs/licensing.md).
+
 **Reference images** (scanned drawings, photos, blueprints) lie on the active sketch plane and show in
 both windows: under the sketch in 2D for tracing, in place in 3D. Select one to set its width (mm),
 centre and opacity in the Model panel, or drag it with the Move tool.

@@ -73,6 +73,9 @@ add_library(sicdm_core STATIC
     src/core/Library.cpp
     src/core/Lathe.cpp
     src/core/LatheCommand.cpp
+    src/core/Ed25519.cpp
+    src/core/Licence.cpp
+    src/core/CrashReport.cpp
     src/core/CommandEngine.cpp
     src/core/FileIO.cpp
     src/core/Json.cpp
@@ -83,6 +86,25 @@ add_library(sicdm_core STATIC
 )
 target_include_directories(sicdm_core PUBLIC src)
 target_compile_definitions(sicdm_core PUBLIC SICDM_VERSION="${PROJECT_VERSION}")
+
+# The third-party notices, compiled in (About, NOTICES).
+file(READ "${PROJECT_SOURCE_DIR}/resources/THIRD-PARTY-NOTICES.txt" SICDM_NOTICES_TEXT)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/resources/THIRD-PARTY-NOTICES.txt")
+configure_file(src/core/Notices.cpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/Notices.cpp" @ONLY)
+target_sources(sicdm_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/Notices.cpp")
+
+# Licences: the vendor's Ed25519 public key (64 hex digits) that licence files are checked
+# with. Empty: the build checks none and runs as the Community edition. Make a key pair
+# with sicdm-licence keygen.
+set(SICDM_LICENCE_PUBLIC_KEY "" CACHE STRING "Ed25519 public key (64 hex digits) for licence files")
+if(SICDM_LICENCE_PUBLIC_KEY AND NOT SICDM_LICENCE_PUBLIC_KEY MATCHES "^[0-9a-fA-F]+$")
+    message(FATAL_ERROR "SICDM_LICENCE_PUBLIC_KEY must be 64 hex digits")
+endif()
+string(LENGTH "${SICDM_LICENCE_PUBLIC_KEY}" _sicdm_key_len)
+if(SICDM_LICENCE_PUBLIC_KEY AND NOT _sicdm_key_len EQUAL 64)
+    message(FATAL_ERROR "SICDM_LICENCE_PUBLIC_KEY must be 64 hex digits")
+endif()
+set_source_files_properties(src/core/Licence.cpp PROPERTIES COMPILE_DEFINITIONS "SICDM_LICENCE_PUBLIC_KEY=\"${SICDM_LICENCE_PUBLIC_KEY}\"")
 target_include_directories(sicdm_core SYSTEM PRIVATE third_party/stb)
 sicdm_set_compile_options(sicdm_core)
 
@@ -91,6 +113,12 @@ add_executable(sicdm_mcp tools/sicdm_mcp.cpp)
 set_target_properties(sicdm_mcp PROPERTIES OUTPUT_NAME "sicdm-mcp")
 target_link_libraries(sicdm_mcp PRIVATE sicdm_core)
 sicdm_set_compile_options(sicdm_mcp)
+
+# sicdm-licence: makes key pairs and issues licence files (for the vendor).
+add_executable(sicdm_licence tools/sicdm_licence.cpp)
+set_target_properties(sicdm_licence PROPERTIES OUTPUT_NAME "sicdm-licence")
+target_link_libraries(sicdm_licence PRIVATE sicdm_core)
+sicdm_set_compile_options(sicdm_licence)
 
 # ---------------------------------------------------------------------------
 if(SICDM_BUILD_APP)
