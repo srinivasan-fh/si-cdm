@@ -1,0 +1,20 @@
+{
+  "name": "gears",
+  "version": "1.0",
+  "description": "Involute spur gears from a tooth count, a module and a thickness",
+  "author": "SI CDM examples",
+  "commands": [
+    {
+      "name": "SPURGEAR",
+      "usage": "SPURGEAR teeth module thickness [BORE d]",
+      "help": "An involute spur gear (20 degree pressure angle) on the active plane, extruded",
+      "run": ["python3", "gears.py"],
+      "run_windows": ["python", "gears.py"]
+    }
+  ],
+  "menu": [
+    {"label": "Spur Gear (20 teeth, module 2, 8 thick)", "command": "SPURGEAR 20 2 8"},
+    {"label": "Spur Gear (12 teeth, module 1.5, 6 thick, 5 bore)", "command": "SPURGEAR 12 1.5 6 BORE 5"}
+  ],
+  "timeout": 60
+}

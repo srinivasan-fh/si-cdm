@@ -87,6 +87,7 @@ constexpr CommandSpec kCommands[] = {
     {"OPEN", "", "OPEN path.sicdm", "Open a project (in the app: in its own file tab)"},
     {"LICENCE", "LICENSE", "LICENCE [SHOW] | INSTALL licence.json | REMOVE", "This copy's licence: who it is licensed to, or the Community edition; install or remove a licence file"},
     {"CRASHES", "", "CRASHES [LIST] | SHOW n | CLEAR | FOLDER", "Crash reports kept on this computer (nothing is sent): list, print or delete them"},
+    {"PLUGINS", "PLUGIN", "PLUGINS [LIST] | RELOAD | FOLDER", "The plugins found and the commands they add; RELOAD reads them again"},
     {"NOTICES", "", "NOTICES", "The third-party components SI CDM is built with, and their licences"},
     {"RECOVER", "", "RECOVER [n | DISCARD n|ALL]", "Unsaved work kept from a session that ended unexpectedly: list, reopen or discard it"},
     {"SAVE", "", "SAVE [path.sicdm]", "Save the project (to a new path if given)"},

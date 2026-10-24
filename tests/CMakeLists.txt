@@ -31,13 +31,16 @@ add_executable(sicdm_tests
     test_sketch_edit.cpp
     test_lathe.cpp
     test_system.cpp
+    test_plugin.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 # A program that crashes on purpose, and the licence tool, run by the tests.
 add_executable(crash_probe crash_probe.cpp)
 target_link_libraries(crash_probe PRIVATE sicdm_core)
-add_dependencies(sicdm_tests crash_probe sicdm_licence)
-target_compile_definitions(sicdm_tests PRIVATE SICDM_CRASH_PROBE="$<TARGET_FILE:crash_probe>" SICDM_LICENCE_TOOL="$<TARGET_FILE:sicdm_licence>")
+add_executable(sample_plugin sample_plugin.cpp)
+add_dependencies(sicdm_tests crash_probe sicdm_licence sample_plugin)
+target_compile_definitions(sicdm_tests PRIVATE SICDM_CRASH_PROBE="$<TARGET_FILE:crash_probe>" SICDM_LICENCE_TOOL="$<TARGET_FILE:sicdm_licence>"
+    SICDM_SAMPLE_PLUGIN="$<TARGET_FILE:sample_plugin>")
 sicdm_set_compile_options(sicdm_tests)
 add_test(NAME sicdm_tests COMMAND sicdm_tests)
 # Tests that read example files from the source tree.

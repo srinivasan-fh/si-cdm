@@ -76,6 +76,7 @@ add_library(sicdm_core STATIC
     src/core/Ed25519.cpp
     src/core/Licence.cpp
     src/core/CrashReport.cpp
+    src/core/Plugin.cpp
     src/core/CommandEngine.cpp
     src/core/FileIO.cpp
     src/core/Json.cpp

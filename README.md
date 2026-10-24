@@ -694,6 +694,22 @@ and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`
 
 *AI → Connect an AI Agent…* shows ready-to-copy settings.
 
+## Plugins
+
+A plugin adds commands: a folder with a `plugin.json` manifest and a program in any language.
+The program runs in its own process and drives the document through the same tools AI agents
+get over MCP, as JSON-RPC over its standard input and output. Put plugins in the plugins
+folder (`~/.config/sicdm/plugins`, `%APPDATA%\SI-CDM\Plugins`,
+`~/Library/Application Support/SI-CDM/Plugins`) or list folders in `SICDM_PLUGIN_PATH`.
+
+- **Using them:** their commands work like built-in ones, and show in `HELP` and the *Plugins*
+  menu.
+- **Managing them:** `PLUGINS` lists them and `PLUGINS RELOAD` reads them again.
+- **Example:** [docs/examples/plugins/gears](docs/examples/plugins/gears) adds `SPURGEAR` (an
+  involute spur gear, in Python).
+
+Details: [docs/plugins.md](docs/plugins.md).
+
 ## Controls
 
 - `Tab`: switch 2D Drawing / 3D Model window; `Shift + Tab`: Simulation window

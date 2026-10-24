@@ -9,6 +9,7 @@
 #include "core/CrashReport.hpp"
 #include "core/Licence.hpp"
 #include "core/Notices.hpp"
+#include "core/Plugin.hpp"
 #include "core/AssemblyCommand.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/DrawingCommand.hpp"
@@ -418,7 +419,11 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     const ParsedCommand pc = tokenizeCommand(line);
     if (pc.name.empty()) return out;
     const CommandSpec* spec = findCommand(pc.name);
-    if (!spec) return out.fail("Unknown command: " + pc.name + "   (type HELP for the list)");
+    if (!spec) {
+        const Plugin* plugin = nullptr;
+        if (const PluginCommand* pcmd = findPluginCommand(pc.name, &plugin)) return runPluginCommand(doc, view, *plugin, *pcmd, pc.args);
+        return out.fail("Unknown command: " + pc.name + "   (type HELP for the list)");
+    }
     const std::string cmd = spec->name;
     const auto& a = pc.args;
     // A quoted argument is a name, whatever it says ("Ball", "Arm, left").
@@ -823,6 +828,26 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             return out;
         }
         return out.fail("CRASHES [LIST] | SHOW n | CLEAR | FOLDER");
+    }
+    if (cmd == "PLUGINS") {
+        // PLUGINS [LIST] | RELOAD | FOLDER
+        const std::string sub = a.empty() ? "list" : lower(a[0]);
+        if (sub == "reload") reloadPlugins();
+        else if (sub == "folder") {
+            out.say(pluginsFolder());
+            return out;
+        } else if (sub != "list") return out.fail("PLUGINS [LIST] | RELOAD | FOLDER");
+        const std::vector<Plugin>& all = plugins();
+        if (all.empty()) {
+            out.say("No plugins. Put a plugin's folder (with its plugin.json) in " + pluginsFolder() + ", or list folders in SICDM_PLUGIN_PATH; then PLUGINS RELOAD");
+            return out;
+        }
+        for (const Plugin& p : all) {
+            out.say(p.name + (p.version.empty() ? "" : " " + p.version) + (p.description.empty() ? "" : ": " + p.description) + "  (" + p.dir + ")");
+            for (const PluginCommand& c : p.commands) out.say("  " + c.usage + (c.help.empty() ? "" : "   " + c.help));
+            if (!p.error.empty()) out.say("  not loaded in full: " + p.error);
+        }
+        return out;
     }
     if (cmd == "NOTICES") {
         std::istringstream in(thirdPartyNotices());
@@ -3150,6 +3175,11 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     if (cmd == "HELP") {
         if (!a.empty()) {
             const CommandSpec* s = findCommand(a[0]);
+            const Plugin* owner = nullptr;
+            if (const PluginCommand* pcmd = s ? nullptr : findPluginCommand(a[0], &owner)) {
+                out.say(pcmd->usage + (pcmd->help.empty() ? "" : "  -  " + pcmd->help) + "   (plugin " + owner->name + ")");
+                return out;
+            }
             if (!s) return out.fail("Unknown command: " + a[0]);
             out.say(std::string(s->usage) + "  -  " + s->help);
             if (s->aliases[0]) out.say(std::string("Aliases: ") + s->aliases);
@@ -3160,6 +3190,12 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             std::snprintf(buf, sizeof(buf), "%-46s %s", s.usage, s.help);
             out.say(buf);
         }
+        for (const Plugin& p : plugins())
+            for (const PluginCommand& c : p.commands) {
+                char buf[512];
+                std::snprintf(buf, sizeof(buf), "%-46s %s (plugin %s)", c.usage.c_str(), c.help.c_str(), p.name.c_str());
+                out.say(buf);
+            }
         out.say("Points: x,y  @dx,dy (relative)  @len<deg (polar).  Paths with spaces in \"quotes\".");
         return out;
     }

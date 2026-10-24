@@ -3,6 +3,7 @@
 #include "core/CrashReport.hpp"
 #include "core/Licence.hpp"
 #include "core/Notices.hpp"
+#include "core/Plugin.hpp"
 
 #include "core/Cam.hpp"
 
@@ -682,6 +683,27 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         std::snprintf(label, sizeof(label), "MCP Server (port %d)", st.mcpPort);
         if (ImGui::MenuItem(label, nullptr, &running)) cmd.toggleMcp = true;
         if (ImGui::MenuItem("Connect an AI Agent...")) m_showMcp = true;
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Plugins")) {
+        bool any = false;
+        for (const Plugin& p : plugins()) {
+            if (p.commands.empty()) continue;
+            any = true;
+            if (ImGui::BeginMenu(p.name.c_str())) {
+                for (const PluginMenuItem& m : p.menu)
+                    if (ImGui::MenuItem(m.label.c_str())) cmd.commands.push_back(m.command);
+                if (!p.menu.empty()) ImGui::Separator();
+                for (const PluginCommand& c : p.commands) ImGui::TextDisabled("%s", c.usage.c_str());
+                if (!p.description.empty()) ImGui::TextDisabled("%s", p.description.c_str());
+                ImGui::EndMenu();
+            }
+        }
+        if (!any) ImGui::TextDisabled("No plugins installed");
+        ImGui::Separator();
+        if (ImGui::MenuItem("List Plugins")) cmd.commands.push_back("PLUGINS");
+        if (ImGui::MenuItem("Reload Plugins")) cmd.commands.push_back("PLUGINS RELOAD");
+        ImGui::TextDisabled("Plugins folder: %s", pluginsFolder().c_str());
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
