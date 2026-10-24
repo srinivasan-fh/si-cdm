@@ -651,6 +651,23 @@ TEST_CASE("CAM rotary: 4-axis wrapping turns a bar under the tool, roughing in l
     std::filesystem::remove(path);
 }
 
+TEST_CASE("CAM 5-axis keeps clear of the stock roughing couldn't reach (under an overhang)") {
+    // A ball sitting on a plate: roughing from above leaves stock under the ball, round its
+    // base. The 5-axis finish simulates the roughing and keeps its shank and holder out of
+    // that stock, and moves in and out beside it at feed.
+    Document d;
+    for (const char* l : {"BOX 40 40 8 @0,0,0", "SPHERE 12 @0,0,8", "BOOLEAN \"Block 1\" UNION \"Sphere 2\"", "CAM SETUP \"Block 1\" STOCK 1 MATERIAL aluminium",
+                          "CAM MACHINE PRESET trunnion", "CAM TOOL 1 FLAT 6 LENGTH 30", "CAM TOOL 2 BALL 4 STICKOUT 40", "CAM ROUGH TOOL 1 LEAVE 0.3",
+                          "CAM 5AXIS TOOL 2 SCALLOP 0.1"})
+        REQUIRE(run(d, l).ok);
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0); // 19 when only the part was checked
+    CHECK(sim.shankHits == 0);    // 119
+    CHECK(sim.meanLeft < 0.8);
+}
+
 TEST_CASE("CAM 5-axis: a ball end mill leans along the cut over a dome, turning the table as it goes") {
     Document d;
     REQUIRE(run(d, "BOX 40 40 8 @0,0,0").ok);

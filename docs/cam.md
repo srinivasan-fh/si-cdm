@@ -301,6 +301,15 @@ CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
 - **Clear of the part:** the shank and holder are checked along the axis at each point;
   where they would touch, the axis stands back up towards vertical until they don't.
   Points that can't be cleared, or that the machine's A travel can't reach, are skipped.
+- **Clear of the stock left:** the operations before are simulated (in voxels), and the
+  stock they leave is checked too.
+  - **The finish's to cut:** stock on top of the part, within roughing's steps and stock to
+    leave, and stock within the stock to leave beside walls.
+  - **In the way:** stock under an overhang, which roughing from above can't reach, and
+    anything thicker.
+  - **What it does there:** the shank and holder keep out of all stock and the flutes out
+    of stock in the way, the axis standing up where they would touch. Moves in and out that
+    would rub any stock go at feed, not rapid.
 - **Turning:** each move turns the table at most 1.5 degrees. Where the table would flip
   (the axis passing upright), the run ends.
 - **Links:** between runs close together the tool goes across lifted along its axis, at

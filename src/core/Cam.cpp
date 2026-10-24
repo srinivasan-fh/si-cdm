@@ -2299,12 +2299,105 @@ bool genSurface5(Ctx& c, const Body& part, std::string* err) {
         if (h < 1e-12) return D3{0, 0, 1};
         return D3{t.x / h * std::sin(limit), t.y / h * std::sin(limit), std::cos(limit)};
     };
-    // The shank and holder above the ball, along the axis, clear of the part.
+    // The stock the operations before left (none: only the part counts). What roughing
+    // leaves over the part (its steps and stock to leave) is this finish's to cut; more is in
+    // the way (stock it couldn't reach, under an overhang).
+    const double allow = std::max(c.approach, 1.0);
+    const CamSimulation* rest = c.rest;
+    // The stock in the way. Roughing from above leaves steps and its stock to leave on top of
+    // the part: stock with the part straight below it within the allowance, or within the stock
+    // to leave of it in any direction (beside walls), is this finish's to cut. Stock with the
+    // part above it is under an overhang, where roughing from above couldn't reach: in the way.
+    std::vector<unsigned char> obstacle;
+    if (rest) {
+        const int nx = rest->nx, ny = rest->ny, nz = rest->vz;
+        auto idx = [&](int i, int j, int k) {
+            return (static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) + static_cast<std::size_t>(j)) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i);
+        };
+        double leave = 0.0;
+        for (const CamOperation& prev : c.job.ops) {
+            if (&prev == &op) break;
+            leave = std::max(leave, prev.leave);
+        }
+        const int wSide = std::max(1, static_cast<int>(std::ceil((leave + 0.5) / rest->cell)));
+        const int wBelow = std::max(1, static_cast<int>(std::ceil(allow / rest->cell)));
+        std::vector<unsigned char> near(rest->voxel.size()), tmp(rest->voxel.size());
+        for (std::size_t q = 0; q < near.size(); ++q) near[q] = rest->voxel[q] >= 2 ? 1 : 0;
+        // Grown by wSide voxels along each axis in turn (a box).
+        auto grow = [&](int axis) {
+            const int n = axis == 0 ? nx : axis == 1 ? ny : nz;
+            parallelFor(axis == 2 ? ny : nz, [&](int outer) {
+                std::vector<int> last(static_cast<std::size_t>(n));
+                for (int inner = 0; inner < (axis == 0 ? ny : nx); ++inner) {
+                    auto at = [&](int t) { return axis == 0 ? idx(t, inner, outer) : axis == 1 ? idx(inner, t, outer) : idx(inner, outer, t); };
+                    int since = 1 << 28;
+                    for (int t = 0; t < n; ++t) {
+                        since = near[at(t)] ? 0 : since + 1;
+                        last[static_cast<std::size_t>(t)] = since;
+                    }
+                    since = 1 << 28;
+                    for (int t = n - 1; t >= 0; --t) {
+                        since = near[at(t)] ? 0 : since + 1;
+                        tmp[at(t)] = std::min(since, last[static_cast<std::size_t>(t)]) <= wSide ? 1 : 0;
+                    }
+                }
+            });
+            near.swap(tmp);
+        };
+        grow(0), grow(1), grow(2);
+        obstacle.assign(rest->voxel.size(), 0);
+        parallelFor(ny, [&](int j) {
+            for (int i = 0; i < nx; ++i) {
+                // Up the column: how far above the part, and whether the part is above too.
+                bool partAbove = false;
+                for (int k = nz - 1; k >= 0; --k) {
+                    const unsigned char v = rest->voxel[idx(i, j, k)];
+                    if (v >= 2) partAbove = true;
+                    else if (v == 1 && partAbove) obstacle[idx(i, j, k)] = 1;
+                }
+                int sincePart = 1 << 28;
+                for (int k = 0; k < nz; ++k) {
+                    const std::size_t at = idx(i, j, k);
+                    const unsigned char v = rest->voxel[at];
+                    sincePart = v >= 2 ? 0 : sincePart + 1;
+                    if (v == 1 && !obstacle[at] && sincePart > wBelow && !near[at]) obstacle[at] = 1;
+                }
+            }
+        });
+    }
+    // Whether a ball of radius r at q reaches stock in the way (any stock at all: `any`).
+    auto inStock = [&](const D3& q, double radius, bool any = false) {
+        if (!rest) return false;
+        const double cell = rest->cell;
+        const double r = radius + cell; // voxels are sampled at their centres, on a grid of their own: a voxel to spare
+        const int k0 = static_cast<int>(std::floor((q.z - r - rest->voxelMin.z) / cell)), k1 = static_cast<int>(std::floor((q.z + r - rest->voxelMin.z) / cell));
+        const int j0 = static_cast<int>(std::floor((q.y - r - rest->voxelMin.y) / cell)), j1 = static_cast<int>(std::floor((q.y + r - rest->voxelMin.y) / cell));
+        const int i0 = static_cast<int>(std::floor((q.x - r - rest->voxelMin.x) / cell)), i1 = static_cast<int>(std::floor((q.x + r - rest->voxelMin.x) / cell));
+        for (int k = std::max(0, k0); k <= std::min(rest->vz - 1, k1); ++k)
+            for (int j = std::max(0, j0); j <= std::min(rest->ny - 1, j1); ++j)
+                for (int i = std::max(0, i0); i <= std::min(rest->nx - 1, i1); ++i) {
+                    const std::size_t at =
+                        (static_cast<std::size_t>(k) * static_cast<std::size_t>(rest->ny) + static_cast<std::size_t>(j)) * static_cast<std::size_t>(rest->nx) + static_cast<std::size_t>(i);
+                    if (!(any ? rest->voxel[at] == 1 : obstacle[at] != 0)) continue;
+                    const double x = rest->voxelMin.x + (i + 0.5) * cell, y = rest->voxelMin.y + (j + 0.5) * cell, z = rest->voxelMin.z + (k + 0.5) * cell;
+                    if ((x - q.x) * (x - q.x) + (y - q.y) * (y - q.y) + (z - q.z) * (z - q.z) < r * r) return true;
+                }
+        return false;
+    };
+    // The shank and holder above the ball, along the axis, clear of the part and of the stock
+    // the operations before left.
+    // The flutes may cut what the finish is for; above them the shank and the holder must
+    // clear all stock.
+    const double flute = c.tool.fluteLength - Rt; // the flutes' top, from the ball's centre
     auto clear = [&](const D3& ctr, const D3& t) {
-        for (double s = Rt * 0.6; s < gauge - Rt; s += Rt * 0.5)
-            if (grid.near({ctr.x + t.x * s, ctr.y + t.y * s, ctr.z + t.z * s}, Rt - margin)) return false;
-        for (double s = gauge - Rt; s <= gauge - Rt + holderLen; s += std::max(HR * 0.5, 1.0))
-            if (grid.near({ctr.x + t.x * s, ctr.y + t.y * s, ctr.z + t.z * s}, HR - margin)) return false;
+        for (double s = Rt * 0.6; s < gauge - Rt; s += Rt * 0.5) {
+            const D3 q{ctr.x + t.x * s, ctr.y + t.y * s, ctr.z + t.z * s};
+            if (grid.near(q, Rt - margin) || inStock(q, Rt - margin, s > flute)) return false;
+        }
+        for (double s = gauge - Rt; s <= gauge - Rt + holderLen; s += std::max(HR * 0.5, 1.0)) {
+            const D3 q{ctr.x + t.x * s, ctr.y + t.y * s, ctr.z + t.z * s};
+            if (grid.near(q, HR - margin) || inStock(q, HR - margin, true)) return false;
+        }
         return true;
     };
     struct Pt {
@@ -2484,26 +2577,47 @@ bool genSurface5(Ctx& c, const Body& part, std::string* err) {
             const double t = static_cast<double>(q) / n;
             const M5 m{p0 + (p1 - p0) * static_cast<float>(t), from.a + (to.a - from.a) * t, from.c + (to.c - from.c) * t};
             const D3 u = axisOf(m.a, m.c), ctr = centre(m);
-            if (grid.near(ctr, need) || !clear(ctr, u)) return std::vector<M5>{};
+            if (grid.near(ctr, need) || inStock(ctr, Rt) || !clear(ctr, u)) return std::vector<M5>{};
             if (q > 0) out.push_back(m);
         }
         return out;
     };
+    // A move in or out along the axis that would rub the stock the operations before left
+    // (beside a wall of it the roughing couldn't reach) goes at feed rather than rapid.
+    // The ball and flutes are checked against any stock at all: a rapid must touch none.
+    auto alongStock = [&](const Vec3& from, const Vec3& to, double a, double cc) {
+        if (!rest) return false;
+        const D3 u = axisOf(a, cc);
+        const int n = std::max(1, static_cast<int>(std::ceil(length(to - from) / std::max(Rt * 0.5, 0.5))));
+        for (int q = 0; q <= n; ++q) {
+            const Vec3 p = camToPart(c.job, from + (to - from) * (static_cast<float>(q) / static_cast<float>(n)), static_cast<float>(a), static_cast<float>(cc));
+            for (double s = Rt; s <= flute + Rt + 1e-9; s += Rt)
+                if (inStock({p.x + u.x * s, p.y + u.y * s, p.z + u.z * s}, Rt - margin, true)) return true;
+        }
+        return false;
+    };
+    auto travel = [&](const Vec3& from, const Vec3& to, double a, double cc) {
+        if (alongStock(from, to, a, cc)) push(CamMove::Feed, to, c.feeds.feed, a, cc);
+        else push(CamMove::Rapid, to, 0, a, cc);
+    };
+    bool linked = false; // the last run ended in a link to this one
     for (std::size_t r = 0; r < cuts.size(); ++r) {
         const std::vector<M5>& fine = cuts[r];
         const M5& s0 = fine.front();
         const Vec3 m0 = machineAt(s0);
-        if (r == 0 || c.op.moves.empty() || c.op.moves.back().kind != CamMove::Feed) {
-            push(CamMove::Rapid, vec(m0.x, m0.y, static_cast<float>(c.clearZ)), 0, s0.a, s0.c);
-            push(CamMove::Rapid, m0 + vec(0, 0, static_cast<float>(lift(s0))), 0, s0.a, s0.c);
+        if (!linked) {
+            const Vec3 high = vec(m0.x, m0.y, static_cast<float>(c.clearZ)), low = m0 + vec(0, 0, static_cast<float>(lift(s0)));
+            push(CamMove::Rapid, high, 0, s0.a, s0.c);
+            travel(high, low, s0.a, s0.c);
         }
         push(CamMove::Plunge, m0, c.feeds.plunge, s0.a, s0.c);
         for (std::size_t k = 1; k < fine.size(); ++k) push(CamMove::Feed, machineAt(fine[k]), c.feeds.feed, fine[k].a, fine[k].c);
         const M5& s1 = fine.back();
-        const Vec3 m1 = machineAt(s1);
-        push(CamMove::Rapid, m1 + vec(0, 0, static_cast<float>(lift(s1))), 0, s1.a, s1.c);
+        const Vec3 m1 = machineAt(s1), up = m1 + vec(0, 0, static_cast<float>(lift(s1)));
+        travel(m1, up, s1.a, s1.c);
         const std::vector<M5> hop = r + 1 < cuts.size() ? link(s1, cuts[r + 1].front()) : std::vector<M5>{};
-        if (hop.empty()) push(CamMove::Rapid, vec(m1.x, m1.y, static_cast<float>(c.clearZ)), 0, s1.a, s1.c);
+        linked = !hop.empty();
+        if (!linked) travel(up, vec(m1.x, m1.y, static_cast<float>(c.clearZ)), s1.a, s1.c);
         else
             for (const M5& m : hop) push(CamMove::Feed, machineAt(m), std::max(c.feeds.feed, mach.maxFeed), m.a, m.c);
     }
@@ -2601,6 +2715,10 @@ std::vector<CamHole> findHoles(const Body& body) {
     return out;
 }
 
+namespace {
+bool simulateVoxels(CamJob& job, const Body& part, CamSimulation& out, std::string* error);
+} // namespace
+
 bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, std::string* error) {
     op.moves.clear();
     op.generated = false;
@@ -2697,7 +2815,17 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
         c.approach = std::max(c.approach, psd + prev.leave + 1.0);
     }
     // Rest machining: simulate the operations before this one for the stock they leave.
+    // Simultaneous 5-axis does the same, to keep its shank and holder out of that stock.
     CamSimulation restSim;
+    if (op.kind == CamOpKind::Surface5) {
+        CamJob before = job;
+        std::size_t k = 0;
+        while (k < job.ops.size() && &job.ops[k] != &op) ++k;
+        before.ops.resize(k);
+        std::string e;
+        // In voxels whatever the operations were: they tell stock from part, under overhangs too.
+        if (!before.ops.empty() && before.setup.hasStock && simulateVoxels(before, part, restSim, &e) && restSim.voxels) c.rest = &restSim;
+    }
     if (op.rest && (op.kind == CamOpKind::Rough || op.kind == CamOpKind::Pocket)) {
         CamJob before = job;
         std::size_t k = 0;
