@@ -165,7 +165,9 @@ Body turnedStock(const LatheJob& job, const Body& part, const LatheSimulation& s
 double latheSeconds(const LatheJob& job, const LatheOperation& op);
 
 const std::vector<std::string>& lathePosts(); // fanuc, haas, linuxcnc
-std::string postLathe(LatheJob& job, const Body& part, const std::string& post, std::string* error = nullptr);
+// With `cycles`, rough turning and boring are written as G71 and facing as G72 (Fanuc, Haas),
+// where a type I cycle can describe the outline; otherwise, and on LinuxCNC, every pass.
+std::string postLathe(LatheJob& job, const Body& part, const std::string& post, std::string* error = nullptr, bool cycles = false);
 
 Json latheToJson(const LatheJob& job);
 bool latheFromJson(const Json& j, LatheJob& job);

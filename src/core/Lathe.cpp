@@ -1296,7 +1296,72 @@ void programmed(const LatheTool& t, const LatheMove& m, double& x, double& z) {
 
 } // namespace
 
-std::string postLathe(LatheJob& job, const Body& part, const std::string& post, std::string* error) {
+namespace {
+
+// The finished outline a G71 (rough turning or boring) or G72 (facing) cycle roughs down to,
+// as programmed points (z, x radius): first where the cycle starts it (at its start point's Z
+// for G71, its X for G72), then along the part. Empty, and why, when a type I cycle can't
+// describe it: G71 wants an outline that only rises (outside; in a bore, only narrows)
+// towards the chuck.
+std::vector<std::pair<double, double>> cycleContour(const Plan& pl, const LatheOperation& op, const LatheTool& t, double& startX, double& startZ, std::string& why) {
+    std::vector<std::pair<double, double>> out;
+    const Grid& g = pl.g;
+    const double rn = t.noseRadius;
+    startZ = pl.front + pl.clear;
+    if (op.kind == LatheOpKind::Face) {
+        const double faceZ = std::max(op.leaveZ, 0.0); // the tip on the face
+        startX = pl.stockR + pl.clear;
+        out.push_back({faceZ, startX});
+        out.push_back({faceZ, -2 * rn}); // past the middle, as the facing passes go
+        return out;
+    }
+    const bool inside = op.inside;
+    double top;
+    if (inside) {
+        const double r = drilledRadius(pl.job, op);
+        if (r <= 0) {
+            why = "no drilled hole";
+            return {};
+        }
+        top = -(r - rn);
+        startX = std::max(r - 0.5, 0.1);
+    } else {
+        top = pl.stockR + rn;
+        startX = pl.stockR + pl.clear;
+    }
+    const std::vector<double> reach = reachable(g, noseCentre(g, keepY(pl, inside, 0, 0), rn), t.relief());
+    long i = std::min(static_cast<long>(g.n) - 1, g.index(startZ + rn));
+    const long i0 = std::max(0L, std::isnan(op.zTo) ? 0L : g.index(op.zTo));
+    while (i > i0 && !(reach[static_cast<std::size_t>(i)] > -kInfL)) --i; // the part's front
+    long e = i;
+    while (e > i0 && reach[static_cast<std::size_t>(e - 1)] < top - 1e-9) --e;
+    if (e >= i) {
+        why = "nothing to rough";
+        return {};
+    }
+    if (e > i0) --e; // and up the last shoulder (a bore's floor) to the stock
+    std::vector<double> path(reach);
+    for (double& v : path) v = std::min(v, top);
+    // Type I: the outline never goes down towards the chuck.
+    for (long q = i; q > e; --q)
+        if (path[static_cast<std::size_t>(q - 1)] < path[static_cast<std::size_t>(q)] - 1e-6) {
+            why = "the outline goes down behind a shoulder at Z" + fmt("%.3f", g.zAt(static_cast<std::size_t>(q))) + " (a recess: G71 type I can't)";
+            return {};
+        }
+    const auto pts = simplified(g, path, i, e, std::max(pl.job.setup.tolerance * 0.5, 0.002));
+    auto tip = [&](double z, double y) { // the nose's centre to the programmed point
+        const double x = inside ? -y : y;
+        return std::make_pair(z - rn, inside ? x + rn : x - rn);
+    };
+    const auto first = tip(pts.front().first, pts.front().second);
+    out.push_back({startZ, first.second}); // in along X only, at the start point's Z
+    for (const auto& [z, y] : pts) out.push_back(tip(z, y));
+    return out;
+}
+
+} // namespace
+
+std::string postLathe(LatheJob& job, const Body& part, const std::string& post, std::string* error, bool cycles) {
     const bool lcnc = post == "linuxcnc";
     if (std::find(lathePosts().begin(), lathePosts().end(), post) == lathePosts().end()) {
         if (error) *error = "Lathe posts: fanuc, haas, linuxcnc (" + post + " doesn't turn)";
@@ -1321,6 +1386,7 @@ std::string postLathe(LatheJob& job, const Body& part, const std::string& post, 
     };
     LatheProfile prof;
     if (!latheProfile(job, part, prof, error)) return {};
+    const Plan plan(job, prof);
     o << "%" << nl;
     if (!lcnc) o << (post == "haas" ? "O01000" : "O1000") << " (" << job.setup.body << ")" << nl;
     else o << "(" << job.setup.body << ")" << nl;
@@ -1351,6 +1417,48 @@ std::string postLathe(LatheJob& job, const Body& part, const std::string& post, 
             else o << "G50 S" << static_cast<long>(std::lround(job.setup.maxRpm)) << nl << "G96 S" << static_cast<long>(std::lround(c.vc)) << " M03" << nl;
         } else o << (lcnc ? "G97 S" : "G97 S") << static_cast<long>(std::lround(c.rpm)) << (lcnc ? " M3" : " M03") << nl;
         if (op.kind != LatheOpKind::Thread) o << (lcnc ? "M8" : "M08") << nl;
+        // Rough turning and boring as G71, facing as G72: the control works out the passes
+        // from the finished outline (P to Q) and the stock to leave (U on the diameter, W).
+        if (cycles && !lcnc && (op.kind == LatheOpKind::Rough || op.kind == LatheOpKind::Face)) {
+            double sx = 0, sz = 0;
+            std::string why;
+            const auto contour = cycleContour(plan, op, *t, sx, sz, why);
+            if (contour.empty()) {
+                std::string w = why;
+                for (char& ch : w) ch = ch == '(' || ch == ')' ? ' ' : static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+                o << "(PASSES WRITTEN OUT: " << w << ")" << nl;
+            } else {
+                const bool g72 = op.kind == LatheOpKind::Face;
+                const int ns = 1000 * static_cast<int>(k + 1), nf = ns + 1;
+                const double doc = stepdownFor(job, op), u = g72 ? 0.0 : (op.inside ? -2.0 : 2.0) * std::max(op.leave, 0.0);
+                const double w = g72 ? 0.0 : std::max(op.leaveZ, 0.0);
+                const std::string cyc = g72 ? "G72" : "G71";
+                o << "G00 X" << n(2 * sx) << " Z" << n(sz) << nl;
+                if (post == "haas") o << cyc << " P" << ns << " Q" << nf << " U" << n(u) << " W" << n(w) << " D" << n(doc) << " F" << n(c.f) << nl;
+                else {
+                    o << cyc << (g72 ? " W" : " U") << n(doc) << " R0.5" << nl;
+                    o << cyc << " P" << ns << " Q" << nf << " U" << n(u) << " W" << n(w) << " F" << n(c.f) << nl;
+                }
+                std::vector<std::string> lines;
+                lines.push_back(g72 ? "G00 Z" + n(contour.front().first) : "G00 X" + n(2 * contour.front().second));
+                int g = 0;
+                for (const ArcStep& st : fitArcs(contour, std::max(job.setup.tolerance, 0.001))) {
+                    const int code = st.r > 0 ? (st.ccw ? 3 : 2) : 1;
+                    std::string line = code != g ? "G0" + std::to_string(code) + " " : std::string();
+                    g = code;
+                    line += "X" + n(2 * st.x) + " Z" + n(st.z);
+                    if (st.r > 0) line += " R" + n(st.r);
+                    lines.push_back(line);
+                }
+                if (lines.size() < 2) lines.push_back("G01 X" + n(2 * contour.back().second));
+                lines.front() = "N" + std::to_string(ns) + " " + lines.front();
+                lines.back() = "N" + std::to_string(nf) + " " + lines.back();
+                for (const std::string& l : lines) o << l << nl;
+                o << "M09" << nl << "M05" << nl;
+                if (css) o << "G97" << nl;
+                continue;
+            }
+        }
         double lastF = -1, px = 0, pz = 0;
         int lastG = -1;
         for (std::size_t mi = 0; mi < op.moves.size();) {

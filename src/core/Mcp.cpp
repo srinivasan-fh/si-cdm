@@ -539,6 +539,7 @@ Json McpServer::toolDefinitions() {
         p.set("rpm", prop("number", "operations: a constant spindle speed instead of constant surface speed"));
         p.set("path", prop("string", "post: the G-code file"));
         p.set("show", prop("boolean", "simulate: add the turned stock as a body"));
+        p.set("cycles", prop("boolean", "post: rough turning and boring as G71, facing as G72 (Fanuc, Haas), where the outline allows"));
         p.set("index", prop("number", "delete: the operation's number (1-based)"));
         p.set("name", prop("string", "tool / operations: a name"));
         tools.push(tool("lathe",
@@ -1330,7 +1331,8 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (op == "simulate") return runLine(std::string("LATHE SIMULATE") + (a["show"].asBool() ? " SHOW" : ""));
         if (op == "post") {
             if (!a["path"].isString()) return textResult("post needs 'path'", true);
-            return runLine("LATHE POST " + quote(a["path"].asString()) + (a["post"].isString() ? " " + a["post"].asString() : std::string()));
+            return runLine("LATHE POST " + quote(a["path"].asString()) + (a["post"].isString() ? " " + a["post"].asString() : std::string()) +
+                           (a["cycles"].asBool() ? " CYCLES" : ""));
         }
         if (op == "delete") {
             if (!a["index"].isNumber()) return textResult("delete needs 'index'", true);

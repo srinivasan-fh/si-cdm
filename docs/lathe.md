@@ -194,7 +194,7 @@ It reports:
 
 ## Posts
 
-`LATHE POST file.nc [FANUC|HAAS|LINUXCNC]`
+`LATHE POST file.nc [FANUC|HAAS|LINUXCNC] [CYCLES]`
 
 | | Fanuc, Haas | LinuxCNC |
 | --- | --- | --- |
@@ -218,6 +218,28 @@ It reports:
   - Threading inserts and drills: the tip.
 
 GRBL is a milling control and is refused.
+
+### Canned roughing cycles
+
+With `CYCLES`, the post writes rough turning and boring as `G71` cycles and facing as a `G72`
+cycle. The control then works out the passes from the finished outline (the contour between
+the `P` and `Q` blocks), the depth of cut and the stock to leave:
+
+| | Fanuc | Haas |
+| --- | --- | --- |
+| Rough turning | `G71 U2. R0.5`, then `G71 P2000 Q2001 U0.4 W0.1 F0.35` | `G71 P2000 Q2001 U0.4 W0.1 D2. F0.35` |
+| Facing | `G72 W2. R0.5`, then `G72 P1000 Q1001 U0. W0. F0.35` | `G72 P1000 Q1001 U0. W0. D2. F0.35` |
+
+- **The contour:** the programmed points of the outline, as the finishing pass would cut it,
+  with arcs where the outline is round. Its first block moves only X (`G71`) or only Z (`G72`).
+- **Stock to leave:** `U` is on the diameter (negative in a bore) and `W` along Z.
+- **Type I only:** a `G71` cycle needs an outline that only rises towards the chuck. Where it
+  goes down behind a shoulder (a neck, a recess), the post writes that operation's passes out
+  and says why in a comment.
+- **LinuxCNC:** its `G71` is not the same cycle, so its programs always have the passes
+  written out.
+
+`LATHE POST` reports how many operations became cycles and how many were written out.
 
 ## Over MCP
 
@@ -246,5 +268,4 @@ These are not modelled yet:
 
 - **Machines:** live tooling and C-axis milling on the lathe, sub-spindles, tailstocks and
   steady rests.
-- **Programs:** canned roughing cycles (`G71`, `G72`). The posts write every pass out, so any
-  control runs them.
+- **Programs:** type II `G71` cycles (recesses). Those operations are written out pass by pass.

@@ -384,20 +384,33 @@ CommandOutput runLatheCommand(Document& doc, const std::vector<std::string>& a, 
         }
         if (sub == "post") {
             std::string path, post = job.setup.post;
+            bool cycles = false;
             for (std::size_t i = 1; i < a.size(); ++i) {
                 const std::string w = lower(a[i]);
                 if (!quotedArg(i) && std::find(lathePosts().begin(), lathePosts().end(), w) != lathePosts().end()) post = w;
+                else if (!quotedArg(i) && (w == "cycles" || w == "cycle")) cycles = true;
                 else if (path.empty()) path = a[i];
-                else return out.fail("LATHE POST file.nc [FANUC|HAAS|LINUXCNC]");
+                else return out.fail("LATHE POST file.nc [FANUC|HAAS|LINUXCNC] [CYCLES]");
             }
-            if (path.empty()) return out.fail("LATHE POST file.nc [FANUC|HAAS|LINUXCNC]");
-            const std::string g = postLathe(job, *p, post, &err);
+            if (path.empty()) return out.fail("LATHE POST file.nc [FANUC|HAAS|LINUXCNC] [CYCLES]");
+            const std::string g = postLathe(job, *p, post, &err, cycles);
             if (g.empty()) return out.fail(err);
             if (!writeFile(path, g, &err)) return out.fail(err);
             std::size_t lines = static_cast<std::size_t>(std::count(g.begin(), g.end(), '\n'));
             double secs = 0;
             for (const LatheOperation& o : job.ops) secs += latheSeconds(job, o) + job.setup.toolChange;
             out.say("Wrote " + path + ": " + post + " lathe program, " + std::to_string(lines) + " lines, " + minutes(secs));
+            if (cycles) {
+                const auto count = [&](const char* w) {
+                    std::size_t c = 0;
+                    for (std::size_t at = g.find(w); at != std::string::npos; at = g.find(w, at + 1)) ++c;
+                    return c;
+                };
+                if (post == "linuxcnc") out.say("  LinuxCNC: every pass written out (its G71 takes the outline as a subroutine)");
+                else
+                    out.say("  " + std::to_string(count("\nG71 P")) + " G71 and " + std::to_string(count("\nG72 P")) + " G72 cycles; " +
+                            std::to_string(count("(PASSES WRITTEN OUT")) + " operations written out pass by pass");
+            }
             return out;
         }
         const bool show = a.size() > 1 && lower(a[1]) == "show";

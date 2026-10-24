@@ -136,7 +136,7 @@ constexpr CommandSpec kCommands[] = {
      "LATHE TOOL n TURN [NOSE r] [INSERT C|D|V|T|W] | BORE d | GROOVE w [CORNER r] [REACH l] | THREAD | DRILL d [ANGLE a]; "
      "operations take [TOOL n] [STEPDOWN d] [LEAVE l] [LEAVEZ l] [FROM z] [TO z] [SPEED m/min] [FEED mm/rev] [RPM n]: LATHE FACE; LATHE ROUGH|FINISH "
      "[INSIDE]; LATHE BORE (rough inside); LATHE GROOVE [INSIDE] (the recesses a turning insert or boring bar can't reach); LATHE DRILL [DEPTH d] [PECK p]; "
-     "LATHE THREAD PITCH p [FROM z] [TO z] [DIAMETER d] [INSIDE]; LATHE PARTOFF [PECK p]; LATHE SIMULATE [SHOW]; LATHE POST file.nc [post]; "
+     "LATHE THREAD PITCH p [FROM z] [TO z] [DIAMETER d] [INSIDE]; LATHE PARTOFF [PECK p]; LATHE SIMULATE [SHOW]; LATHE POST file.nc [post] [CYCLES] (G71/G72 roughing cycles); "
      "Z is 0 at the part's front face, negative towards the chuck"},
     {"SHEET", "DWG", "SHEET NEW|VIEW|SECTION|DIM|AUTODIM|TOL|GDT|DATUM|FINISH|TOLERANCE|TITLE|NOTE|SCALE|SIZE|PROJECTION|EXPORT|SHOW ...",
      "Drawings: SHEET NEW [bodies] [SIZE A3] [PORTRAIT] [THIRD] [SCALE 1:2] lays out front, top, right and isometric views; SHEET VIEW ADD kind [AT x,y]; "

@@ -308,3 +308,48 @@ TEST_CASE("Lathe posts fit arcs (R, under half a turn) to the round parts of a p
     CHECK(arcs >= 2); // the nose's corners round the shoulders
     CHECK(bad == 0);
 }
+
+TEST_CASE("Lathe posts with CYCLES: G71 rough turning and boring, G72 facing; written out where type I can't") {
+    Document d;
+    for (const char* l : {"CYLINDER 15 25 @0,0,0", "CYLINDER 10 20 @0,0,25", "BOOLEAN \"Cylinder 1\" UNION \"Cylinder 2\"", "CYLINDER 6 15 @0,0,35",
+                          "BOOLEAN \"Cylinder 1\" SUBTRACT \"Cylinder 3\"", "LATHE SETUP \"Cylinder 1\"", "LATHE TOOL 1 TURN NOSE 0.8 INSERT C",
+                          "LATHE TOOL 4 DRILL 8", "LATHE TOOL 5 BORE 8 NOSE 0.2", "LATHE FACE", "LATHE ROUGH TOOL 1 LEAVE 0.2 LEAVEZ 0.1", "LATHE DRILL",
+                          "LATHE BORE LEAVE 0.1"})
+        REQUIRE(run(d, l).ok);
+    LatheJob& job = d.state.lathe;
+    const std::string g = postLathe(job, partOf(d), "fanuc", nullptr, true);
+    for (const char* w : {"G72 W2. R0.5", "G72 P1000 Q1001 U0. W0. F0.35", "N1000 G00 Z0.", "G71 U2. R0.5", "G71 P2000 Q2001 U0.4 W0.1 F0.35",
+                          "N2000 G00 X", "G71 P4000 Q4001 U-0.2 W0.", "N4001 X8. Z"}) {
+        CHECK(has(g, w));
+        if (!has(g, w)) std::printf("lacks %s\n", w);
+    }
+    // The outside outline between N2000 and N2001: X never falls going towards the chuck, and
+    // it ends on the bar.
+    std::istringstream in(g.substr(g.find("N2000"), g.find("M09", g.find("N2000")) - g.find("N2000")));
+    double lastX = -1, x = 0;
+    bool mono = true;
+    for (std::string l; std::getline(in, l);) {
+        const auto at = l.find(" X") != std::string::npos ? l.find(" X") + 2 : l.rfind("X", 0) == 0 ? 1 : std::string::npos;
+        if (at == std::string::npos) continue;
+        x = std::atof(l.c_str() + at);
+        if (x < lastX - 1e-6) mono = false;
+        lastX = x;
+    }
+    CHECK(mono);
+    CHECK_NEAR(x, 32.0, 1e-3);
+    CHECK(has(postLathe(job, partOf(d), "haas", nullptr, true), "G71 P2000 Q2001 U0.4 W0.1 D2. F0.35"));
+    CHECK(!has(postLathe(job, partOf(d), "linuxcnc", nullptr, true), "G71"));
+    CHECK(!has(postLathe(job, partOf(d), "fanuc"), "G71")); // only when asked
+    // A neck the turning insert can't follow: that operation is written out pass by pass.
+    Document e;
+    REQUIRE(shaft(e));
+    REQUIRE(run(e, "LATHE ROUGH TOOL 1 LEAVE 0.2").ok);
+    const std::string g2 = postLathe(e.state.lathe, partOf(e), "fanuc", nullptr, true);
+    CHECK(has(g2, "(PASSES WRITTEN OUT: THE OUTLINE GOES DOWN BEHIND A SHOULDER"));
+    CHECK(!has(g2, "G71 P"));
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_cycles.nc").string();
+    const auto r = run(d, "LATHE POST " + path + " CYCLES");
+    CHECK(r.ok);
+    CHECK(has(text(r), "2 G71 and 1 G72 cycles"));
+    std::filesystem::remove(path);
+}
