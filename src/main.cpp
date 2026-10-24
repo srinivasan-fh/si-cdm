@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 
 int main(int argc, char** argv) {
     sicdm::AppOptions options;
@@ -34,6 +35,10 @@ int main(int argc, char** argv) {
     }
 
     sicdm::installCrashHandler(SICDM_VERSION); // a fault from here on leaves a report
-    sicdm::Application app(options);
-    return app.run();
+    try {
+        sicdm::Application app(options);
+        return app.run();
+    } catch (const std::exception& e) {
+        sicdm::crashOnUncaught(e.what());
+    }
 }

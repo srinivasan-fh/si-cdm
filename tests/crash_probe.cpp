@@ -15,7 +15,14 @@ int main(int argc, char** argv) {
 #endif
     sicdm::installCrashHandler("probe", argv[1]);
     sicdm::setCrashContext("PROBE 42");
-    if (std::strcmp(argv[2], "exception") == 0) throw std::runtime_error("the probe's exception");
+    if (std::strcmp(argv[2], "exception") == 0) throw std::runtime_error("the probe's exception"); // left to std::terminate
+    if (std::strcmp(argv[2], "caught") == 0) { // as main() does in the app
+        try {
+            throw std::runtime_error("the probe's caught exception");
+        } catch (const std::exception& e) {
+            sicdm::crashOnUncaught(e.what());
+        }
+    }
     std::raise(SIGSEGV);
     return 0;
 }

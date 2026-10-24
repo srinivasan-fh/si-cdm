@@ -25,6 +25,11 @@ void installCrashHandler(const std::string& version, const std::string& dir = st
 // What the program is doing, written into a report if it dies now (e.g. the command running).
 void setCrashContext(const std::string& what);
 
+// For main()'s last catch: records an exception nobody handled, then aborts (the report
+// carries its message). On Windows an exception that leaves main() reaches the fault
+// handler before std::terminate, so this is the way its message gets into the report.
+[[noreturn]] void crashOnUncaught(const char* what);
+
 struct CrashReportFile {
     std::string path;
     std::int64_t time = 0; // seconds since 1970

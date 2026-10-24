@@ -170,6 +170,10 @@ void writeReport(const char* what, const void* address, CONTEXT* ctx) {
 
 const char* exceptionName(DWORD code) {
     switch (code) {
+    case 0xE06D7363: // MSVC's C++ exceptions
+    case 0x20474343: // GCC's (MinGW): 'GCC' and the kind of unwind
+    case 0x21474343:
+    case 0x22474343: return "uncaught C++ exception";
     case EXCEPTION_ACCESS_VIOLATION: return "access violation (bad memory access)";
     case EXCEPTION_STACK_OVERFLOW: return "stack overflow";
     case EXCEPTION_INT_DIVIDE_BY_ZERO: return "integer divide by zero";
@@ -258,6 +262,11 @@ void installCrashHandler(const std::string& version, const std::string& dir) {
 }
 
 void setCrashContext(const std::string& what) { copyInto(g_context, sizeof g_context, what); }
+
+void crashOnUncaught(const char* what) {
+    copyInto(g_what, sizeof g_what, what ? what : "(unknown exception)");
+    std::abort();
+}
 
 std::vector<CrashReportFile> crashReports(const std::string& dir) {
     std::vector<CrashReportFile> out;

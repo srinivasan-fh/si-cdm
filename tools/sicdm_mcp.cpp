@@ -8,6 +8,7 @@
 //   sicdm-mcp [project.sicdm]
 
 #include "core/CrashReport.hpp"
+#include <exception>
 #include "core/Document.hpp"
 #include "core/Mcp.hpp"
 
@@ -15,8 +16,9 @@
 #include <iostream>
 #include <string>
 
-int main(int argc, char** argv) {
-    sicdm::installCrashHandler(SICDM_VERSION);
+namespace {
+
+int serve(int argc, char** argv) {
     sicdm::Document doc;
     if (argc > 1) {
         const std::string arg = argv[1];
@@ -41,4 +43,15 @@ int main(int argc, char** argv) {
         }
     }
     return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    sicdm::installCrashHandler(SICDM_VERSION);
+    try {
+        return serve(argc, argv);
+    } catch (const std::exception& e) {
+        sicdm::crashOnUncaught(e.what());
+    }
 }

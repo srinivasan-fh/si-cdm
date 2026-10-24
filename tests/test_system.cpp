@@ -205,21 +205,32 @@ TEST_CASE("Crash reports: a fault or an uncaught exception leaves a report with 
     CHECK(has(r, "fault: SIGSEGV"));
     CHECK(has(r, "last command: PROBE 42"));
     CHECK(has(r, "stack:"));
-    // An uncaught exception: its message, then the abort.
-    CHECK(runCrashing(quoted(probe) + " " + quoted(dir.string()) + " exception") != 0);
+    // An exception main() catches last: its message, then the abort.
+    CHECK(runCrashing(quoted(probe) + " " + quoted(dir.string()) + " caught") != 0);
     reports = crashReports(dir.string());
     REQUIRE(reports.size() == 2);
-    bool found = false;
-    for (const CrashReportFile& f : reports) {
-        const std::string t = slurp(f.path);
-        if (has(t, "exception: the probe's exception") && has(t, "SIGABRT")) found = true;
-    }
-    CHECK(found);
+    auto anyHas = [&](const std::string& a, const std::string& b) {
+        for (const CrashReportFile& f : crashReports(dir.string())) {
+            const std::string t = slurp(f.path);
+            if (has(t, a) && has(t, b)) return true;
+        }
+        return false;
+    };
+    CHECK(anyHas("exception: the probe's caught exception", "SIGABRT"));
+    // One nobody catches: std::terminate keeps its message; on Windows the fault handler sees
+    // it first and names it.
+    CHECK(runCrashing(quoted(probe) + " " + quoted(dir.string()) + " exception") != 0);
+    REQUIRE(crashReports(dir.string()).size() == 3);
+#if defined(_WIN32)
+    CHECK(anyHas("uncaught C++ exception", "last command: PROBE 42") || anyHas("exception: the probe's exception", "SIGABRT"));
+#else
+    CHECK(anyHas("exception: the probe's exception", "SIGABRT"));
+#endif
     // Shown once, then kept as seen; cleared on request.
     acknowledgeCrashReports(dir.string());
     reports = crashReports(dir.string());
-    REQUIRE(reports.size() == 2);
-    CHECK(reports[0].seen && reports[1].seen);
+    REQUIRE(reports.size() == 3);
+    CHECK(reports[0].seen && reports[1].seen && reports[2].seen);
     clearCrashReports(dir.string());
     CHECK(crashReports(dir.string()).empty());
     std::filesystem::remove_all(dir);
