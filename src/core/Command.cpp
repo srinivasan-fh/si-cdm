@@ -128,7 +128,7 @@ constexpr CommandSpec kCommands[] = {
     {"CAM", "MILL MACHINE", "CAM SETUP|MACHINE|TOOL|LIBRARY|FACE|ROUGH|POCKET|CONTOUR|PARALLEL|WATERLINE|DRILL|BORE|ROTARY|HOLES|TOOLS|LIST|SIMULATE|POST|CHECK ...",
      "CNC milling: CAM SETUP [body] [STOCK margin|x,y,z] [MATERIAL m] [ORIGIN CORNER|CENTRE|MODEL]; CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|"
      "CHAMFER|TAP d [STICKOUT l] [HOLDER d]; CAM LIBRARY [LIST] | IMPORT file.csv|.json | USE #n [AS n] | STORE n|ALL | LOAD file | SAVE file "
-     "[CSV|FUSION] (tool libraries, vendor catalogues, Fusion 360); operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d] [ADAPTIVE] [REST] [INDEX a c]...; CAM ROTARY [ALONG] [STEPOVER s] [STEPDOWN d]; CAM 5AXIS [LEADANGLE a] [SIDETILT a] [MAXTILT a]; CAM SIMULATE [SHOW]; "
+     "[CSV|FUSION] (tool libraries, vendor catalogues, Fusion 360); operations take [TOOL n] [STEPDOWN s] [STEPOVER s|%] [LEAVE l] [TOP z] [BOTTOM z|DEPTH d] [ADAPTIVE] [REST] [INDEX a c]...; CAM ROTARY [ALONG] [STEPOVER s] [STEPDOWN d]; CAM 5AXIS [LEADANGLE a] [SIDETILT a] [MAXTILT a]; CAM SWARF [TOOL n] [LEAVE l] [TOP z] [BOTTOM z] [OUTSIDE|INSIDE|BOTH] (walls with the side of a flat end mill); CAM SIMULATE [SHOW]; "
      "CAM POST file.nc [FANUC|HAAS|GRBL|LINUXCNC] [FORCE] (read back and checked first); CAM CHECK [post | file.nc [post]]; "
      "CAM MACHINE [PRESET vmc|vmc-4th|trunnion|head-table|benchtop|router] [TRAVEL x y z] [ZERO x,y,z] [A min max] [B min max] [C min max] [POCKETS n] [MAXRPM n]"},
     {"LATHE", "TURN TURNING", "LATHE SETUP|TOOL|FACE|ROUGH|FINISH|BORE|GROOVE|DRILL|THREAD|PARTOFF|PROFILE|LIST|SIMULATE|POST ...",

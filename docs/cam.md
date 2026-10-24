@@ -321,6 +321,34 @@ CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
 - **Needs:** a ball end mill, and a machine with A and C, or B and C. The table isn't indexed
   by hand (no `INDEX`).
 
+**Swarf (flank) cutting.** The side of a flat end mill finishes the part's walls, the tool
+leaning with them, so a drafted or tapered wall is cut its whole height in one pass:
+
+```text
+CAM SWARF [TOOL n] [LEAVE l] [BOTTOM z] [TOP z] [OUTSIDE | INSIDE | BOTH] [CONVENTIONAL]
+```
+
+- **The walls:** those between `BOTTOM` and `TOP` (by default the part's bottom and top).
+  `OUTSIDE` (the default) takes the outline, `INSIDE` the walls of pockets and holes, `BOTH`
+  all of them.
+- **The tool axis:** on the wall's rule lines. The part is cut through just above the foot
+  and just below the top. Each corner of the lower outline is joined to the upper one's, out
+  along the corner's bisector, and the faces between are joined straight across. Planar,
+  drafted and conical walls are ruled exactly.
+- **The side:** a tool's radius (plus `LEAVE`) off the wall, square to it. At an outside
+  corner the tool swings round the corner's rule; at an inside corner it stops where it
+  meets the next face.
+- **The foot:** where part continues below `BOTTOM` (a floor), the tool rises along the
+  wall until its tilted end clears the floor, leaving a narrow band at the foot.
+- **Refused:** walls longer than the tool's flutes; a tool that would touch the part past
+  the walls' top (a wall leaning out over it) or a shank or holder that would; and a wall
+  leaning past the machine's A (or B) travel.
+- **Moves:** in from off the wall along its normal and round the outline (climb milling
+  by default), then out the same way, turning at most 1.5 degrees a move. Rough first: the
+  tool comes down beside the wall.
+- **Needs:** a flat end mill, and a machine with A and C, or B and C. Posted as 5-axis
+  surface finishing is.
+
 **Posts:**
 
 - The work zero is the rotary centre for the whole program.
@@ -538,5 +566,6 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Machines:** 5-axis on head-head machines (two tilting head axes), and swarf (flank)
-  cutting. (Lathes have their own job: see [lathe.md](lathe.md).)
+- **Machines:** 5-axis on head-head machines (two tilting head axes).
+- **Swarf:** walls that twist along their height (rules that don't follow the corners'
+  bisectors), and several passes down a wall taller than the flutes. (Lathes have their own job: see [lathe.md](lathe.md).)

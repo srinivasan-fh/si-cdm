@@ -132,7 +132,7 @@ CamTool camToolFromJson(const Json& o);
 // cut in mm (0: full width), which thins the chip and lets the feed rise.
 CamFeeds camFeeds(const CamTool& tool, const CamMaterial& material, const CamMachine& machine, double stepover = 0.0);
 
-enum class CamOpKind { Face, Contour, Pocket, Rough, Parallel, Waterline, Drill, Bore, Rotary, Surface5 };
+enum class CamOpKind { Face, Contour, Pocket, Rough, Parallel, Waterline, Drill, Bore, Rotary, Surface5, Swarf };
 const char* camOpKey(CamOpKind k);
 
 enum class DrillCycle { Spot, Drill, Peck, ChipBreak, Tap, Bore };

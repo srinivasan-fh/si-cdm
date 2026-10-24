@@ -71,6 +71,7 @@ const char* opLabel(CamOpKind k) {
     case CamOpKind::Bore: return "Helical bore";
     case CamOpKind::Rotary: return "Rotary (4-axis)";
     case CamOpKind::Surface5: return "5-axis surface finish";
+    case CamOpKind::Swarf: return "Swarf (5-axis flank)";
     }
     return "Op";
 }
@@ -100,6 +101,7 @@ int defaultTool(const CamJob& job, CamOpKind k, DrillCycle cycle) {
     case CamOpKind::Waterline:
     case CamOpKind::Rotary: return first({CamToolType::Ball, CamToolType::BullNose, CamToolType::Flat});
     case CamOpKind::Surface5: return first({CamToolType::Ball});
+    case CamOpKind::Swarf: return first({CamToolType::Flat});
     case CamOpKind::Drill:
         if (cycle == DrillCycle::Spot) return first({CamToolType::Spot, CamToolType::Chamfer, CamToolType::Drill});
         if (cycle == DrillCycle::Tap) return first({CamToolType::Tap});
@@ -142,6 +144,7 @@ std::string opText(const CamJob& job, std::size_t i) {
         std::snprintf(b, sizeof b, ", lead %g deg, tilt %g deg, at most %g deg from vertical", op.leadAngle, op.sideTilt, op.maxTilt);
         s += b;
     }
+    if (op.kind == CamOpKind::Swarf) s += op.side == 0 ? ", outside walls" : op.side == 1 ? ", inside walls" : ", all walls";
     if (op.adaptive) s += ", adaptive";
     if (op.rest) s += ", rest";
     if (op.kind == CamOpKind::Drill) s += std::string(", ") + drillCycleKey(op.cycle) + ", " + std::to_string(op.holes.size()) + " holes";
@@ -831,9 +834,10 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
     else if (sub == "drill" || sub == "spot" || sub == "tap" || sub == "peck") kind = CamOpKind::Drill;
     else if (sub == "bore" || sub == "helix") kind = CamOpKind::Bore;
     else if (sub == "rotary" || sub == "wrap" || sub == "4axis") kind = CamOpKind::Rotary;
-    else if (sub == "5axis" || sub == "surface5" || sub == "multiaxis" || sub == "swarf5") kind = CamOpKind::Surface5;
+    else if (sub == "5axis" || sub == "surface5" || sub == "multiaxis") kind = CamOpKind::Surface5;
+    else if (sub == "swarf" || sub == "flank") kind = CamOpKind::Swarf;
     else
-        return out.fail("CAM SETUP | TOOL | TOOLS | LIBRARY | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | ROTARY | 5AXIS | HOLES | LIST | "
+        return out.fail("CAM SETUP | TOOL | TOOLS | LIBRARY | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | ROTARY | 5AXIS | SWARF | HOLES | LIST | "
                         "GENERATE | SIMULATE [SHOW] | POST path [post] | DELETE n | CLEAR | SHOW | HIDE");
     Body* p = needPart();
     if (!p) return out;
@@ -1006,6 +1010,8 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
     }
     if (kind == CamOpKind::Surface5 && (op.indexA != 0 || op.indexC != 0))
         return out.fail("CAM 5AXIS turns the table itself as it cuts: no A, C or INDEX (MAXTILT, LEADANGLE and SIDETILT steer the axis)");
+    if (kind == CamOpKind::Swarf && (op.indexA != 0 || op.indexC != 0))
+        return out.fail("CAM SWARF turns the table itself as it cuts: no A, C or INDEX (the walls set the axis)");
     if (tool < 0) tool = defaultTool(job, kind, op.cycle);
     if (tool < 0) return out.fail(std::string("No tool for ") + opLabel(kind) + " in the library: add one with CAM TOOL");
     op.tool = tool;

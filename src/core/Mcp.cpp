@@ -446,7 +446,7 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("operation", prop("string", "setup | tool | library | face | rough | pocket | contour | parallel | waterline | drill | bore | rotary | "
-                                          "5axis | machine | holes | list | generate | simulate | post | delete | clear"));
+                                          "5axis | swarf | machine | holes | list | generate | simulate | post | delete | clear"));
         p.set("library", prop("string", "library: list | import | export | store | use | delete | load | save - the user's tool library: import a "
                                         "vendor catalogue (.csv) or Fusion 360 library (.json) into it, use a library tool in the job, store job "
                                         "tools in it, or load / save the job's tools straight from / to a file"));
@@ -477,7 +477,7 @@ Json McpServer::toolDefinitions() {
         p.set("top", prop("number", "operations: top z, mm"));
         p.set("bottom", prop("number", "operations: bottom z, mm"));
         p.set("depth", prop("number", "operations: depth below the stock top (drill: below the hole's top), mm"));
-        p.set("side", prop("string", "contour: outside (default), inside, both"));
+        p.set("side", prop("string", "contour / swarf: outside (default), inside, both"));
         p.set("tabs", prop("number", "contour: holding tabs on the outside profile"));
         p.set("scallop", prop("number", "parallel / waterline / 5axis: cusp height, mm"));
         p.set("slope", prop("array", "parallel / waterline / 5axis: [from, to] degrees of surface slope to cut"));
@@ -500,7 +500,7 @@ Json McpServer::toolDefinitions() {
         tools.push(tool("cam",
                         "CNC milling CAM: set up the part and stock, build a tool library with feeds and speeds, add operations "
                         "(facing, 2D contour with tabs, pocket, 3D roughing - adaptive or rest - parallel and waterline finishing, drilling "
-                        "cycles, helical boring, 3+2 indexed versions of any of them, 4-axis rotary wrapping, and simultaneous 5-axis surface finishing with a ball end mill on a table-table or head-table machine), simulate the cut "
+                        "cycles, helical boring, 3+2 indexed versions of any of them, 4-axis rotary wrapping, simultaneous 5-axis surface finishing with a ball end mill, and swarf cutting of leaning walls with the side of a flat end mill, on a table-table or head-table machine), simulate the cut "
                         "(stock left, gouges, rapid crashes, holder collisions, cycle time; voxels when the part turns) and post G-code for "
                         "Fanuc, Haas, GRBL or LinuxCNC.",
                         p, {"operation"}));
@@ -1397,9 +1397,9 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!a["index"].isNumber()) return textResult("delete needs 'index'", true);
             return runLine("CAM DELETE " + num(a["index"].asNumber()));
         }
-        static const char* const kOps[] = {"face", "rough", "pocket", "contour", "parallel", "waterline", "drill", "bore", "rotary", "5axis"};
+        static const char* const kOps[] = {"face", "rough", "pocket", "contour", "parallel", "waterline", "drill", "bore", "rotary", "5axis", "swarf"};
         if (std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
-            return textResult("operation is one of setup, tool, face, rough, pocket, contour, parallel, waterline, drill, bore, rotary, 5axis, machine, holes, "
+            return textResult("operation is one of setup, tool, face, rough, pocket, contour, parallel, waterline, drill, bore, rotary, 5axis, swarf, machine, holes, "
                               "list, generate, simulate, post, delete, clear",
                               true);
         std::string line = "CAM " + toUpper(op) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("stepover", "STEPOVER") +

@@ -824,6 +824,105 @@ TEST_CASE("CAM 5-axis on a head-table machine: B tilts the tool, C turns the par
     std::filesystem::remove(path);
 }
 
+TEST_CASE("CAM swarf: the side of a flat end mill along leaning walls, its axis on the walls' rules") {
+    // A cone frustum (40 mm across at the foot, 20 at the top, 20 high: the wall leans in
+    // 26.6 degrees) on a plate.
+    Document d;
+    for (const char* l : {"CONE 20 40 @0,0,0", "BOX 60 60 20 @0,0,0", "BOOLEAN \"Cone 1\" INTERSECT \"Block 2\"", "BOX 60 60 6 @0,0,-6",
+                          "BOOLEAN \"Cone 1\" UNION \"Block 3\"", "CAM SETUP \"Cone 1\" STOCK 1 MATERIAL aluminium", "CAM TOOL 1 FLAT 8 LENGTH 30 STICKOUT 45",
+                          "CAM TOOL 2 FLAT 6 LENGTH 20", "CAM TOOL 3 BALL 6", "CAM TOOL 4 FLAT 8 LENGTH 12", "CAM ROUGH TOOL 2 LEAVE 0.3 BOTTOM 0"})
+        REQUIRE(run(d, l).ok);
+    // A 3-axis machine can't; nor can a ball end mill, or flutes shorter than the walls.
+    REQUIRE(run(d, "CAM MACHINE PRESET vmc").ok);
+    CHECK(!run(d, "CAM SWARF TOOL 1 BOTTOM 0").ok);
+    REQUIRE(run(d, "CAM MACHINE PRESET trunnion").ok);
+    CHECK(!run(d, "CAM SWARF TOOL 3 BOTTOM 0").ok);
+    auto r = run(d, "CAM SWARF TOOL 4 BOTTOM 0");
+    CHECK(!r.ok);
+    CHECK(has(text(r), "flutes"));
+    REQUIRE(run(d, "CAM SWARF TOOL 1 BOTTOM 0").ok);
+    const CamJob& job = d.state.cam;
+    REQUIRE(job.ops.size() == 2);
+    CHECK(job.ops[1].kind == CamOpKind::Swarf);
+    // All round, the side runs the tool's radius off the wall and the axis lies along it:
+    // in the plane through the cone's axis, leaning with the wall.
+    const double s5 = std::sqrt(5.0);
+    std::size_t cuts = 0;
+    double worst = 0, offPlane = 0, offWall = 0, turned = 0;
+    const std::vector<CamMove>& mv = job.ops[1].moves;
+    for (std::size_t i = 0; i + 1 < mv.size(); ++i) {
+        const CamMove& m = mv[i];
+        if (m.kind != CamMove::Feed || mv[i + 1].kind == CamMove::Rapid) continue; // the lead out ends off the wall
+        const Vec3 axis = camToolAxis(m.a, m.c), tip = camToPart(job, m.to, m.a, m.c);
+        const double rr = std::hypot(tip.x, tip.y);
+        ++cuts;
+        const double ux = tip.x / rr, uy = tip.y / rr;
+        const double ar = axis.x * ux + axis.y * uy, at = -axis.x * uy + axis.y * ux;
+        worst = std::max(worst, std::fabs(((rr - 20.0) * 2.0 + tip.z) / s5 - 4.0));
+        offPlane = std::max(offPlane, std::fabs(at));
+        offWall = std::max(offWall, std::fabs((2.0 * ar + axis.z) / s5));
+        turned = std::max(turned, std::fabs(static_cast<double>(m.c)));
+    }
+    CHECK(cuts > 100);
+    CHECK(worst < 0.1); // the cone's facets lie inside it by their sag
+    CHECK(offPlane < 0.03);
+    CHECK(offWall < 0.01);
+    CHECK(turned > 170); // the table turns the part round under the tool
+    // Cut in the voxels after the roughing: nothing gouged, no rapid through the stock, the
+    // shank and holder clear.
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK(sim.shankHits == 0);
+    std::string g = postToString(d.state.cam, d.scene.bodies()[0], "fanuc");
+    CamPostCheck pc = checkPost(d.state.cam, "fanuc", g);
+    CHECK(pc.errors == 0);
+    CHECK(pc.deviation <= pc.allowed);
+    // The same walls on a head-table machine, in tool centre point mode.
+    REQUIRE(run(d, "CAM MACHINE PRESET head-table").ok);
+    REQUIRE(run(d, "CAM GENERATE").ok);
+    for (const CamMove& m : d.state.cam.ops[1].moves) CHECK(m.a == 0.0f);
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    g = postToString(d.state.cam, d.scene.bodies()[0], "haas");
+    CHECK(has(g, "G234 H01"));
+    pc = checkPost(d.state.cam, "haas", g);
+    CHECK(pc.errors == 0);
+    CHECK(pc.deviation <= pc.allowed);
+    // Saved with the job.
+    const std::string path = tempPath("sicdm_cam_swarf.sicdm");
+    REQUIRE(run(d, "SAVE " + path).ok);
+    Document e;
+    REQUIRE(run(e, "OPEN " + path).ok);
+    REQUIRE(e.state.cam.ops.size() == 2);
+    CHECK(e.state.cam.ops[1].kind == CamOpKind::Swarf);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("CAM swarf INSIDE: a drafted pocket's wall; one that closes over the tool is refused") {
+    // A conical pocket through a block, 40 mm across at the top and 20 at the bottom.
+    Document d;
+    for (const char* l : {"BOX 70 70 20 @0,0,0", "CONE 25 50 @0,0,0", "ROTATE \"Cone 2\" 180,0,0", "MOVE 0,0,30 \"Cone 2\"",
+                          "BOOLEAN \"Block 1\" SUBTRACT \"Cone 2\"", "CAM SETUP \"Block 1\" STOCK 1 MATERIAL aluminium", "CAM MACHINE PRESET trunnion",
+                          "CAM TOOL 1 FLAT 8 LENGTH 30 STICKOUT 45", "CAM TOOL 2 FLAT 6 LENGTH 25", "CAM ROUGH TOOL 2 LEAVE 0.3", "CAM SWARF TOOL 1 INSIDE"})
+        REQUIRE(run(d, l).ok);
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK(sim.shankHits == 0);
+    // The same pocket the other way up: narrower at the top, the wall over the tool.
+    Document u;
+    for (const char* l : {"BOX 70 70 20 @0,0,0", "CONE 25 50 @0,0,-30", "BOOLEAN \"Block 1\" SUBTRACT \"Cone 2\"", "CAM SETUP \"Block 1\" STOCK 1 MATERIAL aluminium",
+                          "CAM MACHINE PRESET trunnion", "CAM TOOL 1 FLAT 8 LENGTH 30 STICKOUT 45"})
+        REQUIRE(run(u, l).ok);
+    const auto r = run(u, "CAM SWARF TOOL 1 INSIDE");
+    CHECK(!r.ok);
+    CHECK(has(text(r), "overhang"));
+}
+
 namespace {
 
 void setEnv(const char* name, const std::string& value) {

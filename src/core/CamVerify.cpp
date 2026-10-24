@@ -635,7 +635,7 @@ CamPostCheck checkPost(const CamJob& job, const std::string& post, const std::st
     std::vector<std::pair<P3, P3>> expected, programmed;
     for (const CamOperation& op : job.ops) {
         // Tool centre point moves are posted as the tip on the part.
-        const bool onPart = op.kind == CamOpKind::Surface5 && m.headTilts();
+        const bool onPart = (op.kind == CamOpKind::Surface5 || op.kind == CamOpKind::Swarf) && m.headTilts();
         auto at = [&](const CamMove& mv) { return onPart ? camToPart(job, mv.to, mv.a, mv.c) : mv.to; };
         for (std::size_t i = 1; i < op.moves.size(); ++i) {
             if (op.moves[i].kind == CamMove::Rapid) continue;

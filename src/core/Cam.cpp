@@ -787,6 +787,7 @@ const char* camOpKey(CamOpKind k) {
     case CamOpKind::Bore: return "bore";
     case CamOpKind::Rotary: return "rotary";
     case CamOpKind::Surface5: return "5axis";
+    case CamOpKind::Swarf: return "swarf";
     }
     return "rough";
 }
@@ -827,7 +828,7 @@ Vec3 CamJob::origin() const {
 
 bool CamJob::multiAxis() const {
     return std::any_of(ops.begin(), ops.end(), [](const CamOperation& o) {
-        return o.kind == CamOpKind::Rotary || o.kind == CamOpKind::Surface5 || o.indexA != 0 || o.indexC != 0;
+        return o.kind == CamOpKind::Rotary || o.kind == CamOpKind::Surface5 || o.kind == CamOpKind::Swarf || o.indexA != 0 || o.indexC != 0;
     });
 }
 
@@ -2657,6 +2658,266 @@ bool genSurface5(Ctx& c, const Body& part, std::string* err) {
     return true;
 }
 
+
+// Swarf (flank) cutting: the side of a flat end mill along the part's walls, its axis on
+// each wall's rule lines, so a wall leaning at any angle is finished its whole height in
+// one pass. The rules join a section of the part near the walls' foot to one near their
+// top: each corner of the lower outline to the upper one's, out along the corner's
+// bisector, and the faces between them straight across.
+bool genSwarf(Ctx& c, const Body& part, std::string* err) {
+    const CamOperation& op = c.op;
+    if (c.tool.type != CamToolType::Flat) {
+        if (err) *err = "Swarf cutting needs a flat end mill (it cuts with its side)";
+        return false;
+    }
+    const CamMachine& mach = c.job.setup.machine;
+    if (!(mach.hasA || mach.hasB) || !mach.hasC) {
+        if (err) *err = "Swarf needs a machine with A and C axes, or B and C (CAM MACHINE PRESET trunnion, or head-table)";
+        return false;
+    }
+    const bool head = mach.headTilts();
+    const MeshData world = worldMesh(part);
+    // Welded (the sections follow shared edges), to a micron.
+    std::vector<Vec3> pts;
+    std::vector<std::uint32_t> remap(world.vertices.size());
+    {
+        std::unordered_map<std::uint64_t, std::uint32_t> seen;
+        for (std::size_t i = 0; i < world.vertices.size(); ++i) {
+            const Vec3& q = world.vertices[i].position;
+            auto key = [](float v) { return static_cast<std::uint64_t>(static_cast<std::int64_t>(std::llround(v * 1000.0)) & 0x1FFFFF); };
+            const std::uint64_t k = key(q.x) | key(q.y) << 21 | key(q.z) << 42;
+            const auto [it, fresh] = seen.emplace(k, static_cast<std::uint32_t>(pts.size()));
+            if (fresh) pts.push_back(q);
+            remap[i] = it->second;
+        }
+    }
+    std::vector<section::Tri> tris;
+    for (std::size_t k = 0; k + 2 < world.indices.size(); k += 3) {
+        const section::Tri t{remap[world.indices[k]], remap[world.indices[k + 1]], remap[world.indices[k + 2]]};
+        if (t[0] != t[1] && t[1] != t[2] && t[0] != t[2]) tris.push_back(t);
+    }
+    std::vector<std::uint32_t> all(tris.size());
+    for (std::uint32_t i = 0; i < all.size(); ++i) all[i] = i;
+    const AABB box = world.bounds();
+    const double zb = std::isnan(op.bottom) ? box.min.z : std::max(op.bottom, static_cast<double>(box.min.z));
+    const double zt = std::isnan(op.top) ? box.max.z : std::min(op.top, static_cast<double>(box.max.z));
+    if (!(zt - zb > 0.1)) {
+        if (err) *err = "No wall between BOTTOM and TOP";
+        return false;
+    }
+    const double e = std::min(0.5, 0.05 * (zt - zb)); // the sections, just inside the walls' ends
+    // Points along straight runs left out (the section of a planar face is one edge).
+    auto simplify = [&](const Loop& l) {
+        Loop out;
+        const std::size_t n = l.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const P2 &a = l[(i + n - 1) % n], &b = l[i], &d = l[(i + 1) % n];
+            const double ux = d.x - a.x, uy = d.y - a.y, len = std::hypot(ux, uy);
+            if (len < 1e-9) continue;
+            const double off = std::fabs((b.x - a.x) * uy - (b.y - a.y) * ux) / len;
+            if (off > std::max(c.tol * 0.2, 1e-4) || dist2(a, b) < 1e-9) out.push_back(b);
+        }
+        return out.size() >= 3 ? out : l;
+    };
+    std::vector<Loop> lower, upper;
+    for (const Loop& l : section::contours(pts, tris, all, zb + e))
+        if (l.size() >= 3 && ((op.side != 1 && section::loopArea(l) > 0) || (op.side != 0 && section::loopArea(l) < 0))) lower.push_back(simplify(l));
+    for (const Loop& l : section::contours(pts, tris, all, zt - e))
+        if (l.size() >= 3) upper.push_back(l);
+    if (lower.empty() || upper.empty()) {
+        if (err) *err = "No walls to cut between BOTTOM and TOP";
+        return false;
+    }
+    auto sub = [](const D3& a, const D3& b) { return D3{a.x - b.x, a.y - b.y, a.z - b.z}; };
+    auto add = [](const D3& a, const D3& b, double s) { return D3{a.x + b.x * s, a.y + b.y * s, a.z + b.z * s}; };
+    auto dot3 = [](const D3& a, const D3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; };
+    auto cross3 = [](const D3& a, const D3& b) { return D3{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; };
+    auto unit = [&](const D3& v) {
+        const double l = std::sqrt(dot3(v, v));
+        return l > 1e-15 ? D3{v.x / l, v.y / l, v.z / l} : D3{0, 0, 1};
+    };
+    const double R = c.R(), off = R + op.leave;
+    const bool floor = zb > box.min.z + 1e-3; // part below the walls' foot: keep the tool's end above it
+    const double ds = std::clamp(R * 0.5, 0.2, 1.0);
+    const TriGrid3 grid(world, std::max(R, 1.0));
+    const double gauge = c.tool.gauge(), HR = c.tool.holderRadius(), flute = c.tool.fluteLength;
+    // A station: the tool's tip and axis, beside the rule from `foot` up the wall.
+    struct St {
+        D3 tip, axis;
+    };
+    std::vector<std::vector<St>> loops;
+    double shortFlutes = 0;
+    std::size_t blocked = 0;
+    auto station = [&](const D3& foot, const D3& axis, const D3& n, double len) {
+        // Up the rule far enough that the end's lowest point stays on the floor.
+        const double sinTilt = std::sqrt(std::max(0.0, 1.0 - axis.z * axis.z));
+        double s0 = 0;
+        if (floor) s0 = std::max(0.0, (R * sinTilt - off * n.z) / std::max(axis.z, 0.05));
+        shortFlutes = std::max(shortFlutes, len - s0 - flute);
+        const D3 tip = add(add(foot, n, off), axis, s0);
+        // The flutes past the wall's top, the shank and the holder clear of the part.
+        for (double s = std::min(len - s0 + R * 0.5, flute); s <= gauge + c.tool.holderLength; s += std::max(R * 0.5, 0.5)) {
+            const double r = s < gauge ? R : HR;
+            if (grid.near(add(tip, axis, s), r - std::max(c.tol, 0.01))) {
+                ++blocked;
+                break;
+            }
+        }
+        return St{tip, axis};
+    };
+    for (const Loop& lo : lower) {
+        const std::size_t n = lo.size();
+        // Each corner's rule: out along its bisector to the upper outline, onto its corner there
+        // when one is close.
+        std::vector<D3> foot(n), top(n);
+        bool ok = true;
+        for (std::size_t i = 0; i < n && ok; ++i) {
+            const P2 &pa = lo[(i + n - 1) % n], &pb = lo[i], &pc = lo[(i + 1) % n];
+            const double l1 = std::max(dist2(pa, pb), 1e-12), l2 = std::max(dist2(pb, pc), 1e-12);
+            // Away from the material: right of the way round (material on the left).
+            const double nx = (pb.y - pa.y) / l1 + (pc.y - pb.y) / l2, ny = -(pb.x - pa.x) / l1 - (pc.x - pb.x) / l2;
+            const double nl = std::hypot(nx, ny);
+            const P2 dir{nl > 1e-12 ? nx / nl : (pb.y - pa.y) / l1, nl > 1e-12 ? ny / nl : -(pb.x - pa.x) / l1};
+            double best = kInf;
+            P2 hit{};
+            for (const Loop& up : upper)
+                for (std::size_t k = 0; k < up.size(); ++k) {
+                    const P2 &q0 = up[k], &q1 = up[(k + 1) % up.size()];
+                    const double ex = q1.x - q0.x, ey = q1.y - q0.y, den = dir.x * ey - dir.y * ex;
+                    if (std::fabs(den) < 1e-12) continue;
+                    const double s = ((q0.x - pb.x) * ey - (q0.y - pb.y) * ex) / den, u = ((q0.x - pb.x) * dir.y - (q0.y - pb.y) * dir.x) / den;
+                    if (u < -1e-9 || u > 1 + 1e-9 || std::fabs(s) >= std::fabs(best)) continue;
+                    best = s, hit = {pb.x + dir.x * s, pb.y + dir.y * s};
+                }
+            if (!(std::fabs(best) < (zt - zb) * 4.0 + 1.0)) {
+                ok = false;
+                break;
+            }
+            const double snap = 0.25 * std::min(l1, l2);
+            double nearest = snap;
+            for (const Loop& up : upper)
+                for (const P2& q : up)
+                    if (dist2(q, hit) < nearest) nearest = dist2(q, hit), hit = q;
+            // The rule through the two sections, carried on to the walls' ends.
+            const D3 b{pb.x, pb.y, zb + e}, t{hit.x, hit.y, zt - e};
+            const D3 r = sub(t, b);
+            foot[i] = add(b, r, -e / r.z);
+            top[i] = add(t, r, e / r.z);
+        }
+        if (!ok) continue; // a wall with no top to it
+        std::vector<St> path;
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t j = (i + 1) % n, h = (i + n - 1) % n;
+            const D3 d = unit(sub(foot[j], foot[i])), dPrev = unit(sub(foot[i], foot[h])), dNext = unit(sub(foot[(j + 1) % n], foot[j]));
+            // Turns at this edge's ends: left is a convex corner (the tool swings round it), right
+            // a concave one (the tool stops where it meets the next face).
+            const double turnIn = dPrev.x * d.y - dPrev.y * d.x, turnOut = d.x * dNext.y - d.y * dNext.x;
+            const double angIn = std::acos(std::clamp(dPrev.x * d.x + dPrev.y * d.y, -1.0, 1.0)), angOut = std::acos(std::clamp(d.x * dNext.x + d.y * dNext.y, -1.0, 1.0));
+            const double len = std::hypot(foot[j].x - foot[i].x, foot[j].y - foot[i].y);
+            const double t0 = turnIn < 0 ? off * std::tan(angIn * 0.5) / std::max(len, 1e-9) : 0.0;
+            const double t1 = 1.0 - (turnOut < 0 ? off * std::tan(angOut * 0.5) / std::max(len, 1e-9) : 0.0);
+            if (t1 <= t0) continue;
+            const int m = std::max(1, static_cast<int>(std::ceil(len * (t1 - t0) / ds)));
+            for (int q = 0; q <= m; ++q) {
+                const double t = t0 + (t1 - t0) * q / m;
+                const D3 f = add(foot[i], sub(foot[j], foot[i]), t), tp = add(top[i], sub(top[j], top[i]), t);
+                const D3 axis = unit(sub(tp, f));
+                path.push_back(station(f, axis, unit(cross3(d, axis)), std::sqrt(dot3(sub(tp, f), sub(tp, f)))));
+            }
+            // Round a convex corner: the axis stays on the corner's rule as the side turns.
+            if (turnOut > 0 && angOut > 1e-3) {
+                const D3 axis = unit(sub(top[j], foot[j]));
+                const D3 n0 = unit(cross3(d, axis)), n1 = unit(cross3(dNext, axis)), w = cross3(axis, n0);
+                const double ang = std::atan2(dot3(n1, w), dot3(n1, n0));
+                const int k = std::max(1, static_cast<int>(std::ceil(std::fabs(ang) / (3.0 * kPiD / 180.0))));
+                const double rl = std::sqrt(dot3(sub(top[j], foot[j]), sub(top[j], foot[j])));
+                for (int q = 1; q < k; ++q) {
+                    const double a = ang * q / k;
+                    path.push_back(station(foot[j], axis, add(D3{n0.x * std::cos(a), n0.y * std::cos(a), n0.z * std::cos(a)}, w, std::sin(a)), rl));
+                }
+            }
+        }
+        if (path.size() < 2) continue;
+        path.push_back(path.front()); // all the way round
+        if (op.climb) std::reverse(path.begin(), path.end()); // the part on the right
+        loops.push_back(std::move(path));
+    }
+    if (loops.empty()) {
+        if (err) *err = "No walls to cut: no section at the top matches the foot's";
+        return false;
+    }
+    if (shortFlutes > 1e-3) {
+        char b[32];
+        std::snprintf(b, sizeof b, "%.2f mm", shortFlutes);
+        if (err) *err = "The walls run " + std::string(b) + " past T" + std::to_string(c.tool.number) + "'s flutes: a tool with longer flutes, or a lower TOP";
+        return false;
+    }
+    if (blocked > 0) {
+        if (err) *err = "The tool would touch the part past the walls' top (an overhang), or its shank or holder would, at " + std::to_string(blocked) +
+                          " points: a longer stickout, or a lower TOP";
+        return false;
+    }
+    // The moves, as 5-axis surface finishing writes them: angles for each station, turning at
+    // most 1.5 degrees a move.
+    const double gap = std::max({2.0, c.job.setup.retract, c.approach});
+    const float tableA = 0.0f;
+    double lastC = 0;
+    auto upOf = [&](double a) {
+        const double r = a * kPiD / 180.0;
+        return head ? vec(std::sin(r), 0, std::cos(r)) : vec(0, 0, 1);
+    };
+    auto push = [&](CamMove::Kind k, const Vec3& to, double f, double a, double cc) {
+        CamMove mv{k, to, f, head ? 0.0f : static_cast<float>(a), static_cast<float>(cc)};
+        if (head) mv.b = static_cast<float>(a);
+        c.op.moves.push_back(mv);
+    };
+    auto at = [&](const D3& tip, double a, double cc) { return camToMachine(c.job, vec(tip.x, tip.y, tip.z), head ? tableA : static_cast<float>(a), static_cast<float>(cc)); };
+    for (const std::vector<St>& path : loops) {
+        struct M {
+            D3 tip;
+            double a, c;
+        };
+        std::vector<M> ms;
+        for (const St& s : path) {
+            double a = 0, cc = 0;
+            if (!axisAngles(s.axis, mach, lastC, a, cc)) {
+                if (err) *err = std::string("A wall leans further than the machine's ") + (head ? "B" : "A") + " axis turns";
+                c.op.moves.clear();
+                return false;
+            }
+            lastC = cc;
+            if (!ms.empty()) {
+                const M& p = ms.back();
+                const int k = std::max(1, static_cast<int>(std::ceil(std::max(std::fabs(a - p.a), std::fabs(cc - p.c)) / 1.5)));
+                for (int q = 1; q < k; ++q) {
+                    const double t = static_cast<double>(q) / k;
+                    ms.push_back({add(p.tip, sub(s.tip, p.tip), t), p.a + (a - p.a) * t, p.c + (cc - p.c) * t});
+                }
+            }
+            ms.push_back({s.tip, a, cc});
+        }
+        // In from off the wall along its normal, and out the same way at the end. The stations
+        // were set off the wall to the right of the way round; climb milling reversed that.
+        const St &s0 = path.front(), &s1 = path.back();
+        const double lead = std::max(2.0, R), side = op.climb ? -1.0 : 1.0;
+        const M &m0 = ms.front(), &m1 = ms.back();
+        const D3 n0 = unit(cross3(sub(path[1].tip, s0.tip), s0.axis)), n1 = unit(cross3(sub(s1.tip, path[path.size() - 2].tip), s1.axis));
+        const D3 start = add(m0.tip, n0, side * lead), end = add(m1.tip, n1, side * lead);
+        const Vec3 p0 = at(start, m0.a, m0.c), e0 = at(m0.tip, m0.a, m0.c);
+        const Vec3 low = p0 + upOf(m0.a) * static_cast<float>(gap);
+        push(CamMove::Rapid, vec(low.x, low.y, c.clearZ), 0, m0.a, m0.c);
+        push(CamMove::Rapid, low, 0, m0.a, m0.c);
+        push(CamMove::Plunge, p0, c.feeds.plunge, m0.a, m0.c);
+        push(CamMove::Feed, e0, c.feeds.feed, m0.a, m0.c);
+        for (std::size_t k = 1; k < ms.size(); ++k) push(CamMove::Feed, at(ms[k].tip, ms[k].a, ms[k].c), c.feeds.feed, ms[k].a, ms[k].c);
+        const Vec3 p1 = at(end, m1.a, m1.c), up = p1 + upOf(m1.a) * static_cast<float>(gap);
+        push(CamMove::Feed, p1, c.feeds.feed, m1.a, m1.c);
+        push(CamMove::Rapid, up, 0, m1.a, m1.c);
+        push(CamMove::Rapid, vec(up.x, up.y, c.clearZ), 0, m1.a, m1.c);
+    }
+    return true;
+}
+
 } // namespace
 
 std::vector<CamHole> findHoles(const Body& body) {
@@ -2754,7 +3015,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
         return false;
     }
     // 3+2: turn the part and the stock with the table, make the 3-axis operation there.
-    if ((op.indexA != 0 || op.indexC != 0) && op.kind != CamOpKind::Rotary && op.kind != CamOpKind::Surface5) {
+    if ((op.indexA != 0 || op.indexC != 0) && op.kind != CamOpKind::Rotary && op.kind != CamOpKind::Surface5 && op.kind != CamOpKind::Swarf) {
         if (!job.setup.hasStock) {
             if (error) *error = "Set up the stock first (CAM SETUP)";
             return false;
@@ -2873,7 +3134,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
         }
         c.rest = &restSim;
     }
-    if (op.kind == CamOpKind::Rotary || op.kind == CamOpKind::Surface5) {
+    if (op.kind == CamOpKind::Rotary || op.kind == CamOpKind::Surface5 || op.kind == CamOpKind::Swarf) {
         c.clearZ = job.clearZ();
         c.retractZ = job.rotaryCentre().z + job.swingRadius() + su.retract;
     }
@@ -2906,6 +3167,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
     case CamOpKind::Bore: ok = genBore(c, error); break;
     case CamOpKind::Rotary: ok = genRotary(c, part, error); break;
     case CamOpKind::Surface5: ok = genSurface5(c, part, error); break;
+    case CamOpKind::Swarf: ok = genSwarf(c, part, error); break;
     }
     if (!ok) {
         op.moves.clear();
@@ -3616,7 +3878,7 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
     const bool head = job.setup.machine.headTilts();
     if (head && !st.fanuc)
         for (const CamOperation& op : job.ops)
-            if (op.kind == CamOpKind::Surface5) {
+            if (op.kind == CamOpKind::Surface5 || op.kind == CamOpKind::Swarf) {
                 if (error) *error = "5-axis on a head-table machine needs tool centre point control: the fanuc (G43.4) or haas (G234) post";
                 return {};
             }
@@ -3812,7 +4074,7 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
             if (started) w.line("G80");
             w.modalG = 0;
             w.z = clear;
-        } else if (op.kind == CamOpKind::Surface5) {
+        } else if (op.kind == CamOpKind::Surface5 || op.kind == CamOpKind::Swarf) {
             // Simultaneous 5-axis: every move turns A and C as well. Inverse-time feed (G93):
             // each cutting move takes as long as its tip's path over the part at the feed.
             // With tool centre point control (a head-table machine) X Y Z are the tip on the
@@ -4098,7 +4360,7 @@ bool camFromJson(const Json& j, CamJob& job) {
         CamOperation op;
         const std::string kind = o["kind"].asString("rough");
         for (CamOpKind k : {CamOpKind::Face, CamOpKind::Contour, CamOpKind::Pocket, CamOpKind::Rough, CamOpKind::Parallel, CamOpKind::Waterline,
-                            CamOpKind::Drill, CamOpKind::Bore, CamOpKind::Rotary, CamOpKind::Surface5})
+                            CamOpKind::Drill, CamOpKind::Bore, CamOpKind::Rotary, CamOpKind::Surface5, CamOpKind::Swarf})
             if (kind == camOpKey(k)) op.kind = k;
         op.name = o["name"].asString("");
         op.tool = o["tool"].asInt(1);
