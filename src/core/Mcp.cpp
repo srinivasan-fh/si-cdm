@@ -524,7 +524,7 @@ Json McpServer::toolDefinitions() {
         p.set("size", prop("number", "tool: a drill's diameter, a boring bar's smallest bore, a blade's width, mm"));
         p.set("reach", prop("number", "tool: how deep a blade, drill or boring bar goes, mm"));
         p.set("tool", prop("number", "operations: the T number (default: the first that suits)"));
-        p.set("inside", prop("boolean", "rough / finish: the bore instead of the outside"));
+        p.set("inside", prop("boolean", "rough / finish / groove / thread: the bore instead of the outside"));
         p.set("stepdown", prop("number", "face / rough: depth of cut, mm"));
         p.set("leave", prop("number", "rough / finish: stock to leave radially, mm"));
         p.set("leave_z", prop("number", "rough / finish: stock to leave on faces, mm"));

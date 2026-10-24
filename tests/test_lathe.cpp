@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <algorithm>
 #include <sstream>
 #include <string>
 
@@ -205,4 +206,105 @@ TEST_CASE("Lathe job saves with the project; a part along X turns about X, faced
     REQUIRE(latheFrame(x.state.lathe, partOf(x), f));
     CHECK_NEAR(f.axis.x, -1.0, 1e-6);
     CHECK_NEAR(f.origin.x, box.min.x, 1e-3);
+}
+
+TEST_CASE("Lathe in a bore: drilled, bored, grooved and threaded inside, simulated clean") {
+    Document d;
+    for (const char* l : {"CYLINDER 20 40 @0,0,0", "CYLINDER 8 30 @0,0,10", "BOOLEAN \"Cylinder 1\" SUBTRACT \"Cylinder 2\"", "CYLINDER 10 3 @0,0,20",
+                          "BOOLEAN \"Cylinder 1\" SUBTRACT \"Cylinder 3\"", "LATHE SETUP \"Cylinder 1\"", "LATHE TOOL 1 TURN NOSE 0.8 INSERT C",
+                          "LATHE TOOL 4 DRILL 12", "LATHE TOOL 5 BORE 10 NOSE 0.2", "LATHE TOOL 7 GROOVE 2 DIAMETER 12 REACH 6",
+                          "LATHE TOOL 8 THREAD DIAMETER 12"})
+        REQUIRE(run(d, l).ok);
+    CHECK(d.state.lathe.setup.axis == 2); // 40 by 40 by 40: a tie goes to Z
+    for (const char* l : {"LATHE FACE", "LATHE ROUGH TOOL 1 LEAVE 0.2", "LATHE FINISH TOOL 1", "LATHE DRILL", "LATHE BORE LEAVE 0.1", "LATHE FINISH INSIDE"})
+        REQUIRE(run(d, l).ok);
+    // The bore's groove is past the boring bar's reach (a recess); the grooving bar takes it.
+    LatheJob& job = d.state.lathe;
+    LatheSimulation s;
+    REQUIRE(simulateLathe(job, partOf(d), s));
+    auto innerAt = [&](double z) {
+        const long i = static_cast<long>(std::llround((z - s.z0) / s.dz));
+        return s.inner[static_cast<std::size_t>(i)];
+    };
+    CHECK(innerAt(-18.5) < 9.0); // the groove (radius 10, Z -20 to -17) not yet cut
+    auto r = run(d, "LATHE GROOVE INSIDE TOOL 7");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "Groove the bore"));
+    r = run(d, "LATHE THREAD INSIDE TOOL 8 PITCH 1.5 FROM 0 TO -8");
+    REQUIRE(r.ok);
+    REQUIRE(simulateLathe(job, partOf(d), s));
+    CHECK(s.gouges == 0);
+    CHECK(s.rapidCrashes == 0);
+    CHECK(s.maxLeft < 0.25);
+    CHECK(innerAt(-18.5) > 9.98); // grooved
+    CHECK_NEAR(innerAt(-4), 8.0 + 0.5413 * 1.5, 0.02); // threaded out to the major diameter
+    const std::string g = postLathe(job, partOf(d), "fanuc");
+    CHECK(has(g, "T0808"));
+    CHECK(has(g, "G32 X"));
+    // A bar too big for the bore is refused.
+    REQUIRE(run(d, "LATHE TOOL 9 THREAD DIAMETER 30").ok);
+    r = run(d, "LATHE THREAD INSIDE TOOL 9 PITCH 1.5 FROM 0 TO -8");
+    CHECK(!r.ok);
+    CHECK(has(text(r), "needs a 30 mm bore"));
+}
+
+TEST_CASE("Lathe posts fit arcs (R, under half a turn) to the round parts of a profile") {
+    Document d;
+    REQUIRE(shaft(d));
+    for (const char* l : {"LATHE FACE", "LATHE ROUGH TOOL 1 LEAVE 0.2", "LATHE FINISH TOOL 2"}) REQUIRE(run(d, l).ok);
+    LatheJob& job = d.state.lathe;
+    const std::string g = postLathe(job, partOf(d), "linuxcnc");
+    // The finish's programmed path (the imaginary tip), as straight segments.
+    const LatheOperation& fin = job.ops[2];
+    const LatheTool* t2 = job.tool(2);
+    REQUIRE(t2 != nullptr);
+    std::vector<std::pair<double, double>> path; // (z, x radius)
+    for (const LatheMove& m : fin.moves) path.push_back({m.z - t2->noseRadius, m.x - t2->noseRadius});
+    auto nearPath = [&](double z, double x) {
+        double best = 1e9;
+        for (std::size_t i = 1; i < path.size(); ++i) {
+            const double az = path[i - 1].first, ax = path[i - 1].second, bz = path[i].first, bx = path[i].second;
+            const double l2 = (bz - az) * (bz - az) + (bx - ax) * (bx - ax);
+            const double u = l2 > 0 ? std::clamp(((z - az) * (bz - az) + (x - ax) * (bx - ax)) / l2, 0.0, 1.0) : 0.0;
+            best = std::min(best, std::hypot(z - az - u * (bz - az), x - ax - u * (bx - ax)));
+        }
+        return best;
+    };
+    // Read the finish back: each arc from where the last move ended, its middle on the path.
+    std::istringstream in(g.substr(g.find("(3 ")));
+    double z = 0, x = 0;
+    int g0 = 0, arcs = 0, bad = 0;
+    auto word = [](const std::string& l, char w, double& v) {
+        for (std::size_t i = 0; i < l.size(); ++i)
+            if (l[i] == w && (i == 0 || l[i - 1] == ' ')) {
+                v = std::atof(l.c_str() + i + 1);
+                return true;
+            }
+        return false;
+    };
+    for (std::string l; std::getline(in, l);) {
+        if (l.rfind("G2 ", 0) == 0) g0 = 2;
+        else if (l.rfind("G3 ", 0) == 0) g0 = 3;
+        else if (l.rfind("G0 ", 0) == 0 || l.rfind("G1 ", 0) == 0) g0 = l[1] - '0';
+        double nx = x * 2, nz = z, r = 0;
+        const bool hasX = word(l, 'X', nx), hasZ = word(l, 'Z', nz);
+        if (!hasX && !hasZ) continue;
+        nx *= 0.5; // diameters
+        if ((g0 == 2 || g0 == 3) && word(l, 'R', r)) {
+            ++arcs;
+            // The centre: on the chord's bisector, to the left (G3, counterclockwise) or right.
+            const double mz = 0.5 * (z + nz), mx = 0.5 * (x + nx), cz = nz - z, cx = nx - x, c = std::hypot(cz, cx);
+            const double h = std::sqrt(std::max(0.0, r * r - c * c / 4));
+            const double s = g0 == 3 ? 1.0 : -1.0;
+            const double oz = mz - s * cx / c * h, ox = mx + s * cz / c * h;
+            // The arc's middle: from the centre through the chord's middle, a radius out.
+            const double dz = mz - oz, dx = mx - ox, dl = std::hypot(dz, dx);
+            const double az = oz + dz / dl * r, ax = ox + dx / dl * r;
+            if (nearPath(az, ax) > job.setup.tolerance * 1.5) ++bad;
+        }
+        z = nz, x = nx;
+        if (l.rfind("M9", 0) == 0) break;
+    }
+    CHECK(arcs >= 2); // the nose's corners round the shoulders
+    CHECK(bad == 0);
 }

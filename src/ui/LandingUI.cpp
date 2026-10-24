@@ -666,8 +666,9 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             if (ImGui::MenuItem("Drill the Bore")) cmd.commands.push_back("LATHE DRILL");
             if (ImGui::MenuItem("Rough Bore (leave 0.1)")) cmd.commands.push_back("LATHE BORE LEAVE 0.1");
             if (ImGui::MenuItem("Finish Bore")) cmd.commands.push_back("LATHE FINISH INSIDE");
+            if (ImGui::MenuItem("Groove the Bore")) cmd.commands.push_back("LATHE GROOVE INSIDE");
             if (ImGui::MenuItem("Part Off")) cmd.commands.push_back("LATHE PARTOFF");
-            ImGui::TextDisabled("LATHE THREAD PITCH p FROM z TO z");
+            ImGui::TextDisabled("LATHE THREAD PITCH p FROM z TO z [INSIDE]");
             ImGui::Separator();
             if (ImGui::MenuItem("List the Lathe Job")) cmd.commands.push_back("LATHE LIST");
             if (ImGui::MenuItem("Simulate (show turned stock)")) cmd.commands.push_back("LATHE SIMULATE SHOW");

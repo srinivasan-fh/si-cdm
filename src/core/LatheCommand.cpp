@@ -56,9 +56,9 @@ const char* opLabel(const LatheOperation& op) {
     case LatheOpKind::Face: return "Face";
     case LatheOpKind::Rough: return op.inside ? "Rough bore" : "Rough turn";
     case LatheOpKind::Finish: return op.inside ? "Finish bore" : "Finish turn";
-    case LatheOpKind::Groove: return "Groove";
+    case LatheOpKind::Groove: return op.inside ? "Groove the bore" : "Groove";
     case LatheOpKind::Drill: return "Drill";
-    case LatheOpKind::Thread: return "Thread";
+    case LatheOpKind::Thread: return op.inside ? "Thread the bore" : "Thread";
     case LatheOpKind::PartOff: return "Part off";
     }
     return "Op";
@@ -169,7 +169,9 @@ CommandOutput runLatheCommand(Document& doc, const std::vector<std::string>& a, 
             su = LatheSetup{};
             const AABB box = b.bounds();
             const Vec3 s = box.max - box.min;
-            su.axis = s.x >= s.y && s.x >= s.z ? 0 : s.y >= s.z ? 1 : 2;
+            // The longest side; on a tie Z, then Y (cylinders are made along Z).
+            const double tie = 1e-3 * std::max({s.x, s.y, s.z});
+            su.axis = s.z + tie >= s.x && s.z + tie >= s.y ? 2 : s.y + tie >= s.x ? 1 : 0;
         }
         su.body = b.name;
         for (; i < a.size(); ++i) {
@@ -515,7 +517,8 @@ CommandOutput runLatheCommand(Document& doc, const std::vector<std::string>& a, 
         else return out.fail("Unknown option " + a[i] + " for LATHE " + upper(sub));
     }
     if (op.kind == LatheOpKind::Thread && op.pitch <= 0) return out.fail("LATHE THREAD needs a PITCH, e.g. LATHE THREAD PITCH 1.5 FROM 0 TO -20");
-    if (op.inside && op.kind != LatheOpKind::Rough && op.kind != LatheOpKind::Finish) return out.fail("INSIDE is for ROUGH and FINISH (boring)");
+    if (op.inside && op.kind != LatheOpKind::Rough && op.kind != LatheOpKind::Finish && op.kind != LatheOpKind::Groove && op.kind != LatheOpKind::Thread)
+        return out.fail("INSIDE is for ROUGH, FINISH, GROOVE and THREAD (in the bore)");
     if (tool < 0) tool = defaultTool(job, op);
     if (tool < 0) return out.fail(std::string("No tool for ") + opLabel(op) + ": add one with LATHE TOOL");
     if (!job.tool(tool)) return out.fail("No tool T" + std::to_string(tool));

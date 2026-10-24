@@ -128,8 +128,9 @@ sharpest nose.
 | `LATHE ROUGH INSIDE`, `LATHE BORE` | The same in the bore, with a boring bar. The bore must be drilled first. |
 | `LATHE FINISH INSIDE` | Finishes the bore. |
 | `LATHE GROOVE [LEAVE l]` | Finds the recesses the job's turning insert can't reach and plunges a blade across each, side by side. |
+| `LATHE GROOVE INSIDE` | The same in the bore: the recesses the boring bar can't reach, with a grooving bar (`LATHE TOOL n GROOVE w DIAMETER d`: d is the smallest bore it fits). |
 | `LATHE DRILL [DEPTH d] [PECK p]` | Drills on the axis, to the bore's depth (or through) by default. |
-| `LATHE THREAD PITCH p [FROM z] [TO z] [DIAMETER d]` | Single-point threading. See [Threading](#threading). |
+| `LATHE THREAD PITCH p [FROM z] [TO z] [DIAMETER d] [INSIDE]` | Single-point threading, outside or in the bore. See [Threading](#threading). |
 | `LATHE PARTOFF [PECK p]` | Parts the part off the bar. See [Parting off](#parting-off). |
 
 ### Rough turning
@@ -149,10 +150,14 @@ point is narrower, and that is allowed for near the tip.
 
 ### Threading
 
-- **Passes:** to ISO metric depth (0.613 × pitch on the radius), in passes of falling depth,
-  then a spring pass.
+- **Passes:** to ISO metric depth on the radius, in passes of falling depth, then a spring
+  pass. Outside the depth is 0.613 × pitch, going in towards the minor diameter. In a bore
+  (`INSIDE`) it is 0.541 × pitch, going out from the minor diameter (the bore) to the major.
 - **Infeed:** along the flank, at 29.5°.
-- **Diameter:** by default the part's outside between `FROM` and `TO`.
+- **Diameter:** by default the part's outside between `FROM` and `TO`; in a bore, its bore
+  there plus the depth. `DIAMETER` gives the major diameter (M20: 20).
+- **In a bore:** the insert comes and goes along the bore's middle. A threading bar too big for
+  the bore (`LATHE TOOL n THREAD DIAMETER d`) is refused.
 - **Program:** `G32` (Fanuc, Haas) or `G33` (LinuxCNC).
 
 ### Parting off
@@ -201,6 +206,11 @@ It reports:
 | End | `G28 U0. W0.`, `M30` | `G28`, `M2` |
 
 - **X:** always a diameter. Fanuc-style controls get a decimal point on every number.
+- **Arcs:** runs of cuts that lie on a circle within the setup's tolerance (the path between
+  points included) are written as `G2`/`G3` arcs with `R`, each under half a turn. These are
+  the nose's round corners at shoulders, and round parts of a profile from exact geometry. A
+  faceted mesh stays straight moves where its facets are further from a circle than the
+  tolerance. `G2` turns clockwise with Z across and X up, seen from +Y, as G18 defines it.
 - **Programmed points:** what the control expects for each tool.
   - Turning inserts: the imaginary tip, the nose's tangents towards −X and −Z (tip direction 3).
   - Boring bars: towards +X and −Z (tip direction 2).
@@ -234,10 +244,7 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Inside:** grooves and threads in a bore. Use the outside versions, or finish them by hand.
 - **Machines:** live tooling and C-axis milling on the lathe, sub-spindles, tailstocks and
   steady rests.
 - **Programs:** canned roughing cycles (`G71`, `G72`). The posts write every pass out, so any
   control runs them.
-- **Arcs:** the profile is written as short straight moves within the tolerance, not as
-  `G2`/`G3` arcs.

@@ -683,11 +683,13 @@ bool genFace(const Plan& pl, const LatheOperation& op, const LatheTool& t, doubl
 // steeper than its relief): plunges side by side with a blade.
 bool genGroove(const Plan& pl, const LatheOperation& op, const LatheTool& t, double feed, std::vector<LatheMove>& out, std::string* err) {
     const Grid& g = pl.g;
-    // The turning insert the recesses are left by: the job's first.
+    const bool inside = op.inside;
+    // The insert the recesses are left by: the job's first turning insert (in a bore, its
+    // first boring bar).
     const LatheTool* turn = nullptr;
     for (const LatheTool& q : pl.job.tools)
-        if (q.type == LatheToolType::Turn && !turn) turn = &q;
-    const std::vector<double> k = keepY(pl, false, std::max(op.leave, 0.0), 0.0);
+        if (q.type == (inside ? LatheToolType::Bore : LatheToolType::Turn) && !turn) turn = &q;
+    const std::vector<double> k = keepY(pl, inside, std::max(op.leave, 0.0), 0.0);
     const std::vector<double> edge = bladeEdge(g, k, t.width, t.noseRadius);
     std::vector<double> left(g.n, -kInfL); // the material the turning leaves over the keep
     if (turn) {
@@ -710,8 +712,19 @@ bool genGroove(const Plan& pl, const LatheOperation& op, const LatheTool& t, dou
     }
     const double zHi = std::isnan(op.zFrom) ? 0.0 : op.zFrom, zLo = std::isnan(op.zTo) ? pl.prof.z0 : op.zTo;
     const long i1 = std::min(static_cast<long>(g.n) - 1, g.index(zHi)), i0 = std::max(0L, g.index(zLo));
-    Emit e{out, false};
-    const double outside = pl.stockR + pl.clear;
+    Emit e{out, inside};
+    // Outside the blade comes in from beyond the bar; in a bore, along its middle.
+    double outside = pl.stockR + pl.clear, entry = pl.front + pl.clear;
+    if (inside) {
+        double bore = kInfL; // the narrowest the bore is over the grooves
+        for (long q = i0; q <= i1; ++q)
+            if (left[static_cast<std::size_t>(q)] > -kInfL) bore = std::min(bore, -left[static_cast<std::size_t>(q)]);
+        if (bore < kInfL && 2 * bore < t.diameter) {
+            if (err) *err = "The grooving bar needs a " + fmt("%g", t.diameter) + " mm bore; the bore is " + fmt("%.3g", 2 * bore) + " mm there";
+            return false;
+        }
+        outside = bore < kInfL ? -boreHome(t, bore) : -t.noseRadius;
+    }
     std::size_t grooves = 0;
     const double step = 0.8 * t.width;
     long i = i1;
@@ -740,6 +753,7 @@ bool genGroove(const Plan& pl, const LatheOperation& op, const LatheTool& t, dou
                 if (err) *err = "The blade reaches " + fmt("%g", t.reach) + " mm; the recess at Z" + fmt("%.3f", zc) + " is deeper";
                 return false;
             }
+            if (inside && out.empty()) e.rapid(entry, outside);
             e.rapid(zc, outside);
             e.rapid(zc, topY + 0.5);
             e.feed(zc, bottom, feed);
@@ -749,9 +763,12 @@ bool genGroove(const Plan& pl, const LatheOperation& op, const LatheTool& t, dou
         i = j;
     }
     if (grooves == 0) {
-        if (err) *err = turn ? "No recesses: the turning insert reaches all of the outside" : "Add a turning tool first: grooving takes what it can't reach";
+        if (err)
+            *err = turn ? std::string("No recesses: the ") + (inside ? "boring bar reaches all of the bore" : "turning insert reaches all of the outside")
+                        : std::string("Add a ") + (inside ? "boring bar" : "turning tool") + " first: grooving takes what it can't reach";
         return false;
     }
+    if (inside) e.rapid(entry, outside); // out of the bore along its middle
     return true;
 }
 
@@ -836,18 +853,24 @@ bool genDrill(const Plan& pl, const LatheOperation& op, const LatheTool& t, doub
 
 // Single-point threading: passes of falling depth, the insert going in along the thread's
 // flank (29.5 degrees), each pass synchronised to the spindle.
-// The thread's major radius: as given, else the most of the part over its length (0: none).
+// ISO metric thread depths on the radius: outside to the minor diameter, in a nut out to the major.
+double threadDepth(const LatheOperation& op) { return (op.inside ? 0.5413 : 0.6134) * op.pitch; }
+
+// The thread's major radius: as given, else outside the most of the part over its length,
+// in a bore its least (the minor diameter) plus the depth (0: none).
 double threadMajor(const Plan& pl, const LatheOperation& op) {
     if (op.threadDiameter > 0) return op.threadDiameter * 0.5;
     const LatheProfile& p = pl.prof;
     const double zA = std::isnan(op.zFrom) ? 0.0 : op.zFrom, zB = std::isnan(op.zTo) ? p.z0 : op.zTo;
-    double major = 0;
+    double major = 0, minor = kInfL;
     for (std::size_t i = 0; i < p.size(); ++i)
-        if (p.zAt(i) >= std::min(zA, zB) && p.zAt(i) <= std::max(zA, zB) && p.has[i]) major = std::max(major, p.outer[i]);
+        if (p.zAt(i) >= std::min(zA, zB) && p.zAt(i) <= std::max(zA, zB) && p.has[i])
+            major = std::max(major, p.outer[i]), minor = std::min(minor, p.inner[i]);
+    if (op.inside) return minor > 0 && minor < kInfL ? minor + threadDepth(op) : 0.0;
     return major;
 }
 
-bool genThread(const Plan& pl, const LatheOperation& op, std::vector<LatheMove>& out, std::string* err) {
+bool genThread(const Plan& pl, const LatheOperation& op, const LatheTool& t, std::vector<LatheMove>& out, std::string* err) {
     if (op.pitch <= 0) {
         if (err) *err = "THREAD needs a PITCH (mm)";
         return false;
@@ -861,23 +884,34 @@ bool genThread(const Plan& pl, const LatheOperation& op, std::vector<LatheMove>&
     }
     const double major = threadMajor(pl, op);
     if (major <= 0) {
-        if (err) *err = "No part there to thread";
+        if (err) *err = op.inside ? "No bore there to thread (or give its DIAMETER)" : "No part there to thread";
         return false;
     }
-    const double h = 0.6134 * op.pitch; // ISO metric external, on the radius
+    const double h = threadDepth(op);
     const int passes = std::max(4, static_cast<int>(std::ceil(h / 0.12)));
-    Emit e{out, false};
-    const double runIn = 2.0 * op.pitch, outside = std::max(major, pl.stockR) + pl.clear;
-    const double flank = std::tan(29.5 * kPiL / 180.0);
+    const double runIn = 2.0 * op.pitch, flank = std::tan(29.5 * kPiL / 180.0);
+    // Outside the insert goes in from beyond the bar towards the axis; in a bore it starts at
+    // the minor diameter and goes out, coming and going along the bore's middle.
+    const double start = op.inside ? major - h : major;
+    double away = std::max(major, pl.stockR) + pl.clear;
+    if (op.inside) {
+        if (2 * start < t.diameter) {
+            if (err) *err = "The threading bar needs a " + fmt("%g", t.diameter) + " mm bore; the thread's is " + fmt("%.3g", 2 * start) + " mm";
+            return false;
+        }
+        away = boreHome(t, start);
+        out.push_back({LatheMove::Rapid, away, pl.front + pl.clear, 0});
+    }
     for (int q = 1; q <= passes + 1; ++q) { // the last again: a spring pass
         const double d = h * std::sqrt(static_cast<double>(std::min(q, passes)) / passes);
-        const double shift = d * flank;
-        e.rapid(hi + runIn + shift, outside);
-        e.rapid(hi + runIn + shift, major - d);
-        out.push_back({LatheMove::Thread, major - d, lo + shift, op.pitch});
-        e.rapid(lo + shift, outside);
+        const double shift = d * flank, x = op.inside ? start + d : start - d;
+        out.push_back({LatheMove::Rapid, away, hi + runIn + shift, 0});
+        out.push_back({LatheMove::Rapid, x, hi + runIn + shift, 0});
+        out.push_back({LatheMove::Thread, x, lo + shift, op.pitch});
+        out.push_back({LatheMove::Rapid, away, lo + shift, 0});
     }
-    e.rapid(hi + runIn, outside);
+    out.push_back({LatheMove::Rapid, away, hi + runIn, 0});
+    if (op.inside) out.push_back({LatheMove::Rapid, away, pl.front + pl.clear, 0});
     return true;
 }
 
@@ -922,7 +956,7 @@ bool generateLatheOperation(const LatheJob& job, const Body& part, LatheOperatio
     case LatheOpKind::Groove: ok = genGroove(pl, op, *t, c.f, op.moves, error); break;
     case LatheOpKind::PartOff: ok = genPartOff(pl, op, *t, c.f, op.moves, error); break;
     case LatheOpKind::Drill: ok = genDrill(pl, op, *t, c.f, op.moves, error); break;
-    case LatheOpKind::Thread: ok = genThread(pl, op, op.moves, error); break;
+    case LatheOpKind::Thread: ok = genThread(pl, op, *t, op.moves, error); break;
     }
     if (!ok) {
         op.moves.clear();
@@ -1009,7 +1043,7 @@ bool simulateLathe(LatheJob& job, const Body& part, LatheSimulation& out, std::s
         return v;
     };
     const double v0 = volume();
-    std::vector<unsigned char> threaded(g.n, 0);
+    std::vector<unsigned char> threaded(g.n, 0), threadedIn(g.n, 0); // a thread's cut is meant
     for (LatheOperation& op : job.ops) {
         if (!op.generated && !generateLatheOperation(job, part, op, error)) return false;
         const LatheTool* t = job.tool(op.tool);
@@ -1022,8 +1056,8 @@ bool simulateLathe(LatheJob& job, const Body& part, LatheSimulation& out, std::s
         switch (t->type) {
         case LatheToolType::Turn: sh.kind = Shape::Nose, sh.r = t->noseRadius, sh.beta = (t->relief() + 2.0) * kPiL / 180.0; break;
         case LatheToolType::Bore: sh.kind = Shape::Nose, sh.r = t->noseRadius, sh.beta = (t->relief() + 2.0) * kPiL / 180.0, bore = true; break;
-        case LatheToolType::Groove: sh.kind = Shape::Blade, sh.r = std::min(t->noseRadius, t->width * 0.5), sh.half = t->width * 0.5; break;
-        case LatheToolType::Thread: sh.kind = Shape::Point, sh.r = 2.0; break;
+        case LatheToolType::Groove: sh.kind = Shape::Blade, sh.r = std::min(t->noseRadius, t->width * 0.5), sh.half = t->width * 0.5, bore = op.inside; break;
+        case LatheToolType::Thread: sh.kind = Shape::Point, sh.r = 2.0, bore = op.inside; break;
         case LatheToolType::Drill:
             sh.kind = Shape::Drill, sh.r = t->diameter * 0.5;
             sh.cone = std::tan(std::clamp(t->tipAngle, 60.0, 180.0) * 0.5 * kPiL / 180.0);
@@ -1084,6 +1118,7 @@ bool simulateLathe(LatheJob& job, const Body& part, LatheSimulation& out, std::s
                     if (r > out.inner[i] + 1e-9 && out.outer[i] > out.inner[i]) {
                         if (m.kind == LatheMove::Rapid && std::min(r, out.outer[i]) > out.inner[i] + 1e-3) crashed = true;
                         out.inner[i] = r;
+                        if (t->type == LatheToolType::Thread) threadedIn[i] = 1;
                     }
                 } else if (best < out.outer[i] - 1e-9 && out.outer[i] > out.inner[i]) {
                     if (m.kind == LatheMove::Rapid && out.outer[i] - std::max(best, out.inner[i]) > 1e-3) crashed = true;
@@ -1115,7 +1150,7 @@ bool simulateLathe(LatheJob& job, const Body& part, LatheSimulation& out, std::s
         }
         double cut = 0;
         if (!threaded[i] && out.outer[i] < oLo - tolG) cut = std::max(cut, oLo - out.outer[i]);
-        if (out.inner[i] > inHi + tolG) cut = std::max(cut, out.inner[i] - inHi);
+        if (!threadedIn[i] && out.inner[i] > inHi + tolG) cut = std::max(cut, out.inner[i] - inHi);
         if (cut > 0) {
             ++out.gouges;
             out.deepestGouge = std::max(out.deepestGouge, cut);
@@ -1192,6 +1227,62 @@ namespace {
 
 // The programmed point for a move: the insert's imaginary tip, a blade's corner towards
 // the chuck, a drill's point.
+// Arcs through runs of points (z, x) where the points lie on a circle within `tol` and so
+// does the path between them: for each point after the first, an arc to it (r > 0; ccw:
+// counterclockwise with Z across and X up) or a straight move (r = 0).
+struct ArcStep {
+    double z = 0, x = 0, r = 0;
+    bool ccw = false;
+};
+
+std::vector<ArcStep> fitArcs(const std::vector<std::pair<double, double>>& p, double tol) {
+    std::vector<ArcStep> out;
+    const std::size_t n = p.size();
+    std::size_t i = 0;
+    while (i + 1 < n) {
+        std::size_t best = 0;
+        ArcStep arc;
+        for (std::size_t j = i + 3; j < n; ++j) {
+            // The circle through the first, middle and last points.
+            const std::size_t m = (i + j) / 2;
+            const double ax = p[i].first, ay = p[i].second, bx = p[m].first, by = p[m].second, cx = p[j].first, cy = p[j].second;
+            const double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+            if (std::fabs(d) < 1e-12) break; // straight
+            const double a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+            const double ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d, uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+            const double r = std::hypot(ax - ux, ay - uy);
+            if (r < 0.05 || r > 2000) break;
+            const double turn = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+            bool ok = true;
+            double swept = 0;
+            for (std::size_t k = i; k <= j && ok; ++k) {
+                if (std::fabs(std::hypot(p[k].first - ux, p[k].second - uy) - r) > tol) ok = false;
+                if (k == i) continue;
+                // Each step turns the same way, and its chord stays within the tolerance of the arc.
+                const double a0 = std::atan2(p[k - 1].second - uy, p[k - 1].first - ux), a1 = std::atan2(p[k].second - uy, p[k].first - ux);
+                double da = a1 - a0;
+                while (da > kPiL) da -= 2 * kPiL;
+                while (da < -kPiL) da += 2 * kPiL;
+                if ((da > 0) != (turn > 0) || std::fabs(da) < 1e-12) ok = false;
+                swept += std::fabs(da);
+                const double chord = std::hypot(p[k].first - p[k - 1].first, p[k].second - p[k - 1].second);
+                if (r - std::sqrt(std::max(0.0, r * r - chord * chord / 4)) > tol) ok = false;
+            }
+            if (!ok || swept > kPiL * 0.95) break; // R arcs stay under half a turn
+            best = j;
+            arc = {cx, cy, r, turn > 0};
+        }
+        if (best) {
+            out.push_back(arc);
+            i = best;
+        } else {
+            out.push_back({p[i + 1].first, p[i + 1].second, 0, false});
+            ++i;
+        }
+    }
+    return out;
+}
+
 void programmed(const LatheTool& t, const LatheMove& m, double& x, double& z) {
     x = m.x, z = m.z;
     switch (t.type) {
@@ -1260,12 +1351,39 @@ std::string postLathe(LatheJob& job, const Body& part, const std::string& post, 
             else o << "G50 S" << static_cast<long>(std::lround(job.setup.maxRpm)) << nl << "G96 S" << static_cast<long>(std::lround(c.vc)) << " M03" << nl;
         } else o << (lcnc ? "G97 S" : "G97 S") << static_cast<long>(std::lround(c.rpm)) << (lcnc ? " M3" : " M03") << nl;
         if (op.kind != LatheOpKind::Thread) o << (lcnc ? "M8" : "M08") << nl;
-        double lastF = -1;
+        double lastF = -1, px = 0, pz = 0;
         int lastG = -1;
-        for (const LatheMove& m : op.moves) {
+        for (std::size_t mi = 0; mi < op.moves.size();) {
+            const LatheMove& m = op.moves[mi];
             double x = 0, z = 0;
             programmed(*t, m, x, z);
             std::string w;
+            if (m.kind == LatheMove::Feed && mi > 0) {
+                // A run of cuts at one feed: arcs where they lie on circles (the round corners
+                // and curves of a profile), straight moves elsewhere. X stays a diameter; R is
+                // the arc's radius; G2 turns clockwise with Z across and X up (seen from +Y).
+                std::vector<std::pair<double, double>> pts{{pz, px}};
+                std::size_t e = mi;
+                for (; e < op.moves.size() && op.moves[e].kind == LatheMove::Feed && std::fabs(op.moves[e].feed - m.feed) < 1e-12; ++e) {
+                    double qx = 0, qz = 0;
+                    programmed(*t, op.moves[e], qx, qz);
+                    pts.push_back({qz, qx});
+                }
+                const std::vector<ArcStep> steps = fitArcs(pts, std::max(job.setup.tolerance, 0.001));
+                for (const ArcStep& st : steps) {
+                    const int g = st.r > 0 ? (st.ccw ? 3 : 2) : 1;
+                    std::string line;
+                    if (g != lastG) line += lcnc ? "G" + std::to_string(g) + " " : "G0" + std::to_string(g) + " ";
+                    lastG = g;
+                    line += "X" + n(2 * st.x) + " Z" + n(st.z);
+                    if (st.r > 0) line += " R" + n(st.r);
+                    if (std::fabs(m.feed - lastF) > 1e-9) line += " F" + n(m.feed), lastF = m.feed;
+                    o << line << nl;
+                }
+                px = pts.back().second, pz = pts.back().first;
+                mi = e;
+                continue;
+            }
             if (m.kind == LatheMove::Rapid) {
                 if (lastG != 0) w += lcnc ? "G0 " : "G00 ";
                 lastG = 0;
@@ -1280,6 +1398,8 @@ std::string postLathe(LatheJob& job, const Body& part, const std::string& post, 
                 if (std::fabs(m.feed - lastF) > 1e-9) w += " F" + n(m.feed), lastF = m.feed;
             }
             o << w << nl;
+            px = x, pz = z;
+            ++mi;
         }
         o << (lcnc ? "M9" : "M09") << nl << (lcnc ? "M5" : "M05") << nl;
         if (css && !lcnc) o << "G97" << nl;
