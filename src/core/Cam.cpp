@@ -2887,7 +2887,7 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
             }
             lastC = cc;
             if (!ms.empty()) {
-                const M& p = ms.back();
+                const M p = ms.back(); // a copy: the pushes below may move ms
                 const int k = std::max(1, static_cast<int>(std::ceil(std::max(std::fabs(a - p.a), std::fabs(cc - p.c)) / 1.5)));
                 for (int q = 1; q < k; ++q) {
                     const double t = static_cast<double>(q) / k;
