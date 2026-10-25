@@ -94,6 +94,16 @@ file(READ "${PROJECT_SOURCE_DIR}/resources/THIRD-PARTY-NOTICES.txt" SICDM_NOTICE
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/resources/THIRD-PARTY-NOTICES.txt")
 configure_file(src/core/Notices.cpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/Notices.cpp" @ONLY)
 target_sources(sicdm_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/Notices.cpp")
+# The user guide and the example scripts, built in for the in-app help.
+file(GLOB SICDM_DOC_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/docs/*.md" "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/*.txt")
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/EmbeddedDocs.cpp"
+    COMMAND ${CMAKE_COMMAND} -DDOCS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/docs -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/EmbeddedDocs.cpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedDocs.cmake
+    DEPENDS ${SICDM_DOC_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedDocs.cmake"
+    COMMENT "Building the user guide in"
+    VERBATIM)
+target_sources(sicdm_core PRIVATE src/core/HelpDocs.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/EmbeddedDocs.cpp")
 
 # Licences: the vendor's Ed25519 public key (64 hex digits) that licence files are checked
 # with. Empty: the build checks none and runs as the Community edition. Make a key pair
@@ -139,6 +149,7 @@ if(SICDM_BUILD_APP)
         src/render/Shader.cpp
         src/ui/FileDialog.cpp
         src/ui/CamPanel.cpp
+        src/ui/HelpWindow.cpp
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
         src/ui/ToolIcons.cpp

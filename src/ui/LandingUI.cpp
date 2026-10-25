@@ -1,5 +1,7 @@
 #include "ui/LandingUI.hpp"
 
+#include "core/HelpDocs.hpp"
+
 #include "core/CrashReport.hpp"
 #include "core/Licence.hpp"
 #include "core/Notices.hpp"
@@ -351,6 +353,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showControls) drawControlsWindow(st);
     if (st.showAbout) drawAboutWindow(st);
     if (st.showCamTools && st.cam) drawCamToolsWindow(cmd, st);
+    if (st.showHelp) drawHelpWindow(cmd, st);
     if (st.showCamMachine && st.cam) drawCamMachineWindow(cmd, st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
     if (!st.mateTool.empty()) drawMateWindow(cmd, st);
@@ -743,7 +746,18 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
-        ImGui::MenuItem("Viewport Controls", nullptr, &st.showControls);
+        if (ImGui::MenuItem("User Guide", "F1")) st.showHelp = true;
+        if (ImGui::MenuItem("Getting Started")) st.showHelp = true, st.helpPage = "getting-started.md";
+        if (ImGui::BeginMenu("Sample Projects")) {
+            for (const HelpExample& e : helpExamples())
+                if (ImGui::MenuItem(e.title.c_str())) runSample(cmd, e.file);
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Commands (HELP)")) cmd.commands.push_back("HELP");
+        ImGui::MenuItem("Keyboard and Mouse", nullptr, &st.showControls);
+        if (ImGui::MenuItem("Crash Reports")) cmd.commands.push_back("CRASHES");
+        ImGui::Separator();
         ImGui::MenuItem("About SI CDM", nullptr, &st.showAbout);
         ImGui::EndMenu();
     }

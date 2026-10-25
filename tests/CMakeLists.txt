@@ -31,6 +31,7 @@ add_executable(sicdm_tests
     test_sketch_edit.cpp
     test_lathe.cpp
     test_system.cpp
+    test_help.cpp
     test_plugin.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)

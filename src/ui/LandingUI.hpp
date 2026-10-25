@@ -48,6 +48,9 @@ struct UiState {
     const LatheJob* lathe = nullptr;
     int camSelected = -1, latheSelected = -1;
     bool showCamTools = false, showCamMachine = false;
+    // The user guide window and the page it shows ("cam.md", "cam.md#the-cam-panel").
+    bool showHelp = false;
+    std::string helpPage = "getting-started.md";
     std::string mateTool;
     float mateValue = 0.0f;
     std::string mateFirst;    // the first part's name ("" until picked)
@@ -198,6 +201,8 @@ private:
     void drawLatheOperations(UiCommands& cmd, UiState& st);
     void drawCamToolsWindow(UiCommands& cmd, UiState& st);
     void drawCamMachineWindow(UiCommands& cmd, UiState& st);
+    void drawHelpWindow(UiCommands& cmd, UiState& st); // HelpWindow.cpp
+    void runSample(UiCommands& cmd, const std::string& file);
     float drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom); // returns width
     void drawSimTransport(UiState& st);
     void drawCommandBar(UiCommands& cmd, UiState& st);
@@ -289,6 +294,13 @@ private:
     // Machine window: edits before Apply (CAM MACHINE).
     CamMachine m_machineEdit;
     bool m_machineEditDirty = false;
+
+    // User guide: the page shown (its file and the heading to scroll to), the pages before it
+    // (Back), and the search text.
+    std::string m_helpShown;
+    std::string m_helpAnchor;
+    std::vector<std::string> m_helpBack;
+    char m_helpSearch[64] = "";
 
     // Library page: selected item and its edited parameters.
     std::string m_libSelected = "dc_motor";

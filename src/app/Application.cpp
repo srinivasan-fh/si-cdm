@@ -1317,6 +1317,7 @@ void Application::handleViewportInput() {
     if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !ctrl) togglePage(0);
     if (ImGui::IsKeyPressed(ImGuiKey_K, false) && !ctrl) togglePage(1);
     if (ImGui::IsKeyPressed(ImGuiKey_J, false) && !ctrl) togglePage(2);
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) m_uiState.showHelp = !m_uiState.showHelp;
     if (ctrl) { // Ctrl/Cmd + key belongs to the menus, not to single-key shortcuts
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
         handleCommands(cmd);
@@ -2896,7 +2897,8 @@ void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.val
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
 
 void Application::setPanelPage(int page) {
-    if (page == 3) m_uiState.showCamTools = true;
+    if (page == 5) m_uiState.showHelp = true;
+    else if (page == 3) m_uiState.showCamTools = true;
     else if (page == 4) m_uiState.showCamMachine = true;
     else m_uiState.showModelTree = true, m_uiState.dockTab = page;
 }
