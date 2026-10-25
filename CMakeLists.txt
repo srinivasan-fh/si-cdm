@@ -144,6 +144,7 @@ if(SICDM_BUILD_APP)
         src/main.cpp
         src/app/Application.cpp
         src/app/McpHttpServer.cpp
+        src/app/OpenFiles.cpp
         src/app/SketchController.cpp
         src/app/Splash.cpp
         src/render/GL.cpp
@@ -152,7 +153,7 @@ if(SICDM_BUILD_APP)
         src/ui/FileDialog.cpp
         src/ui/CamPanel.cpp
         src/ui/HelpWindow.cpp
-    src/ui/PreferencesWindow.cpp
+        src/ui/PreferencesWindow.cpp
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
         src/ui/ToolIcons.cpp

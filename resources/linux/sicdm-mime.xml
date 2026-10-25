@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SI CDM projects, so file managers open .sicdm files in SI CDM. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-sicdm">
+    <comment>SI CDM project</comment>
+    <glob pattern="*.sicdm"/>
+    <icon name="sicdm"/>
+  </mime-type>
+</mime-info>

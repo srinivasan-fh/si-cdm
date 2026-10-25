@@ -1,4 +1,5 @@
 #include "app/Application.hpp"
+#include "app/OpenFiles.hpp"
 
 #include "core/CrashReport.hpp"
 
@@ -47,6 +48,7 @@ Application::~Application() { shutdown(); }
 
 bool Application::init() {
     glfwSetErrorCallback(glfwErrorCallback);
+    installOpenFileHandler(); // before GLFW sets up the application
     if (!glfwInit()) return false;
 
     // Launch splash while the workbench loads (not for scripted screenshots).
@@ -1458,6 +1460,11 @@ void Application::frame(float dt) {
     updateTitle();
     refreshFileTabs();
     autosave();
+    // Files the system asked us to open (a project double-clicked in the macOS Finder).
+    for (const std::string& path : takeOpenFileRequests()) {
+        runCommandLine((fileKindOf(path) == FileKind::Project ? "OPEN \"" : "IMPORT \"") + path + "\"");
+        m_framesToRender = std::max(m_framesToRender, 3);
+    }
     if (m_updateCheck.valid() && m_updateCheck.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         const UpdateResult r = m_updateCheck.get();
         // Only news is shown; a failed check at start is a quiet log line.

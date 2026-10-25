@@ -32,5 +32,48 @@
     <false/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <!-- SI CDM projects (.sicdm) open in SI CDM from the Finder. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>SI CDM Project</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>CFBundleTypeIconFile</key>
+            <string>${MACOSX_BUNDLE_ICON_FILE}</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.sicdm.project</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.sicdm.project</string>
+            <key>UTTypeDescription</key>
+            <string>SI CDM Project</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.content</string>
+            </array>
+            <key>UTTypeIconFile</key>
+            <string>${MACOSX_BUNDLE_ICON_FILE}</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>sicdm</string>
+                </array>
+                <key>public.mime-type</key>
+                <string>application/x-sicdm</string>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>

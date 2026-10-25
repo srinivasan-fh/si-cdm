@@ -38,6 +38,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
     install(FILES resources/linux/sicdm.desktop DESTINATION "${CMAKE_INSTALL_DATADIR}/applications" COMPONENT app)
+    install(FILES resources/linux/sicdm-mime.xml DESTINATION "${CMAKE_INSTALL_DATADIR}/mime/packages" RENAME sicdm.xml COMPONENT app)
     foreach(size 32 64 256)
         install(FILES resources/icon/sicdm_${size}.png DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps"
                 RENAME sicdm.png COMPONENT app)
@@ -68,6 +69,21 @@ if(WIN32)
     set(CPACK_NSIS_MODIFY_PATH OFF)
     set(CPACK_NSIS_CREATE_ICONS_EXTRA "CreateShortCut '$DESKTOP\\\\SI CDM.lnk' '$INSTDIR\\\\bin\\\\sicdm.exe'")
     set(CPACK_NSIS_DELETE_ICONS_EXTRA "Delete '$DESKTOP\\\\SI CDM.lnk'")
+    # .sicdm projects open in SI CDM (double-click, Open With). The uninstaller takes the
+    # association away only while it is still ours.
+    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
+        WriteRegStr SHCTX 'Software\\Classes\\.sicdm' '' 'SICDM.Project'
+        WriteRegStr SHCTX 'Software\\Classes\\.sicdm' 'Content Type' 'application/x-sicdm'
+        WriteRegStr SHCTX 'Software\\Classes\\SICDM.Project' '' 'SI CDM Project'
+        WriteRegStr SHCTX 'Software\\Classes\\SICDM.Project\\DefaultIcon' '' '$INSTDIR\\bin\\sicdm.exe,0'
+        WriteRegStr SHCTX 'Software\\Classes\\SICDM.Project\\shell\\open\\command' '' '\"$INSTDIR\\bin\\sicdm.exe\" \"%1\"'
+        System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'")
+    set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "
+        ReadRegStr $0 SHCTX 'Software\\Classes\\.sicdm' ''
+        StrCmp $0 'SICDM.Project' 0 +2
+        DeleteRegKey SHCTX 'Software\\Classes\\.sicdm'
+        DeleteRegKey SHCTX 'Software\\Classes\\SICDM.Project'
+        System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'")
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop")
     set(CPACK_PACKAGE_FILE_NAME "SICDM-${PROJECT_VERSION}-macos")

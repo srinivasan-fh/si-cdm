@@ -69,6 +69,12 @@ scripts/release.sh version 0.2.0     # set the version, then commit CMakeLists.t
 scripts/release.sh tag               # tags v0.2.0 and pushes it
 ```
 
+**Opening projects from the desktop:** every package registers `.sicdm` projects with SI CDM,
+so double-clicking one opens it. The Windows setup writes the association to the registry (the
+uninstaller removes it while it is still SI CDM's), the macOS app declares the document type in
+its `Info.plist`, and the Linux packages install the `application/x-sicdm` MIME type beside the
+desktop entry.
+
 CI runs the same script on macOS, Linux and Windows for every push and keeps the packages as
 workflow artifacts; for a `v*` tag it also publishes them, with their checksums, as a GitHub release.
 Each package carries the documentation and the third-party licences (`resources/THIRD-PARTY-NOTICES.txt`).
@@ -622,6 +628,10 @@ tessellated watertight for display and written back unchanged. IGES trimmed surf
 solids. Primitives, extrusions and revolves export exactly too. Details: [docs/step.md](docs/step.md).
 
 Unsaved changes are tracked (`*` in the tab and title); closing a tab or quitting asks before discarding them.
+
+**Recent files and preferences:** *File → Open Recent* reopens the last ten projects, and
+*File → Preferences* (Ctrl/⌘ ,) sets the units for new projects, the autosave interval, the CAM
+set-up defaults and the update check. See [docs/preferences.md](docs/preferences.md).
 
 **Safe saving and recovery:**
 
