@@ -605,86 +605,110 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::EndMenu();
         }
         ImGui::Separator();
+        // Milling. Material and post name the part set up (else the selection), and sizes
+        // carry mm (a plain number is read in the document's units).
         ImGui::TextDisabled("CNC milling (CAM)");
-        if (ImGui::MenuItem("Setup: Part and Stock", nullptr, false, st.selectedBody >= 0)) cmd.commands.push_back("CAM SETUP");
-        if (ImGui::BeginMenu("Material")) {
+        const CamJob* job = st.cam;
+        const bool camSet = job && job->setup.hasStock;
+        const std::string camSetup = camSet ? "CAM SETUP \"" + job->setup.body + "\"" : std::string("CAM SETUP");
+        if (ImGui::MenuItem("Set Up the Selected Part", nullptr, false, st.selectedBody >= 0)) cmd.commands.push_back("CAM SETUP");
+        if (ImGui::BeginMenu("Material", camSet || st.selectedBody >= 0)) {
             for (const CamMaterial& m : camMaterials())
-                if (ImGui::MenuItem(m.name.c_str())) cmd.commands.push_back("CAM SETUP MATERIAL " + m.key);
+                if (ImGui::MenuItem(m.name.c_str(), nullptr, job && job->setup.material == m.key)) cmd.commands.push_back(camSetup + " MATERIAL " + m.key);
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Add a Starter Tool Library")) {
-            for (const char* t : {"CAM TOOL 1 FLAT 6", "CAM TOOL 2 FLAT 3", "CAM TOOL 3 BALL 6", "CAM TOOL 4 BALL 3", "CAM TOOL 5 BULL 10 CORNER 1",
-                                  "CAM TOOL 6 FACE 50", "CAM TOOL 7 SPOT 10", "CAM TOOL 8 DRILL 5", "CAM TOOL 9 DRILL 6", "CAM TOOL 10 TAP 6"})
-                cmd.commands.push_back(t);
-            cmd.commands.push_back("CAM TOOLS");
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Face")) cmd.commands.push_back("CAM FACE");
-        if (ImGui::MenuItem("3D Rough (offset clearing)")) cmd.commands.push_back("CAM ROUGH LEAVE 0.3");
-        if (ImGui::MenuItem("Pocket")) cmd.commands.push_back("CAM POCKET");
-        if (ImGui::MenuItem("Adaptive Rough (trochoidal, deep cuts)")) cmd.commands.push_back("CAM ROUGH ADAPTIVE LEAVE 0.3");
-        if (ImGui::MenuItem("Adaptive Pocket")) cmd.commands.push_back("CAM POCKET ADAPTIVE");
-        if (ImGui::MenuItem("Rest Rough (what the tools before left)")) cmd.commands.push_back("CAM ROUGH REST LEAVE 0.3");
-        ImGui::Separator();
-        ImGui::TextDisabled("Multi-axis");
-        if (ImGui::MenuItem("Rotary Wrap Finish (4-axis, helical)")) cmd.commands.push_back("CAM ROTARY");
-        if (ImGui::MenuItem("Rotary Rough (4-axis, 3 mm levels)")) cmd.commands.push_back("CAM ROTARY STEPDOWN 3 LEAVE 0.3");
-        if (ImGui::MenuItem("Pocket the Front Face (3+2, A -90)")) cmd.commands.push_back("CAM POCKET INDEX -90 0");
-        if (ImGui::MenuItem("Drill the Right Face (3+2, A -90 C -90)")) cmd.commands.push_back("CAM DRILL INDEX -90 -90");
-        if (ImGui::MenuItem("5-axis Surface Finish (ball, leaning 10 deg)")) cmd.commands.push_back("CAM 5AXIS");
-        ImGui::TextDisabled("Any operation: INDEX a c turns the table first");
-        if (ImGui::MenuItem("2D Contour (with tabs)")) cmd.commands.push_back("CAM CONTOUR TABS 4");
-        if (ImGui::MenuItem("Parallel Finish")) cmd.commands.push_back("CAM PARALLEL SHALLOW");
-        if (ImGui::MenuItem("Waterline Finish")) cmd.commands.push_back("CAM WATERLINE STEEP");
-        if (ImGui::MenuItem("Spot Drill Holes")) cmd.commands.push_back("CAM SPOT");
-        if (ImGui::MenuItem("Drill Holes (peck)")) cmd.commands.push_back("CAM DRILL CYCLE PECK");
-        if (ImGui::MenuItem("Helical Bore Big Holes")) cmd.commands.push_back("CAM BORE");
-        ImGui::Separator();
-        if (ImGui::MenuItem("List the Job")) cmd.commands.push_back("CAM LIST");
-        if (ImGui::MenuItem("Simulate (show cut stock)")) cmd.commands.push_back("CAM SIMULATE SHOW");
-        if (ImGui::BeginMenu("Post Processor")) {
-            for (const std::string& p : camPosts())
-                if (ImGui::MenuItem(p.c_str())) cmd.commands.push_back("CAM SETUP POST " + p);
+        if (ImGui::MenuItem("Tools...")) st.showCamTools = true;
+        if (ImGui::BeginMenu("Tool Files")) {
+            if (ImGui::MenuItem("Add a Starter Set (10 tools)")) {
+                for (const char* t : {"CAM TOOL 1 FLAT 6mm", "CAM TOOL 2 FLAT 3mm", "CAM TOOL 3 BALL 6mm", "CAM TOOL 4 BALL 3mm", "CAM TOOL 5 BULL 10mm CORNER 1mm",
+                                      "CAM TOOL 6 FACE 50mm", "CAM TOOL 7 SPOT 10mm", "CAM TOOL 8 DRILL 5mm", "CAM TOOL 9 DRILL 6mm", "CAM TOOL 10 TAP 6mm"})
+                    cmd.commands.push_back(t);
+                cmd.commands.push_back("CAM TOOLS");
+            }
+            if (ImGui::MenuItem("Load Tools from File...")) requestFile(FileToolsImport, st);
+            if (ImGui::MenuItem("Save the Job's Tools to File...", nullptr, false, job && !job->tools.empty())) requestFile(FileToolsExport, st);
+            if (ImGui::MenuItem("Store the Job's Tools in My Library", nullptr, false, job && !job->tools.empty())) cmd.commands.push_back("CAM LIBRARY STORE ALL");
+            if (ImGui::MenuItem("List My Library")) cmd.commands.push_back("CAM LIBRARY LIST");
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Machine")) {
+        if (ImGui::MenuItem("Machine...")) st.showCamMachine = true;
+        if (ImGui::BeginMenu("Machine Preset")) {
             for (const CamMachine& m : camMachinePresets())
-                if (ImGui::MenuItem(m.name.c_str())) cmd.commands.push_back("CAM MACHINE PRESET " + m.name);
-            ImGui::Separator();
-            if (ImGui::MenuItem("Show the Machine")) cmd.commands.push_back("CAM MACHINE");
-            ImGui::TextDisabled("CAM MACHINE TRAVEL x y z ZERO x,y,z A min max ...");
+                if (ImGui::MenuItem(m.name.c_str(), nullptr, job && job->setup.machine.name == m.name)) cmd.commands.push_back("CAM MACHINE PRESET " + m.name);
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Check the Program (read-back)")) cmd.commands.push_back("CAM CHECK");
-        if (ImGui::MenuItem("Post Process (G-code)...")) requestFile(FilePost, st);
-        if (ImGui::MenuItem("Show Toolpaths")) cmd.commands.push_back("CAM SHOW");
-        if (ImGui::MenuItem("Hide Toolpaths")) cmd.commands.push_back("CAM HIDE");
+        if (ImGui::BeginMenu("Post Processor", camSet || st.selectedBody >= 0)) {
+            for (const std::string& p : camPosts())
+                if (ImGui::MenuItem(p.c_str(), nullptr, job && job->setup.post == p)) cmd.commands.push_back(camSetup + " POST " + p);
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Add Operation", camSet)) {
+            ImGui::TextDisabled("Roughing");
+            if (ImGui::MenuItem("Face")) cmd.commands.push_back("CAM FACE");
+            if (ImGui::MenuItem("3D Rough (offset clearing)")) cmd.commands.push_back("CAM ROUGH LEAVE 0.3mm");
+            if (ImGui::MenuItem("Adaptive Rough (trochoidal, deep cuts)")) cmd.commands.push_back("CAM ROUGH ADAPTIVE LEAVE 0.3mm");
+            if (ImGui::MenuItem("Rest Rough (what the tools before left)")) cmd.commands.push_back("CAM ROUGH REST LEAVE 0.3mm");
+            if (ImGui::MenuItem("Pocket")) cmd.commands.push_back("CAM POCKET");
+            if (ImGui::MenuItem("Adaptive Pocket")) cmd.commands.push_back("CAM POCKET ADAPTIVE");
+            ImGui::Separator();
+            ImGui::TextDisabled("Finishing");
+            if (ImGui::MenuItem("2D Contour (with tabs)")) cmd.commands.push_back("CAM CONTOUR TABS 4");
+            if (ImGui::MenuItem("Parallel Finish (shallow areas)")) cmd.commands.push_back("CAM PARALLEL SHALLOW");
+            if (ImGui::MenuItem("Waterline Finish (steep walls)")) cmd.commands.push_back("CAM WATERLINE STEEP");
+            ImGui::Separator();
+            ImGui::TextDisabled("Holes");
+            if (ImGui::MenuItem("Spot Drill Holes")) cmd.commands.push_back("CAM SPOT");
+            if (ImGui::MenuItem("Drill Holes (peck)")) cmd.commands.push_back("CAM DRILL CYCLE PECK");
+            if (ImGui::MenuItem("Tap Holes")) cmd.commands.push_back("CAM TAP");
+            if (ImGui::MenuItem("Helical Bore Big Holes")) cmd.commands.push_back("CAM BORE");
+            ImGui::Separator();
+            ImGui::TextDisabled("Multi-axis");
+            if (ImGui::MenuItem("Pocket the Front Face (3+2, A -90)")) cmd.commands.push_back("CAM POCKET INDEX -90 0");
+            if (ImGui::MenuItem("Drill the Right Face (3+2, A -90 C -90)")) cmd.commands.push_back("CAM DRILL INDEX -90 -90");
+            if (ImGui::MenuItem("Rotary Wrap Finish (4-axis, helical)")) cmd.commands.push_back("CAM ROTARY");
+            if (ImGui::MenuItem("Rotary Rough (4-axis, 3 mm levels)")) cmd.commands.push_back("CAM ROTARY STEPDOWN 3mm LEAVE 0.3mm");
+            if (ImGui::MenuItem("5-axis Surface Finish (ball, leaning 10 deg)")) cmd.commands.push_back("CAM 5AXIS");
+            if (ImGui::MenuItem("Swarf: Leaning Walls with the Side (5-axis)")) cmd.commands.push_back("CAM SWARF");
+            ImGui::TextDisabled("Change any of them on the CAM panel");
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Generate the Toolpaths", nullptr, false, camSet)) cmd.commands.push_back("CAM GENERATE");
+        if (ImGui::MenuItem("Simulate (show cut stock)", nullptr, false, camSet)) cmd.commands.push_back("CAM SIMULATE SHOW");
+        if (ImGui::MenuItem("Check the Program (read-back)", nullptr, false, camSet)) cmd.commands.push_back("CAM CHECK");
+        if (ImGui::MenuItem("Post Process (G-code)...", nullptr, false, camSet)) requestFile(FilePost, st);
+        if (ImGui::MenuItem("Show Toolpaths", nullptr, job && job->showPaths)) cmd.commands.push_back(job && job->showPaths ? "CAM HIDE" : "CAM SHOW");
         ImGui::Separator();
         if (ImGui::BeginMenu("Turning (Lathe)")) {
-            if (ImGui::MenuItem("Set Up the Selected Part")) cmd.commands.push_back("LATHE SETUP");
+            const LatheJob* lathe = st.lathe;
+            const bool latheSet = lathe && !lathe->setup.body.empty();
+            if (ImGui::MenuItem("Set Up the Selected Part", nullptr, false, st.selectedBody >= 0)) cmd.commands.push_back("LATHE SETUP");
             if (ImGui::MenuItem("Add Starter Lathe Tools")) {
-                for (const char* t : {"LATHE TOOL 1 TURN NOSE 0.8 INSERT C", "LATHE TOOL 2 TURN NOSE 0.4 INSERT D", "LATHE TOOL 3 GROOVE 3",
-                                      "LATHE TOOL 4 DRILL 8", "LATHE TOOL 5 BORE 6 NOSE 0.2", "LATHE TOOL 6 THREAD"})
+                for (const char* t : {"LATHE TOOL 1 TURN NOSE 0.8mm INSERT C", "LATHE TOOL 2 TURN NOSE 0.4mm INSERT D", "LATHE TOOL 3 GROOVE 3mm",
+                                      "LATHE TOOL 4 DRILL 8mm", "LATHE TOOL 5 BORE 6mm NOSE 0.2mm", "LATHE TOOL 6 THREAD"})
                     cmd.commands.push_back(t);
                 cmd.commands.push_back("LATHE TOOLS");
             }
-            if (ImGui::MenuItem("Show the Part's Profile")) cmd.commands.push_back("LATHE PROFILE");
+            if (ImGui::MenuItem("Show the Part's Profile", nullptr, false, latheSet)) cmd.commands.push_back("LATHE PROFILE");
             ImGui::Separator();
+            ImGui::BeginDisabled(!latheSet);
             if (ImGui::MenuItem("Face")) cmd.commands.push_back("LATHE FACE");
-            if (ImGui::MenuItem("Rough Turn (leave 0.2)")) cmd.commands.push_back("LATHE ROUGH LEAVE 0.2");
+            if (ImGui::MenuItem("Rough Turn (leave 0.2 mm)")) cmd.commands.push_back("LATHE ROUGH LEAVE 0.2mm");
             if (ImGui::MenuItem("Finish Turn")) cmd.commands.push_back("LATHE FINISH");
             if (ImGui::MenuItem("Groove the Recesses")) cmd.commands.push_back("LATHE GROOVE");
+            if (ImGui::MenuItem("Thread (pitch 1.5 mm)")) cmd.commands.push_back("LATHE THREAD PITCH 1.5mm");
             if (ImGui::MenuItem("Drill the Bore")) cmd.commands.push_back("LATHE DRILL");
-            if (ImGui::MenuItem("Rough Bore (leave 0.1)")) cmd.commands.push_back("LATHE BORE LEAVE 0.1");
+            if (ImGui::MenuItem("Rough Bore (leave 0.1 mm)")) cmd.commands.push_back("LATHE BORE LEAVE 0.1mm");
             if (ImGui::MenuItem("Finish Bore")) cmd.commands.push_back("LATHE FINISH INSIDE");
             if (ImGui::MenuItem("Groove the Bore")) cmd.commands.push_back("LATHE GROOVE INSIDE");
+            if (ImGui::MenuItem("Thread the Bore (pitch 1.5 mm)")) cmd.commands.push_back("LATHE THREAD PITCH 1.5mm INSIDE");
             if (ImGui::MenuItem("Part Off")) cmd.commands.push_back("LATHE PARTOFF");
-            ImGui::TextDisabled("LATHE THREAD PITCH p FROM z TO z [INSIDE]");
             ImGui::Separator();
-            if (ImGui::MenuItem("List the Lathe Job")) cmd.commands.push_back("LATHE LIST");
+            if (ImGui::MenuItem("Generate the Lathe Paths")) cmd.commands.push_back("LATHE GENERATE");
             if (ImGui::MenuItem("Simulate (show turned stock)")) cmd.commands.push_back("LATHE SIMULATE SHOW");
-            if (ImGui::MenuItem("Show / Hide Lathe Paths")) cmd.commands.push_back("LATHE PATHS");
-            ImGui::TextDisabled("LATHE POST file.nc [FANUC|HAAS|LINUXCNC]");
+            ImGui::MenuItem("Canned Cycles in the Post (G71 / G72)", nullptr, &m_latheCycles);
+            if (ImGui::MenuItem("Post Lathe G-code...")) requestFile(FileLathePost, st);
+            if (ImGui::MenuItem("Show Lathe Paths", nullptr, lathe && lathe->showPaths)) cmd.commands.push_back("LATHE PATHS");
+            ImGui::EndDisabled();
             ImGui::EndMenu();
         }
         ImGui::EndMenu();

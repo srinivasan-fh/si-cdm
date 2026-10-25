@@ -156,8 +156,8 @@ void LandingUI::drawCamPanel(UiCommands& cmd, const Scene& scene, UiState& st) {
             ImGui::EndCombo();
         }
         if (lj.tools.empty() && ImGui::Button("Add Starter Lathe Tools", {-1, 0})) {
-            for (const char* t : {"LATHE TOOL 1 TURN NOSE 0.8 INSERT C", "LATHE TOOL 2 TURN NOSE 0.4 INSERT D", "LATHE TOOL 3 GROOVE 3",
-                                  "LATHE TOOL 4 DRILL 8", "LATHE TOOL 5 BORE 6 NOSE 0.2", "LATHE TOOL 6 THREAD"})
+            for (const char* t : {"LATHE TOOL 1 TURN NOSE 0.8mm INSERT C", "LATHE TOOL 2 TURN NOSE 0.4mm INSERT D", "LATHE TOOL 3 GROOVE 3mm",
+                                  "LATHE TOOL 4 DRILL 8mm", "LATHE TOOL 5 BORE 6mm NOSE 0.2mm", "LATHE TOOL 6 THREAD"})
                 cmd.commands.push_back(t);
             cmd.commands.push_back("LATHE TOOLS");
         }
@@ -185,9 +185,9 @@ void LandingUI::drawCamOperations(UiCommands& cmd, UiState& st) {
             const char* command;
         };
         static const Add kAdds[] = {{"Face", "CAM FACE"},
-                                    {"3D Rough (leave 0.3 mm)", "CAM ROUGH LEAVE 0.3"},
-                                    {"Adaptive Rough (trochoidal)", "CAM ROUGH ADAPTIVE LEAVE 0.3"},
-                                    {"Rest Rough (what the tools before left)", "CAM ROUGH REST LEAVE 0.3"},
+                                    {"3D Rough (leave 0.3 mm)", "CAM ROUGH LEAVE 0.3mm"},
+                                    {"Adaptive Rough (trochoidal)", "CAM ROUGH ADAPTIVE LEAVE 0.3mm"},
+                                    {"Rest Rough (what the tools before left)", "CAM ROUGH REST LEAVE 0.3mm"},
                                     {"Pocket", "CAM POCKET"},
                                     {"2D Contour (with tabs)", "CAM CONTOUR TABS 4"},
                                     {"Parallel Finish", "CAM PARALLEL"},
@@ -390,16 +390,16 @@ void LandingUI::drawLatheOperations(UiCommands& cmd, UiState& st) {
             const char* command;
         };
         static const Add kAdds[] = {{"Face", "LATHE FACE"},
-                                    {"Rough Turn (leave 0.2 mm)", "LATHE ROUGH LEAVE 0.2"},
+                                    {"Rough Turn (leave 0.2 mm)", "LATHE ROUGH LEAVE 0.2mm"},
                                     {"Finish Turn", "LATHE FINISH"},
                                     {"Groove the Recesses", "LATHE GROOVE"},
-                                    {"Thread (M, pitch 1.5)", "LATHE THREAD PITCH 1.5"},
+                                    {"Thread (M, pitch 1.5)", "LATHE THREAD PITCH 1.5mm"},
                                     {nullptr, nullptr},
                                     {"Drill the Bore", "LATHE DRILL"},
-                                    {"Rough Bore (leave 0.1 mm)", "LATHE BORE LEAVE 0.1"},
+                                    {"Rough Bore (leave 0.1 mm)", "LATHE BORE LEAVE 0.1mm"},
                                     {"Finish the Bore", "LATHE FINISH INSIDE"},
                                     {"Groove the Bore", "LATHE GROOVE INSIDE"},
-                                    {"Thread the Bore (pitch 1.5)", "LATHE THREAD PITCH 1.5 INSIDE"},
+                                    {"Thread the Bore (pitch 1.5)", "LATHE THREAD PITCH 1.5mm INSIDE"},
                                     {nullptr, nullptr},
                                     {"Part Off", "LATHE PARTOFF"}};
         for (const Add& a : kAdds) {
