@@ -446,7 +446,8 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("operation", prop("string", "setup | tool | library | face | rough | pocket | contour | parallel | waterline | drill | bore | rotary | "
-                                          "5axis | swarf | machine | holes | list | generate | simulate | post | delete | clear"));
+                                          "5axis | swarf | machine | holes | list | generate | simulate | post | edit | move | suppress | unsuppress | "
+                                          "duplicate | delete | clear"));
         p.set("library", prop("string", "library: list | import | export | store | use | delete | load | save - the user's tool library: import a "
                                         "vendor catalogue (.csv) or Fusion 360 library (.json) into it, use a library tool in the job, store job "
                                         "tools in it, or load / save the job's tools straight from / to a file"));
@@ -495,7 +496,9 @@ Json McpServer::toolDefinitions() {
         p.set("points", prop("array", "drill / bore: hole centres [[x, y], ...] (default: the part's holes that fit the tool)"));
         p.set("path", prop("string", "post: the G-code file; library import / export / load / save: the tool file"));
         p.set("show", prop("boolean", "simulate: add the cut stock as a body"));
-        p.set("index", prop("number", "delete: the operation's number (1-based)"));
+        p.set("index", prop("number", "edit / move / suppress / unsuppress / duplicate / delete: the operation's number (1-based)"));
+        p.set("direction", prop("string", "move: up | down (or 'to': the place to move it to)"));
+        p.set("to", prop("number", "move: the place to move it to (1-based)"));
         p.set("name", prop("string", "tool / operations: a name"));
         tools.push(tool("cam",
                         "CNC milling CAM: set up the part and stock, build a tool library with feeds and speeds, add operations "
@@ -508,7 +511,7 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("operation", prop("string", "setup | tool | tools | profile | face | rough | finish | bore | groove | drill | thread | partoff | list | "
-                                          "generate | simulate | post | delete | clear"));
+                                          "generate | simulate | post | edit | move | suppress | unsuppress | duplicate | delete | clear"));
         p.set("body", prop("string", "setup: the part (default: the selection)"));
         p.set("axis", prop("string", "setup: the model's axis the part turns about, x, y or z (default: its longest side)"));
         p.set("flip", prop("boolean", "setup: face the part's -axis end instead of its +axis end"));
@@ -529,7 +532,7 @@ Json McpServer::toolDefinitions() {
         p.set("leave", prop("number", "rough / finish: stock to leave radially, mm"));
         p.set("leave_z", prop("number", "rough / finish: stock to leave on faces, mm"));
         p.set("from", prop("number", "operations: start Z (0 is the part's front face, negative towards the chuck)"));
-        p.set("to", prop("number", "operations: end Z"));
+        p.set("to", prop("number", "operations: end Z; move: the place to move it to"));
         p.set("depth", prop("number", "drill: depth from the front face, mm (default: the part's bore)"));
         p.set("peck", prop("number", "drill / partoff: peck depth, mm"));
         p.set("pitch", prop("number", "thread: the pitch, mm"));
@@ -540,7 +543,8 @@ Json McpServer::toolDefinitions() {
         p.set("path", prop("string", "post: the G-code file"));
         p.set("show", prop("boolean", "simulate: add the turned stock as a body"));
         p.set("cycles", prop("boolean", "post: rough turning and boring as G71, facing as G72 (Fanuc, Haas), where the outline allows"));
-        p.set("index", prop("number", "delete: the operation's number (1-based)"));
+        p.set("index", prop("number", "edit / move / suppress / unsuppress / duplicate / delete: the operation's number (1-based)"));
+        p.set("direction", prop("string", "move: up | down (or 'to': the place to move it to)"));
         p.set("name", prop("string", "tool / operations: a name"));
         tools.push(tool("lathe",
                         "CNC turning: set up a part to turn about an axis from bar stock, add turning inserts, boring bars, grooving / "
@@ -1334,16 +1338,24 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine("LATHE POST " + quote(a["path"].asString()) + (a["post"].isString() ? " " + a["post"].asString() : std::string()) +
                            (a["cycles"].asBool() ? " CYCLES" : ""));
         }
-        if (op == "delete") {
-            if (!a["index"].isNumber()) return textResult("delete needs 'index'", true);
-            return runLine("LATHE DELETE " + num(a["index"].asNumber()));
+        if (op == "delete" || op == "suppress" || op == "unsuppress" || op == "duplicate" || op == "move") {
+            if (!a["index"].isNumber()) return textResult(op + " needs 'index'", true);
+            std::string line = "LATHE " + toUpper(op) + " " + num(a["index"].asNumber());
+            if (op == "move") {
+                if (a["to"].isNumber() && !a["direction"].isString()) line += " TO " + num(a["to"].asNumber());
+                else line += " " + toUpper(a["direction"].asString("up"));
+            }
+            return runLine(line);
         }
+        // edit: the options given change in operation `index` (the rest stay).
+        const bool editing = op == "edit";
+        if (editing && !a["index"].isNumber()) return textResult("edit needs 'index'", true);
         static const char* const kOps[] = {"face", "rough", "finish", "bore", "groove", "drill", "thread", "partoff"};
-        if (std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
+        if (!editing && std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
             return textResult("operation is one of setup, tool, tools, profile, face, rough, finish, bore, groove, drill, thread, partoff, list, generate, "
-                              "simulate, post, delete, clear",
+                              "simulate, post, edit, move, suppress, unsuppress, duplicate, delete, clear",
                               true);
-        std::string line = "LATHE " + toUpper(op) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("leave", "LEAVE") + opt("leave_z", "LEAVEZ") +
+        std::string line = (editing ? "LATHE EDIT " + num(a["index"].asNumber()) : "LATHE " + toUpper(op)) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("leave", "LEAVE") + opt("leave_z", "LEAVEZ") +
                            opt("from", "FROM") + opt("to", "TO") + opt("depth", "DEPTH") + opt("peck", "PECK") + opt("pitch", "PITCH") +
                            opt("diameter", "DIAMETER") + opt("speed", "SPEED") + opt("feed", "FEED") + opt("rpm", "RPM") + text("name", "NAME");
         if (a["inside"].asBool()) line += " INSIDE";
@@ -1393,16 +1405,24 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!a["path"].isString()) return textResult("post needs 'path'", true);
             return runLine("CAM POST " + quote(a["path"].asString()) + (a["post"].isString() ? " " + a["post"].asString() : std::string()));
         }
-        if (op == "delete") {
-            if (!a["index"].isNumber()) return textResult("delete needs 'index'", true);
-            return runLine("CAM DELETE " + num(a["index"].asNumber()));
+        if (op == "delete" || op == "suppress" || op == "unsuppress" || op == "duplicate" || op == "move") {
+            if (!a["index"].isNumber()) return textResult(op + " needs 'index'", true);
+            std::string line = "CAM " + toUpper(op) + " " + num(a["index"].asNumber());
+            if (op == "move") {
+                if (a["to"].isNumber() && !a["direction"].isString()) line += " TO " + num(a["to"].asNumber());
+                else line += " " + toUpper(a["direction"].asString("up"));
+            }
+            return runLine(line);
         }
+        // edit: the options given change in operation `index` (the rest stay).
+        const bool editing = op == "edit";
+        if (editing && !a["index"].isNumber()) return textResult("edit needs 'index'", true);
         static const char* const kOps[] = {"face", "rough", "pocket", "contour", "parallel", "waterline", "drill", "bore", "rotary", "5axis", "swarf"};
-        if (std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
+        if (!editing && std::find(std::begin(kOps), std::end(kOps), op) == std::end(kOps))
             return textResult("operation is one of setup, tool, face, rough, pocket, contour, parallel, waterline, drill, bore, rotary, 5axis, swarf, machine, holes, "
-                              "list, generate, simulate, post, delete, clear",
+                              "list, generate, simulate, post, edit, move, suppress, unsuppress, duplicate, delete, clear",
                               true);
-        std::string line = "CAM " + toUpper(op) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("stepover", "STEPOVER") +
+        std::string line = (editing ? "CAM EDIT " + num(a["index"].asNumber()) : "CAM " + toUpper(op)) + opt("tool", "TOOL") + opt("stepdown", "STEPDOWN") + opt("stepover", "STEPOVER") +
                            opt("leave", "LEAVE") + opt("top", "TOP") + opt("bottom", "BOTTOM") + opt("depth", "DEPTH") + opt("tabs", "TABS") +
                            opt("scallop", "SCALLOP") + opt("peck", "PECK") + opt("diameter", "DIAMETER") + opt("max_tilt", "MAXTILT") +
                            opt("lead_angle", "LEADANGLE") + opt("side_tilt", "SIDETILT") + text("name", "NAME");

@@ -200,6 +200,7 @@ struct CamOperation {
     // Output.
     std::vector<CamMove> moves;
     bool generated = false;
+    bool suppressed = false;       // kept in the job but not generated, simulated or posted
     std::string summary;           // "412 moves, 3.2 m, 1 min 40 s"
     double rpm = 0, feed = 0, plunge = 0;          // what the moves use (set when generated)
     double setRpm = 0, setFeed = 0, setPlunge = 0; // the user's values (0: from the tool and material)
@@ -227,7 +228,10 @@ struct CamJob {
     bool empty() const noexcept { return setup.body.empty() && tools.empty() && ops.empty(); }
     const CamTool* tool(int number) const;
     Vec3 origin() const; // the work zero in model coordinates (the rotary centre for multi-axis jobs)
-    bool multiAxis() const;     // any operation turns the part
+    bool multiAxis() const;     // any operation turns the part (suppressed ones don't count)
+    bool anySuppressed() const;
+    // The job without its suppressed operations; `index` gets each kept one's place in this.
+    CamJob active(std::vector<std::size_t>* index = nullptr) const;
     Vec3 rotaryCentre() const;  // the stock's centre: A and C turn about it
     double swingRadius() const; // the stock's farthest corner from the A axis
     double clearZ() const;      // the clearance height in the machine frame, whatever the table's turn

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <fstream>
 
@@ -88,6 +89,7 @@ std::string opText(const LatheJob& job, std::size_t i) {
     std::string s = std::to_string(i + 1) + ". " + (op.name.empty() ? opLabel(op) : op.name) + " with " + (t ? t->describe() : "T" + std::to_string(op.tool) + " (missing)");
     if (op.kind == LatheOpKind::Thread && op.pitch > 0) s += ", pitch " + num(op.pitch) + " mm";
     if (op.leave > 0 || op.leaveZ > 0) s += ", leaving " + lengthText(op.leave) + (op.leaveZ > 0 ? " / " + lengthText(op.leaveZ) + " on faces" : "");
+    if (op.suppressed) return s + " (suppressed)";
     if (!op.generated) return s;
     double cut = 0, x = 0, z = 0;
     bool first = true;
@@ -376,6 +378,7 @@ CommandOutput runLatheCommand(Document& doc, const std::vector<std::string>& a, 
         std::string err;
         for (std::size_t i = 0; i < job.ops.size(); ++i) {
             job.ops[i].generated = false;
+            if (job.ops[i].suppressed) continue;
             if (!generateLatheOperation(job, *p, job.ops[i], &err)) return out.fail(std::to_string(i + 1) + ". " + opLabel(job.ops[i]) + ": " + err);
         }
         if (sub == "generate") {
@@ -437,9 +440,67 @@ CommandOutput runLatheCommand(Document& doc, const std::vector<std::string>& a, 
         return out;
     }
 
-    // Operations.
+    // An operation's number (1-based) from a[1], or -1 after failing.
+    auto opIndex = [&](const char* usage) -> int {
+        const auto n = a.size() > 1 ? parseNumber(a[1]) : std::nullopt;
+        if (!n || *n < 1 || *n > static_cast<double>(job.ops.size()) || *n != std::floor(*n)) {
+            out.fail(std::string(usage) + ": an operation's number (LATHE LIST)");
+            return -1;
+        }
+        return static_cast<int>(*n) - 1;
+    };
+    // Drilling before boring and grooving: what comes after works from what the ones before left.
+    auto stale = [&]() {
+        for (LatheOperation& o : job.ops) o.generated = false;
+    };
+    if (sub == "move") {
+        const int k = opIndex("LATHE MOVE n UP|DOWN|TO m");
+        if (k < 0) return out;
+        const std::string how = a.size() > 2 ? lower(a[2]) : std::string();
+        int to = how == "up" ? k - 1 : how == "down" ? k + 1 : -1;
+        if (how == "to") {
+            const auto m = a.size() > 3 ? parseNumber(a[3]) : std::nullopt;
+            if (!m) return out.fail("LATHE MOVE n TO m: the place to move it to");
+            to = static_cast<int>(*m) - 1;
+        } else if (how != "up" && how != "down") return out.fail("LATHE MOVE n UP|DOWN|TO m");
+        if (to < 0 || to >= static_cast<int>(job.ops.size())) return out.fail("It can't move further that way");
+        LatheOperation moved = std::move(job.ops[static_cast<std::size_t>(k)]);
+        job.ops.erase(job.ops.begin() + k);
+        job.ops.insert(job.ops.begin() + to, std::move(moved));
+        stale();
+        changed();
+        out.say("Moved to " + opText(job, static_cast<std::size_t>(to)));
+        return out;
+    }
+    if (sub == "suppress" || sub == "unsuppress") {
+        const int k = opIndex(sub == "suppress" ? "LATHE SUPPRESS n" : "LATHE UNSUPPRESS n");
+        if (k < 0) return out;
+        job.ops[static_cast<std::size_t>(k)].suppressed = sub == "suppress";
+        stale();
+        changed();
+        out.say(std::string(sub == "suppress" ? "Suppressed " : "Unsuppressed ") + opText(job, static_cast<std::size_t>(k)));
+        return out;
+    }
+    if (sub == "duplicate" || sub == "copy") {
+        const int k = opIndex("LATHE DUPLICATE n");
+        if (k < 0) return out;
+        LatheOperation c = job.ops[static_cast<std::size_t>(k)];
+        if (!c.name.empty()) c.name += " (copy)";
+        job.ops.insert(job.ops.begin() + k + 1, std::move(c));
+        stale();
+        changed();
+        out.say("Added " + opText(job, static_cast<std::size_t>(k) + 1));
+        return out;
+    }
+
+    // Operations: a new one, or LATHE EDIT n with options to change in an existing one.
+    int editing = -1;
     LatheOperation op;
-    if (sub == "face") op.kind = LatheOpKind::Face;
+    if (sub == "edit" || sub == "set") {
+        editing = opIndex("LATHE EDIT n options");
+        if (editing < 0) return out;
+        op = job.ops[static_cast<std::size_t>(editing)];
+    } else if (sub == "face") op.kind = LatheOpKind::Face;
     else if (sub == "rough" || sub == "turn") op.kind = LatheOpKind::Rough;
     else if (sub == "finish") op.kind = LatheOpKind::Finish;
     else if (sub == "bore") op.kind = LatheOpKind::Rough, op.inside = true;
@@ -448,12 +509,28 @@ CommandOutput runLatheCommand(Document& doc, const std::vector<std::string>& a, 
     else if (sub == "thread") op.kind = LatheOpKind::Thread;
     else if (sub == "partoff" || sub == "part" || sub == "cutoff") op.kind = LatheOpKind::PartOff;
     else
-        return out.fail("LATHE SETUP|TOOL|TOOLS|PROFILE|FACE|ROUGH|FINISH|BORE|GROOVE|DRILL|THREAD|PARTOFF|LIST|GENERATE|SIMULATE|POST|DELETE|CLEAR|PATHS");
+        return out.fail("LATHE SETUP|TOOL|TOOLS|PROFILE|FACE|ROUGH|FINISH|BORE|GROOVE|DRILL|THREAD|PARTOFF|LIST|GENERATE|SIMULATE|POST|EDIT n|MOVE n|SUPPRESS n|"
+                        "UNSUPPRESS n|DUPLICATE n|DELETE|CLEAR|PATHS");
     Body* p = needPart();
     if (!p) return out;
-    int tool = -1;
-    for (std::size_t i = 1; i < a.size(); ++i) {
+    int tool = editing >= 0 ? op.tool : -1;
+    for (std::size_t i = editing >= 0 ? 2 : 1; i < a.size(); ++i) {
         const std::string k = lower(a[i]);
+        // AUTO puts an option back to its default (from the part, the tool or the material).
+        if (i + 1 < a.size() && lower(a[i + 1]) == "auto") {
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            if (k == "from") op.zFrom = nan;
+            else if (k == "to") op.zTo = nan;
+            else if (k == "stepdown" || k == "doc") op.stepdown = 0;
+            else if (k == "depth") op.depth = 0;
+            else if (k == "diameter") op.threadDiameter = 0;
+            else if (k == "speed" || k == "vc") op.speed = 0;
+            else if (k == "feed") op.feedPerRev = 0;
+            else if (k == "rpm") op.rpm = 0;
+            else return out.fail(upper(k) + " has no AUTO");
+            ++i;
+            continue;
+        }
         auto next1 = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
         auto len = [&](const char* what, bool positive = true) -> std::optional<double> {
             const auto v = parseLength(next1());
@@ -527,7 +604,7 @@ CommandOutput runLatheCommand(Document& doc, const std::vector<std::string>& a, 
             if (!v) return out;
             op.rpm = *v;
         } else if (k == "name") op.name = next1();
-        else return out.fail("Unknown option " + a[i] + " for LATHE " + upper(sub));
+        else return out.fail("Unknown option " + a[i] + " for LATHE " + upper(editing >= 0 ? std::string("edit") : sub));
     }
     if (op.kind == LatheOpKind::Thread && op.pitch <= 0) return out.fail("LATHE THREAD needs a PITCH, e.g. LATHE THREAD PITCH 1.5 FROM 0 TO -20");
     if (op.inside && op.kind != LatheOpKind::Rough && op.kind != LatheOpKind::Finish && op.kind != LatheOpKind::Groove && op.kind != LatheOpKind::Thread)
@@ -537,6 +614,22 @@ CommandOutput runLatheCommand(Document& doc, const std::vector<std::string>& a, 
     if (!job.tool(tool)) return out.fail("No tool T" + std::to_string(tool));
     op.tool = tool;
     latheFrame(job, *p, job.frame);
+    if (editing >= 0) {
+        // In its place, so what the operations before it leave is what it works from.
+        const std::size_t k = static_cast<std::size_t>(editing);
+        LatheOperation old = std::move(job.ops[k]);
+        job.ops[k] = op;
+        job.ops[k].generated = false;
+        std::string err;
+        if (!op.suppressed && !generateLatheOperation(job, *p, job.ops[k], &err)) {
+            job.ops[k] = std::move(old);
+            return out.fail(std::to_string(k + 1) + ". " + opLabel(op) + ": " + err + " (left as it was)");
+        }
+        for (std::size_t i = k + 1; i < job.ops.size(); ++i) job.ops[i].generated = false;
+        changed();
+        out.say("Changed " + opText(job, k));
+        return out;
+    }
     job.ops.push_back(op);
     std::string err;
     if (!generateLatheOperation(job, *p, job.ops.back(), &err)) {

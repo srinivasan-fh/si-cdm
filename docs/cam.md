@@ -399,7 +399,20 @@ CAM SWARF [TOOL n] [LEAVE l] [BOTTOM z] [TOP z] [STEPDOWN d] [OUTSIDE | INSIDE |
 
 ```text
 CAM LIST       CAM GENERATE       CAM DELETE n       CAM CLEAR       CAM SHOW | HIDE
+CAM EDIT n options          CAM MOVE n UP | DOWN | TO m          CAM DUPLICATE n
+CAM SUPPRESS n              CAM UNSUPPRESS n
 ```
+
+- **Editing:** `CAM EDIT n` takes the same options as adding the operation and changes only
+  those given; `AUTO` puts one back to its default (`TOP AUTO`, `STEPOVER AUTO`, `FEED AUTO`).
+  The operation is made again in its place. An edit it can't make (a tool that doesn't fit,
+  a missing tool) leaves it as it was. `NOADAPTIVE` and `NOREST` turn those off.
+- **Order:** `CAM MOVE` reorders. The operations after a change are made again from what the
+  ones before them now leave.
+- **Suppressing:** a suppressed operation stays in the job (and the project) but isn't made,
+  simulated or posted.
+- **The CAM panel** (the left panel's CAM page) does all of these with the mouse; see
+  [The CAM panel](#the-cam-panel).
 
 - **Saving:** the setup, tools and operations are saved in the project. The toolpaths are
   remade when needed.

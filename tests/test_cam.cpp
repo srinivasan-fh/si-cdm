@@ -1200,3 +1200,87 @@ TEST_CASE("CAM LIBRARY: import into the user's library, use in a job, store and 
     std::filesystem::remove(jobFile);
     setEnv("SICDM_TOOL_LIBRARY", "");
 }
+
+TEST_CASE("CAM operations edited in place, moved, suppressed and duplicated (commands and MCP)") {
+    Document d;
+    bracket(d);
+    for (const char* l : {"CAM SETUP \"Block 1\" STOCK 3 TOP 1 MATERIAL aluminium", "CAM TOOL 1 FLAT 6", "CAM TOOL 2 FLAT 10", "CAM TOOL 3 BALL 6",
+                          "CAM ROUGH TOOL 2 LEAVE 0.3", "CAM PARALLEL TOOL 3"})
+        REQUIRE(run(d, l).ok);
+    CamJob& job = d.state.cam;
+    REQUIRE(job.ops.size() == 2);
+    // Edit: the options given change, the rest stay; it is made again and the finish after it
+    // waits to be made again from what it now leaves.
+    auto r = run(d, "CAM EDIT 1 LEAVE 0.5 STEPDOWN 2 TOOL 1 NAME \"Rough it\"");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "Changed 1. Rough it"));
+    CHECK(job.ops[0].leave == 0.5);
+    CHECK(job.ops[0].stepdown == 2);
+    CHECK(job.ops[0].tool == 1);
+    CHECK(job.ops[0].kind == CamOpKind::Rough);
+    CHECK(job.ops[0].generated);
+    CHECK(!job.ops[1].generated);
+    // AUTO puts an option back; a bad edit leaves the operation as it was.
+    REQUIRE(run(d, "CAM EDIT 1 STEPDOWN AUTO TOP 10").ok);
+    CHECK(job.ops[0].stepdown == 0);
+    CHECK(job.ops[0].top == 10);
+    REQUIRE(run(d, "CAM EDIT 1 TOP AUTO").ok);
+    CHECK(std::isnan(job.ops[0].top));
+    CHECK(!run(d, "CAM EDIT 1 TOOL 9").ok);
+    CHECK(!run(d, "CAM EDIT 3 LEAVE 1").ok);
+    CHECK(!run(d, "CAM EDIT 1 WOBBLE 2").ok);
+    CHECK(job.ops[0].tool == 1);
+    // Move, duplicate, suppress.
+    REQUIRE(run(d, "CAM MOVE 2 UP").ok);
+    CHECK(job.ops[0].kind == CamOpKind::Parallel);
+    CHECK(!run(d, "CAM MOVE 1 UP").ok);
+    REQUIRE(run(d, "CAM MOVE 1 TO 2").ok);
+    CHECK(job.ops[0].kind == CamOpKind::Rough);
+    REQUIRE(run(d, "CAM DUPLICATE 2").ok);
+    REQUIRE(job.ops.size() == 3);
+    CHECK(job.ops[2].kind == CamOpKind::Parallel);
+    REQUIRE(run(d, "CAM SUPPRESS 3").ok);
+    CHECK(job.ops[2].suppressed);
+    CHECK(has(text(run(d, "CAM LIST")), "(suppressed)"));
+    // A suppressed operation isn't simulated or posted, and is kept in the saved job.
+    CamSimulation sim;
+    REQUIRE(simulateJob(job, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(!job.ops[2].generated);
+    const std::string g = postToString(job, d.scene.bodies()[0], "fanuc");
+    REQUIRE(!g.empty());
+    CHECK(checkPost(job, "fanuc", g).errors == 0);
+    std::size_t opsPosted = 0;
+    for (std::size_t q = g.find("(ROUGH IT"); q != std::string::npos; q = g.find("(ROUGH IT", q + 1)) ++opsPosted;
+    CHECK(opsPosted == 1);
+    std::size_t parallels = 0;
+    for (std::size_t q = g.find("(PARALLEL"); q != std::string::npos; q = g.find("(PARALLEL", q + 1)) ++parallels;
+    CHECK(parallels == 1); // the copy is suppressed
+    CamJob back;
+    REQUIRE(camFromJson(camToJson(job), back));
+    CHECK(back.ops[2].suppressed);
+    REQUIRE(run(d, "CAM UNSUPPRESS 3").ok);
+    CHECK(!job.ops[2].suppressed);
+    REQUIRE(run(d, "CAM SUPPRESS 1").ok);
+    REQUIRE(run(d, "CAM SUPPRESS 2").ok);
+    REQUIRE(run(d, "CAM SUPPRESS 3").ok);
+    std::string e;
+    CHECK(postToString(job, d.scene.bodies()[0], "fanuc", nullptr, &e).empty());
+    CHECK(has(e, "suppressed"));
+    REQUIRE(run(d, "CAM UNSUPPRESS 1").ok);
+    // Over MCP.
+    McpServer s(d, nullptr);
+    auto call = [&](const std::string& args) {
+        const auto j = Json::parse(s.handle(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cam","arguments":)" + args + "}}"));
+        return j.has_value() && !(*j)["result"]["isError"].asBool();
+    };
+    CHECK(call(R"({"operation":"edit","index":1,"leave":0.4})"));
+    CHECK(job.ops[0].leave == 0.4);
+    CHECK(call(R"({"operation":"move","index":1,"direction":"down"})"));
+    CHECK(job.ops[1].kind == CamOpKind::Rough);
+    CHECK(call(R"({"operation":"move","index":2,"to":1})"));
+    CHECK(job.ops[0].kind == CamOpKind::Rough);
+    CHECK(call(R"({"operation":"duplicate","index":1})"));
+    CHECK(job.ops.size() == 4);
+    CHECK(!call(R"({"operation":"edit","leave":0.4})"));
+}

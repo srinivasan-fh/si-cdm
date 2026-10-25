@@ -515,7 +515,7 @@ double drilledRadius(const LatheJob& job, const LatheOperation& op) {
     double r = 0;
     for (const LatheOperation& o : job.ops) {
         if (&o == &op) break;
-        if (o.kind != LatheOpKind::Drill) continue;
+        if (o.suppressed || o.kind != LatheOpKind::Drill) continue;
         if (const LatheTool* t = job.tool(o.tool)) r = std::max(r, t->diameter * 0.5);
     }
     return r;
@@ -1045,6 +1045,7 @@ bool simulateLathe(LatheJob& job, const Body& part, LatheSimulation& out, std::s
     const double v0 = volume();
     std::vector<unsigned char> threaded(g.n, 0), threadedIn(g.n, 0); // a thread's cut is meant
     for (LatheOperation& op : job.ops) {
+        if (op.suppressed) continue;
         if (!op.generated && !generateLatheOperation(job, part, op, error)) return false;
         const LatheTool* t = job.tool(op.tool);
         if (!t) continue;
@@ -1368,9 +1369,9 @@ std::string postLathe(LatheJob& job, const Body& part, const std::string& post, 
         return {};
     }
     for (LatheOperation& op : job.ops)
-        if (!op.generated && !generateLatheOperation(job, part, op, error)) return {};
-    if (job.ops.empty()) {
-        if (error) *error = "No lathe operations";
+        if (!op.suppressed && !op.generated && !generateLatheOperation(job, part, op, error)) return {};
+    if (std::all_of(job.ops.begin(), job.ops.end(), [](const LatheOperation& op) { return op.suppressed; })) {
+        if (error) *error = job.ops.empty() ? "No lathe operations" : "Every lathe operation is suppressed";
         return {};
     }
     std::ostringstream o;
@@ -1402,7 +1403,7 @@ std::string postLathe(LatheJob& job, const Body& part, const std::string& post, 
     for (std::size_t k = 0; k < job.ops.size(); ++k) {
         const LatheOperation& op = job.ops[k];
         const LatheTool* t = job.tool(op.tool);
-        if (!t || op.moves.empty()) continue;
+        if (!t || op.suppressed || op.moves.empty()) continue;
         const LatheCut c = cutOf(job, op, *t);
         o << "(" << (k + 1) << " " << (op.name.empty() ? std::string(latheOpKey(op.kind)) : op.name) << ")" << nl;
         if (lcnc) o << "G28" << nl << "T" << t->number << " M6 G43" << nl;
@@ -1555,6 +1556,7 @@ Json latheToJson(const LatheJob& job) {
         if (op.speed > 0) o.set("speed", op.speed);
         if (op.feedPerRev > 0) o.set("feed_per_rev", op.feedPerRev);
         if (op.rpm > 0) o.set("rpm", op.rpm);
+        if (op.suppressed) o.set("suppressed", true);
         ops.push(o);
     }
     j.set("ops", ops);
@@ -1606,6 +1608,7 @@ bool latheFromJson(const Json& j, LatheJob& job) {
         op.stepdown = o["stepdown"].asNumber(0);
         op.leave = o["leave"].asNumber(0);
         op.leaveZ = o["leave_z"].asNumber(0);
+        op.suppressed = o["suppressed"].asBool(false);
         if (o["z_from"].isNumber()) op.zFrom = o["z_from"].asNumber();
         if (o["z_to"].isNumber()) op.zTo = o["z_to"].asNumber();
         op.depth = o["depth"].asNumber(0);

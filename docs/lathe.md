@@ -169,6 +169,12 @@ point is narrower, and that is allowed for near the tip.
 `LATHE LIST`, `LATHE TOOLS`, `LATHE DELETE n`, `LATHE CLEAR`, `LATHE GENERATE` and
 `LATHE PATHS [ON|OFF]` manage the job. The job saves with the project.
 
+`LATHE EDIT n options` changes the options given in operation n (`AUTO` puts one back to its
+default, as in `FROM AUTO`); an edit it can't make leaves the operation as it was.
+`LATHE MOVE n UP|DOWN|TO m`, `LATHE DUPLICATE n`, `LATHE SUPPRESS n` and `LATHE UNSUPPRESS n`
+reorder, copy and switch operations off and on. A suppressed operation stays in the job but
+isn't made, simulated or posted.
+
 ## Simulation
 
 `LATHE SIMULATE [SHOW]` cuts the bar with each operation in turn.

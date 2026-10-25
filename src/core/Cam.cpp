@@ -839,8 +839,24 @@ Vec3 CamJob::origin() const {
 
 bool CamJob::multiAxis() const {
     return std::any_of(ops.begin(), ops.end(), [](const CamOperation& o) {
-        return o.kind == CamOpKind::Rotary || o.kind == CamOpKind::Surface5 || o.kind == CamOpKind::Swarf || o.indexA != 0 || o.indexC != 0;
+        return !o.suppressed && (o.kind == CamOpKind::Rotary || o.kind == CamOpKind::Surface5 || o.kind == CamOpKind::Swarf || o.indexA != 0 || o.indexC != 0);
     });
+}
+
+bool CamJob::anySuppressed() const {
+    return std::any_of(ops.begin(), ops.end(), [](const CamOperation& o) { return o.suppressed; });
+}
+
+CamJob CamJob::active(std::vector<std::size_t>* index) const {
+    CamJob j = *this;
+    j.ops.clear();
+    if (index) index->clear();
+    for (std::size_t i = 0; i < ops.size(); ++i)
+        if (!ops[i].suppressed) {
+            j.ops.push_back(ops[i]);
+            if (index) index->push_back(i);
+        }
+    return j;
 }
 
 Vec3 CamJob::rotaryCentre() const { return (setup.stockMin + setup.stockMax) * 0.5f; }
@@ -2355,7 +2371,7 @@ bool genSurface5(Ctx& c, const Body& part, std::string* err) {
         double leave = 0.0;
         for (const CamOperation& prev : c.job.ops) {
             if (&prev == &op) break;
-            leave = std::max(leave, prev.leave);
+            if (!prev.suppressed) leave = std::max(leave, prev.leave);
         }
         const int wSide = std::max(1, static_cast<int>(std::ceil((leave + 0.5) / rest->cell)));
         const int wBelow = std::max(1, static_cast<int>(std::ceil(allow / rest->cell)));
@@ -3261,7 +3277,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
     // Roughing before this leaves steps up to its stepdown (plus its stock to leave).
     for (const CamOperation& prev : job.ops) {
         if (&prev == &op) break;
-        if (prev.kind != CamOpKind::Rough && prev.kind != CamOpKind::Pocket) continue;
+        if (prev.suppressed || (prev.kind != CamOpKind::Rough && prev.kind != CamOpKind::Pocket)) continue;
         const CamTool* pt = job.tool(prev.tool);
         const CamMaterial* pm2 = camMaterial(su.material);
         const double psd = prev.stepdown > 0 ? prev.stepdown : (pt ? pt->diameter * (pm2 ? pm2->stepdownFactor : 0.5) : 3.0);
@@ -3275,6 +3291,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
         std::size_t k = 0;
         while (k < job.ops.size() && &job.ops[k] != &op) ++k;
         before.ops.resize(k);
+        before = before.active();
         std::string e;
         // In voxels whatever the operations were: they tell stock from part, under overhangs too.
         if (!before.ops.empty() && before.setup.hasStock && simulateVoxels(before, part, restSim, &e) && restSim.voxels) c.rest = &restSim;
@@ -3284,6 +3301,7 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
         std::size_t k = 0;
         while (k < job.ops.size() && &job.ops[k] != &op) ++k;
         before.ops.resize(k);
+        before = before.active();
         if (before.ops.empty()) {
             if (error) *error = "REST machines what the operations before it left: there are none";
             return false;
@@ -3608,6 +3626,18 @@ bool simulateVoxels(CamJob& job, const Body& part, CamSimulation& out, std::stri
 
 bool simulateJob(CamJob& job, const Body& part, CamSimulation& out, std::string* error) {
     out = CamSimulation{};
+    if (job.anySuppressed()) {
+        // Without the suppressed operations; what is generated on the way is kept.
+        std::vector<std::size_t> index;
+        CamJob a = job.active(&index);
+        if (a.ops.empty()) {
+            if (error) *error = "Every operation is suppressed";
+            return false;
+        }
+        const bool ok = simulateJob(a, part, out, error);
+        for (std::size_t i = 0; i < index.size(); ++i) job.ops[index[i]] = a.ops[i];
+        return ok;
+    }
     if (!job.setup.hasStock) {
         if (error) *error = "Set up the stock first (CAM SETUP)";
         return false;
@@ -4018,6 +4048,17 @@ const std::vector<std::string>& camPosts() {
 }
 
 std::string postToString(CamJob& job, const Body& part, const std::string& post, CamPostReport* report, std::string* error) {
+    if (job.anySuppressed()) {
+        std::vector<std::size_t> index;
+        CamJob a = job.active(&index);
+        if (a.ops.empty()) {
+            if (error) *error = "Every operation is suppressed";
+            return {};
+        }
+        std::string g = postToString(a, part, post, report, error);
+        for (std::size_t i = 0; i < index.size(); ++i) job.ops[index[i]] = a.ops[i];
+        return g;
+    }
     PostStyle st;
     if (!postStyle(post, &st)) {
         if (error) *error = "Unknown post '" + post + "' (fanuc, haas, grbl, linuxcnc)";
@@ -4438,6 +4479,7 @@ Json camToJson(const CamJob& job) {
         o.set("leave", op.leave);
         o.set("angle", op.angle);
         o.set("climb", op.climb);
+        if (op.suppressed) o.set("suppressed", true);
         o.set("raster", op.raster);
         if (op.adaptive) o.set("adaptive", true);
         if (op.indexA != 0) o.set("index_a", op.indexA);
@@ -4536,6 +4578,7 @@ bool camFromJson(const Json& j, CamJob& job) {
         op.leave = o["leave"].asNumber(0);
         op.angle = o["angle"].asNumber(0);
         op.climb = o["climb"].asBool(true);
+        op.suppressed = o["suppressed"].asBool(false);
         op.raster = o["raster"].asBool(false);
         op.adaptive = o["adaptive"].asBool(false);
         op.indexA = o["index_a"].asNumber(0);

@@ -3,6 +3,7 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
+#include "core/Json.hpp"
 #include "core/Lathe.hpp"
 #include "core/Scene.hpp"
 
@@ -352,4 +353,40 @@ TEST_CASE("Lathe posts with CYCLES: G71 rough turning and boring, G72 facing; wr
     CHECK(r.ok);
     CHECK(has(text(r), "2 G71 and 1 G72 cycles"));
     std::filesystem::remove(path);
+}
+
+TEST_CASE("Lathe operations edited in place, moved, suppressed and duplicated") {
+    Document d;
+    REQUIRE(shaft(d));
+    for (const char* l : {"LATHE FACE", "LATHE ROUGH TOOL 1 LEAVE 0.2", "LATHE FINISH TOOL 2"}) REQUIRE(run(d, l).ok);
+    LatheJob& job = d.state.lathe;
+    REQUIRE(run(d, "LATHE EDIT 2 LEAVE 0.4 STEPDOWN 1.5").ok);
+    CHECK(job.ops[1].leave == 0.4);
+    CHECK(job.ops[1].stepdown == 1.5);
+    CHECK(job.ops[1].kind == LatheOpKind::Rough);
+    CHECK(job.ops[1].generated);
+    CHECK(!job.ops[2].generated);
+    REQUIRE(run(d, "LATHE EDIT 2 STEPDOWN AUTO FROM -5").ok);
+    CHECK(job.ops[1].stepdown == 0);
+    CHECK(job.ops[1].zFrom == -5);
+    CHECK(!run(d, "LATHE EDIT 2 TOOL 9").ok);
+    CHECK(job.ops[1].tool == 1);
+    REQUIRE(run(d, "LATHE MOVE 3 UP").ok);
+    CHECK(job.ops[1].kind == LatheOpKind::Finish);
+    REQUIRE(run(d, "LATHE MOVE 2 DOWN").ok);
+    REQUIRE(run(d, "LATHE DUPLICATE 3").ok);
+    REQUIRE(job.ops.size() == 4);
+    REQUIRE(run(d, "LATHE SUPPRESS 4").ok);
+    LatheSimulation s;
+    REQUIRE(simulateLathe(job, partOf(d), s));
+    CHECK(s.gouges == 0);
+    CHECK(!job.ops[3].generated);
+    std::string err;
+    const std::string g = postLathe(job, partOf(d), "fanuc", &err);
+    REQUIRE(!g.empty());
+    CHECK(has(text(run(d, "LATHE LIST")), "(suppressed)"));
+    Json j = latheToJson(job);
+    LatheJob back;
+    REQUIRE(latheFromJson(j, back));
+    CHECK(back.ops[3].suppressed);
 }

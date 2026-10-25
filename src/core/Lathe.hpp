@@ -91,6 +91,7 @@ struct LatheOperation {
     // Output.
     std::vector<LatheMove> moves;
     bool generated = false;
+    bool suppressed = false;        // kept in the job but not generated, simulated or posted
     double usedSpeed = 0.0, usedFeed = 0.0, usedRpm = 0.0; // what the moves use
 };
 

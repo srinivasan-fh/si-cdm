@@ -17,6 +17,7 @@
 #include <fstream>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 
 namespace sicdm {
@@ -145,6 +146,7 @@ std::string opText(const CamJob& job, std::size_t i) {
         s += b;
     }
     if (op.kind == CamOpKind::Swarf) s += op.side == 0 ? ", outside walls" : op.side == 1 ? ", inside walls" : ", all walls";
+    if (op.suppressed) s += " (suppressed)";
     if (op.adaptive) s += ", adaptive";
     if (op.rest) s += ", rest";
     if (op.kind == CamOpKind::Drill) s += std::string(", ") + drillCycleKey(op.cycle) + ", " + std::to_string(op.holes.size()) + " holes";
@@ -600,6 +602,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         const std::size_t k = static_cast<std::size_t>(*n) - 1;
         out.say("Removed " + std::to_string(k + 1) + ". " + (job.ops[k].name.empty() ? std::string(opLabel(job.ops[k].kind)) : job.ops[k].name));
         job.ops.erase(job.ops.begin() + static_cast<std::ptrdiff_t>(k));
+        for (std::size_t i = k; i < job.ops.size(); ++i) job.ops[i].generated = false; // they worked from what it left
         changed();
         return out;
     }
@@ -620,12 +623,16 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
     if (sub == "generate" || sub == "regenerate") {
         Body* p = needPart();
         if (!p) return out;
+        std::size_t made = 0;
         for (std::size_t i = 0; i < job.ops.size(); ++i) {
             std::string e;
-            if (!generateOperation(job, *p, job.ops[i], &e)) return out.fail(std::to_string(i + 1) + ". " + e);
+            if (!job.ops[i].suppressed) {
+                if (!generateOperation(job, *p, job.ops[i], &e)) return out.fail(std::to_string(i + 1) + ". " + e);
+                ++made;
+            }
             out.say("  " + opText(job, i));
         }
-        out.say("Generated " + std::to_string(job.ops.size()) + " operations");
+        out.say("Generated " + std::to_string(made) + " operations");
         return out;
     }
 
@@ -636,7 +643,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         std::string e;
         if (!simulateJob(job, *p, sim, &e)) return out.fail(e);
         const bool show = a.size() > 1 && (lower(a[1]) == "show" || lower(a[1]) == "stock");
-        out.say("Simulated " + std::to_string(job.ops.size()) + " operations on a " + lengthText(sim.cell) + " grid:");
+        out.say("Simulated " + std::to_string(job.active().ops.size()) + " operations on a " + lengthText(sim.cell) + " grid:");
         out.say("  removed " + num(sim.removed / 1000.0, "%.1f") + " cm3; stock left on the part: up to " + lengthText(sim.maxLeft) + ", " +
                 lengthText(sim.meanLeft) + " on average");
         out.say(sim.gouges ? "  GOUGES: " + std::to_string(sim.gouges) + " points cut into the part, the deepest " + lengthText(sim.deepestGouge)
@@ -699,7 +706,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
             return out;
         }
         if (!writeFile(path, g, &e)) return out.fail(e);
-        out.say("Posted " + std::to_string(job.ops.size()) + " operations for " + post + " to " + path + ": " + std::to_string(r.lines) + " lines, " +
+        out.say("Posted " + std::to_string(job.active().ops.size()) + " operations for " + post + " to " + path + ": " + std::to_string(r.lines) + " lines, " +
                 std::to_string(r.arcs) + " arcs, " + std::to_string(r.cycles) + " drilling cycles, about " + minutes(r.seconds));
         out.say("  " + c.summary() + " on " + job.setup.machine.name);
         sayIssues(c, 8);
@@ -728,7 +735,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
             ss << f.rdbuf();
             g = ss.str();
             for (CamOperation& op : job.ops) // the toolpath to hold the program against
-                if (!op.generated && !generateOperation(job, *p, op, &e)) return out.fail(e);
+                if (!op.generated && !op.suppressed && !generateOperation(job, *p, op, &e)) return out.fail(e);
         }
         const CamPostCheck c = checkPost(job, post, g);
         out.say((path.empty() ? "The " + post + " program" : path + " (as " + post + ")") + ": " + std::to_string(c.plot.lines) + " lines, " +
@@ -831,9 +838,71 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         return out;
     }
 
-    // Operations.
+    // An operation's number (1-based) from a[1], or -1 after failing.
+    auto opIndex = [&](const char* usage) -> int {
+        const auto n = a.size() > 1 ? parseNumber(a[1]) : std::nullopt;
+        if (!n || *n < 1 || *n > static_cast<double>(job.ops.size()) || *n != std::floor(*n)) {
+            out.fail(std::string(usage) + ": an operation's number (CAM LIST)");
+            return -1;
+        }
+        return static_cast<int>(*n) - 1;
+    };
+    // The operations from k on use what those before them leave: made again when next needed.
+    auto staleFrom = [&](std::size_t k) {
+        for (std::size_t i = k; i < job.ops.size(); ++i) job.ops[i].generated = false;
+    };
+    if (sub == "move") {
+        // CAM MOVE n UP | DOWN | TO m
+        const int k = opIndex("CAM MOVE n UP|DOWN|TO m");
+        if (k < 0) return out;
+        const std::string how = a.size() > 2 ? lower(a[2]) : std::string();
+        int to = how == "up" ? k - 1 : how == "down" ? k + 1 : -1;
+        if (how == "to") {
+            const auto m = a.size() > 3 ? parseNumber(a[3]) : std::nullopt;
+            if (!m) return out.fail("CAM MOVE n TO m: the place to move it to");
+            to = static_cast<int>(*m) - 1;
+        } else if (how != "up" && how != "down") return out.fail("CAM MOVE n UP|DOWN|TO m");
+        if (to < 0 || to >= static_cast<int>(job.ops.size())) return out.fail("It can't move further that way");
+        CamOperation moved = std::move(job.ops[static_cast<std::size_t>(k)]);
+        job.ops.erase(job.ops.begin() + k);
+        job.ops.insert(job.ops.begin() + to, std::move(moved));
+        staleFrom(static_cast<std::size_t>(std::min(k, to)));
+        changed();
+        out.say("Moved to " + opText(job, static_cast<std::size_t>(to)));
+        return out;
+    }
+    if (sub == "suppress" || sub == "unsuppress") {
+        const int k = opIndex(sub == "suppress" ? "CAM SUPPRESS n" : "CAM UNSUPPRESS n");
+        if (k < 0) return out;
+        CamOperation& o = job.ops[static_cast<std::size_t>(k)];
+        const bool was = job.multiAxis();
+        o.suppressed = sub == "suppress";
+        // A job that stops (or starts) turning the part moves its work zero: all of it again.
+        staleFrom(was != job.multiAxis() ? 0 : static_cast<std::size_t>(k) + 1);
+        changed();
+        out.say(std::string(o.suppressed ? "Suppressed " : "Unsuppressed ") + opText(job, static_cast<std::size_t>(k)));
+        return out;
+    }
+    if (sub == "duplicate" || sub == "copy") {
+        const int k = opIndex("CAM DUPLICATE n");
+        if (k < 0) return out;
+        CamOperation c = job.ops[static_cast<std::size_t>(k)];
+        if (!c.name.empty()) c.name += " (copy)";
+        job.ops.insert(job.ops.begin() + k + 1, std::move(c));
+        staleFrom(static_cast<std::size_t>(k) + 2);
+        changed();
+        out.say("Added " + opText(job, static_cast<std::size_t>(k) + 1));
+        return out;
+    }
+
+    // Operations: a new one, or CAM EDIT n with options to change in an existing one.
+    int editing = -1;
     CamOpKind kind;
-    if (sub == "face") kind = CamOpKind::Face;
+    if (sub == "edit" || sub == "set") {
+        editing = opIndex("CAM EDIT n options");
+        if (editing < 0) return out;
+        kind = job.ops[static_cast<std::size_t>(editing)].kind;
+    } else if (sub == "face") kind = CamOpKind::Face;
     else if (sub == "rough" || sub == "adaptive" || sub == "clearing") kind = CamOpKind::Rough;
     else if (sub == "pocket") kind = CamOpKind::Pocket;
     else if (sub == "contour" || sub == "profile") kind = CamOpKind::Contour;
@@ -846,20 +915,37 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
     else if (sub == "swarf" || sub == "flank") kind = CamOpKind::Swarf;
     else
         return out.fail("CAM SETUP | TOOL | TOOLS | LIBRARY | FACE | ROUGH | POCKET | CONTOUR | PARALLEL | WATERLINE | DRILL | BORE | ROTARY | 5AXIS | SWARF | HOLES | LIST | "
-                        "GENERATE | SIMULATE [SHOW] | POST path [post] | DELETE n | CLEAR | SHOW | HIDE");
+                        "GENERATE | SIMULATE [SHOW] | POST path [post] | EDIT n options | MOVE n UP|DOWN|TO m | SUPPRESS n | UNSUPPRESS n | "
+                        "DUPLICATE n | DELETE n | CLEAR | SHOW | HIDE");
     Body* p = needPart();
     if (!p) return out;
-    CamOperation op;
+    CamOperation op = editing >= 0 ? job.ops[static_cast<std::size_t>(editing)] : CamOperation{};
     op.kind = kind;
     if (sub == "spot") op.cycle = DrillCycle::Spot;
     if (sub == "tap") op.cycle = DrillCycle::Tap;
     if (sub == "peck") op.cycle = DrillCycle::Peck;
-    int tool = -1;
+    int tool = editing >= 0 ? op.tool : -1;
     std::vector<std::pair<double, double>> at;
     double holeD = 0, holeDepth = -1;
     bool through = false;
-    for (std::size_t i = 1; i < a.size(); ++i) {
+    for (std::size_t i = editing >= 0 ? 2 : 1; i < a.size(); ++i) {
         const std::string k = lower(a[i]);
+        // AUTO puts an option back to its default (from the part, the tool or the material).
+        if (i + 1 < a.size() && lower(a[i + 1]) == "auto") {
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            if (k == "top") op.top = nan;
+            else if (k == "bottom") op.bottom = nan;
+            else if (k == "stepdown" || k == "step") op.stepdown = 0;
+            else if (k == "stepover") op.stepover = 0;
+            else if (k == "lead") op.lead = -1;
+            else if (k == "peck") op.peck = 0;
+            else if (k == "rpm") op.setRpm = 0;
+            else if (k == "feed") op.setFeed = 0;
+            else if (k == "plunge") op.setPlunge = 0;
+            else return out.fail(toUpper(k) + " has no AUTO");
+            ++i;
+            continue;
+        }
         auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
         auto len = [&](const char* what, bool allowNegative = false) -> std::optional<double> {
             const auto v = parseLength(next());
@@ -924,7 +1010,10 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         else if (k == "climb") op.climb = true;
         else if (k == "raster" || k == "zigzag") op.raster = true;
         else if (k == "adaptive" || k == "hsm" || k == "trochoidal") op.adaptive = true;
+        else if (k == "noadaptive") op.adaptive = false;
         else if (k == "rest") op.rest = true;
+        else if (k == "norest") op.rest = false;
+        else if (k == "holes" && i + 1 < a.size() && lower(a[i + 1]) == "auto") op.autoHoles = true, op.holes.clear(), ++i;
         else if (k == "along") op.along = true;
         else if (k == "around" || k == "helical") op.along = false;
         else if (k == "a" || k == "c" || k == "index" || k == "tilt") {
@@ -1027,6 +1116,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
     if (op.stepover < 0) op.stepover = t->diameter * -op.stepover / 100.0;
     if (!at.empty()) { // holes given
         op.autoHoles = false;
+        op.holes.clear();
         for (const auto& [x, y] : at) {
             CamTool probe; // as wide as the hole: its rim is the top (the middle may be open already)
             probe.diameter = std::max(holeD > 0 ? holeD : t->diameter, 0.1) * 1.1;
@@ -1060,6 +1150,20 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
         }
     }
     std::string e;
+    if (editing >= 0) {
+        // In its place, so what the operations before it leave is what it works from.
+        const std::size_t k = static_cast<std::size_t>(editing);
+        CamOperation old = std::move(job.ops[k]);
+        job.ops[k] = op;
+        if (!op.suppressed && !generateOperation(job, *p, job.ops[k], &e)) {
+            job.ops[k] = std::move(old);
+            return out.fail(std::to_string(k + 1) + ". " + opLabel(kind) + ": " + e + " (left as it was)");
+        }
+        staleFrom(k + 1);
+        changed();
+        out.say("Changed " + opText(job, k));
+        return out;
+    }
     if (!generateOperation(job, *p, op, &e)) return out.fail(std::string(opLabel(kind)) + ": " + e);
     job.ops.push_back(op);
     changed();

@@ -640,6 +640,7 @@ CamPostCheck checkPost(const CamJob& job, const std::string& post, const std::st
     const Vec3 o = job.origin();
     std::vector<std::pair<P3, P3>> expected, programmed;
     for (const CamOperation& op : job.ops) {
+        if (op.suppressed) continue; // not posted
         // Tool centre point moves are posted as the tip on the part.
         const bool onPart = (op.kind == CamOpKind::Surface5 || op.kind == CamOpKind::Swarf) && m.headTilts();
         auto at = [&](const CamMove& mv) { return onPart ? camToPart(job, mv.to, mv.a, mv.c) : mv.to; };
@@ -709,7 +710,7 @@ CamPostCheck checkPost(const CamJob& job, const std::string& post, const std::st
     if (job.setup.hasStock && !job.multiAxis()) {
         std::vector<std::pair<P3, P3>> ownRapids;
         for (const CamOperation& op : job.ops)
-            for (std::size_t i = 1; i < op.moves.size(); ++i)
+            for (std::size_t i = 1; i < op.moves.size() && !op.suppressed; ++i)
                 if (op.moves[i].kind == CamMove::Rapid) {
                     const Vec3 &p = op.moves[i - 1].to, &q = op.moves[i].to;
                     ownRapids.push_back({{p.x - o.x + 0.0, p.y - o.y + 0.0, p.z - o.z + 0.0}, {q.x - o.x + 0.0, q.y - o.y + 0.0, q.z - o.z + 0.0}});

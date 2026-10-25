@@ -2403,10 +2403,10 @@ void Application::drawToolpathOverlay() const {
     std::size_t total = 0, latheMoves = 0;
     if (job.showPaths)
         for (const CamOperation& op : job.ops)
-            if (op.generated) total += op.moves.size();
+            if (op.generated && !op.suppressed) total += op.moves.size();
     if (lathe.showPaths)
         for (const LatheOperation& op : lathe.ops)
-            if (op.generated) latheMoves += op.moves.size();
+            if (op.generated && !op.suppressed) latheMoves += op.moves.size();
     if (total == 0 && latheMoves == 0) return;
     const ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
@@ -2416,7 +2416,7 @@ void Application::drawToolpathOverlay() const {
     if (latheMoves > 0) {
         for (std::size_t o = 0; o < lathe.ops.size(); ++o) {
             const LatheOperation& op = lathe.ops[o];
-            if (!op.generated || op.moves.empty()) continue;
+            if (!op.generated || op.suppressed || op.moves.empty()) continue;
             const ImU32 cut = kColours[o % std::size(kColours)];
             std::optional<ImVec2> prev;
             for (const LatheMove& m : op.moves) {
@@ -2436,7 +2436,7 @@ void Application::drawToolpathOverlay() const {
     std::size_t k = 0;
     for (std::size_t o = 0; o < job.ops.size(); ++o) {
         const CamOperation& op = job.ops[o];
-        if (!op.generated || op.moves.empty()) continue;
+        if (!op.generated || op.suppressed || op.moves.empty()) continue;
         const ImU32 cut = kColours[o % std::size(kColours)];
         // Multi-axis moves are in the turned machine frame: drawn where they fall on the part.
         const bool turned = job.multiAxis();
