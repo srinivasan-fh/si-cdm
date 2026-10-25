@@ -10,6 +10,8 @@
 # SPHERE 20 resting on a point, stretched by SCALE (and tilted by ROTATE) about it.
 
 NEW
+# The sizes below are millimetres, whatever units new projects start in.
+UNITS mm
 
 # The head's big forms
 # the cranium: 144 wide, 174 deep

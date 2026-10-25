@@ -141,6 +141,13 @@ public:
     void pushSketchUndo(std::string label);
     void keepSketchUndo() { m_redo.clear(); }
     void dropSketchUndo();
+    // A command or tool that may add, remove, rebuild or move bodies (a primitive, an
+    // extrude, an import, a move): beginBodyEdit() takes a snapshot, and endBodyEdit() keeps
+    // it as an undo step only when the bodies or motions did change and the edit didn't keep
+    // its own snapshot meanwhile. Otherwise nothing is recorded (and the redo list stays).
+    // They pair up, and may nest. Seal the step with sealUndo() as for pushUndo().
+    void beginBodyEdit(std::string label);
+    void endBodyEdit();
     // How many snapshots were ever taken (the stack itself is capped).
     std::uint64_t undoPushes() const noexcept { return m_undoPushes; }
     void sealUndo();
@@ -213,6 +220,7 @@ private:
         bool sketchOnly = false;         // pushSketchUndo: the sketch below, no bodies
         Sketch sketch;
         std::uint64_t sketchAfter = 0;   // the sketch's revision the edit left
+        std::uint64_t id = 0;            // m_undoPushes when it was taken
     };
     std::vector<Snapshot> m_undo;
     std::uint64_t m_undoPushes = 0;
@@ -228,6 +236,13 @@ private:
         std::uint64_t sketchAt = 0; // the sketch's revision the undo left
     };
     std::vector<Redo> m_redo;
+    struct PendingEdit { // beginBodyEdit() waiting for its endBodyEdit()
+        std::uint64_t id = 0, revision = 0;
+        std::vector<BodyState> bodies;
+        std::string motions;
+        std::vector<Redo> redo;
+    };
+    std::vector<PendingEdit> m_pending;
     // Carries moves, colours, visibility and renames made since `was` onto `bodies`.
     void keepLaterChanges(std::vector<Body>& bodies, const std::vector<BodyState>& was) const;
 };

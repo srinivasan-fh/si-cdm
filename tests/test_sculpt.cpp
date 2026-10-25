@@ -193,7 +193,12 @@ TEST_CASE("sculpt and boolean commands, with undo") {
     CHECK(meshVolume(d.scene.bodies().front().mesh) > vTrim);
     for (int i = 0; i < 5; ++i) REQUIRE(run(d, "UNDO").ok);
     CHECK_NEAR(meshVolume(d.scene.bodies().front().mesh), v0, 1e-3);
+    REQUIRE(run(d, "UNDO").ok); // the block itself
+    CHECK(d.scene.bodies().empty());
     CHECK(!run(d, "UNDO").ok);
+    REQUIRE(run(d, "REDO").ok);
+    REQUIRE(d.scene.bodies().size() == 1);
+    CHECK_NEAR(meshVolume(d.scene.bodies().front().mesh), v0, 1e-3);
 
     // Two bodies: the tool is used up unless KEEP.
     REQUIRE(run(d, "CYLINDER 10 80 @0,0,-20").ok);
@@ -275,9 +280,13 @@ TEST_CASE("undo keeps later work and restores motions") {
     CHECK(d.scene.bodies().size() == 2);
     CHECK_NEAR(d.scene.bodies()[0].offset.x, 5, 1e-4);
 
-    // A body added after an edit is not swept away by its undo.
+    // A body added by a command is an undo step of its own; one added outside the
+    // commands (no snapshot) is not swept away by the undo of an edit before it.
     REQUIRE(run(d, "HOLE \"Block 1\" AT 5,0,10 DIAMETER 6").ok);
     REQUIRE(run(d, "SPHERE 10 @300,0,0").ok);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.bodies().size() == 2);
+    d.scene.add(d.scene.bodies()[1]);
     const auto r = run(d, "UNDO");
     CHECK(!r.ok);
     CHECK(d.scene.bodies().size() == 3);
@@ -667,4 +676,57 @@ TEST_CASE("a union of solids that only touch face to face is one shell, with no 
     REQUIRE(run(d, "BOX 10 10 10 @100,0,20").ok);
     REQUIRE(run(d, "BOOLEAN \"Block 3\" UNION \"Block 4\"").ok);
     CHECK_NEAR(meshVolume(worldMesh(d.scene.bodies().back())), 2000.0, 1e-3);
+}
+
+TEST_CASE("undo takes back primitives, imports and moves; a command that changes nothing leaves no step") {
+    Document d;
+    REQUIRE(run(d, "BOX 20 20 20 @0,0,0").ok);
+    REQUIRE(run(d, "CYLINDER 5 30 @40,0,0").ok);
+    REQUIRE(run(d, "MOVE 10,0,0 \"Block 1\"").ok);
+    const Vec3 moved = d.scene.bodies()[0].offset;
+    REQUIRE(run(d, "UNDO").ok); // the move
+    CHECK(d.scene.bodies().size() == 2);
+    CHECK_NEAR(d.scene.bodies()[0].offset.x, moved.x - 10.0f, 1e-4);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK_NEAR(d.scene.bodies()[0].offset.x, moved.x, 1e-4);
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "UNDO").ok); // the cylinder
+    CHECK(d.scene.bodies().size() == 1);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(d.scene.bodies().size() == 2);
+
+    // A failed command, or one that changes nothing, adds no undo step and keeps the redo list.
+    REQUIRE(run(d, "UNDO").ok);
+    const std::size_t depth = d.scene.undoDepth();
+    CHECK(!run(d, "BOX x y z").ok);
+    CHECK(!run(d, "HOLE AT 900,0,40 D 5").ok); // misses: it takes its own snapshot and puts it back
+    CHECK(!run(d, "MOVE 1,0,0 \"Nothing\"").ok);
+    CHECK(d.scene.undoDepth() == depth);
+    REQUIRE(run(d, "REDO").ok); // still there
+    CHECK(d.scene.bodies().size() == 2);
+
+    // An edit that keeps its own snapshot (HOLE) is one step, not two.
+    const std::size_t before = d.scene.undoDepth();
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 0,0,20 DIAMETER 4").ok);
+    CHECK(d.scene.undoDepth() == before + 1);
+
+    // Imports undo too.
+    const std::string stl = (std::filesystem::temp_directory_path() / "sicdm-undo-import.stl").string();
+    REQUIRE(run(d, "EXPORT \"" + stl + "\"").ok);
+    const std::size_t n = d.scene.bodies().size();
+    REQUIRE(run(d, "IMPORT \"" + stl + "\"").ok);
+    CHECK(d.scene.bodies().size() > n);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.bodies().size() == n);
+    std::filesystem::remove(stl);
+
+    // The history follows: each undone step leaves it.
+    Document e;
+    REQUIRE(run(e, "BOX 10 10 10").ok);
+    REQUIRE(run(e, "SPHERE 5 @30,0,0").ok);
+    const std::size_t steps = e.state.history.size();
+    REQUIRE(run(e, "UNDO").ok);
+    CHECK(e.state.history.size() == steps - 1);
+    REQUIRE(run(e, "REDO").ok);
+    CHECK(e.state.history.size() == steps);
 }

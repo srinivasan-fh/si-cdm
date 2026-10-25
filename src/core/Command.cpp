@@ -67,7 +67,7 @@ constexpr CommandSpec kCommands[] = {
      "Add material: a boss, pad or dome fused onto the surface"},
     {"BOOLEAN", "CSG BOOL", "BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]",
      "Combine two bodies exactly; the other body is used up unless KEEP"},
-    {"UNDO", "U", "UNDO", "Undo the last sculpt, cut, boolean or armour edit"},
+    {"UNDO", "U", "UNDO", "Undo the last edit: a new, moved or deleted body, a feature, a sculpt or cut, a sketch edit or a CAM change"},
     {"REDO", "", "REDO", "Put back what the last UNDO took away"},
     // Wearable armour & exoskeletons
     {"SHELL", "SOLIDIFY HOLLOW", "SHELL [body] THICKNESS t [OUTWARD] [OPEN x,y,z NORMAL x,y,z]",

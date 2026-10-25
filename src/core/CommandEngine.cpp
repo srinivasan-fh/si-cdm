@@ -311,6 +311,18 @@ bool sketchCommand(const std::string& cmd) {
     return false;
 }
 
+// Commands that add, remove, rebuild or move bodies. Those whose edit keeps no undo
+// snapshot of its own get one around them (Scene::beginBodyEdit), so UNDO takes them back.
+bool bodyCommand(const std::string& cmd) {
+    static const char* const kBody[] = {"BOX",     "CYLINDER", "CONE",   "SPHERE", "TORUS",   "WEDGE",      "PYRAMID",  "PRISM",
+                                        "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
+                                        "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
+                                        "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE"};
+    for (const char* k : kBody)
+        if (cmd == k) return true;
+    return false;
+}
+
 bool historyCommand(const std::string& cmd) {
     static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
                                          "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
@@ -401,7 +413,10 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     const bool jobCommand = spec && (std::string(spec->name) == "CAM" || std::string(spec->name) == "LATHE") && !doc.replaying;
     std::string camBefore, latheBefore;
     if (jobCommand) camBefore = camToJson(doc.state.cam).dump(), latheBefore = latheToJson(doc.state.lathe).dump();
+    const bool bodyEdit = spec && bodyCommand(spec->name) && !doc.replaying;
+    if (bodyEdit) doc.scene.beginBodyEdit(std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))));
     CommandOutput out = runCommand(doc, line, view);
+    if (bodyEdit) doc.scene.endBodyEdit();
     if (sketchEdit) {
         if (out.ok && doc.scene.sketch().revision() != sketchBefore) doc.scene.keepSketchUndo();
         else doc.scene.dropSketchUndo();

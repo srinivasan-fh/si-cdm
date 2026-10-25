@@ -1,5 +1,7 @@
 # CAM demo: a plate with a dome and four holes, faced, roughed, finished, drilled and profiled.
 NEW
+# The sizes below are millimetres, whatever units new projects start in.
+UNITS mm
 BOX 80 50 18 @0,0,0
 SPHERE 16 @0,0,2
 BOOLEAN "Block 1" UNION "Sphere 2"

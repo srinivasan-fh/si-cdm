@@ -248,6 +248,7 @@ private:
     void abortSculpt(); // drops the stroke and restores the body
     // Ends whatever the left button is doing: a stroke is kept (`commit`) or
     // dropped; channel paths, knife lines and a half-picked boolean are forgotten.
+    void finishMoveDrag(bool commit); // the move tool let go (commit) or cancelled
     void cancelInteraction(bool commit);
     void applyCutTool(ToolId tool, float x, float y);
     void applyWearableTool(ToolId tool, float x, float y);
@@ -269,6 +270,7 @@ private:
     double m_autosaveCheck = 0.0;
     std::future<UpdateResult> m_updateCheck; // the check at start (Preferences), while it runs
     bool m_autosaveOn = true;
+    int m_commandFailures = 0; // commands that failed (a scripted --screenshot run exits with 3)
     std::vector<RecoveryFile> m_recoverable;
     bool m_offerRecovery = false;
     std::vector<CrashReportFile> m_newCrashes; // reports from earlier sessions not yet shown

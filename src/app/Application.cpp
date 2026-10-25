@@ -656,7 +656,10 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         char msg[160];
         std::snprintf(msg, sizeof(msg), "Placed %s at %s", body.name.c_str(),
                       lengthsText({at.x, at.y, at.z}, ", ", "(", ")").c_str());
+        m_doc.scene.beginBodyEdit("Place " + body.name); // UNDO takes it away
         m_doc.scene.add(std::move(body));
+        m_doc.scene.endBodyEdit();
+        m_doc.scene.sealUndo();
         m_uiState.selectedBody = static_cast<int>(m_doc.scene.bodies().size()) - 1;
         m_uiState.selectedCurve = m_uiState.selectedImage = -1;
         setStatus(msg);
@@ -842,7 +845,16 @@ void Application::abortSculpt() {
     m_sculptMesh = SculptMesh();
 }
 
+void Application::finishMoveDrag(bool commit) {
+    const int sel = m_uiState.selectedBody;
+    if (!commit && sel >= 0 && sel < static_cast<int>(m_doc.scene.bodies().size()))
+        m_doc.scene.bodies()[static_cast<std::size_t>(sel)].offset = m_moveStartOffset; // Esc: where it was
+    m_doc.scene.endBodyEdit();
+    m_doc.scene.sealUndo();
+}
+
 void Application::cancelInteraction(bool commit) {
+    if (m_leftDrag == DragMode::MoveBody) finishMoveDrag(commit);
     if (m_leftDrag == DragMode::SketchGrip) { // Esc: the sketch as it was
         if (commit) finishSketchDrag();
         else if (m_sketchDragMoved) {
@@ -1180,6 +1192,7 @@ void Application::handleViewportInput() {
                 m_uiState.selectedCurve = m_uiState.selectedImage = -1;
                 m_movePlanePoint = hit->point;
                 m_moveStartOffset = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].offset;
+                m_doc.scene.beginBodyEdit("MOVE " + m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name); // an undo step if it moves
             } else if (const int img = pickImage(mx, my, &grab); img >= 0) {
                 // Images slide within their own plane.
                 m_leftDrag = DragMode::MoveImage;
@@ -1249,6 +1262,7 @@ void Application::handleViewportInput() {
         else if (m_leftDrag == DragMode::CutPath) finishCutDrag(ToolId::CutChannel, mx, my);
         else if (m_leftDrag == DragMode::Knife) finishCutDrag(ToolId::CutKnife, mx, my);
         else if (m_leftDrag == DragMode::SketchGrip) finishSketchDrag();
+        else if (m_leftDrag == DragMode::MoveBody) finishMoveDrag(true);
         m_leftDrag = DragMode::None;
         m_gripCandidate.reset();
         m_escapedDrag = false;
@@ -1759,6 +1773,11 @@ void Application::runCommandLine(const std::string& raw) {
     syncFromDoc();
     if (out.clearHistory) m_uiState.commandLog.clear();
     for (const std::string& l : out.lines) log(l, out.ok ? UiState::LogLine::Output : UiState::LogLine::Error);
+    if (!out.ok) {
+        ++m_commandFailures;
+        if (!m_options.screenshotPath.empty()) // scripted runs: say what failed
+            std::fprintf(stderr, "Command failed: %s\n  %s\n", text.c_str(), out.lines.empty() ? "" : out.lines.back().c_str());
+    }
     if (!out.lines.empty()) setStatus(out.lines.back());
     if (out.documentReplaced) afterDocumentReplaced();
     if (!m_doc.dirty) m_savedSignature = contentSignature(); // SAVE / OPEN / NEW
@@ -3064,6 +3083,7 @@ int Application::run() {
             const bool ok = saveScreenshot(m_options.screenshotPath);
             std::printf("%s screenshot: %s\n", ok ? "Saved" : "Failed to save", m_options.screenshotPath.c_str());
             glfwSwapBuffers(m_window);
+            if (ok && m_commandFailures > 0) return 3; // a --command failed
             return ok ? 0 : 1;
         }
 

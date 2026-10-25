@@ -1,5 +1,7 @@
 # A shaft turned from bar: faced, rough and finish turned, the neck grooved, the bore
 # drilled and bored, the front threaded M20 x 1.5, then parted off.  RUN docs/examples/lathe-demo.txt
+# The sizes below are millimetres, whatever units new projects start in.
+UNITS mm
 CYLINDER 15 20 @0,0,0
 CYLINDER 12 4 @0,0,20
 CYLINDER 15 16 @0,0,24

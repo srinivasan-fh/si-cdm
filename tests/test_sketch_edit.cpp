@@ -435,6 +435,8 @@ TEST_CASE("Sketch edits undo and redo: new curves, trims, constraints and drags"
     REQUIRE(run(d, "BOX 10 10 10 @0,50,0").ok);
     REQUIRE(run(d, "HOLE \"Block 1\" AT 0,50,10 DIAMETER 3").ok);
     REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "UNDO").ok); // the box
+    CHECK(d.scene.bodies().empty());
     CHECK(run(d, "UNDO").ok); // Line 1
     CHECK(d.scene.sketch().curves().empty());
     // Erasing a curve undoes, with the constraints on it.

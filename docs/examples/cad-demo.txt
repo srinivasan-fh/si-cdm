@@ -1,5 +1,7 @@
 # Part features: a revolved vase, a swept pipe, a loft, and a rounded block with a pattern of holes.
 NEW
+# The sizes below are millimetres, whatever units new projects start in.
+UNITS mm
 PLANE FRONT
 PLINE 0,0 20,0 23,8 17,28 11,42 15,58 0,58 CLOSE
 REVOLVE "Polyline 1" AXIS V

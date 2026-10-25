@@ -115,6 +115,7 @@ std::string motionsKey(const std::vector<Motion>& motions) {
 void Scene::pushUndo(std::string label) {
     ++m_undoPushes;
     Snapshot s;
+    s.id = m_undoPushes;
     s.label = std::move(label);
     s.bodies = m_bodies;
     s.motions = m_motions;
@@ -126,11 +127,53 @@ void Scene::pushUndo(std::string label) {
 void Scene::pushSketchUndo(std::string label) {
     ++m_undoPushes;
     Snapshot s;
+    s.id = m_undoPushes;
     s.label = std::move(label);
     s.sketchOnly = true;
     s.sketch = m_sketch;
     s.before = m_sketch.revision();
     m_undo.push_back(std::move(s));
+}
+
+void Scene::beginBodyEdit(std::string label) {
+    PendingEdit p;
+    p.revision = m_revision;
+    for (const Body& b : m_bodies) p.bodies.push_back({b.name, b.offset, b.color, b.visible});
+    p.motions = motionsKey(m_motions);
+    p.redo = m_redo; // pushUndo drops it; put back if nothing comes of this
+    pushUndo(std::move(label));
+    p.id = m_undoPushes;
+    m_pending.push_back(std::move(p));
+}
+
+void Scene::endBodyEdit() {
+    if (m_pending.empty()) return;
+    PendingEdit p = std::move(m_pending.back());
+    m_pending.pop_back();
+    // The edit may have kept a snapshot of its own (then that is the undo step), or taken one
+    // and put it back because it failed (then the bodies are as they were, at a new revision).
+    bool innerKept = false;
+    for (const Snapshot& u : m_undo) innerKept = innerKept || u.id > p.id;
+    const bool innerUndone = m_undoPushes != p.id && !innerKept;
+    bool changed = (m_revision != p.revision && !innerUndone) || m_bodies.size() != p.bodies.size() || motionsKey(m_motions) != p.motions;
+    for (std::size_t i = 0; !changed && i < m_bodies.size(); ++i) {
+        const Body& b = m_bodies[i];
+        const BodyState& w = p.bodies[i];
+        changed = b.name != w.name || b.visible != w.visible || b.offset.x != w.offset.x || b.offset.y != w.offset.y || b.offset.z != w.offset.z ||
+                  b.color.x != w.color.x || b.color.y != w.color.y || b.color.z != w.color.z;
+    }
+    if (changed && !innerKept) return; // an undo step: sealed by the caller
+    for (std::size_t i = m_undo.size(); i-- > 0;)
+        if (m_undo[i].id == p.id) {
+            m_undo.erase(m_undo.begin() + static_cast<std::ptrdiff_t>(i));
+            break;
+        }
+    if (innerKept) return;
+    // Nothing came of it: as though no snapshot was taken. The edit before can still be
+    // undone (the state it left was only restored), and what could be redone still can.
+    if (!m_undo.empty() && m_undo.back().sealed && !m_undo.back().sketchOnly && m_undo.back().after == p.revision) m_undo.back().after = m_revision;
+    if (!innerUndone) --m_undoPushes;
+    m_redo = std::move(p.redo);
 }
 
 void Scene::dropSketchUndo() {

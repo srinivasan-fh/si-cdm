@@ -31,6 +31,8 @@ jobs:
         run: scripts/release.sh linux
       - name: Render landing page
         run: xvfb-run -a -s "-screen 0 1600x960x24" ./build/release/sicdm --size 1600 960 --screenshot landing.ppm
+      - name: UI smoke test (each main screen renders; samples run without a failed command)
+        run: scripts/ui-smoke.sh build/release/sicdm build/ui-smoke
       - name: MCP server smoke test (stdio)
         run: |
           printf '%s\n' \
