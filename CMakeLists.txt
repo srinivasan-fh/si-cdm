@@ -76,6 +76,8 @@ add_library(sicdm_core STATIC
     src/core/LatheCommand.cpp
     src/core/Ed25519.cpp
     src/core/Licence.cpp
+    src/core/Preferences.cpp
+    src/core/UpdateCheck.cpp
     src/core/CrashReport.cpp
     src/core/Plugin.cpp
     src/core/CommandEngine.cpp
@@ -150,6 +152,7 @@ if(SICDM_BUILD_APP)
         src/ui/FileDialog.cpp
         src/ui/CamPanel.cpp
         src/ui/HelpWindow.cpp
+    src/ui/PreferencesWindow.cpp
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
         src/ui/ToolIcons.cpp

@@ -9,6 +9,8 @@
 #include "core/LatheCommand.hpp"
 #include "core/CrashReport.hpp"
 #include "core/Licence.hpp"
+#include "core/Preferences.hpp"
+#include "core/UpdateCheck.hpp"
 #include "core/Notices.hpp"
 #include "core/Plugin.hpp"
 #include "core/AssemblyCommand.hpp"
@@ -733,6 +735,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.state.historyRedo.clear();
         doc.state.historyComplete = true;
         doc.state.simDuration = 0.0f;
+        if (const auto u = parseUnitName(preferences().units)) doc.state.units.unit = *u; // Preferences: units for new projects
         out.documentReplaced = true;
         out.say("New empty project");
         return out;
@@ -775,6 +778,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         ProjectState st;
         if (!loadProject(loaded, st, path, &err, &warn)) return out.fail(err);
         if (view && view->prepareDocument(fs::absolute(path).string())) {
+            noteRecentFile(path);
             out.say(fs::path(path).filename().string() + " is already open");
             return out;
         }
@@ -785,9 +789,71 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.dirty = false;
         doc.clearSelection();
         doc.primitiveSerial = static_cast<int>(doc.scene.bodies().size());
+        noteRecentFile(doc.path);
         out.documentReplaced = true;
         out.say("Opened " + doc.path);
         if (!warn.empty()) out.say(warn);
+        return out;
+    }
+    if (cmd == "RECENT") {
+        // RECENT [n | CLEAR]
+        std::vector<std::string>& recent = preferences().recent;
+        if (!a.empty() && lower(a[0]) == "clear") {
+            recent.clear();
+            std::string err;
+            if (!savePreferences(&err)) return out.fail(err);
+            out.say("Recent files cleared");
+            return out;
+        }
+        if (!a.empty()) {
+            const auto n = parseNumber(a[0]);
+            if (!n || *n < 1 || *n > static_cast<double>(recent.size()) || *n != std::floor(*n))
+                return out.fail(recent.empty() ? std::string("No recent files") : fmt("RECENT needs 1 to %g", static_cast<double>(recent.size())));
+            const std::string path = recent[static_cast<std::size_t>(*n) - 1];
+            std::error_code ec;
+            if (!fs::exists(path, ec)) return out.fail(path + " is no longer there");
+            return executeCommand(doc, "OPEN \"" + path + "\"", view);
+        }
+        if (recent.empty()) out.say("No recent files");
+        for (std::size_t i = 0; i < recent.size(); ++i) {
+            std::error_code ec;
+            out.say(fmt("%g. ", static_cast<double>(i + 1)) + recent[i] + (fs::exists(recent[i], ec) ? "" : "  (missing)"));
+        }
+        return out;
+    }
+    if (cmd == "UPDATES") {
+        // UPDATES [CHECK] [url]
+        std::size_t i = !a.empty() && lower(a[0]) == "check" ? 1 : 0;
+        const std::string url = i < a.size() ? a[i] : preferences().updateUrl;
+        const UpdateResult r = checkForUpdate(url, SICDM_VERSION);
+        if (!r.ok) return out.fail(r.describe(SICDM_VERSION));
+        out.say(r.describe(SICDM_VERSION));
+        if (r.newer && !r.latest.notes.empty()) out.say("  " + r.latest.notes);
+        return out;
+    }
+    if (cmd == "PREFERENCES") {
+        // PREFERENCES [SHOW] | SET name value | RESET
+        const std::string sub = a.empty() ? "show" : lower(a[0]);
+        std::string err;
+        if (sub == "set") {
+            if (a.size() < 2) return usage();
+            if (!setPreference(preferences(), a[1], a.size() > 2 ? a[2] : std::string(), &err)) return out.fail(err);
+            if (!savePreferences(&err)) return out.fail(err);
+            for (const std::string& l : describePreferences(preferences()))
+                if (lower(l).rfind(lower(a[1]) + ":", 0) == 0) out.say("Preference " + l);
+            return out;
+        }
+        if (sub == "reset") {
+            Preferences fresh;
+            fresh.recent = preferences().recent; // the recent list isn't a setting
+            preferences() = fresh;
+            if (!savePreferences(&err)) return out.fail(err);
+            out.say("Preferences reset to the defaults");
+            return out;
+        }
+        if (sub != "show") return usage();
+        out.say("Preferences (" + preferencesPath() + "):");
+        for (const std::string& l : describePreferences(preferences())) out.say("  " + l);
         return out;
     }
     if (cmd == "LICENCE") {
@@ -2758,6 +2824,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         if (!saveProject(doc.scene, doc.state, path, &err)) return out.fail(err);
         doc.path = fs::absolute(path).string();
         doc.dirty = false;
+        noteRecentFile(doc.path);
         out.say("Saved " + doc.path);
         return out;
     }
@@ -3123,9 +3190,10 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {
-        // PANEL MODEL | LIBRARY | CAM: open the docked panel on that page.
+        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE: open that page or window.
         const std::string page = toUpper(a[0]);
-        const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5 : -1;
+        const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5
+                    : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7 : -1;
         if (p >= 0) {
             if (auto o = needView(view, "PANEL"); !o.ok) return o;
             view->setPanelPage(p);

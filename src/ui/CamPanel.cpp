@@ -5,6 +5,7 @@
 
 #include "core/CamEdit.hpp"
 #include "core/CamLibrary.hpp"
+#include "core/Preferences.hpp"
 #include "ui/LandingUI.hpp"
 #include "ui/Theme.hpp"
 
@@ -105,7 +106,13 @@ void LandingUI::drawCamPanel(UiCommands& cmd, const Scene& scene, UiState& st) {
     if (!job.setup.hasStock) {
         ImGui::TextWrapped("Pick the part to machine (in the 3D view or on the Model page), then set it up. The stock is the part's box plus 2 mm.");
         ImGui::BeginDisabled(selectedName.empty());
-        if (ImGui::Button("Set Up the Selected Part", {-1, 0})) cmd.commands.push_back("CAM SETUP");
+        if (ImGui::Button("Set Up the Selected Part", {-1, 0})) {
+            // Preferences: the material, post and machine a set-up starts with.
+            const Preferences& p = preferences();
+            cmd.commands.push_back("CAM SETUP" + (p.camMaterial.empty() ? std::string() : " MATERIAL " + p.camMaterial) +
+                                   (p.camPost.empty() ? std::string() : " POST " + p.camPost));
+            if (!p.camMachine.empty()) cmd.commands.push_back("CAM MACHINE PRESET " + p.camMachine);
+        }
         ImGui::EndDisabled();
     } else {
         const CamSetup& su = job.setup;
@@ -139,7 +146,12 @@ void LandingUI::drawCamPanel(UiCommands& cmd, const Scene& scene, UiState& st) {
     if (lj.setup.body.empty()) {
         ImGui::TextWrapped("Pick a round part, then set it up for the lathe. It turns about its longest side.");
         ImGui::BeginDisabled(selectedName.empty());
-        if (ImGui::Button("Set Up the Selected Part##lathe", {-1, 0})) cmd.commands.push_back("LATHE SETUP");
+        if (ImGui::Button("Set Up the Selected Part##lathe", {-1, 0})) {
+            const Preferences& p = preferences();
+            const bool post = std::find(lathePosts().begin(), lathePosts().end(), p.camPost) != lathePosts().end();
+            cmd.commands.push_back("LATHE SETUP" + (p.camMaterial.empty() ? std::string() : " MATERIAL " + p.camMaterial) +
+                                   (post ? " POST " + p.camPost : std::string()));
+        }
         ImGui::EndDisabled();
     } else {
         ImGui::TextUnformatted(("Part: " + lj.setup.body).c_str());

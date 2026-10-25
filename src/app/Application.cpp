@@ -12,6 +12,7 @@
 #include "core/Command.hpp"
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
+#include "core/Preferences.hpp"
 #include "core/Units.hpp"
 #include "ui/Theme.hpp"
 #include "core/Extrude.hpp"
@@ -186,6 +187,7 @@ bool Application::init() {
         }
     });
 
+    if (const auto u = parseUnitName(preferences().units)) m_doc.state.units.unit = *u; // Preferences: units for new projects
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
     m_savedSignature = contentSignature(); // the demo part counts as unmodified
     if (!m_options.openPath.empty()) {
@@ -196,6 +198,12 @@ bool Application::init() {
         if (kind != FileKind::Project) m_savedSignature = contentSignature();
     }
     for (const std::string& line : m_options.commands) runCommandLine(line);
+    if (preferences().checkUpdates && !preferences().updateUrl.empty() && m_options.screenshotPath.empty())
+        m_updateCheck = std::async(std::launch::async, [url = preferences().updateUrl] {
+            UpdateResult r = checkForUpdate(url, SICDM_VERSION);
+            glfwPostEmptyEvent(); // wake the idle loop to show it
+            return r;
+        });
     refreshFileTabs();
     updateTitle();
     // Unsaved work from a session that ended without closing: offered back in frame().
@@ -1450,6 +1458,13 @@ void Application::frame(float dt) {
     updateTitle();
     refreshFileTabs();
     autosave();
+    if (m_updateCheck.valid() && m_updateCheck.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        const UpdateResult r = m_updateCheck.get();
+        // Only news is shown; a failed check at start is a quiet log line.
+        if (r.ok && r.newer) setStatus(r.describe(SICDM_VERSION));
+        log(r.describe(SICDM_VERSION), r.ok ? UiState::LogLine::Output : UiState::LogLine::Error);
+        m_framesToRender = std::max(m_framesToRender, 3);
+    }
 
     if (m_offerRecovery) {
         ImGui::OpenPopup("Recover Unsaved Work");
@@ -2147,6 +2162,15 @@ void Application::autosave() {
     const double now = glfwGetTime();
     if (now < m_autosaveCheck) return;
     m_autosaveCheck = now + 1.0;
+    // Preferences: the interval, or off (this session's copies go).
+    const int seconds = preferences().autosaveSeconds;
+    if (seconds <= 0) {
+        if (m_autosaveOn) m_autosaver.clear();
+        m_autosaveOn = false;
+        return;
+    }
+    m_autosaveOn = true;
+    if (m_autosaver.interval() != seconds) m_autosaver.setInterval(seconds);
     for (int i = 0; i < static_cast<int>(m_files.size()); ++i) {
         const Document& d = fileDoc(i);
         std::string err;
@@ -2897,7 +2921,9 @@ void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.val
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
 
 void Application::setPanelPage(int page) {
-    if (page == 5) m_uiState.showHelp = true;
+    if (page == 7) m_uiState.showLicence = true;
+    else if (page == 6) m_uiState.showPreferences = true;
+    else if (page == 5) m_uiState.showHelp = true;
     else if (page == 3) m_uiState.showCamTools = true;
     else if (page == 4) m_uiState.showCamMachine = true;
     else m_uiState.showModelTree = true, m_uiState.dockTab = page;

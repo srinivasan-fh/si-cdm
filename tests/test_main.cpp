@@ -1,11 +1,25 @@
 #include "TestFramework.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 // Optional argument: run only the cases whose name contains it.
 int main(int argc, char** argv) {
     using namespace sicdm::test;
+    // The tests open and save projects: keep their recent files and settings out of the
+    // user's own preferences.
+    {
+        const std::string prefs = (std::filesystem::temp_directory_path() / "sicdm-test-preferences.json").string();
+        std::filesystem::remove(prefs);
+#if defined(_WIN32)
+        _putenv_s("SICDM_PREFERENCES", prefs.c_str());
+#else
+        setenv("SICDM_PREFERENCES", prefs.c_str(), 1);
+#endif
+    }
     int failedCases = 0;
     double total = 0;
     std::size_t ran = 0;

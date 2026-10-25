@@ -6,6 +6,7 @@
 #include "core/Ed25519.hpp"
 #include "core/FileIO.hpp"
 #include "core/Json.hpp"
+#include "core/Preferences.hpp"
 
 #include <ctime>
 #include <cstdlib>
@@ -143,16 +144,7 @@ bool readLicence(const std::string& path, Licence& l, std::string* error) {
 
 std::string licencePath() {
     if (const std::string p = env("SICDM_LICENCE"); !p.empty()) return p;
-#if defined(_WIN32)
-    if (const std::string d = env("APPDATA"); !d.empty()) return (fs::path(d) / "SI-CDM" / "licence.json").string();
-#elif defined(__APPLE__)
-    if (const std::string h = env("HOME"); !h.empty()) return (fs::path(h) / "Library" / "Application Support" / "SI-CDM" / "licence.json").string();
-#else
-    if (const std::string d = env("XDG_CONFIG_HOME"); !d.empty()) return (fs::path(d) / "sicdm" / "licence.json").string();
-    if (const std::string h = env("HOME"); !h.empty()) return (fs::path(h) / ".config" / "sicdm" / "licence.json").string();
-#endif
-    std::error_code ec;
-    return (fs::temp_directory_path(ec) / "sicdm-licence.json").string();
+    return (fs::path(configDirectory()) / "licence.json").string();
 }
 
 LicenceStatus currentLicence() {

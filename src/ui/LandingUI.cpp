@@ -4,6 +4,7 @@
 
 #include "core/CrashReport.hpp"
 #include "core/Licence.hpp"
+#include "core/Preferences.hpp"
 #include "core/Notices.hpp"
 #include "core/Plugin.hpp"
 
@@ -354,6 +355,8 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showAbout) drawAboutWindow(st);
     if (st.showCamTools && st.cam) drawCamToolsWindow(cmd, st);
     if (st.showHelp) drawHelpWindow(cmd, st);
+    if (st.showPreferences) drawPreferencesWindow(cmd, st);
+    if (st.showLicence) drawLicenceWindow(cmd, st);
     if (st.showCamMachine && st.cam) drawCamMachineWindow(cmd, st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
     if (!st.mateTool.empty()) drawMateWindow(cmd, st);
@@ -377,6 +380,21 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Project", "Ctrl+N")) requestFile(-1, st);
         if (ImGui::MenuItem("Open Project...", "Ctrl+O")) requestFile(FileOpen, st);
+        const std::vector<std::string>& recent = preferences().recent;
+        if (ImGui::BeginMenu("Open Recent", !recent.empty())) {
+            for (std::size_t i = 0; i < recent.size(); ++i) {
+                std::error_code ec;
+                const std::filesystem::path f(recent[i]);
+                const bool there = std::filesystem::exists(f, ec);
+                const std::string label = f.filename().string() + "##recent" + std::to_string(i);
+                if (ImGui::MenuItem(label.c_str(), nullptr, false, there)) cmd.commands.push_back("OPEN \"" + recent[i] + "\"");
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("%s%s", recent[i].c_str(), there ? "" : "\n(no longer there)");
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Clear the List")) cmd.commands.push_back("RECENT CLEAR");
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Close", "Ctrl+W")) requestClose(cmd, st, st.activeFile);
         ImGui::Separator();
         if (ImGui::MenuItem("Undo", "Ctrl+Z")) cmd.commands.push_back("UNDO");
@@ -394,6 +412,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::Separator();
         if (ImGui::MenuItem("Import STEP / IGES...")) requestFile(FileImportStep, st);
         if (ImGui::MenuItem("Export STEP / IGES...")) requestFile(FileExportStep, st);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Preferences...", "Ctrl+,")) st.showPreferences = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) cmd.quit = true;
         ImGui::EndMenu();
@@ -758,6 +778,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::MenuItem("Keyboard and Mouse", nullptr, &st.showControls);
         if (ImGui::MenuItem("Crash Reports")) cmd.commands.push_back("CRASHES");
         ImGui::Separator();
+        ImGui::MenuItem("Licence...", nullptr, &st.showLicence);
+        if (ImGui::MenuItem("Check for Updates", nullptr, false, !preferences().updateUrl.empty())) cmd.commands.push_back("UPDATES CHECK");
         ImGui::MenuItem("About SI CDM", nullptr, &st.showAbout);
         ImGui::EndMenu();
     }
@@ -1770,6 +1792,7 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
         if (mod && ImGui::IsKeyPressed(ImGuiKey_I, false)) requestFile(FileImport, st);
         if (mod && ImGui::IsKeyPressed(ImGuiKey_E, false)) requestFile(FileExport, st);
         if (mod && ImGui::IsKeyPressed(ImGuiKey_W, false)) requestClose(cmd, st, st.activeFile);
+        if (ImGui::IsKeyPressed(ImGuiKey_Comma, false)) st.showPreferences = true;
         if (mod && ImGui::IsKeyPressed(ImGuiKey_Tab, false) && st.files.size() > 1) { // next / previous file
             const int n = static_cast<int>(st.files.size());
             cmd.switchFile = st.files[static_cast<std::size_t>((st.activeFile + (io.KeyShift ? n - 1 : 1)) % n)].id;
@@ -1955,6 +1978,7 @@ void LandingUI::requestFile(int action, const UiState& st) {
     case FileToolsImport:
         m_fileDialog.open(FileDialog::Mode::Open, "Load Tools into the Job (SI CDM, CSV catalogue or Fusion 360 library)", {".json", ".csv", ".tools"}, dir);
         break;
+    case FileLicence: m_fileDialog.open(FileDialog::Mode::Open, "Install a Licence File", {".json", ".lic"}, dir); break;
     case FileToolsExport:
         m_fileDialog.open(FileDialog::Mode::Save, "Save the Job's Tools", {".json", ".csv"}, dir, projectStem(st) + "-tools.json");
         break;
@@ -1987,6 +2011,7 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case FilePost: cmd.commands.push_back("CAM POST " + quoted(*path)); break;
         case FileToolsImport: cmd.commands.push_back("CAM LIBRARY LOAD " + quoted(*path)); break;
         case FileToolsExport: cmd.commands.push_back("CAM LIBRARY SAVE " + quoted(*path)); break;
+        case FileLicence: cmd.commands.push_back("LICENCE INSTALL " + quoted(*path)); break;
         case FileLathePost:
             cmd.commands.push_back("LATHE POST " + quoted(*path) + (st.lathe ? " " + st.lathe->setup.post : std::string()) + (m_latheCycles ? " CYCLES" : ""));
             break;
@@ -2132,7 +2157,7 @@ void LandingUI::drawAboutWindow(UiState& st) {
         static std::string licence;
         if (ImGui::IsWindowAppearing() || licence.empty()) licence = currentLicence().describe();
         ImGui::TextUnformatted(licence.c_str());
-        ImGui::TextDisabled("LICENCE INSTALL file installs a licence");
+        if (ImGui::SmallButton("Licence...")) st.showLicence = true;
         ImGui::TextDisabled("Crash reports stay on this computer: %s", crashDirectory().c_str());
         if (ImGui::CollapsingHeader("Third-party components")) {
             ImGui::BeginChild("notices", {560, 260}, true);

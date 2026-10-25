@@ -94,6 +94,13 @@ Turning works the same way in the lower half of the CAM panel. See the
 *Help → Sample Projects* builds finished examples: a part with a drawing, a milling job, a
 lathe job and a sculpted head. Open one and look through its panels.
 
+## Settings
+
+*File → Preferences* (`Ctrl+,`) sets the units new projects start in, how often unsaved work
+is autosaved, the material, post and machine a CAM job starts with, and the update check.
+*File → Open Recent* reopens the last ten projects. See
+[preferences, recent files and updates](preferences.md).
+
 ## Getting help
 
 - *Help → User Guide* (`F1`) opens these pages inside SI CDM; search them from its box.

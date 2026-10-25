@@ -33,6 +33,7 @@ add_executable(sicdm_tests
     test_system.cpp
     test_help.cpp
     test_plugin.cpp
+    test_preferences.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 # A program that crashes on purpose, and the licence tool, run by the tests.

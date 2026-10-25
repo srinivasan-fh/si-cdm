@@ -50,6 +50,7 @@ struct UiState {
     bool showCamTools = false, showCamMachine = false;
     // The user guide window and the page it shows ("cam.md", "cam.md#the-cam-panel").
     bool showHelp = false;
+    bool showPreferences = false, showLicence = false;
     std::string helpPage = "getting-started.md";
     std::string mateTool;
     float mateValue = 0.0f;
@@ -203,6 +204,8 @@ private:
     void drawCamMachineWindow(UiCommands& cmd, UiState& st);
     void drawHelpWindow(UiCommands& cmd, UiState& st); // HelpWindow.cpp
     void runSample(UiCommands& cmd, const std::string& file);
+    void drawPreferencesWindow(UiCommands& cmd, UiState& st); // PreferencesWindow.cpp
+    void drawLicenceWindow(UiCommands& cmd, UiState& st);
     float drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom); // returns width
     void drawSimTransport(UiState& st);
     void drawCommandBar(UiCommands& cmd, UiState& st);
@@ -260,7 +263,7 @@ private:
     // File menu.
     enum FileAction {
         FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport,
-        FileLathePost, FileToolsImport, FileToolsExport
+        FileLathePost, FileToolsImport, FileToolsExport, FileLicence
     };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;

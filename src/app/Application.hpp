@@ -13,7 +13,9 @@
 #include "app/Splash.hpp"
 #include "render/Renderer.hpp"
 #include "ui/LandingUI.hpp"
+#include "core/UpdateCheck.hpp"
 
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -265,6 +267,8 @@ private:
     // Autosave of unsaved work, and what an earlier session that ended badly left.
     Autosaver m_autosaver;
     double m_autosaveCheck = 0.0;
+    std::future<UpdateResult> m_updateCheck; // the check at start (Preferences), while it runs
+    bool m_autosaveOn = true;
     std::vector<RecoveryFile> m_recoverable;
     bool m_offerRecovery = false;
     std::vector<CrashReportFile> m_newCrashes; // reports from earlier sessions not yet shown

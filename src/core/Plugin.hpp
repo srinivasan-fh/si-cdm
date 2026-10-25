@@ -85,6 +85,11 @@ void reloadPlugins();
 // A plugin command by name (any case); null if none.
 const PluginCommand* findPluginCommand(const std::string& name, const Plugin** owner = nullptr);
 
+// Runs a program (no shell: the arguments reach it as they are) and collects its standard
+// output, stopping it after `timeout` seconds. Its exit code; -1 when it couldn't start or
+// took too long. On a failure `error` says why (the end of its standard error).
+int runProgram(const std::vector<std::string>& argv, double timeout, std::string& output, std::string* error = nullptr);
+
 // Runs a plugin command against the document.
 CommandOutput runPluginCommand(Document& doc, ViewHost* view, const Plugin& plugin, const PluginCommand& command, const std::vector<std::string>& args);
 

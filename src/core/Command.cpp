@@ -85,6 +85,10 @@ constexpr CommandSpec kCommands[] = {
     // Files
     {"NEW", "", "NEW", "Start an empty project (in the app: a new file tab)"},
     {"OPEN", "", "OPEN path.sicdm", "Open a project (in the app: in its own file tab)"},
+    {"RECENT", "", "RECENT [n | CLEAR]", "The projects opened or saved lately; RECENT n opens one"},
+    {"PREFERENCES", "PREFS SETTINGS", "PREFERENCES [SHOW] | SET units|autosave|material|post|machine|updates|update-url value | RESET",
+     "Settings for every project: units for new projects, autosave interval, CAM set-up defaults, update check"},
+    {"UPDATES", "UPDATE", "UPDATES [CHECK] [url]", "Is there a newer release? Reads the release feed (the update-url preference, or the address given)"},
     {"LICENCE", "LICENSE", "LICENCE [SHOW] | INSTALL licence.json | REMOVE", "This copy's licence: who it is licensed to, or the Community edition; install or remove a licence file"},
     {"CRASHES", "", "CRASHES [LIST] | SHOW n | CLEAR | FOLDER", "Crash reports kept on this computer (nothing is sent): list, print or delete them"},
     {"PLUGINS", "PLUGIN", "PLUGINS [LIST] | RELOAD | FOLDER", "The plugins found and the commands they add; RELOAD reads them again"},
@@ -210,7 +214,7 @@ constexpr CommandSpec kCommands[] = {
     {"DISPLAY", "SHADE", "DISPLAY SHADED|EDGES|WIRE|HIDDEN", "Display mode of the 3D window"},
     {"GRID", "", "GRID [ON|OFF]", "Show or hide the grid"},
     {"SNAP", "", "SNAP [ON|OFF]", "Grid and point snapping for sketches"},
-    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine or user guide window"},
+    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences or licence window"},
     // Session
     {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF]",
      "Units for typing and showing lengths (the model stays exact in mm)"},

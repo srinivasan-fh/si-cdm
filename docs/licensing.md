@@ -14,6 +14,10 @@ is looked up over the network.
 - **A changed licence file**, or one signed with another vendor's key, doesn't check out. It is
   refused when installed, and ignored if it is changed afterwards.
 
+*Help → Licence* shows the licence and installs one: *Install a Licence File...* checks the file
+you pick and puts it in place; *Remove Licence* goes back to the Community edition. The same
+from the command bar:
+
 ```text
 LICENCE                     who this copy is licensed to
 LICENCE INSTALL file.json   checks a licence, then puts it in place

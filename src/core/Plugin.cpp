@@ -463,6 +463,35 @@ std::string tail(const std::string& path, std::size_t lines) {
 
 } // namespace
 
+int runProgram(const std::vector<std::string>& argv, double timeout, std::string& output, std::string* error) {
+    output.clear();
+    if (argv.empty()) return -1;
+    std::error_code ec;
+    const std::string errFile = (fs::temp_directory_path(ec) / ("sicdm-run-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".err")).string();
+    Child child;
+    std::string err;
+    if (!child.start(argv, fs::current_path(ec).string(), errFile, &err)) {
+        fs::remove(errFile, ec);
+        if (error) *error = err;
+        return -1;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<long long>(timeout * 1000.0));
+    bool timedOut = false;
+    for (std::string line; child.readLine(line, deadline, timedOut);) output += line + "\n";
+    int code = -1;
+    if (!timedOut) code = child.finish(deadline, timedOut);
+    else child.stop();
+    if (timedOut) {
+        if (error) *error = argv[0] + " took longer than " + std::to_string(static_cast<int>(timeout)) + " s";
+        code = -1;
+    } else if (code != 0 && error) {
+        *error = tail(errFile, 4);
+        if (error->empty()) *error = argv[0] + " exited with " + std::to_string(code);
+    }
+    fs::remove(errFile, ec);
+    return code;
+}
+
 CommandOutput runPluginCommand(Document& doc, ViewHost* view, const Plugin& plugin, const PluginCommand& command, const std::vector<std::string>& args) {
     CommandOutput out;
     std::vector<std::string> argv = command.run;
