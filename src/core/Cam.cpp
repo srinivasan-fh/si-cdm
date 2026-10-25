@@ -2763,18 +2763,20 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
     const double gauge = c.tool.gauge(), HR = c.tool.holderRadius(), flute = c.tool.fluteLength;
     // A station: the tool's tip and axis, beside the rule from `foot` up the wall.
     struct St {
-        D3 tip, axis;
+        D3 tip, axis, n; // n: off the wall
     };
     std::vector<std::vector<St>> loops;
     double shortFlutes = 0;
     std::size_t blocked = 0;
-    auto station = [&](const D3& foot, const D3& axis, const D3& n, double len) {
-        // Up the rule far enough that the end's lowest point stays on the floor.
+    // `base`: where the tool's axis meets the wall's foot, set off it; `len`: the wall's length
+    // along the tool.
+    auto station = [&](const D3& base, const D3& axis, const D3& n, double len) {
+        // Up the axis far enough that the end's lowest point stays on the floor.
         const double sinTilt = std::sqrt(std::max(0.0, 1.0 - axis.z * axis.z));
         double s0 = 0;
-        if (floor) s0 = std::max(0.0, (R * sinTilt - off * n.z) / std::max(axis.z, 0.05));
+        if (floor) s0 = std::max(0.0, (zb + R * sinTilt - base.z) / std::max(axis.z, 0.05));
         shortFlutes = std::max(shortFlutes, len - s0 - flute);
-        const D3 tip = add(add(foot, n, off), axis, s0);
+        const D3 tip = add(base, axis, s0);
         // The flutes past the wall's top, the shank and the holder clear of the part.
         for (double s = std::min(len - s0 + R * 0.5, flute); s <= gauge + c.tool.holderLength; s += std::max(R * 0.5, 0.5)) {
             const double r = s < gauge ? R : HR;
@@ -2783,52 +2785,159 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
                 break;
             }
         }
-        return St{tip, axis};
+        return St{tip, axis, n};
+    };
+    // Arc length round a loop as a share of the whole: at[i] at vertex i, at[n] = 1.
+    auto lengths = [](const Loop& l) {
+        std::vector<double> at(l.size() + 1, 0.0);
+        for (std::size_t i = 0; i < l.size(); ++i) at[i + 1] = at[i] + dist2(l[i], l[(i + 1) % l.size()]);
+        for (double& v : at) v /= std::max(at.back(), 1e-12);
+        return at;
+    };
+    auto pointAt = [](const Loop& l, const std::vector<double>& at, double p) {
+        p -= std::floor(p);
+        const std::size_t i = std::min(l.size() - 1, static_cast<std::size_t>(std::upper_bound(at.begin(), at.end(), p) - at.begin()) - 1);
+        const double t = (p - at[i]) / std::max(at[i + 1] - at[i], 1e-15);
+        const P2 &a0 = l[i], &a1 = l[(i + 1) % l.size()];
+        return P2{a0.x + (a1.x - a0.x) * t, a0.y + (a1.y - a0.y) * t};
+    };
+    // The corners: where the outline turns more than 20 degrees.
+    auto cornersOf = [](const Loop& l, const std::vector<double>& at) {
+        std::vector<double> out;
+        const std::size_t n = l.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const P2 &a0 = l[(i + n - 1) % n], &a1 = l[i], &a2 = l[(i + 1) % n];
+            const double t = std::atan2((a1.x - a0.x) * (a2.y - a1.y) - (a1.y - a0.y) * (a2.x - a1.x), (a1.x - a0.x) * (a2.x - a1.x) + (a1.y - a0.y) * (a2.y - a1.y));
+            if (std::fabs(t) > 20.0 * kPiD / 180.0) out.push_back(at[i]);
+        }
+        return out;
+    };
+    auto centreOf = [](const Loop& l) {
+        P2 m{0, 0};
+        for (const P2& q : l) m.x += q.x, m.y += q.y;
+        return P2{m.x / static_cast<double>(l.size()), m.y / static_cast<double>(l.size())};
     };
     for (const Loop& lo : lower) {
-        const std::size_t n = lo.size();
-        // Each corner's rule: out along its bisector to the upper outline, onto its corner there
-        // when one is close.
+        // The upper outline this wall rises to: the same way round, the nearest.
+        const Loop* upp = nullptr;
+        double nearUp = kInf;
+        for (const Loop& u : upper)
+            if ((section::loopArea(u) > 0) == (section::loopArea(lo) > 0) && dist2(centreOf(u), centreOf(lo)) < nearUp) nearUp = dist2(centreOf(u), centreOf(lo)), upp = &u;
+        if (!upp) continue; // a wall with no top to it
+        const Loop& up = *upp;
+        const std::vector<double> atL = lengths(lo), atU = lengths(up);
+        // Which point of the top each point of the foot rises to, as knots (p on the foot, q on
+        // the top, both rising, over one turn). Corners go to corners where the two outlines have
+        // as many, round the way that pairs them closest, and the sides between them in step;
+        // else the whole outline goes in step from the start that pairs them closest.
+        using Knots = std::vector<std::pair<double, double>>;
+        // Corners to corners, where the two outlines have as many, round the way that pairs
+        // them closest, and the sides between in step.
+        Knots byCorners;
+        const std::vector<double> cl = cornersOf(lo, atL), cu = cornersOf(up, atU);
+        if (cl.size() == cu.size() && cl.size() >= 2) {
+            const std::size_t m = cl.size();
+            std::size_t bestK = 0;
+            double best = kInf;
+            for (std::size_t k = 0; k < m; ++k) {
+                double cost = 0;
+                for (std::size_t i = 0; i < m; ++i) cost += dist2(pointAt(lo, atL, cl[i]), pointAt(up, atU, cu[(i + k) % m]));
+                if (cost < best) best = cost, bestK = k;
+            }
+            for (std::size_t i = 0; i < m; ++i) {
+                double q = cu[(i + bestK) % m];
+                while (!byCorners.empty() && q <= byCorners.back().second) q += 1.0;
+                byCorners.push_back({cl[i], q});
+            }
+            if (byCorners.back().second >= byCorners.front().second + 1.0) byCorners.clear(); // round the other way: not a match
+            else byCorners.push_back({byCorners.front().first + 1.0, byCorners.front().second + 1.0});
+        }
+        // The whole outline in step, from the start that pairs the two closest (as a ruled loft
+        // joins its sections).
+        Knots inStep;
+        {
+            auto cost = [&](double sh) {
+                double c2 = 0;
+                for (int i = 0; i < 256; ++i) c2 += dist2(pointAt(lo, atL, i / 256.0), pointAt(up, atU, i / 256.0 + sh));
+                return c2;
+            };
+            double best = kInf, shift = 0;
+            for (int k = 0; k < 720; ++k)
+                if (const double c2 = cost(k / 720.0); c2 < best) best = c2, shift = k / 720.0;
+            // Then finer, about the best.
+            double lo2 = shift - 1.0 / 720.0, hi2 = shift + 1.0 / 720.0;
+            for (int it = 0; it < 60; ++it) {
+                const double m1 = lo2 + (hi2 - lo2) / 3.0, m2 = hi2 - (hi2 - lo2) / 3.0;
+                if (cost(m1) < cost(m2)) hi2 = m2;
+                else lo2 = m1;
+            }
+            shift = 0.5 * (lo2 + hi2);
+            inStep = {{0.0, shift}, {1.0, shift + 1.0}};
+        }
+        // Along knots, either way.
+        auto followOn = [](const Knots& kn, double x, bool back) {
+            const double x0 = back ? kn.front().second : kn.front().first;
+            x = x0 + (x - x0 - std::floor(x - x0));
+            for (std::size_t i = 0; i + 1 < kn.size(); ++i) {
+                const double a0 = back ? kn[i].second : kn[i].first, a1 = back ? kn[i + 1].second : kn[i + 1].first;
+                const double b0 = back ? kn[i].first : kn[i].second, b1 = back ? kn[i + 1].first : kn[i + 1].second;
+                if (x <= a1 + 1e-12) return b0 + (b1 - b0) * (x - a0) / std::max(a1 - a0, 1e-15);
+            }
+            return back ? kn.back().first : kn.back().second;
+        };
+        // The pairing whose rules lie on the wall: points along them nearest the part's surface.
+        auto offSurface = [&](const Knots& kn) {
+            double sum = 0;
+            for (int i = 0; i < 64; ++i) {
+                const P2 pb = pointAt(lo, atL, i / 64.0), pt = pointAt(up, atU, followOn(kn, i / 64.0, false));
+                for (const double f : {0.25, 0.5, 0.75}) {
+                    const D3 q{pb.x + (pt.x - pb.x) * f, pb.y + (pt.y - pb.y) * f, zb + e + (zt - zb - 2 * e) * f};
+                    double l = 0, h = 2.0;
+                    if (grid.near(q, h))
+                        for (int it = 0; it < 12; ++it) (grid.near(q, 0.5 * (l + h)) ? h : l) = 0.5 * (l + h);
+                    sum += h;
+                }
+            }
+            return sum;
+        };
+        const Knots knots = !byCorners.empty() && offSurface(byCorners) <= offSurface(inStep) + 1e-9 ? byCorners : inStep;
+        auto follow = [&](double x, bool back) { return followOn(knots, x, back); };
+        // Stations at every corner of both outlines (the facets between are ruled straight).
+        std::vector<double> ps;
+        const double p0 = knots.front().first;
+        auto wrap = [&](double p) { return p0 + (p - p0 - std::floor(p - p0)); };
+        for (std::size_t i = 0; i < lo.size(); ++i) ps.push_back(wrap(atL[i]));
+        for (std::size_t i = 0; i < up.size(); ++i) ps.push_back(wrap(follow(atU[i], true)));
+        for (const auto& k : knots) ps.push_back(wrap(k.first));
+        std::sort(ps.begin(), ps.end());
+        // Stations closer than a hundredth of a millimetre along the foot are one.
+        const double perim = [&] {
+            double t = 0;
+            for (std::size_t i = 0; i < lo.size(); ++i) t += dist2(lo[i], lo[(i + 1) % lo.size()]);
+            return t;
+        }();
+        ps.erase(std::unique(ps.begin(), ps.end(), [&](double x, double y) { return (y - x) * perim < 0.01; }), ps.end());
+        if (ps.size() >= 2 && ps.back() - ps.front() > 1.0 - 1e-7) ps.pop_back();
+        const std::size_t n = ps.size();
+        if (n < 3) continue;
         std::vector<D3> foot(n), top(n);
         bool ok = true;
-        for (std::size_t i = 0; i < n && ok; ++i) {
-            const P2 &pa = lo[(i + n - 1) % n], &pb = lo[i], &pc = lo[(i + 1) % n];
-            const double l1 = std::max(dist2(pa, pb), 1e-12), l2 = std::max(dist2(pb, pc), 1e-12);
-            // Away from the material: right of the way round (material on the left).
-            const double nx = (pb.y - pa.y) / l1 + (pc.y - pb.y) / l2, ny = -(pb.x - pa.x) / l1 - (pc.x - pb.x) / l2;
-            const double nl = std::hypot(nx, ny);
-            const P2 dir{nl > 1e-12 ? nx / nl : (pb.y - pa.y) / l1, nl > 1e-12 ? ny / nl : -(pb.x - pa.x) / l1};
-            double best = kInf;
-            P2 hit{};
-            for (const Loop& up : upper)
-                for (std::size_t k = 0; k < up.size(); ++k) {
-                    const P2 &q0 = up[k], &q1 = up[(k + 1) % up.size()];
-                    const double ex = q1.x - q0.x, ey = q1.y - q0.y, den = dir.x * ey - dir.y * ex;
-                    if (std::fabs(den) < 1e-12) continue;
-                    const double s = ((q0.x - pb.x) * ey - (q0.y - pb.y) * ex) / den, u = ((q0.x - pb.x) * dir.y - (q0.y - pb.y) * dir.x) / den;
-                    if (u < -1e-9 || u > 1 + 1e-9 || std::fabs(s) >= std::fabs(best)) continue;
-                    best = s, hit = {pb.x + dir.x * s, pb.y + dir.y * s};
-                }
-            if (!(std::fabs(best) < (zt - zb) * 4.0 + 1.0)) {
-                ok = false;
-                break;
-            }
-            const double snap = 0.25 * std::min(l1, l2);
-            double nearest = snap;
-            for (const Loop& up : upper)
-                for (const P2& q : up)
-                    if (dist2(q, hit) < nearest) nearest = dist2(q, hit), hit = q;
+        for (std::size_t i = 0; i < n; ++i) {
+            const P2 pb = pointAt(lo, atL, ps[i]), pt = pointAt(up, atU, follow(ps[i], false));
+            if (dist2(pb, pt) > (zt - zb) * 4.0 + 1.0) ok = false;
             // The rule through the two sections, carried on to the walls' ends.
-            const D3 b{pb.x, pb.y, zb + e}, t{hit.x, hit.y, zt - e};
+            const D3 b{pb.x, pb.y, zb + e}, t{pt.x, pt.y, zt - e};
             const D3 r = sub(t, b);
             foot[i] = add(b, r, -e / r.z);
             top[i] = add(t, r, e / r.z);
         }
-        if (!ok) continue; // a wall with no top to it
+        if (!ok) continue; // too far to be one wall
         std::vector<St> path;
         for (std::size_t i = 0; i < n; ++i) {
             const std::size_t j = (i + 1) % n, h = (i + n - 1) % n;
-            const D3 d = unit(sub(foot[j], foot[i])), dPrev = unit(sub(foot[i], foot[h])), dNext = unit(sub(foot[(j + 1) % n], foot[j]));
+            // Along the facet: its foot's and top's edges together (one of them may be a point).
+            auto along = [&](std::size_t u, std::size_t v) { return unit(add(sub(foot[v], foot[u]), sub(top[v], top[u]), 1.0)); };
+            const D3 d = along(i, j), dPrev = along(h, i), dNext = along(j, (j + 1) % n);
             // Turns at this edge's ends: left is a convex corner (the tool swings round it), right
             // a concave one (the tool stops where it meets the next face).
             const double turnIn = dPrev.x * d.y - dPrev.y * d.x, turnOut = d.x * dNext.y - d.y * dNext.x;
@@ -2838,22 +2947,38 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
             const double t1 = 1.0 - (turnOut < 0 ? off * std::tan(angOut * 0.5) / std::max(len, 1e-9) : 0.0);
             if (t1 <= t0) continue;
             const int m = std::max(1, static_cast<int>(std::ceil(len * (t1 - t0) / ds)));
+            // The foot's and top's own edges (a twisted wall's normal turns along each rule).
+            const D3 eF = sub(foot[j], foot[i]), eT = sub(top[j], top[i]);
+            const D3 dF = dot3(eF, eF) > 1e-12 ? unit(eF) : d, dT = dot3(eT, eT) > 1e-12 ? unit(eT) : d;
             for (int q = 0; q <= m; ++q) {
                 const double t = t0 + (t1 - t0) * q / m;
-                const D3 f = add(foot[i], sub(foot[j], foot[i]), t), tp = add(top[i], sub(top[j], top[i]), t);
-                const D3 axis = unit(sub(tp, f));
-                path.push_back(station(f, axis, unit(cross3(d, axis)), std::sqrt(dot3(sub(tp, f), sub(tp, f)))));
+                const D3 f = add(foot[i], eF, t), tp = add(top[i], eT, t), r = sub(tp, f);
+                // Off the wall at its foot and at its top, each along the wall's normal there: the
+                // side touches the wall at both ends (on a flat or conical wall, all along).
+                const D3 nF = unit(cross3(dF, r)), nT = unit(cross3(dT, r));
+                const D3 pb = add(f, nF, off), axis = unit(sub(add(tp, nT, off), pb));
+                path.push_back(station(pb, axis, unit(add(nF, nT, 1.0)), std::sqrt(dot3(r, r))));
             }
-            // Round a convex corner: the axis stays on the corner's rule as the side turns.
+            // Round a convex corner: the side turns about the corner's rule, at the foot from one
+            // facet's normal to the next and at the top likewise (on a twisted part the corner's
+            // angle differs up there), the tool through both.
             if (turnOut > 0 && angOut > 1e-3) {
-                const D3 axis = unit(sub(top[j], foot[j]));
-                const D3 n0 = unit(cross3(d, axis)), n1 = unit(cross3(dNext, axis)), w = cross3(axis, n0);
-                const double ang = std::atan2(dot3(n1, w), dot3(n1, n0));
-                const int k = std::max(1, static_cast<int>(std::ceil(std::fabs(ang) / (3.0 * kPiD / 180.0))));
-                const double rl = std::sqrt(dot3(sub(top[j], foot[j]), sub(top[j], foot[j])));
+                const std::size_t k2 = (j + 1) % n;
+                const D3 eF2 = sub(foot[k2], foot[j]), eT2 = sub(top[k2], top[j]);
+                const D3 dF2 = dot3(eF2, eF2) > 1e-12 ? unit(eF2) : dNext, dT2 = dot3(eT2, eT2) > 1e-12 ? unit(eT2) : dNext;
+                const D3 r = sub(top[j], foot[j]), u = unit(r);
+                auto turn = [&](const D3& a0, const D3& a1) { return std::atan2(dot3(cross3(a0, a1), u), dot3(a0, a1)); };
+                const D3 nF0 = unit(cross3(dF, r)), nF1 = unit(cross3(dF2, r)), nT0 = unit(cross3(dT, r)), nT1 = unit(cross3(dT2, r));
+                const double angF = turn(nF0, nF1), angT = turn(nT0, nT1);
+                const int k = std::max(1, static_cast<int>(std::ceil(std::max(std::fabs(angF), std::fabs(angT)) / (3.0 * kPiD / 180.0))));
+                auto rot = [&](const D3& v, double a) { // about u (v is square to it)
+                    const D3 w = cross3(u, v);
+                    return D3{v.x * std::cos(a) + w.x * std::sin(a), v.y * std::cos(a) + w.y * std::sin(a), v.z * std::cos(a) + w.z * std::sin(a)};
+                };
                 for (int q = 1; q < k; ++q) {
-                    const double a = ang * q / k;
-                    path.push_back(station(foot[j], axis, add(D3{n0.x * std::cos(a), n0.y * std::cos(a), n0.z * std::cos(a)}, w, std::sin(a)), rl));
+                    const D3 nF = rot(nF0, angF * q / k), nT = rot(nT0, angT * q / k);
+                    const D3 pb = add(foot[j], nF, off), axis = unit(sub(add(top[j], nT, off), pb));
+                    path.push_back(station(pb, axis, unit(add(nF, nT, 1.0)), std::sqrt(dot3(r, r))));
                 }
             }
         }
@@ -2919,13 +3044,11 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
             }
             ms.push_back({s.tip, a, cc});
         }
-        // In from off the wall along its normal, and out the same way at the end. The stations
-        // were set off the wall to the right of the way round; climb milling reversed that.
+        // In from off the wall along its normal, and out the same way at the end.
         const St &s0 = path.front(), &s1 = path.back();
-        const double lead = std::max(2.0, R), side = op.climb ? -1.0 : 1.0;
+        const double lead = std::max(2.0, R);
         const M &m0 = ms.front(), &m1 = ms.back();
-        const D3 n0 = unit(cross3(sub(path[1].tip, s0.tip), s0.axis)), n1 = unit(cross3(sub(s1.tip, path[path.size() - 2].tip), s1.axis));
-        const D3 start = add(m0.tip, n0, side * lead), end = add(m1.tip, n1, side * lead);
+        const D3 start = add(m0.tip, s0.n, lead), end = add(m1.tip, s1.n, lead);
         const Vec3 p0 = at(start, m0.a, m0.c), e0 = at(m0.tip, m0.a, m0.c);
         const Vec3 low = p0 + upOf(m0.a, m0.c) * static_cast<float>(gap);
         push(CamMove::Rapid, vec(low.x, low.y, c.clearZ), 0, m0.a, m0.c);

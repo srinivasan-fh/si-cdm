@@ -332,13 +332,25 @@ CAM SWARF [TOOL n] [LEAVE l] [BOTTOM z] [TOP z] [OUTSIDE | INSIDE | BOTH] [CONVE
 - **The walls:** those between `BOTTOM` and `TOP` (by default the part's bottom and top).
   `OUTSIDE` (the default) takes the outline, `INSIDE` the walls of pockets and holes, `BOTH`
   all of them.
-- **The tool axis:** on the wall's rule lines. The part is cut through just above the foot
-  and just below the top. Each corner of the lower outline is joined to the upper one's, out
-  along the corner's bisector, and the faces between are joined straight across. Planar,
-  drafted and conical walls are ruled exactly.
-- **The side:** a tool's radius (plus `LEAVE`) off the wall, square to it. At an outside
-  corner the tool swings round the corner's rule; at an inside corner it stops where it
-  meets the next face.
+- **The rules:** the part is cut through just above the foot and just below the top, and the
+  two outlines are paired point to point. Two pairings are tried:
+  - corner to corner, where the outlines have as many corners (turns over 20 degrees), round
+    the way that pairs them closest, the sides between in step;
+  - the whole outline in step by length, from the start that pairs them closest (as a ruled
+    loft joins its sections).
+
+  The one whose rules lie on the part's surface is used. Planar, drafted, conical and
+  twisted ruled walls are followed.
+- **The side:** a tool's radius (plus `LEAVE`) off the wall. The axis passes that far off the
+  wall's foot and its top, each along the wall's normal there, so on a twisted wall (whose
+  normal turns along each rule) the side touches the wall at both ends; on a flat or
+  conical wall, all along. At an outside corner the tool swings round the corner the same
+  way; at an inside corner it stops where it meets the next face.
+- **Twisted walls:** a twisted wall isn't developable, so a cylinder can't touch it all
+  along a rule. The side touches at the foot and the top, and the error in between grows
+  with the twist (under a tenth of a millimetre at 8 degrees over 20 mm). A mesh's
+  facets add their own sag. Where the tool would cut past the walls' top, the operation is
+  refused.
 - **The foot:** where part continues below `BOTTOM` (a floor), the tool rises along the
   wall until its tilted end clears the floor, leaving a narrow band at the foot.
 - **Refused:** walls longer than the tool's flutes; a tool that would touch the part past
@@ -574,7 +586,6 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Swarf:** walls that twist along their height (rules that don't follow the corners'
-  bisectors), and several passes down a wall taller than the flutes.
+- **Swarf:** several passes down a wall taller than the flutes.
 
 Lathes have their own job: see [lathe.md](lathe.md).

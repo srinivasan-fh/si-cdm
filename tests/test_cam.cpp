@@ -968,6 +968,38 @@ TEST_CASE("CAM swarf: the side of a flat end mill along leaning walls, its axis 
     std::filesystem::remove(path);
 }
 
+TEST_CASE("CAM swarf on a twisted wall: rules corner to corner, the side touching the wall at its foot and top") {
+    // A ruled loft from a square (corners at radius 21) to a smaller one (radius 11) turned
+    // 8 degrees: each wall twists along its height.
+    Document d;
+    for (const char* l : {"POLYGON 0,0 21 4", "POLYGON 0,0 11 4 ANGLE 8", "LOFT \"Polyline 1\" \"Polyline 2\" AT 20 RULED", "BOX 50 50 6 @0,0,-6",
+                          "BOOLEAN \"Loft 1\" UNION \"Block 2\"", "CAM SETUP \"Loft 1\" STOCK 1 MATERIAL aluminium", "CAM MACHINE PRESET trunnion",
+                          "CAM TOOL 1 FLAT 8 LENGTH 30 STICKOUT 45", "CAM TOOL 2 FLAT 6 LENGTH 20", "CAM ROUGH TOOL 2 LEAVE 0.3 BOTTOM 0",
+                          "CAM SWARF TOOL 1 BOTTOM 0"})
+        REQUIRE(run(d, l).ok);
+    const CamJob& job = d.state.cam;
+    // The wall between the corners at 0 and 90 degrees rises from the middle of its foot to
+    // the middle of its top (turned 8 degrees). The station passing the foot's middle has its
+    // axis a tool's radius off both.
+    const double c8 = std::cos(8.0 * 3.14159265358979323846 / 180.0), s8 = std::sin(8.0 * 3.14159265358979323846 / 180.0);
+    const Vec3 B{10.5f, 10.5f, 0.0f};
+    const Vec3 T{static_cast<float>(11 * (c8 - s8) / 2), static_cast<float>(11 * (s8 + c8) / 2), 20.0f};
+    auto off = [](const Vec3& p, const Vec3& tip, const Vec3& axis) { return static_cast<double>(length((p - tip) - axis * dot(p - tip, axis))); };
+    double bestB = 1e9, atT = 0;
+    for (const CamMove& m : job.ops[1].moves) {
+        if (m.kind != CamMove::Feed) continue;
+        const Vec3 axis = camToolAxis(m.a, m.c), tip = camToPart(job, m.to, m.a, m.c);
+        const double db = off(B, tip, axis);
+        if (db < bestB) bestB = db, atT = off(T, tip, axis);
+    }
+    CHECK(std::fabs(bestB - 4.0) < 0.05);
+    CHECK(std::fabs(atT - 4.0) < 0.1);
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.rapidCrashes == 0);
+    CHECK(sim.shankHits == 0);
+}
+
 TEST_CASE("CAM swarf INSIDE: a drafted pocket's wall; one that closes over the tool is refused") {
     // A conical pocket through a block, 40 mm across at the top and 20 at the bottom.
     Document d;
