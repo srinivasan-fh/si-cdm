@@ -1,8 +1,10 @@
 #pragma once
 
 #include "core/Assembly.hpp"
+#include "core/Cam.hpp"
 #include "core/Camera.hpp"
 #include "core/Drawing.hpp"
+#include "core/Lathe.hpp"
 #include "core/Scene.hpp"
 #include "render/Renderer.hpp"
 #include "ui/FileDialog.hpp"
@@ -26,7 +28,7 @@ struct UiState {
     ViewMode mode = ViewMode::Model3D;
     SketchPlane plane = SketchPlane::Top; // active sketch / drawing plane
     bool showModelTree = false; // docked panel beside the tool rail
-    int dockTab = 0;            // its page: 0 Model, 1 Library
+    int dockTab = 0;            // its page: 0 Model, 1 Library, 2 CAM
     bool showControls = false;
     bool showAbout = false;
     // The drawing sheet window; the app keeps `sheet` drawn while it is open.
@@ -40,6 +42,12 @@ struct UiState {
     // Assembly: the mates (the app points this at the document's), and the mate tool:
     // its type (COINCIDENT, FLUSH... ; empty: off), value, and the face picked first.
     const AssemblyState* assembly = nullptr;
+    // Manufacturing: the jobs (the app points these at the document's), the operation picked
+    // in the CAM panel (-1: none), and the tool library and machine windows.
+    const CamJob* cam = nullptr;
+    const LatheJob* lathe = nullptr;
+    int camSelected = -1, latheSelected = -1;
+    bool showCamTools = false, showCamMachine = false;
     std::string mateTool;
     float mateValue = 0.0f;
     std::string mateFirst;    // the first part's name ("" until picked)
@@ -185,6 +193,11 @@ private:
     void drawRulers(const OrbitCamera& cam, const UiState& st);
     float drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float x, float top, float bottom); // returns width
     void drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st);
+    void drawCamPanel(UiCommands& cmd, const Scene& scene, UiState& st);   // the dock's CAM page (CamPanel.cpp)
+    void drawCamOperations(UiCommands& cmd, UiState& st);
+    void drawLatheOperations(UiCommands& cmd, UiState& st);
+    void drawCamToolsWindow(UiCommands& cmd, UiState& st);
+    void drawCamMachineWindow(UiCommands& cmd, UiState& st);
     float drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom); // returns width
     void drawSimTransport(UiState& st);
     void drawCommandBar(UiCommands& cmd, UiState& st);
@@ -240,7 +253,10 @@ private:
     int m_recallPos = -1;
 
     // File menu.
-    enum FileAction { FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport };
+    enum FileAction {
+        FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport,
+        FileLathePost, FileToolsImport, FileToolsExport
+    };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
     // Design menu inputs.
@@ -250,6 +266,24 @@ private:
     bool m_closeAskOpen = false;
     int m_closeAfterSave = -1;    // file tab id to close once Save As succeeds
     bool m_showMcp = false;
+
+    // CAM panel: a copy of the picked operation that the fields edit; Apply sends the
+    // differences (CAM EDIT). It follows the job while nothing is changed.
+    CamOperation m_camEdit;
+    int m_camEditIndex = -1;
+    bool m_camEditDirty = false;
+    std::size_t m_camOpsSeen = 0; // a new operation gets picked
+    LatheOperation m_latheEdit;
+    int m_latheEditIndex = -1;
+    bool m_latheEditDirty = false;
+    std::size_t m_latheOpsSeen = 0;
+    bool m_latheCycles = false;   // post rough turning and facing as G71 / G72
+    // Tool library window: the tool being added.
+    int m_newToolType = 0;
+    float m_newToolDiameter = 6.0f, m_newToolLength = 0.0f, m_newToolCorner = 1.0f;
+    // Machine window: edits before Apply.
+    CamMachine m_machineEdit;
+    bool m_machineEditDirty = false;
 
     // Library page: selected item and its edited parameters.
     std::string m_libSelected = "dc_motor";

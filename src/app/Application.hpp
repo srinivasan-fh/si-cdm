@@ -30,6 +30,7 @@ struct AppOptions {
     bool start2D = false;       // open in the 2D drawing window
     int mcpPort = 0;            // > 0: start the MCP HTTP server for AI agents
     std::string openPath;       // project or file to open at startup
+    std::vector<std::string> commands; // command lines to run after it (--command), e.g. for tests and screenshots
     std::string executablePath; // argv[0], for MCP setup hints
     bool splash = true;         // cinematic launch splash with loading progress
     float splashSeconds = 3.2f; // shortest time the splash stays up
@@ -57,6 +58,7 @@ public:
     void setDisplay(int mode) override;
     void setGrid(std::optional<bool> on) override;
     void setPanel(std::optional<bool> on) override;
+    void setPanelPage(int page) override;
     std::string describe() const override;
     bool simulation(const std::string& action, float value, std::string* reply) override;
     bool showSheet(bool on) override;

@@ -53,6 +53,7 @@ add_library(sicdm_core STATIC
     src/core/Section.cpp
     src/core/Cam.cpp
     src/core/CamCommand.cpp
+    src/core/CamEdit.cpp
     src/core/CamLibrary.cpp
     src/core/FeatureCommand.cpp
     src/core/Constraints.cpp
@@ -137,6 +138,7 @@ if(SICDM_BUILD_APP)
         src/render/Renderer.cpp
         src/render/Shader.cpp
         src/ui/FileDialog.cpp
+        src/ui/CamPanel.cpp
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
         src/ui/ToolIcons.cpp

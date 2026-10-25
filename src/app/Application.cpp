@@ -195,6 +195,7 @@ bool Application::init() {
         runCommandLine((kind == FileKind::Project ? "OPEN \"" : "IMPORT \"") + m_options.openPath + "\"");
         if (kind != FileKind::Project) m_savedSignature = contentSignature();
     }
+    for (const std::string& line : m_options.commands) runCommandLine(line);
     refreshFileTabs();
     updateTitle();
     // Unsaved work from a session that ended without closing: offered back in frame().
@@ -1309,12 +1310,13 @@ void Application::handleViewportInput() {
     if (viewKey(ImGuiKey_7, ImGuiKey_Keypad7)) cmd.view = ctrl ? StandardView::Bottom : StandardView::Top;
     if (viewKey(ImGuiKey_0, ImGuiKey_Keypad0)) cmd.view = StandardView::Isometric;
     if (ImGui::IsKeyPressed(ImGuiKey_F)) cmd.fit = true;
-    auto togglePage = [&](int page) { // M: Model page, K: Library page of the docked panel
+    auto togglePage = [&](int page) { // M: Model page, K: Library page, J: CAM page of the docked panel
         m_uiState.showModelTree = !(m_uiState.showModelTree && m_uiState.dockTab == page);
         m_uiState.dockTab = page;
     };
     if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !ctrl) togglePage(0);
     if (ImGui::IsKeyPressed(ImGuiKey_K, false) && !ctrl) togglePage(1);
+    if (ImGui::IsKeyPressed(ImGuiKey_J, false) && !ctrl) togglePage(2);
     if (ctrl) { // Ctrl/Cmd + key belongs to the menus, not to single-key shortcuts
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
         handleCommands(cmd);
@@ -1436,6 +1438,8 @@ void Application::frame(float dt) {
     refreshFileTabs();
     updateSheet();
     m_uiState.assembly = &m_doc.state.assembly;
+    m_uiState.cam = &m_doc.state.cam;
+    m_uiState.lathe = &m_doc.state.lathe;
     const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
 
@@ -2890,6 +2894,11 @@ void Application::setDisplay(int mode) { m_vp3D.displayMode = static_cast<Displa
 void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.value_or(!viewport().showGrid); }
 
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
+
+void Application::setPanelPage(int page) {
+    m_uiState.showModelTree = true;
+    m_uiState.dockTab = page;
+}
 
 void Application::updateSketchColors() {
     // Each curve's colour from how the constraints hold it: construction grey, fully

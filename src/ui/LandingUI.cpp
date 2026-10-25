@@ -433,6 +433,10 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             st.showModelTree = !(st.showModelTree && st.dockTab == 1);
             st.dockTab = 1;
         }
+        if (ImGui::MenuItem("CAM Panel", "J", st.showModelTree && st.dockTab == 2)) {
+            st.showModelTree = !(st.showModelTree && st.dockTab == 2);
+            st.dockTab = 2;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Design")) {
@@ -584,6 +588,11 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Manufacture")) {
+        if (ImGui::MenuItem("CAM Panel (operations, tools, post)", "J")) {
+            st.showModelTree = true;
+            st.dockTab = 2;
+        }
+        ImGui::Separator();
         if (ImGui::BeginMenu("3D Print")) {
             const bool body = st.selectedBody >= 0;
             if (ImGui::MenuItem("Check Printability", nullptr, false, body)) cmd.commands.push_back("PRINTCHECK");
@@ -1297,8 +1306,8 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
         // Page tabs (Model | Library) with a close button, like a docked DCC panel.
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {12, 5});
         if (ImGui::BeginTabBar("##dockpages", ImGuiTabBarFlags_DrawSelectedOverline)) {
-            const char* pages[] = {"Model", "Library"};
-            for (int p = 0; p < 2; ++p) {
+            const char* pages[] = {"Model", "Library", "CAM"};
+            for (int p = 0; p < 3; ++p) {
                 const ImGuiTabItemFlags f = st.dockTab == p && m_shownDockTab != p ? ImGuiTabItemFlags_SetSelected : 0;
                 const bool selected = ImGui::BeginTabItem(pages[p], nullptr, f);
                 if (ImGui::IsItemClicked()) st.dockTab = p; // tabs switch pages only when clicked
@@ -1315,6 +1324,8 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
     }
     if (visible && st.dockTab == 1) {
         drawLibrary(cmd, scene, st);
+    } else if (visible && st.dockTab == 2) {
+        drawCamPanel(cmd, scene, st);
     } else if (visible) {
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
         if (ImGui::TreeNode("##root", "%s  (Part)", st.projectName.c_str())) {
@@ -1898,6 +1909,9 @@ void LandingUI::requestFile(int action, const UiState& st) {
         break;
     case File3mf: m_fileDialog.open(FileDialog::Mode::Save, "Export 3MF", {".3mf"}, dir, projectStem(st) + ".3mf"); break;
     case FilePost: m_fileDialog.open(FileDialog::Mode::Save, "Post Process to G-code", {".nc", ".tap", ".gcode"}, dir, projectStem(st) + ".nc"); break;
+    case FileLathePost:
+        m_fileDialog.open(FileDialog::Mode::Save, "Post the Lathe Job to G-code", {".nc", ".tap", ".gcode"}, dir, projectStem(st) + "-lathe.nc");
+        break;
     case FileSheetExport: m_fileDialog.open(FileDialog::Mode::Save, "Export Drawing", {".pdf", ".svg", ".dxf"}, dir, projectStem(st) + ".pdf"); break;
     default: m_fileAction = FileNone;
     }
@@ -1925,6 +1939,9 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case File3mf: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
         case FileSlice: cmd.commands.push_back("SLICE TO " + quoted(*path)); break;
         case FilePost: cmd.commands.push_back("CAM POST " + quoted(*path)); break;
+        case FileLathePost:
+            cmd.commands.push_back("LATHE POST " + quoted(*path) + (st.lathe ? " " + st.lathe->setup.post : std::string()) + (m_latheCycles ? " CYCLES" : ""));
+            break;
         default: break;
         }
         m_fileAction = FileNone;
@@ -2035,7 +2052,7 @@ void LandingUI::drawControlsWindow(UiState& st) {
                 {"Enter", "Finish polyline"},
                 {"Esc", "Cancel drawing / clear selection"},
                 {"Delete / Backspace", "Delete selected body or curve"},
-                {"M", "Show / hide the Model panel"},
+                {"M  K  J", "Show / hide the Model, Library and CAM panels"},
                 {"V  S  O  H  Z", "Move / Select / Orbit / Pan / Zoom tools"},
                 {"L  C  R", "Line / Circle / Rectangle sketch tools"},
                 {"B  Y", "Block / Cylinder tools (Shift cycles the slot)"},

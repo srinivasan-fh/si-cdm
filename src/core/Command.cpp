@@ -210,7 +210,7 @@ constexpr CommandSpec kCommands[] = {
     {"DISPLAY", "SHADE", "DISPLAY SHADED|EDGES|WIRE|HIDDEN", "Display mode of the 3D window"},
     {"GRID", "", "GRID [ON|OFF]", "Show or hide the grid"},
     {"SNAP", "", "SNAP [ON|OFF]", "Grid and point snapping for sketches"},
-    {"PANEL", "", "PANEL [ON|OFF]", "Show or hide the Model panel"},
+    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM", "Show or hide the docked panel, or open it on a page (CAM: milling and lathe jobs)"},
     // Session
     {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF]",
      "Units for typing and showing lengths (the model stays exact in mm)"},

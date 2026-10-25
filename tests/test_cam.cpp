@@ -1,6 +1,7 @@
 #include "TestFramework.hpp"
 
 #include "core/Cam.hpp"
+#include "core/CamEdit.hpp"
 #include "core/CamLibrary.hpp"
 #include "core/CamVerify.hpp"
 #include "core/Json.hpp"
@@ -1283,4 +1284,90 @@ TEST_CASE("CAM operations edited in place, moved, suppressed and duplicated (com
     CHECK(call(R"({"operation":"duplicate","index":1})"));
     CHECK(job.ops.size() == 4);
     CHECK(!call(R"({"operation":"edit","leave":0.4})"));
+}
+
+TEST_CASE("CAM panel edits: the fields changed become CAM EDIT options that reproduce them") {
+    Document d;
+    bracket(d);
+    for (const char* l : {"CAM SETUP \"Block 1\" STOCK 3 TOP 1 MATERIAL aluminium", "CAM TOOL 1 FLAT 6", "CAM TOOL 2 FLAT 10", "CAM TOOL 3 DRILL 6",
+                          "CAM ROUGH TOOL 2", "CAM CONTOUR TOOL 1", "CAM DRILL TOOL 3"})
+        REQUIRE(run(d, l).ok);
+    CamJob& job = d.state.cam;
+    auto same = [](const CamOperation& a, const CamOperation& b) {
+        auto eq = [](double x, double y) { return (std::isnan(x) && std::isnan(y)) || std::fabs(x - y) < 1e-6 * std::max(1.0, std::fabs(x)); };
+        return a.name == b.name && a.tool == b.tool && eq(a.stepdown, b.stepdown) && eq(a.stepover, b.stepover) && eq(a.leave, b.leave) && eq(a.top, b.top) &&
+               eq(a.bottom, b.bottom) && eq(a.angle, b.angle) && a.climb == b.climb && a.raster == b.raster && a.adaptive == b.adaptive && a.rest == b.rest &&
+               a.side == b.side && a.tabs == b.tabs && eq(a.tabWidth, b.tabWidth) && eq(a.tabHeight, b.tabHeight) && eq(a.lead, b.lead) && a.cycle == b.cycle &&
+               eq(a.peck, b.peck) && eq(a.dwell, b.dwell) && eq(a.setRpm, b.setRpm) && eq(a.setFeed, b.setFeed) && eq(a.setPlunge, b.setPlunge) &&
+               eq(a.indexA, b.indexA) && eq(a.indexC, b.indexC);
+    };
+    CHECK(camEditArgs(job.ops[0], job.ops[0]).empty());
+    // Rough: many fields at once, then back to automatic.
+    CamOperation e = job.ops[0];
+    e.name = "Big \"rough\"", e.tool = 1, e.stepdown = 2.5, e.stepover = 2, e.leave = 0.4, e.top = 14, e.bottom = 3, e.adaptive = true, e.climb = false;
+    e.setRpm = 9000, e.setFeed = 1500, e.setPlunge = 400;
+    std::string args = camEditArgs(job.ops[0], e);
+    auto r = run(d, "CAM EDIT 1" + args);
+    REQUIRE(r.ok);
+    e.name = "Big 'rough'"; // quotes inside a name become single quotes
+    CHECK(same(job.ops[0], e));
+    e = job.ops[0];
+    e.stepdown = 0, e.stepover = 0, e.top = std::numeric_limits<double>::quiet_NaN(), e.setRpm = 0, e.setFeed = 0, e.setPlunge = 0, e.adaptive = false;
+    REQUIRE(run(d, "CAM EDIT 1" + camEditArgs(job.ops[0], e)).ok);
+    CHECK(same(job.ops[0], e));
+    // Contour: walls, tabs, lead.
+    e = job.ops[1];
+    e.side = 2, e.tabs = 3, e.tabWidth = 5, e.tabHeight = 2, e.lead = 3, e.leave = 0.1;
+    REQUIRE(run(d, "CAM EDIT 2" + camEditArgs(job.ops[1], e)).ok);
+    CHECK(same(job.ops[1], e));
+    e.lead = -1;
+    REQUIRE(run(d, "CAM EDIT 2" + camEditArgs(job.ops[1], e)).ok);
+    CHECK(same(job.ops[1], e));
+    // Drill: a peck depth keeps the cycle chosen; a 3+2 turn.
+    e = job.ops[2];
+    e.cycle = DrillCycle::ChipBreak, e.peck = 1.5, e.dwell = 0.2;
+    REQUIRE(run(d, "CAM EDIT 3" + camEditArgs(job.ops[2], e)).ok);
+    CHECK(same(job.ops[2], e));
+    e.cycle = DrillCycle::Drill, e.peck = 0;
+    REQUIRE(run(d, "CAM EDIT 3" + camEditArgs(job.ops[2], e)).ok);
+    CHECK(same(job.ops[2], e));
+}
+
+TEST_CASE("UNDO and REDO take back CAM and lathe changes, in turn with model edits") {
+    Document d;
+    bracket(d);
+    for (const char* l : {"CAM SETUP \"Block 1\" STOCK 3 TOP 1 MATERIAL aluminium", "CAM TOOL 1 FLAT 6", "CAM ROUGH TOOL 1 LEAVE 0.3", "CAM CONTOUR TOOL 1"})
+        REQUIRE(run(d, l).ok);
+    CamJob& job = d.state.cam;
+    REQUIRE(run(d, "CAM EDIT 1 LEAVE 0.7").ok);
+    REQUIRE(run(d, "CAM SUPPRESS 2").ok);
+    auto r = run(d, "UNDO");
+    REQUIRE(r.ok);
+    CHECK(has(text(r), "CAM SUPPRESS 2"));
+    CHECK(!d.state.cam.ops[1].suppressed);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(std::fabs(d.state.cam.ops[0].leave - 0.3) < 1e-6);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(std::fabs(d.state.cam.ops[0].leave - 0.7) < 1e-6);
+    // A model edit after a CAM edit is undone first; then the CAM edit.
+    REQUIRE(run(d, "CAM DELETE 2").ok);
+    REQUIRE(job.ops.size() == 1);
+    REQUIRE(run(d, "SCULPT \"Block 1\" DRAW AT 0,15,15 RADIUS 6").ok);
+    const std::size_t verts = d.scene.bodies()[0].mesh.vertices.size();
+    REQUIRE(run(d, "UNDO").ok); // the sculpt
+    CHECK(d.scene.bodies()[0].mesh.vertices.size() != verts);
+    CHECK(d.state.cam.ops.size() == 1);
+    REQUIRE(run(d, "UNDO").ok); // the delete
+    CHECK(d.state.cam.ops.size() == 2);
+    // A new CAM edit drops what could be redone.
+    REQUIRE(run(d, "CAM EDIT 1 LEAVE 0.2").ok);
+    CHECK(!run(d, "REDO").ok);
+    // Lists and simulations change nothing to undo.
+    const std::size_t depth = d.jobsUndo.size();
+    REQUIRE(run(d, "CAM LIST").ok);
+    REQUIRE(run(d, "CAM GENERATE").ok);
+    CHECK(d.jobsUndo.size() == depth);
+    // A new project forgets them.
+    REQUIRE(run(d, "NEW").ok);
+    CHECK(d.jobsUndo.empty());
 }

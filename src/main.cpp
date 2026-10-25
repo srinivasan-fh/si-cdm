@@ -20,12 +20,14 @@ int main(int argc, char** argv) {
             options.start2D = true;
         } else if (std::strcmp(argv[i], "--mcp-port") == 0 && i + 1 < argc) {
             options.mcpPort = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--command") == 0 && i + 1 < argc) {
+            options.commands.push_back(argv[++i]);
         } else if (std::strcmp(argv[i], "--size") == 0 && i + 2 < argc) {
             options.width = std::atoi(argv[++i]);
             options.height = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--help") == 0) {
             std::printf("Usage: %s [file.sicdm | file.stl | image.png ...] [--size W H] [--2d] [--mcp-port N]\n"
-                        "          [--no-splash] [--splash-seconds S] [--screenshot out.ppm]\n",
+                        "          [--no-splash] [--splash-seconds S] [--screenshot out.ppm] [--command \"LINE\" ...]\n",
                         argv[0]);
             return 0;
         } else if (argv[i][0] != '-') {

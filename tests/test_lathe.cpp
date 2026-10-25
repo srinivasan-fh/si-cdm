@@ -3,6 +3,7 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
+#include "core/CamEdit.hpp"
 #include "core/Json.hpp"
 #include "core/Lathe.hpp"
 #include "core/Scene.hpp"
@@ -389,4 +390,50 @@ TEST_CASE("Lathe operations edited in place, moved, suppressed and duplicated") 
     LatheJob back;
     REQUIRE(latheFromJson(j, back));
     CHECK(back.ops[3].suppressed);
+}
+
+TEST_CASE("Lathe panel edits: the fields changed become LATHE EDIT options that reproduce them") {
+    Document d;
+    REQUIRE(shaft(d));
+    for (const char* l : {"LATHE ROUGH TOOL 1 LEAVE 0.2", "LATHE THREAD PITCH 1.5 FROM 0 TO -14"}) REQUIRE(run(d, l).ok);
+    LatheJob& job = d.state.lathe;
+    auto eq = [](double x, double y) { return (std::isnan(x) && std::isnan(y)) || std::fabs(x - y) < 1e-6 * std::max(1.0, std::fabs(x)); };
+    LatheOperation e = job.ops[0];
+    e.name = "Rough", e.stepdown = 1.2, e.leave = 0.3, e.leaveZ = 0.1, e.zFrom = -2, e.speed = 180, e.feedPerRev = 0.25;
+    REQUIRE(run(d, "LATHE EDIT 1" + latheEditArgs(job.ops[0], e)).ok);
+    const LatheOperation& o = job.ops[0];
+    CHECK(o.name == "Rough");
+    CHECK(eq(o.stepdown, 1.2));
+    CHECK(eq(o.leave, 0.3));
+    CHECK(eq(o.leaveZ, 0.1));
+    CHECK(eq(o.zFrom, -2));
+    CHECK(eq(o.speed, 180));
+    CHECK(eq(o.feedPerRev, 0.25));
+    e = o;
+    e.stepdown = 0, e.zFrom = std::numeric_limits<double>::quiet_NaN(), e.speed = 0, e.feedPerRev = 0;
+    REQUIRE(run(d, "LATHE EDIT 1" + latheEditArgs(o, e)).ok);
+    CHECK(o.stepdown == 0);
+    CHECK(std::isnan(o.zFrom));
+    CHECK(o.speed == 0);
+    e = job.ops[1];
+    e.pitch = 1.0, e.threadDiameter = 19.5;
+    REQUIRE(run(d, "LATHE EDIT 2" + latheEditArgs(job.ops[1], e)).ok);
+    CHECK(eq(job.ops[1].pitch, 1.0));
+    CHECK(eq(job.ops[1].threadDiameter, 19.5));
+    CHECK(latheEditArgs(job.ops[1], job.ops[1]).empty());
+}
+
+TEST_CASE("UNDO takes back lathe changes") {
+    Document d;
+    REQUIRE(shaft(d));
+    for (const char* l : {"LATHE FACE", "LATHE ROUGH TOOL 1 LEAVE 0.2"}) REQUIRE(run(d, l).ok);
+    REQUIRE(run(d, "LATHE EDIT 2 LEAVE 0.5").ok);
+    REQUIRE(run(d, "LATHE DELETE 1").ok);
+    REQUIRE(d.state.lathe.ops.size() == 1);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.state.lathe.ops.size() == 2);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(std::fabs(d.state.lathe.ops[1].leave - 0.2) < 1e-6);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(std::fabs(d.state.lathe.ops[1].leave - 0.5) < 1e-6);
 }

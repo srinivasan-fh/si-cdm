@@ -33,6 +33,15 @@ struct Document {
     std::string pendingConstraint;  // a constraint just made: it learns its history step
     bool historyRewritten = false;  // the command changed the history itself: it isn't recorded
 
+    // Undo for the manufacturing jobs (the scene keeps its own): each CAM / LATHE command
+    // that changed a job keeps them as they were (as saved: toolpaths are made again), with
+    // the scene's undo depth then, so UNDO takes back whichever of the two came last.
+    struct JobsUndo {
+        std::string cam, lathe, label;
+        std::size_t sceneDepth = 0;
+    };
+    std::vector<JobsUndo> jobsUndo, jobsRedo;
+
     bool snapGrid = true;
     bool snapPoints = true;
 
@@ -58,6 +67,7 @@ public:
     virtual void setDisplay(int mode) = 0; // 0 shaded, 1 shaded+edges, 2 wireframe, 3 hidden line
     virtual void setGrid(std::optional<bool> on) = 0;  // nullopt toggles
     virtual void setPanel(std::optional<bool> on) = 0; // Model panel
+    virtual void setPanelPage(int page) { (void)page; }  // open the panel on a page: 0 Model, 1 Library, 2 CAM
     virtual std::string describe() const = 0;          // window, plane, camera summary
 
     // Multi-document hosts keep each project in its own file tab. NEW / OPEN call

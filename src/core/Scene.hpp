@@ -155,6 +155,8 @@ public:
     // new edit drops it too. Moves, colours and renames since the undo are kept.
     std::string redo(std::string* why = nullptr);
     std::size_t redoDepth() const noexcept { return m_redo.size(); }
+    // An edit made elsewhere (the CAM jobs): what was undone here can't come back after it.
+    void clearRedo() { m_redo.clear(); }
 
     // Bumped whenever bodies are added or removed (GPU buffers must be rebuilt).
     std::uint64_t revision() const noexcept { return m_revision; }

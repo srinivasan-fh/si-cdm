@@ -5,6 +5,7 @@
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
 #include "core/CamCommand.hpp"
+#include "core/Json.hpp"
 #include "core/LatheCommand.hpp"
 #include "core/CrashReport.hpp"
 #include "core/Licence.hpp"
@@ -394,6 +395,10 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     const bool sketchEdit = spec && sketchCommand(spec->name) && !doc.replaying;
     const std::uint64_t sketchBefore = doc.scene.sketch().revision();
     if (sketchEdit) doc.scene.pushSketchUndo(std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))));
+    // A CAM or LATHE command: the jobs as they were, for UNDO.
+    const bool jobCommand = spec && (std::string(spec->name) == "CAM" || std::string(spec->name) == "LATHE") && !doc.replaying;
+    std::string camBefore, latheBefore;
+    if (jobCommand) camBefore = camToJson(doc.state.cam).dump(), latheBefore = latheToJson(doc.state.lathe).dump();
     CommandOutput out = runCommand(doc, line, view);
     if (sketchEdit) {
         if (out.ok && doc.scene.sketch().revision() != sketchBefore) doc.scene.keepSketchUndo();
@@ -401,6 +406,17 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     }
     // An edit that kept an undo snapshot and succeeded: record the state it left.
     doc.scene.sealUndo();
+    if (jobCommand && out.ok) {
+        std::string camAfter = camToJson(doc.state.cam).dump(), latheAfter = latheToJson(doc.state.lathe).dump();
+        if (camAfter != camBefore || latheAfter != latheBefore) {
+            doc.jobsUndo.push_back({std::move(camBefore), std::move(latheBefore), std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))),
+                                    doc.scene.undoDepth()});
+            if (doc.jobsUndo.size() > 64) doc.jobsUndo.erase(doc.jobsUndo.begin());
+            doc.jobsRedo.clear();
+            doc.scene.clearRedo(); // one history: a new edit drops what could be redone
+        }
+    }
+    if (out.ok && doc.scene.undoPushes() != pushes) doc.jobsRedo.clear(); // a new edit: nothing to redo
     if (!doc.replaying && !doc.historyRewritten) recordHistory(doc, line, out, empty, selBody, selCurve, doc.scene.undoPushes() != pushes);
     doc.historyRewritten = false;
     // A new constraint remembers the history step that made it (CONSTRAINT EDIT rewrites it).
@@ -709,6 +725,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.clearSelection();
         doc.primitiveSerial = 0;
         doc.state.cam = CamJob{}; // the jobs, the drawing and the mates belonged to the old parts
+        doc.jobsUndo.clear(), doc.jobsRedo.clear();
         doc.state.lathe = LatheJob{};
         doc.state.drawing = Drawing{};
         doc.state.assembly = AssemblyState{};
@@ -762,6 +779,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             return out;
         }
         doc.scene.assign(std::move(loaded));
+        doc.jobsUndo.clear(), doc.jobsRedo.clear();
         doc.state = st;
         doc.path = fs::absolute(path).string();
         doc.dirty = false;
@@ -909,6 +927,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         if (!loadProject(loaded, st, f.project, &err, &warn)) return out.fail("Cannot recover " + f.name + ": " + err);
         if (view) view->prepareDocument(""); // a file tab of its own
         doc.scene.assign(std::move(loaded));
+        doc.jobsUndo.clear(), doc.jobsRedo.clear();
         doc.state = st;
         doc.path = f.original; // SAVE puts it back where it came from
         doc.name = f.name;
@@ -1687,6 +1706,32 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.scene.touchBodies();
         markChanged(doc);
         out.say("Updated " + b.name + ": " + changed);
+        return out;
+    }
+    // The jobs from a snapshot; the ones replaced go to `back` (with the scene's depth there).
+    auto swapJobs = [&](std::vector<Document::JobsUndo>& from, std::vector<Document::JobsUndo>& back, std::size_t depth) {
+        Document::JobsUndo j = std::move(from.back());
+        from.pop_back();
+        const auto cj = Json::parse(j.cam), lj = Json::parse(j.lathe);
+        CamJob c;
+        LatheJob l;
+        if (!cj || !lj || !camFromJson(*cj, c) || !latheFromJson(*lj, l)) return std::string();
+        back.push_back({camToJson(doc.state.cam).dump(), latheToJson(doc.state.lathe).dump(), j.label, depth});
+        doc.state.cam = std::move(c);
+        doc.state.lathe = std::move(l);
+        markChanged(doc);
+        return j.label;
+    };
+    if (cmd == "UNDO" && !doc.jobsUndo.empty() && doc.scene.undoDepth() <= doc.jobsUndo.back().sceneDepth) {
+        const std::string what = swapJobs(doc.jobsUndo, doc.jobsRedo, doc.scene.redoDepth());
+        if (what.empty()) return out.fail("Can't undo the CAM change");
+        out.say("Undid " + what);
+        return out;
+    }
+    if (cmd == "REDO" && !doc.jobsRedo.empty() && doc.scene.redoDepth() <= doc.jobsRedo.back().sceneDepth) {
+        const std::string what = swapJobs(doc.jobsRedo, doc.jobsUndo, doc.scene.undoDepth());
+        if (what.empty()) return out.fail("Can't redo the CAM change");
+        out.say("Redid " + what);
         return out;
     }
     if (cmd == "UNDO") {
@@ -3076,6 +3121,17 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         view->setDisplay(mode);
         out.say("Display " + m);
         return out;
+    }
+    if (cmd == "PANEL" && !a.empty()) {
+        // PANEL MODEL | LIBRARY | CAM: open the docked panel on that page.
+        const std::string page = toUpper(a[0]);
+        const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : -1;
+        if (p >= 0) {
+            if (auto o = needView(view, "PANEL"); !o.ok) return o;
+            view->setPanelPage(p);
+            out.say("Panel: " + page);
+            return out;
+        }
     }
     if (cmd == "GRID" || cmd == "PANEL") {
         if (auto o = needView(view, cmd.c_str()); !o.ok) return o;

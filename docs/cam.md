@@ -421,6 +421,29 @@ CAM SUPPRESS n              CAM UNSUPPRESS n
 - **Display:** the toolpaths show in the 3D view. Cuts are in each operation's colour, plunges
   are yellow and rapids are thin red.
 
+## The CAM panel
+
+The left panel's **CAM** page (`J`, *View → CAM Panel*, or *Manufacture → CAM Panel*) does
+the job with the mouse:
+
+![The CAM panel: setup, the operations (one suppressed), the drill's fields, and the toolpaths](cam-panel.png)
+
+- **Setup:** set up the selected part; then change its material and post, open the machine
+  and the tool library.
+- **Operations:** *+ Add Operation* lists every kind. In the list, the tick box switches an
+  operation off (suppressed) and on, a click picks it, and right-click moves, copies,
+  suppresses or deletes it. *Up*, *Down*, *Copy* and *Delete* act on the picked one.
+- **Fields:** the picked operation's options: tool, stepdown, stepover, stock to leave, top
+  and bottom, and those of its kind (tabs, cycle, slope, lead and tilt ...). A ticked box
+  beside a field leaves it automatic. *Apply* sends the changes (as `CAM EDIT`); *Revert*
+  drops them. Speeds and feeds are under their own heading.
+- **The job:** *Generate*, *Simulate* (shows the cut stock), *Check Program* (the read-back)
+  and *Post G-code...*.
+- **Turning:** the same for the lathe job below it, with *Canned cycles (G71 / G72)* for the
+  post.
+
+Every change runs as a command, so it shows in the command log and *File → Undo* (Ctrl+Z) undoes it.
+
 ## Simulation
 
 ```text
