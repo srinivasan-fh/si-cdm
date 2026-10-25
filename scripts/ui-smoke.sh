@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # UI smoke test: starts the app on each main screen (the landing page, the samples, the CAM
-# panel and its windows, the user guide, preferences, licence, the 2D window), renders it and
+# panel and its windows, the user guide, preferences, licence, the 2D window, a drawing
+# sheet, physics, the simulation window and the sculpted head), renders it and
 # saves a screenshot. A crash, a failed command or a missing screenshot fails the run.
 #
 #   scripts/ui-smoke.sh [build/release/sicdm] [out-dir]
@@ -56,6 +57,10 @@ shot cam-tools --command "RUN docs/examples/cam-demo.txt" --command "PANEL TOOLS
 shot cam-machine --command "RUN docs/examples/cam-demo.txt" --command "PANEL MACHINE"
 shot cam-simulate --command "RUN docs/examples/cam-demo.txt" --command "CAM SIMULATE" --command "PANEL CAM"
 shot lathe-sample --command "NEW" --command "RUN docs/examples/lathe-demo.txt" --command "PANEL CAM"
+shot drawing-sheet --command "RUN docs/examples/cad-demo.txt" --command "SHEET NEW SIZE A3" --command "SHEET SHOW"
+shot physics --command "PHYSICS DEMO" --command "SIM PLAY"
+shot simulation --command "SIM"
+shot sculpt-sample --command "RUN docs/examples/head-bust.txt"
 shot save-reopen --command "BOX 20 20 20" --command "SAVE \"$state/smoke.sicdm\"" --command "NEW" --command "RECENT 1" --command "BOX 5 5 5" --command "UNDO"
 
 if [ "$failed" -gt 0 ]; then

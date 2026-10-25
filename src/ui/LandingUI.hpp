@@ -274,6 +274,9 @@ private:
     bool m_closeAskOpen = false;
     int m_closeAfterSave = -1;    // file tab id to close once Save As succeeds
     bool m_showMcp = false;
+    float m_scaleEdit = 1.0f;     // Model panel: the selected body's Scale field while it is edited
+    bool m_scaleEditing = false;
+    std::string m_scaleEditBody;
 
     // CAM panel: a copy of the picked operation that the fields edit; Apply sends the
     // differences (CAM EDIT). It follows the job while nothing is changed.

@@ -1520,12 +1520,16 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextColored(theme::vec(theme::kTextDim), "Scale");
                 ImGui::TableNextColumn();
-                float scale = b.scale;
+                // The field keeps what is typed until it is let go (Enter, a click away, or a +/- click),
+                // then sends one SCALE. (Number fields can't take ImGuiInputTextFlags_EnterReturnsTrue.)
+                if (m_scaleEditBody != b.name || !m_scaleEditing) m_scaleEdit = b.scale;
                 ImGui::SetNextItemWidth(-1);
-                if (ImGui::InputFloat("##scale", &scale, 0.1f, 0.5f, "x %.2f", ImGuiInputTextFlags_EnterReturnsTrue) &&
-                    scale > 0.01f && scale != b.scale) {
+                ImGui::InputFloat("##scale", &m_scaleEdit, 0.1f, 0.5f, "x %.2f");
+                m_scaleEditing = ImGui::IsItemActive();
+                m_scaleEditBody = b.name;
+                if (ImGui::IsItemDeactivatedAfterEdit() && m_scaleEdit > 0.01f && m_scaleEdit != b.scale) {
                     char line[160];
-                    std::snprintf(line, sizeof(line), "SCALE \"%s\" TO %g", b.name.c_str(), static_cast<double>(scale));
+                    std::snprintf(line, sizeof(line), "SCALE \"%s\" TO %g", b.name.c_str(), static_cast<double>(m_scaleEdit));
                     cmd.commands.push_back(line);
                 }
                 if (ImGui::IsItemHovered())
