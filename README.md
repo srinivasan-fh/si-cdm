@@ -44,6 +44,12 @@ cmake --preset mingw-cross && cmake --build --preset mingw-cross
 wine build/mingw/tests/sicdm_tests.exe # all tests pass under Wine too
 ```
 
+### Internal testing
+
+Testers start with [docs/internal-testing.md](docs/internal-testing.md): installing, what to
+test, the known limitations and how to report a problem. Before handing a build out, run
+`scripts/ui-smoke.sh` (every main screen renders, the samples run) besides the tests.
+
 ### Releases
 
 `scripts/release.sh` builds, tests and packages a release; the packages and a
