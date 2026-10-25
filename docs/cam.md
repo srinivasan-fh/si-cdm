@@ -326,7 +326,7 @@ CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
 leaning with them, so a drafted or tapered wall is cut its whole height in one pass:
 
 ```text
-CAM SWARF [TOOL n] [LEAVE l] [BOTTOM z] [TOP z] [OUTSIDE | INSIDE | BOTH] [CONVENTIONAL]
+CAM SWARF [TOOL n] [LEAVE l] [BOTTOM z] [TOP z] [STEPDOWN d] [OUTSIDE | INSIDE | BOTH] [CONVENTIONAL]
 ```
 
 - **The walls:** those between `BOTTOM` and `TOP` (by default the part's bottom and top).
@@ -353,9 +353,14 @@ CAM SWARF [TOOL n] [LEAVE l] [BOTTOM z] [TOP z] [OUTSIDE | INSIDE | BOTH] [CONVE
   refused.
 - **The foot:** where part continues below `BOTTOM` (a floor), the tool rises along the
   wall until its tilted end clears the floor, leaving a narrow band at the foot.
-- **Refused:** walls longer than the tool's flutes; a tool that would touch the part past
-  the walls' top (a wall leaning out over it) or a shank or holder that would; and a wall
-  leaning past the machine's A (or B) travel.
+- **Bands:** a wall longer along the tool than its flutes (or than `STEPDOWN`) is cut in
+  bands from the top down, the tool stepping down its own axis. The top band's flutes reach
+  past the wall's top by up to a tool's radius and the bands overlap as much, so the shank
+  of the bands below passes only over what the band above cut (and the stock roughing left
+  on the top beside the edge).
+- **Refused:** a tool that would touch the part past the walls' top (a wall leaning out over
+  it) or a shank or holder that would; and a wall leaning past the machine's A (or B)
+  travel.
 - **Moves:** in from off the wall along its normal and round the outline (climb milling
   by default), then out the same way, turning at most 1.5 degrees a move. Rough first: the
   tool comes down beside the wall.
@@ -581,11 +586,5 @@ Its parameters are listed in the tool's schema.
 {"operation": "simulate", "show": true}
 {"operation": "post", "path": "bracket.nc"}
 ```
-
-## Not yet
-
-These are not modelled yet:
-
-- **Swarf:** several passes down a wall taller than the flutes.
 
 Lathes have their own job: see [lathe.md](lathe.md).

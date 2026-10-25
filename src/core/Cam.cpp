@@ -2764,9 +2764,10 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
     // A station: the tool's tip and axis, beside the rule from `foot` up the wall.
     struct St {
         D3 tip, axis, n; // n: off the wall
+        double reach;    // how far up the axis the wall goes from the tip
     };
     std::vector<std::vector<St>> loops;
-    double shortFlutes = 0;
+    double reachMost = 0;
     std::size_t blocked = 0;
     // `base`: where the tool's axis meets the wall's foot, set off it; `len`: the wall's length
     // along the tool.
@@ -2775,7 +2776,7 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
         const double sinTilt = std::sqrt(std::max(0.0, 1.0 - axis.z * axis.z));
         double s0 = 0;
         if (floor) s0 = std::max(0.0, (zb + R * sinTilt - base.z) / std::max(axis.z, 0.05));
-        shortFlutes = std::max(shortFlutes, len - s0 - flute);
+        reachMost = std::max(reachMost, len - s0);
         const D3 tip = add(base, axis, s0);
         // The flutes past the wall's top, the shank and the holder clear of the part.
         for (double s = std::min(len - s0 + R * 0.5, flute); s <= gauge + c.tool.holderLength; s += std::max(R * 0.5, 0.5)) {
@@ -2785,7 +2786,7 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
                 break;
             }
         }
-        return St{tip, axis, n};
+        return St{tip, axis, n, len - s0};
     };
     // Arc length round a loop as a share of the whole: at[i] at vertex i, at[n] = 1.
     auto lengths = [](const Loop& l) {
@@ -2991,12 +2992,16 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
         if (err) *err = "No walls to cut: no section at the top matches the foot's";
         return false;
     }
-    if (shortFlutes > 1e-3) {
-        char b[32];
-        std::snprintf(b, sizeof b, "%.2f mm", shortFlutes);
-        if (err) *err = "The walls run " + std::string(b) + " past T" + std::to_string(c.tool.number) + "'s flutes: a tool with longer flutes, or a lower TOP";
+    // A wall longer than the flutes (or than STEPDOWN) is cut in bands from the top down.
+    const double band = op.stepdown > 0 ? std::min(op.stepdown, flute) : flute;
+    if (!(band > 0.1)) {
+        if (err) *err = "T" + std::to_string(c.tool.number) + "'s flutes are too short to cut with";
         return false;
     }
+    // Cut in bands, the top one's flutes reach past the walls' top (the shank of the bands
+    // below goes over it, and the roughing left stock on the top beside the edge).
+    const double over = reachMost > band + 1e-6 ? std::min(R, 0.25 * band) : 0.0;
+    const int passes = std::max(1, static_cast<int>(std::ceil((reachMost + over - 1e-6) / band)));
     if (blocked > 0) {
         if (err) *err = "The tool would touch the part past the walls' top (an overhang), or its shank or holder would, at " + std::to_string(blocked) +
                           " points: a longer stickout, or a lower TOP";
@@ -3022,8 +3027,8 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
     auto at = [&](const D3& tip, double a, double cc) { return camToMachine(c.job, vec(tip.x, tip.y, tip.z), head ? tableA : static_cast<float>(a), static_cast<float>(cc)); };
     for (const std::vector<St>& path : loops) {
         struct M {
-            D3 tip;
-            double a, c;
+            D3 tip, axis;
+            double a, c, reach;
         };
         std::vector<M> ms;
         for (const St& s : path) {
@@ -3039,27 +3044,33 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
                 const int k = std::max(1, static_cast<int>(std::ceil(std::max(std::fabs(a - p.a), std::fabs(cc - p.c)) / 1.5)));
                 for (int q = 1; q < k; ++q) {
                     const double t = static_cast<double>(q) / k;
-                    ms.push_back({add(p.tip, sub(s.tip, p.tip), t), p.a + (a - p.a) * t, p.c + (cc - p.c) * t});
+                    ms.push_back({add(p.tip, sub(s.tip, p.tip), t), unit(add(p.axis, sub(s.axis, p.axis), t)), p.a + (a - p.a) * t, p.c + (cc - p.c) * t,
+                                  p.reach + (s.reach - p.reach) * t});
                 }
             }
-            ms.push_back({s.tip, a, cc});
+            ms.push_back({s.tip, s.axis, a, cc, s.reach});
         }
-        // In from off the wall along its normal, and out the same way at the end.
+        // Each band: the tip up its axis by what of the wall is still below it.
         const St &s0 = path.front(), &s1 = path.back();
         const double lead = std::max(2.0, R);
-        const M &m0 = ms.front(), &m1 = ms.back();
-        const D3 start = add(m0.tip, s0.n, lead), end = add(m1.tip, s1.n, lead);
-        const Vec3 p0 = at(start, m0.a, m0.c), e0 = at(m0.tip, m0.a, m0.c);
-        const Vec3 low = p0 + upOf(m0.a, m0.c) * static_cast<float>(gap);
-        push(CamMove::Rapid, vec(low.x, low.y, c.clearZ), 0, m0.a, m0.c);
-        push(CamMove::Rapid, low, 0, m0.a, m0.c);
-        push(CamMove::Plunge, p0, c.feeds.plunge, m0.a, m0.c);
-        push(CamMove::Feed, e0, c.feeds.feed, m0.a, m0.c);
-        for (std::size_t k = 1; k < ms.size(); ++k) push(CamMove::Feed, at(ms[k].tip, ms[k].a, ms[k].c), c.feeds.feed, ms[k].a, ms[k].c);
-        const Vec3 p1 = at(end, m1.a, m1.c), up = p1 + upOf(m1.a, m1.c) * static_cast<float>(gap);
-        push(CamMove::Feed, p1, c.feeds.feed, m1.a, m1.c);
-        push(CamMove::Rapid, up, 0, m1.a, m1.c);
-        push(CamMove::Rapid, vec(up.x, up.y, c.clearZ), 0, m1.a, m1.c);
+        for (int pass = 1; pass <= passes; ++pass) {
+            std::vector<M> bandMs = ms;
+            for (M& m : bandMs) m.tip = add(m.tip, m.axis, std::max(0.0, m.reach + over - pass * band));
+            // In from off the wall along its normal, and out the same way at the end.
+            const M &m0 = bandMs.front(), &m1 = bandMs.back();
+            const D3 start = add(m0.tip, s0.n, lead), end = add(m1.tip, s1.n, lead);
+            const Vec3 p0 = at(start, m0.a, m0.c), e0 = at(m0.tip, m0.a, m0.c);
+            const Vec3 low = p0 + upOf(m0.a, m0.c) * static_cast<float>(gap);
+            push(CamMove::Rapid, vec(low.x, low.y, c.clearZ), 0, m0.a, m0.c);
+            push(CamMove::Rapid, low, 0, m0.a, m0.c);
+            push(CamMove::Plunge, p0, c.feeds.plunge, m0.a, m0.c);
+            push(CamMove::Feed, e0, c.feeds.feed, m0.a, m0.c);
+            for (std::size_t k = 1; k < bandMs.size(); ++k) push(CamMove::Feed, at(bandMs[k].tip, bandMs[k].a, bandMs[k].c), c.feeds.feed, bandMs[k].a, bandMs[k].c);
+            const Vec3 p1 = at(end, m1.a, m1.c), up = p1 + upOf(m1.a, m1.c) * static_cast<float>(gap);
+            push(CamMove::Feed, p1, c.feeds.feed, m1.a, m1.c);
+            push(CamMove::Rapid, up, 0, m1.a, m1.c);
+            push(CamMove::Rapid, vec(up.x, up.y, c.clearZ), 0, m1.a, m1.c);
+        }
     }
     return true;
 }

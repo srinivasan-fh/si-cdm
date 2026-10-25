@@ -897,16 +897,13 @@ TEST_CASE("CAM swarf: the side of a flat end mill along leaning walls, its axis 
     Document d;
     for (const char* l : {"CONE 20 40 @0,0,0", "BOX 60 60 20 @0,0,0", "BOOLEAN \"Cone 1\" INTERSECT \"Block 2\"", "BOX 60 60 6 @0,0,-6",
                           "BOOLEAN \"Cone 1\" UNION \"Block 3\"", "CAM SETUP \"Cone 1\" STOCK 1 MATERIAL aluminium", "CAM TOOL 1 FLAT 8 LENGTH 30 STICKOUT 45",
-                          "CAM TOOL 2 FLAT 6 LENGTH 20", "CAM TOOL 3 BALL 6", "CAM TOOL 4 FLAT 8 LENGTH 12", "CAM ROUGH TOOL 2 LEAVE 0.3 BOTTOM 0"})
+                          "CAM TOOL 2 FLAT 6 LENGTH 20", "CAM TOOL 3 BALL 6", "CAM ROUGH TOOL 2 LEAVE 0.3 BOTTOM 0"})
         REQUIRE(run(d, l).ok);
-    // A 3-axis machine can't; nor can a ball end mill, or flutes shorter than the walls.
+    // A 3-axis machine can't, nor can a ball end mill.
     REQUIRE(run(d, "CAM MACHINE PRESET vmc").ok);
     CHECK(!run(d, "CAM SWARF TOOL 1 BOTTOM 0").ok);
     REQUIRE(run(d, "CAM MACHINE PRESET trunnion").ok);
     CHECK(!run(d, "CAM SWARF TOOL 3 BOTTOM 0").ok);
-    auto r = run(d, "CAM SWARF TOOL 4 BOTTOM 0");
-    CHECK(!r.ok);
-    CHECK(has(text(r), "flutes"));
     REQUIRE(run(d, "CAM SWARF TOOL 1 BOTTOM 0").ok);
     const CamJob& job = d.state.cam;
     REQUIRE(job.ops.size() == 2);
@@ -966,6 +963,49 @@ TEST_CASE("CAM swarf: the side of a flat end mill along leaning walls, its axis 
     REQUIRE(e.state.cam.ops.size() == 2);
     CHECK(e.state.cam.ops[1].kind == CamOpKind::Swarf);
     std::filesystem::remove(path);
+}
+
+TEST_CASE("CAM swarf in bands: a wall longer than the flutes, or than STEPDOWN, is cut from the top down") {
+    Document d;
+    for (const char* l : {"CONE 20 40 @0,0,0", "BOX 60 60 20 @0,0,0", "BOOLEAN \"Cone 1\" INTERSECT \"Block 2\"", "BOX 60 60 6 @0,0,-6",
+                          "BOOLEAN \"Cone 1\" UNION \"Block 3\"", "CAM SETUP \"Cone 1\" STOCK 1 MATERIAL aluminium", "CAM MACHINE PRESET trunnion",
+                          "CAM TOOL 1 FLAT 8 LENGTH 30 STICKOUT 45", "CAM TOOL 2 FLAT 6 LENGTH 20", "CAM TOOL 4 FLAT 8 LENGTH 12 STICKOUT 45",
+                          "CAM ROUGH TOOL 2 LEAVE 0.3 BOTTOM 0"})
+        REQUIRE(run(d, l).ok);
+    auto plunges = [](const CamOperation& op) {
+        std::size_t n = 0;
+        for (const CamMove& m : op.moves) n += m.kind == CamMove::Plunge;
+        return n;
+    };
+    // The wall runs 22 mm along the tool: one pass with 30 mm of flutes, three with 12 (each
+    // band overlapping the next, the top one past the wall's top).
+    REQUIRE(run(d, "CAM SWARF TOOL 1 BOTTOM 0").ok);
+    CHECK(plunges(d.state.cam.ops[1]) == 1);
+    REQUIRE(run(d, "CAM DELETE 2").ok);
+    REQUIRE(run(d, "CAM SWARF TOOL 4 BOTTOM 0").ok);
+    const CamOperation& op = d.state.cam.ops[1];
+    CHECK(plunges(op) == 3);
+    // The bands step down the tool's axis, the last at the foot.
+    double lowest = 1e9, highest = -1e9;
+    for (const CamMove& m : op.moves)
+        if (m.kind == CamMove::Feed) {
+            const double z = camToPart(d.state.cam, m.to, m.a, m.c).z;
+            lowest = std::min(lowest, z), highest = std::max(highest, z);
+        }
+    CHECK(lowest < 3.0);
+    CHECK(highest > 10.0);
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK(sim.shankHits == 0); // the shank of the bands below goes over what the band above cut
+    // STEPDOWN makes the bands shorter.
+    REQUIRE(run(d, "CAM DELETE 2").ok);
+    REQUIRE(run(d, "CAM SWARF TOOL 1 BOTTOM 0 STEPDOWN 8").ok);
+    CHECK(plunges(d.state.cam.ops[1]) == 4);
+    REQUIRE(run(d, "CAM DELETE 2").ok);
+    REQUIRE(run(d, "CAM SWARF TOOL 1 BOTTOM 0 STEPDOWN 5").ok);
+    CHECK(plunges(d.state.cam.ops[1]) == 5);
 }
 
 TEST_CASE("CAM swarf on a twisted wall: rules corner to corner, the side touching the wall at its foot and top") {
