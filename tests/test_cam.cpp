@@ -824,6 +824,73 @@ TEST_CASE("CAM 5-axis on a head-table machine: B tilts the tool, C turns the par
     std::filesystem::remove(path);
 }
 
+TEST_CASE("CAM 5-axis on a head-head machine: the part stays put, B tilts and C swivels the head") {
+    Document d;
+    for (const char* l : {"BOX 40 40 8 @0,0,0", "SPHERE 15 @0,0,-7", "BOOLEAN \"Block 1\" UNION \"Sphere 2\"", "CAM SETUP \"Block 1\" STOCK 1 MATERIAL aluminium",
+                          "CAM MACHINE PRESET head-head", "CAM TOOL 1 FLAT 6 LENGTH 30", "CAM TOOL 2 BALL 4 STICKOUT 40", "CAM ROUGH TOOL 1 LEAVE 0.3"})
+        REQUIRE(run(d, l).ok);
+    CHECK(d.state.cam.setup.machine.headHead());
+    // No table to turn the part on.
+    CHECK(!run(d, "CAM ROTARY TOOL 1").ok);
+    auto r = run(d, "CAM PARALLEL TOOL 2 INDEX 0 90");
+    CHECK(!r.ok);
+    CHECK(has(text(r), "swivels the head"));
+    REQUIRE(run(d, "CAM 5AXIS TOOL 2 SCALLOP 0.1").ok);
+    const CamJob& job = d.state.cam;
+    const CamOperation& op = job.ops[1];
+    const Vec3 centre{0, 0, 8};
+    double nearest = 1e9, maxB = 0, leanSum = 0, cLo = 1e9, cHi = -1e9;
+    std::size_t onDome = 0;
+    for (const CamMove& m : op.moves) {
+        CHECK(m.a == 0.0f);
+        CHECK(length(camToPart(job, m.to, m.a, m.c) - m.to) < 1e-5f); // the part never turns
+        if (m.kind == CamMove::Rapid) continue;
+        const Vec3 axis = camToolAxis(m.a, m.c, m.b, true);
+        const Vec3 ball = m.to + axis * 2.0f;
+        const double rr = length(ball - centre);
+        nearest = std::min(nearest, rr);
+        maxB = std::max(maxB, std::fabs(static_cast<double>(m.b)));
+        cLo = std::min(cLo, static_cast<double>(m.c)), cHi = std::max(cHi, static_cast<double>(m.c));
+        if (std::fabs(rr - 17.0) < 0.1 && ball.z > 12.0 && std::fabs(m.b) < 45.0) {
+            const Vec3 n = (ball - centre) * static_cast<float>(1.0 / rr);
+            leanSum += std::acos(std::clamp(static_cast<double>(dot(n, axis)), -1.0, 1.0)) * 180.0 / kPi;
+            ++onDome;
+        }
+    }
+    CHECK(nearest > 17.0 - 0.1);
+    CHECK(maxB > 40.0);
+    CHECK(cHi - cLo > 180.0);
+    CHECK(cLo >= -360.0 - 1e-3);
+    CHECK(cHi <= 360.0 + 1e-3);
+    REQUIRE(onDome > 500);
+    CHECK_NEAR(leanSum / static_cast<double>(onDome), 10.0, 2.5);
+    CamSimulation sim;
+    REQUIRE(simulateJob(d.state.cam, d.scene.bodies()[0], sim));
+    CHECK(sim.gouges == 0);
+    CHECK(sim.rapidCrashes == 0);
+    CHECK(sim.shankHits == 0);
+    // Posted in tool centre point mode and read back on the toolpath, the travel checked with
+    // the head swivelled.
+    const std::string g = postToString(d.state.cam, d.scene.bodies()[0], "fanuc");
+    CHECK(has(g, "G43.4 H02"));
+    CHECK(has(g, "B TILTS THE HEAD AND C SWIVELS IT"));
+    const CamPostCheck pc = checkPost(d.state.cam, "fanuc", g);
+    for (const GcodeIssue& i : pc.issues)
+        if (i.error) std::printf("  line %d: %s\n", i.line, i.text.c_str());
+    CHECK(pc.errors == 0);
+    CHECK(pc.deviation <= pc.allowed);
+    // Kinematics set by hand, and saved with the job.
+    REQUIRE(run(d, "CAM MACHINE PRESET trunnion KINEMATICS head-head B -90 90").ok);
+    CHECK(d.state.cam.setup.machine.headHead());
+    const std::string path = tempPath("sicdm_cam_headhead.sicdm");
+    REQUIRE(run(d, "SAVE " + path).ok);
+    Document e;
+    REQUIRE(run(e, "OPEN " + path).ok);
+    CHECK(e.state.cam.setup.machine.headHead());
+    CHECK(e.state.cam.setup.machine.bMax == 90);
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("CAM swarf: the side of a flat end mill along leaning walls, its axis on the walls' rules") {
     // A cone frustum (40 mm across at the foot, 20 at the top, 20 high: the wall leans in
     // 26.6 degrees) on a plate.

@@ -108,10 +108,13 @@ struct CamMachine {
     // Rotary axes (degrees): A turns the table about X, C about Z. The generic machine has
     // both, without limits; the presets say what theirs have. B tilts the spindle head about
     // Y instead (a head-table machine: B and C); a machine with B tilts the tool, not the
-    // part, and its 5-axis programs use the control's tool centre point mode.
-    bool hasA = true, hasC = true, hasB = false;
+    // part, and its 5-axis programs use the control's tool centre point mode. With `cHead`
+    // C swivels the head about Z too (a head-head machine): the part never moves.
+    bool hasA = true, hasC = true, hasB = false, cHead = false;
     double aMin = -99999.0, aMax = 99999.0, cMin = -99999.0, cMax = 99999.0, bMin = -99999.0, bMax = 99999.0;
     bool headTilts() const { return hasB && !hasA; }
+    bool headHead() const { return headTilts() && cHead; }
+    const char* kinematics() const { return headHead() ? "head-head" : headTilts() ? "head-table" : "table-table"; }
     int toolPockets = 0;       // highest T number the changer takes (0: any)
     bool hasTravel(int axis) const { return travelMax[axis] > travelMin[axis]; }
     std::string describe() const;
@@ -237,8 +240,9 @@ bool camFromJson(const Json& j, CamJob& job);
 // (machine +Z) as a direction on the part.
 Vec3 camToPart(const CamJob& job, const Vec3& machine, float a, float c);
 Vec3 camToMachine(const CamJob& job, const Vec3& part, float a, float c);
-// The tool's axis on the part (up from the tip), for the table at A and C and the head at B.
-Vec3 camToolAxis(float a, float c, float b = 0.0f);
+// The tool's axis on the part (up from the tip), for the table at A and C and the head at B;
+// `cHead`: C swivels the head (a head-head machine) instead of turning the table.
+Vec3 camToolAxis(float a, float c, float b = 0.0f, bool cHead = false);
 
 // Fills `op.moves` for the part. False (and `error`) when it can't, e.g. no stock.
 bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, std::string* error = nullptr);

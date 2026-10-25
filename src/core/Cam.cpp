@@ -625,6 +625,17 @@ const std::vector<CamMachine>& camMachinePresets() {
         ht.bMin = -110, ht.bMax = 110;
         ht.toolPockets = 40;
         v.push_back(ht);
+        CamMachine hh; // a gantry with a fork head: B tilts it, C swivels it; the part stays put
+        hh.name = "head-head";
+        hh.maxRpm = 18000, hh.maxFeed = 20000, hh.rapid = 30000, hh.toolChange = 8;
+        hh.travelMin[0] = 0, hh.travelMax[0] = 2000;
+        hh.travelMin[1] = 0, hh.travelMax[1] = 1200;
+        hh.travelMin[2] = -800, hh.travelMax[2] = 0;
+        hh.hasA = false, hh.hasB = hh.hasC = hh.cHead = true;
+        hh.bMin = -105, hh.bMax = 105;
+        hh.cMin = -360, hh.cMax = 360;
+        hh.toolPockets = 24;
+        v.push_back(hh);
         CamMachine bench; // a benchtop mill with a small changer
         bench.name = "benchtop";
         bench.maxRpm = 10000, bench.maxFeed = 2540, bench.rapid = 7620, bench.toolChange = 10;
@@ -679,7 +690,7 @@ std::string CamMachine::describe() const {
     };
     if (hasA) rot('A', aMin, aMax);
     if (hasB) rot('B', bMin, bMax), s += " (head)";
-    if (hasC) rot('C', cMin, cMax);
+    if (hasC) rot('C', cMin, cMax), s += cHead ? " (head)" : "";
     if (!hasA && !hasB && !hasC) s += "; no rotary axes";
     if (toolPockets > 0) s += "; " + std::to_string(toolPockets) + " tool pockets";
     return s;
@@ -857,17 +868,20 @@ Vec3 turnC(const Vec3& v, double deg) {
 } // namespace
 
 Vec3 camToMachine(const CamJob& job, const Vec3& part, float a, float c) {
+    if (job.setup.machine.cHead) c = 0; // the head swivels, not the part
     const Vec3 o = job.rotaryCentre();
     return o + turnA(turnC(part - o, c), a);
 }
 
 Vec3 camToPart(const CamJob& job, const Vec3& machine, float a, float c) {
+    if (job.setup.machine.cHead) c = 0;
     const Vec3 o = job.rotaryCentre();
     return o + turnC(turnA(machine - o, -a), -c);
 }
 
-Vec3 camToolAxis(float a, float c, float b) {
+Vec3 camToolAxis(float a, float c, float b, bool cHead) {
     const double r = b * kPiD / 180.0;
+    if (cHead) return turnC(vec(std::sin(r), 0, std::cos(r)), c); // the head swivels the tool round
     return turnC(turnA(vec(std::sin(r), 0, std::cos(r)), -a), -c);
 }
 
@@ -894,7 +908,7 @@ double movesSeconds(const std::vector<CamMove>& moves, const CamMachine& machine
     float atA = moves.empty() ? 0.0f : moves[0].a, atC = moves.empty() ? 0.0f : moves[0].c;
     for (const CamMove& m : moves) {
         double len = length(m.to - at);
-        if (centre && m.c != atC) { // A and C both turning (5-axis): the tip's path over the part
+        if (centre && m.c != atC && !machine.cHead) { // A and C both turning (5-axis): the tip's path over the part
             const Vec3 pa = *centre + turnC(turnA(at - *centre, -atA), -atC), pb = *centre + turnC(turnA(m.to - *centre, -m.a), -m.c);
             len = length(pb - pa);
         } else if (centre && m.a != atA) { // the turn, along the part
@@ -2255,9 +2269,13 @@ bool axisAngles(const D3& t, const CamMachine& m, double lastC, double& a, doubl
     for (const double sg : {1.0, -1.0}) {
         const double aa = sg * tilt;
         if (aa < lo - 1e-9 || aa > hi + 1e-9) continue;
-        // Table: T = (sin a sin c, sin a cos c, cos a). Head: T = (sin b cos c, -sin b sin c,
-        // cos b). C from the horizontal part, any C when upright.
-        double cc = s < 1e-7 ? lastC : head ? std::atan2(-sg * t.y, sg * t.x) * 180.0 / kPiD : std::atan2(sg * t.x, sg * t.y) * 180.0 / kPiD;
+        // Table: T = (sin a sin c, sin a cos c, cos a). Head and table: T = (sin b cos c,
+        // -sin b sin c, cos b); with C in the head too, (sin b cos c, sin b sin c, cos b). C from
+        // the horizontal part, any C when upright.
+        double cc = s < 1e-7                ? lastC
+                    : head && m.cHead ? std::atan2(sg * t.y, sg * t.x) * 180.0 / kPiD
+                    : head            ? std::atan2(-sg * t.y, sg * t.x) * 180.0 / kPiD
+                                      : std::atan2(sg * t.x, sg * t.y) * 180.0 / kPiD;
         cc += 360.0 * std::round((lastC - cc) / 360.0);
         if (cc < m.cMin - 1e-9 || cc > m.cMax + 1e-9) {
             // Another turn of C that fits.
@@ -2576,13 +2594,15 @@ bool genSurface5(Ctx& c, const Body& part, std::string* err) {
     auto machineAt = [&](const M5& m) { return camToMachine(c.job, m.tip, head ? tableA : static_cast<float>(m.a), static_cast<float>(m.c)); };
     auto lift = [&](const M5& m) { return gap / std::max(std::cos(m.a * kPiD / 180.0), 0.3) + 1.0; };
     auto axisOf = [&](double a, double cc) {
-        const Vec3 u = head ? camToolAxis(0.0f, static_cast<float>(cc), static_cast<float>(a)) : camToolAxis(static_cast<float>(a), static_cast<float>(cc));
+        const Vec3 u = head ? camToolAxis(0.0f, static_cast<float>(cc), static_cast<float>(a), mach.cHead) : camToolAxis(static_cast<float>(a), static_cast<float>(cc));
         return D3{u.x, u.y, u.z};
     };
-    // Up the tool in the machine's frame: Z where the table tilts the part, the head's tilt else.
-    auto upOf = [&](double a) {
+    // Up the tool in the machine's frame: Z where the table tilts the part, the head's tilt
+    // else (swivelled with C where the head has C too).
+    auto upOf = [&](double a, double cc) {
         const double r = a * kPiD / 180.0;
-        return head ? vec(std::sin(r), 0, std::cos(r)) : vec(0, 0, 1);
+        if (!head) return vec(0, 0, 1);
+        return mach.cHead ? camToolAxis(0.0f, static_cast<float>(cc), static_cast<float>(a), true) : vec(std::sin(r), 0, std::cos(r));
     };
     // The lifted stretch from the end of one run to the start of the next, or empty when
     // it isn't clear.
@@ -2634,14 +2654,14 @@ bool genSurface5(Ctx& c, const Body& part, std::string* err) {
         const M5& s0 = fine.front();
         const Vec3 m0 = machineAt(s0);
         if (!linked) {
-            const Vec3 low = m0 + upOf(s0.a) * static_cast<float>(lift(s0)), high = vec(low.x, low.y, static_cast<float>(c.clearZ));
+            const Vec3 low = m0 + upOf(s0.a, s0.c) * static_cast<float>(lift(s0)), high = vec(low.x, low.y, static_cast<float>(c.clearZ));
             push(CamMove::Rapid, high, 0, s0.a, s0.c);
             travel(high, low, s0.a, s0.c);
         }
         push(CamMove::Plunge, m0, c.feeds.plunge, s0.a, s0.c);
         for (std::size_t k = 1; k < fine.size(); ++k) push(CamMove::Feed, machineAt(fine[k]), c.feeds.feed, fine[k].a, fine[k].c);
         const M5& s1 = fine.back();
-        const Vec3 m1 = machineAt(s1), up = m1 + upOf(s1.a) * static_cast<float>(lift(s1));
+        const Vec3 m1 = machineAt(s1), up = m1 + upOf(s1.a, s1.c) * static_cast<float>(lift(s1));
         travel(m1, up, s1.a, s1.c);
         const std::vector<M5> hop = r + 1 < cuts.size() ? link(s1, cuts[r + 1].front()) : std::vector<M5>{};
         linked = !hop.empty();
@@ -2862,9 +2882,12 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
     const double gap = std::max({2.0, c.job.setup.retract, c.approach});
     const float tableA = 0.0f;
     double lastC = 0;
-    auto upOf = [&](double a) {
+    // Up the tool in the machine's frame: Z where the table tilts the part, the head's tilt
+    // else (swivelled with C where the head has C too).
+    auto upOf = [&](double a, double cc) {
         const double r = a * kPiD / 180.0;
-        return head ? vec(std::sin(r), 0, std::cos(r)) : vec(0, 0, 1);
+        if (!head) return vec(0, 0, 1);
+        return mach.cHead ? camToolAxis(0.0f, static_cast<float>(cc), static_cast<float>(a), true) : vec(std::sin(r), 0, std::cos(r));
     };
     auto push = [&](CamMove::Kind k, const Vec3& to, double f, double a, double cc) {
         CamMove mv{k, to, f, head ? 0.0f : static_cast<float>(a), static_cast<float>(cc)};
@@ -2904,13 +2927,13 @@ bool genSwarf(Ctx& c, const Body& part, std::string* err) {
         const D3 n0 = unit(cross3(sub(path[1].tip, s0.tip), s0.axis)), n1 = unit(cross3(sub(s1.tip, path[path.size() - 2].tip), s1.axis));
         const D3 start = add(m0.tip, n0, side * lead), end = add(m1.tip, n1, side * lead);
         const Vec3 p0 = at(start, m0.a, m0.c), e0 = at(m0.tip, m0.a, m0.c);
-        const Vec3 low = p0 + upOf(m0.a) * static_cast<float>(gap);
+        const Vec3 low = p0 + upOf(m0.a, m0.c) * static_cast<float>(gap);
         push(CamMove::Rapid, vec(low.x, low.y, c.clearZ), 0, m0.a, m0.c);
         push(CamMove::Rapid, low, 0, m0.a, m0.c);
         push(CamMove::Plunge, p0, c.feeds.plunge, m0.a, m0.c);
         push(CamMove::Feed, e0, c.feeds.feed, m0.a, m0.c);
         for (std::size_t k = 1; k < ms.size(); ++k) push(CamMove::Feed, at(ms[k].tip, ms[k].a, ms[k].c), c.feeds.feed, ms[k].a, ms[k].c);
-        const Vec3 p1 = at(end, m1.a, m1.c), up = p1 + upOf(m1.a) * static_cast<float>(gap);
+        const Vec3 p1 = at(end, m1.a, m1.c), up = p1 + upOf(m1.a, m1.c) * static_cast<float>(gap);
         push(CamMove::Feed, p1, c.feeds.feed, m1.a, m1.c);
         push(CamMove::Rapid, up, 0, m1.a, m1.c);
         push(CamMove::Rapid, vec(up.x, up.y, c.clearZ), 0, m1.a, m1.c);
@@ -3012,6 +3035,10 @@ bool generateOperation(const CamJob& job, const Body& part, CamOperation& op, st
     op.generated = false;
     if ((op.kind == CamOpKind::Rotary || op.indexA != 0) && job.setup.machine.headTilts()) {
         if (error) *error = "This machine tilts the tool (B), not the part: " + std::string(op.kind == CamOpKind::Rotary ? "rotary wrapping" : "turning to an A") + " needs an A table";
+        return false;
+    }
+    if (op.indexC != 0 && job.setup.machine.cHead && op.kind != CamOpKind::Surface5 && op.kind != CamOpKind::Swarf) {
+        if (error) *error = "This machine's C swivels the head, not the part: INDEX C needs a C table";
         return false;
     }
     // 3+2: turn the part and the stock with the table, make the 3-axis operation there.
@@ -3292,7 +3319,7 @@ bool simulateVoxels(CamJob& job, const Body& part, CamSimulation& out, std::stri
                 const double t = static_cast<double>(st) / steps;
                 const Vec3 pm2 = a + (b - a) * static_cast<float>(t);
                 const float aa = a0 + (a1 - a0) * static_cast<float>(t), ca = c0 + (c1 - c0) * static_cast<float>(t), ba = b0 + (b1 - b0) * static_cast<float>(t);
-                const Vec3 P = camToPart(job, pm2, aa, ca), u = camToolAxis(aa, ca, ba);
+                const Vec3 P = camToPart(job, pm2, aa, ca), u = camToolAxis(aa, ca, ba, su.machine.cHead);
                 // The voxels the flute and the shank could reach.
                 const double reach = gauge;
                 double bl[3], bh[3];
@@ -3335,7 +3362,7 @@ bool simulateVoxels(CamJob& job, const Body& part, CamSimulation& out, std::stri
             }
             // The holder's face at the end of the move: anything within its radius just above it.
             {
-                const Vec3 P = camToPart(job, b, m.a, m.c), u = camToolAxis(m.a, m.c, m.b);
+                const Vec3 P = camToPart(job, b, m.a, m.c), u = camToolAxis(m.a, m.c, m.b, su.machine.cHead);
                 const Vec3 F = P + u * static_cast<float>(gauge);
                 if (F.x > lo.x - HR && F.y > lo.y - HR && F.z > lo.z - HR && F.x < hi[0] + HR && F.y < hi[1] + HR && F.z < hi[2] + HR) {
                     const int stride = std::max(1, static_cast<int>(HR / (8 * cell)));
@@ -3902,7 +3929,9 @@ std::string postToString(CamJob& job, const Body& part, const std::string& post,
                          }() + ")");
     else w.comment(title);
     w.comment("SI-CDM CAM, " + st.key + " post, work zero G54 at " +
-              (multi ? std::string(head ? "the rotary centre (C turns the table about Z through it; B tilts the head)" : "the rotary centre (A turns about X, C about Z, through it)")
+              (multi ? std::string(job.setup.machine.headHead() ? "the rotary centre (the part stays put; B tilts the head and C swivels it)"
+                                   : head                       ? "the rotary centre (C turns the table about Z through it; B tilts the head)"
+                                                                : "the rotary centre (A turns about X, C about Z, through it)")
                : su.origin == CamSetup::Origin::Model ? std::string("the model origin")
                : su.origin == CamSetup::Origin::StockTopCentre ? std::string("the stock top centre")
                                                                : std::string("the stock top front left corner")));
@@ -4254,6 +4283,7 @@ Json camToJson(const CamJob& job) {
         mj.set("a", m.hasA ? Json(Json::Array{Json(m.aMin), Json(m.aMax)}) : Json(false));
         mj.set("c", m.hasC ? Json(Json::Array{Json(m.cMin), Json(m.cMax)}) : Json(false));
         if (m.hasB) mj.set("b", Json(Json::Array{Json(m.bMin), Json(m.bMax)}));
+        if (m.cHead) mj.set("c_head", true);
         s.set("machine", mj);
     }
     j.set("setup", s);
@@ -4353,6 +4383,7 @@ bool camFromJson(const Json& j, CamJob& job) {
         const auto& b = mj["b"].items();
         m.hasB = b.size() == 2;
         if (m.hasB) m.bMin = b[0].asNumber(-99999), m.bMax = b[1].asNumber(99999);
+        m.cHead = mj["c_head"].asBool(false);
     }
     job.showPaths = j["show_paths"].asBool(true);
     for (const Json& o : j["tools"].items()) job.tools.push_back(camToolFromJson(o));

@@ -741,7 +741,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
 
     if (sub == "machine") {
         // CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z|OFF]
-        //   [A min max|OFF|CONTINUOUS] [B ...] [C ...] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]
+        //   [A min max|OFF|CONTINUOUS] [B ...] [C ...] [KINEMATICS table-table|head-table|head-head] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]
         CamMachine m = job.setup.machine;
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
@@ -795,6 +795,14 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
                     if (!l || !h || !(*h > *l)) return out.fail(toUpper(k) + " needs min max (degrees), CONTINUOUS or OFF");
                     fitted = true, lo = *l, hi = *h;
                 }
+            } else if (k == "kinematics") {
+                // Which axes tilt and turn what: the table both (A, C), the head tilts and the
+                // table turns (B, C), or the head both (B, C: the part never moves).
+                const std::string v = lower(next());
+                if (v == "table-table" || v == "table") m.hasA = m.hasC = true, m.hasB = m.cHead = false;
+                else if (v == "head-table") m.hasA = m.cHead = false, m.hasB = m.hasC = true;
+                else if (v == "head-head" || v == "head") m.hasA = false, m.hasB = m.hasC = m.cHead = true;
+                else return out.fail("KINEMATICS is table-table, head-table or head-head");
             } else if (k == "pockets") {
                 const auto v = number("POCKETS");
                 if (!v) return out;
@@ -806,7 +814,7 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
                 (k == "maxrpm" ? m.maxRpm : k == "maxfeed" ? m.maxFeed : k == "rapid" ? m.rapid : m.toolChange) = *v;
             } else {
                 return out.fail("CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z|OFF] [A min max|CONTINUOUS|OFF] "
-                                "[B ...] [C ...] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]");
+                                "[B ...] [C ...] [KINEMATICS table-table|head-table|head-head] [POCKETS n] [MAXRPM n] [MAXFEED n] [RAPID n] [TOOLCHANGE s] [NAME text]");
             }
         }
         if (a.size() > 1) {

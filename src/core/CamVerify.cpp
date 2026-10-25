@@ -596,11 +596,17 @@ CamPostCheck checkPost(const CamJob& job, const std::string& post, const std::st
             // The tip on the part: in the machine's frame the table's turn (about the work
             // zero, the rotary centre) moves it, and the nose is a tool's length up the
             // tilted axis.
+            // With C in the head the part stays put and C swivels the tilted tool instead.
             const double cr = s.c * 3.14159265358979323846 / 180.0, br = s.b * 3.14159265358979323846 / 180.0;
             for (int e = 0; e < 2; ++e) {
                 const double px = e ? s.x1 : s.x0, py = e ? s.y1 : s.y0, pz = e ? s.z1 : s.z0;
-                extend(0, px * std::cos(cr) - py * std::sin(cr) + len * std::sin(br));
-                extend(1, px * std::sin(cr) + py * std::cos(cr));
+                if (m.cHead) {
+                    extend(0, px + len * std::sin(br) * std::cos(cr));
+                    extend(1, py + len * std::sin(br) * std::sin(cr));
+                } else {
+                    extend(0, px * std::cos(cr) - py * std::sin(cr) + len * std::sin(br));
+                    extend(1, px * std::sin(cr) + py * std::cos(cr));
+                }
                 extend(2, pz + len * std::cos(br));
             }
             continue;

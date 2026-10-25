@@ -288,7 +288,8 @@ CAM ROTARY [TOOL n] [STEPOVER s] [STEPDOWN d] [LEAVE l] [ALONG] [TOP x] [BOTTOM 
 **Simultaneous 5-axis.** A ball end mill finishes the surface with the tool leaning as it
 cuts. On a table-table machine (`CAM MACHINE PRESET trunnion`) the table turns on A and C. On
 a head-table machine (`CAM MACHINE PRESET head-table`) the head tilts on B and the table turns
-on C:
+on C. On a head-head machine (`CAM MACHINE PRESET head-head`, a gantry with a fork head) B
+tilts the head and C swivels it, and the part never moves:
 
 ```text
 CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
@@ -318,8 +319,8 @@ CAM 5AXIS [TOOL n] [SCALLOP h | STEPOVER s] [ANGLE deg] [SLOPE from to]
 - **Links:** between runs close together the tool goes across lifted along its axis, at
   feed, where the ball, shank and holder stay clear of the part all the way. Elsewhere it
   goes up to the clearance height.
-- **Needs:** a ball end mill, and a machine with A and C, or B and C. The table isn't indexed
-  by hand (no `INDEX`).
+- **Needs:** a ball end mill, and a machine with A and C, or B and C (in the head or the
+  table). The table isn't indexed by hand (no `INDEX`).
 
 **Swarf (flank) cutting.** The side of a flat end mill finishes the part's walls, the tool
 leaning with them, so a drafted or tapered wall is cut its whole height in one pass:
@@ -362,6 +363,8 @@ CAM SWARF [TOOL n] [LEAVE l] [BOTTOM z] [TOP z] [OUTSIDE | INSIDE | BOTH] [CONVE
   compensation back on. LinuxCNC has no standard tool centre point mode, so its post refuses
   these jobs. A head-table machine can't turn the part about X, so rotary wrapping and
   `INDEX A` are refused; `INDEX C` works.
+- **Head-head machines:** posted the same way, the tip on the part with B and C. The part
+  stays where it is, so `INDEX C` is refused too.
 - GRBL posts 3 axes, so it refuses multi-axis jobs.
 
 **Simulation:** a job that turns the part is simulated in voxels instead of a height field:
@@ -451,7 +454,8 @@ Each program is read back and checked before it is written (see
 
 ```text
 CAM MACHINE [PRESET name] [TRAVEL x y z] [LIMITS x0,y0,z0 x1,y1,z1] [ZERO x,y,z | OFF]
-            [A min max | CONTINUOUS | OFF] [B ...] [C ...] [POCKETS n]
+            [A min max | CONTINUOUS | OFF] [B ...] [C ...]
+            [KINEMATICS table-table | head-table | head-head] [POCKETS n]
             [MAXRPM n] [MAXFEED mm/min] [RAPID mm/min] [TOOLCHANGE s] [NAME text]
 CAM CHECK [post]                 (or Manufacture > Check the Program)
 CAM CHECK file.nc [post]         a program on disk, against the job
@@ -470,6 +474,9 @@ CAM POST file.nc [post] [FORCE]
 - **Rotary axes:** A turns the table about X and C about Z. B tilts the spindle head about Y
   (a head-table machine has B and C, and no A). Each has limits in degrees, or is
   continuous, or absent.
+- **Kinematics:** `KINEMATICS` says what the rotary axes move: `table-table` (A and C turn the
+  part), `head-table` (B tilts the head, C turns the part) or `head-head` (B tilts and C
+  swivels the head; the part never moves).
 - **Tool changer:** `POCKETS` is the highest T number the changer takes.
 - **Spindle and feeds:** the spindle speed and feed limits. Feeds and speeds are worked
   out within them.
@@ -484,6 +491,7 @@ over them.
 | `vmc-4th` | the same | 8100 rpm | A unlimited | 20 |
 | `trunnion` | 610 × 406 × 394 | 12000 rpm | A -35..120, C unlimited | 30 |
 | `head-table` | 800 × 600 × 500 | 15000 rpm | B -110..110 (head), C unlimited | 40 |
+| `head-head` | 2000 × 1200 × 800 | 18000 rpm | B -105..105, C -360..360 (both head) | 24 |
 | `benchtop` | 457 × 279 × 413 | 10000 rpm | none | 10 |
 | `router` | 800 × 800 × 100 | 24000 rpm | none | manual |
 
@@ -507,7 +515,7 @@ moves: drill, dwell, peck, chip-break, tap, bore, and LinuxCNC's `G33.1`.
   - The program must end with `M30` or `M2`.
 - **Machine:**
   - travel, with each tool's length on Z (in tool centre point mode, the tip turned with
-    the table and the length along the tilted tool);
+    the table and the length along the tilted tool, swivelled by C on a head-head machine);
   - which rotary axes exist, and their limits;
   - spindle speed, feed, and the tool pockets.
 - **Job:**
@@ -566,6 +574,7 @@ Its parameters are listed in the tool's schema.
 
 These are not modelled yet:
 
-- **Machines:** 5-axis on head-head machines (two tilting head axes).
 - **Swarf:** walls that twist along their height (rules that don't follow the corners'
-  bisectors), and several passes down a wall taller than the flutes. (Lathes have their own job: see [lathe.md](lathe.md).)
+  bisectors), and several passes down a wall taller than the flutes.
+
+Lathes have their own job: see [lathe.md](lathe.md).

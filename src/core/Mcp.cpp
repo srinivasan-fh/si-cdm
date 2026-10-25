@@ -460,7 +460,7 @@ Json McpServer::toolDefinitions() {
         p.set("material", prop("string", "setup: aluminium, steel, stainless, brass, castiron, titanium, plastic, wood"));
         p.set("origin", prop("string", "setup: work zero at the stock's top 'corner' (default), 'centre', or the 'model' origin"));
         p.set("post", prop("string", "setup / post: fanuc, haas, grbl, linuxcnc"));
-        p.set("preset", prop("string", "machine: the preset - generic, vmc, vmc-4th (A: 4-axis), trunnion (A and C: 3+2 and 5-axis), head-table (B head and C table: 5-axis with tool centre point), benchtop, router"));
+        p.set("preset", prop("string", "machine: the preset - generic, vmc, vmc-4th (A: 4-axis), trunnion (A and C: 3+2 and 5-axis), head-table (B head and C table: 5-axis with tool centre point), head-head (B and C both in the head: the part stays put), benchtop, router"));
         p.set("number", prop("number", "tool: T number"));
         p.set("type", prop("string", "tool: flat, ball, bull, face, drill, spot, chamfer, tap"));
         p.set("diameter", prop("number", "tool: diameter, mm; drill/bore with points: the hole size"));
