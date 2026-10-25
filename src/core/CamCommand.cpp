@@ -17,6 +17,7 @@
 #include <fstream>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <cstdio>
 
@@ -518,7 +519,9 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
             changed();
             return out;
         }
-        if (a.size() < 4) return out.fail("Usage: CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|CHAMFER|TAP diameter [CORNER r] [FLUTES n] [LENGTH l] [ANGLE deg] [PITCH p] [STICKOUT l] [HOLDER d] [HOLDERLENGTH l] [HSS] [NAME \"x\"]");
+        if (a.size() < 4)
+            return out.fail("Usage: CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|CHAMFER|TAP diameter [CORNER r] [FLUTES n] [LENGTH l] [ANGLE deg] [PITCH p] "
+                            "[STICKOUT l] [HOLDER d] [HOLDERLENGTH l] [HSS] [VC m/min] [FZ mm] [NAME \"x\"] [VENDOR \"x\"] [PRODUCT \"x\"] | CAM TOOL DELETE n");
         CamTool t;
         const std::string ns = lower(a[1]);
         const auto n = parseNumber(ns.substr(!ns.empty() && ns[0] == 't' ? 1 : 0));
@@ -540,6 +543,18 @@ CommandOutput runCamCommand(Document& doc, const std::vector<std::string>& a, co
             if (k == "hss") t.hss = true;
             else if (k == "carbide") t.hss = false;
             else if (k == "name") t.name = next();
+            else if (k == "vendor") t.vendor = next();
+            else if (k == "product") t.productId = next();
+            else if (k == "vc" || k == "fz") {
+                // The tool's own cutting speed (m/min) and chip load (mm per tooth): 0 or AUTO,
+                // the material's.
+                const std::string w = lower(next());
+                char* end = nullptr;
+                const double parsed = std::strtod(w.c_str(), &end);
+                const auto v = w == "auto" ? std::optional<double>(0.0) : end && *end == '\0' && !w.empty() ? std::optional<double>(parsed) : std::nullopt;
+                if (!v || *v < 0) return out.fail(toUpper(k) + (k == "vc" ? " needs m/min" : " needs mm per tooth"));
+                (k == "vc" ? t.vc : t.fz) = *v;
+            }
             else if (k == "flutes") {
                 const auto v = parseNumber(next());
                 if (!v || *v < 1 || *v > 20) return out.fail("FLUTES is 1 to 20");

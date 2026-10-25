@@ -1371,3 +1371,77 @@ TEST_CASE("UNDO and REDO take back CAM and lathe changes, in turn with model edi
     REQUIRE(run(d, "NEW").ok);
     CHECK(d.jobsUndo.empty());
 }
+
+TEST_CASE("CAM panel commands carry millimetres in an inch document; a tool written out comes back the same") {
+    Document d;
+    bracket(d);
+    for (const char* l : {"CAM SETUP \"Block 1\" STOCK 3 TOP 1 MATERIAL aluminium", "CAM TOOL 1 FLAT 6", "CAM ROUGH TOOL 1 LEAVE 0.3"}) REQUIRE(run(d, l).ok);
+    REQUIRE(run(d, "UNITS IN").ok);
+    CamOperation e = d.state.cam.ops[0];
+    e.leave = 0.5, e.stepdown = 2.0;
+    REQUIRE(run(d, "CAM EDIT 1" + camEditArgs(d.state.cam.ops[0], e)).ok);
+    CHECK(std::fabs(d.state.cam.ops[0].leave - 0.5) < 1e-6); // not 0.5 inch
+    CHECK(std::fabs(d.state.cam.ops[0].stepdown - 2.0) < 1e-6);
+    // Every option of a tool, through its command (the units don't matter either).
+    CamTool t;
+    t.number = 7, t.type = CamToolType::BullNose, t.diameter = 12, t.cornerRadius = 1.5, t.flutes = 4, t.fluteLength = 30, t.stickout = 45;
+    t.holderDiameter = 32, t.holderLength = 50, t.hss = false, t.vc = 250, t.fz = 0.06, t.name = "Bull 12", t.vendor = "Acme", t.productId = "B12-4";
+    REQUIRE(run(d, camToolCommand(t)).ok);
+    const CamTool* b = d.state.cam.tool(7);
+    REQUIRE(b != nullptr);
+    CHECK(b->type == CamToolType::BullNose);
+    CHECK(std::fabs(b->diameter - 12) < 1e-6);
+    CHECK(std::fabs(b->cornerRadius - 1.5) < 1e-6);
+    CHECK(b->flutes == 4);
+    CHECK(std::fabs(b->fluteLength - 30) < 1e-6);
+    CHECK(std::fabs(b->stickout - 45) < 1e-6);
+    CHECK(std::fabs(b->holderDiameter - 32) < 1e-6);
+    CHECK(std::fabs(b->holderLength - 50) < 1e-6);
+    CHECK(std::fabs(b->vc - 250) < 1e-9);
+    CHECK(std::fabs(b->fz - 0.06) < 1e-9);
+    CHECK(b->name == "Bull 12");
+    CHECK(b->vendor == "Acme");
+    CHECK(b->productId == "B12-4");
+    CamTool tap;
+    tap.number = 8, tap.type = CamToolType::Tap, tap.diameter = 6, tap.pitch = 1.0, tap.flutes = 3, tap.fluteLength = 15, tap.hss = true;
+    REQUIRE(run(d, camToolCommand(tap)).ok);
+    CHECK(d.state.cam.tool(8)->hss);
+    CHECK(std::fabs(d.state.cam.tool(8)->pitch - 1.0) < 1e-6);
+    REQUIRE(run(d, "UNITS MM").ok);
+}
+
+TEST_CASE("CAM machine window: a machine written out as CAM MACHINE comes back the same") {
+    Document d;
+    bracket(d);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\"").ok);
+    REQUIRE(run(d, "UNITS IN").ok);
+    for (const char* preset : {"trunnion", "head-table", "head-head", "vmc", "generic"}) {
+        CamMachine m = *camMachinePreset(preset);
+        m.name = std::string("My ") + preset;
+        m.hasWorkOffset = true, m.workOffset[0] = 100, m.workOffset[1] = 50.5, m.workOffset[2] = -300;
+        m.toolPockets = 12, m.maxRpm = 9000, m.toolChange = 2.5;
+        if (m.hasC && !m.cHead) m.cMin = -200, m.cMax = 200;
+        const auto r = run(d, camMachineCommand(m));
+        REQUIRE(r.ok);
+        const CamMachine& b = d.state.cam.setup.machine;
+        CHECK(b.name == m.name);
+        CHECK(std::string(b.kinematics()) == m.kinematics());
+        CHECK(b.hasA == m.hasA);
+        CHECK(b.hasB == m.hasB);
+        CHECK(b.hasC == m.hasC);
+        CHECK(b.cHead == m.cHead);
+        for (int i = 0; i < 3; ++i) {
+            CHECK(std::fabs(b.travelMin[i] - m.travelMin[i]) < 1e-3);
+            CHECK(std::fabs(b.travelMax[i] - m.travelMax[i]) < 1e-3);
+            CHECK(std::fabs(b.workOffset[i] - m.workOffset[i]) < 1e-3);
+        }
+        CHECK(b.hasWorkOffset);
+        if (m.hasA) CHECK((b.aMin == m.aMin && b.aMax == m.aMax));
+        if (m.hasB) CHECK((b.bMin == m.bMin && b.bMax == m.bMax));
+        if (m.hasC) CHECK((b.cMin == m.cMin && b.cMax == m.cMax));
+        CHECK(b.toolPockets == 12);
+        CHECK(b.maxRpm == 9000);
+        CHECK(std::fabs(b.toolChange - 2.5) < 1e-6);
+    }
+    REQUIRE(run(d, "UNITS MM").ok);
+}

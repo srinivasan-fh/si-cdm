@@ -350,6 +350,8 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (m_showMcp) drawMcpWindow(st);
     if (st.showControls) drawControlsWindow(st);
     if (st.showAbout) drawAboutWindow(st);
+    if (st.showCamTools && st.cam) drawCamToolsWindow(cmd, st);
+    if (st.showCamMachine && st.cam) drawCamMachineWindow(cmd, st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
     if (!st.mateTool.empty()) drawMateWindow(cmd, st);
     return cmd;
@@ -1912,6 +1914,12 @@ void LandingUI::requestFile(int action, const UiState& st) {
     case FileLathePost:
         m_fileDialog.open(FileDialog::Mode::Save, "Post the Lathe Job to G-code", {".nc", ".tap", ".gcode"}, dir, projectStem(st) + "-lathe.nc");
         break;
+    case FileToolsImport:
+        m_fileDialog.open(FileDialog::Mode::Open, "Load Tools into the Job (SI CDM, CSV catalogue or Fusion 360 library)", {".json", ".csv", ".tools"}, dir);
+        break;
+    case FileToolsExport:
+        m_fileDialog.open(FileDialog::Mode::Save, "Save the Job's Tools", {".json", ".csv"}, dir, projectStem(st) + "-tools.json");
+        break;
     case FileSheetExport: m_fileDialog.open(FileDialog::Mode::Save, "Export Drawing", {".pdf", ".svg", ".dxf"}, dir, projectStem(st) + ".pdf"); break;
     default: m_fileAction = FileNone;
     }
@@ -1939,6 +1947,8 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case File3mf: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
         case FileSlice: cmd.commands.push_back("SLICE TO " + quoted(*path)); break;
         case FilePost: cmd.commands.push_back("CAM POST " + quoted(*path)); break;
+        case FileToolsImport: cmd.commands.push_back("CAM LIBRARY LOAD " + quoted(*path)); break;
+        case FileToolsExport: cmd.commands.push_back("CAM LIBRARY SAVE " + quoted(*path)); break;
         case FileLathePost:
             cmd.commands.push_back("LATHE POST " + quoted(*path) + (st.lathe ? " " + st.lathe->setup.post : std::string()) + (m_latheCycles ? " CYCLES" : ""));
             break;

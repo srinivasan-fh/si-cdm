@@ -4,6 +4,7 @@
 // logged and scripted like one typed.
 
 #include "core/CamEdit.hpp"
+#include "core/CamLibrary.hpp"
 #include "ui/LandingUI.hpp"
 #include "ui/Theme.hpp"
 
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <limits>
 #include <string>
 
@@ -517,6 +519,265 @@ void LandingUI::drawLatheOperations(UiCommands& cmd, UiState& st) {
     ImGui::Checkbox("Canned cycles (G71 / G72)", &m_latheCycles);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rough turning and boring as G71, facing as G72 (Fanuc, Haas)");
     if (ImGui::Button("Post G-code...##lathe", {-1, 0})) requestFile(FileLathePost, st);
+}
+
+void LandingUI::drawCamToolsWindow(UiCommands& cmd, UiState& st) {
+    const CamJob& job = *st.cam;
+    ImGui::SetNextWindowSize({760, 520}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Tools", &st.showCamTools)) {
+        ImGui::End();
+        return;
+    }
+    // The job's tools.
+    static const char* const kTypes[] = {"Flat end mill", "Ball end mill", "Bull nose", "Face mill", "Drill", "Spot drill", "Chamfer mill", "Tap"};
+    const float listW = ImGui::GetContentRegionAvail().x * 0.52f;
+    ImGui::BeginChild("##toollist", {listW, 0}, ImGuiChildFlags_None);
+    ImGui::TextDisabled("The job's tools (T numbers in the program)");
+    if (ImGui::BeginTable("##tools", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY,
+                          {0, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() * 3})) {
+        ImGui::TableSetupColumn("T", ImGuiTableColumnFlags_WidthFixed, 32);
+        ImGui::TableSetupColumn("Tool");
+        ImGui::TableSetupColumn("Flutes", ImGuiTableColumnFlags_WidthFixed, 48);
+        ImGui::TableSetupColumn("Used", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableHeadersRow();
+        for (const CamTool& t : job.tools) {
+            int used = 0;
+            for (const CamOperation& o : job.ops) used += o.tool == t.number;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            char label[16];
+            std::snprintf(label, sizeof label, "T%d", t.number);
+            if (ImGui::Selectable(label, m_toolEditNumber == t.number, ImGuiSelectableFlags_SpanAllColumns)) {
+                m_toolEdit = t;
+                m_toolEditNumber = t.number;
+                m_toolEditDirty = false;
+            }
+            ImGui::TableNextColumn();
+            char what[96];
+            std::snprintf(what, sizeof what, "%.4g mm %s%s", t.diameter, kTypes[static_cast<int>(t.type)], t.name.empty() ? "" : ("  " + t.name).c_str());
+            ImGui::TextUnformatted(what);
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", t.flutes);
+            ImGui::TableNextColumn();
+            if (used) ImGui::Text("%d", used);
+            else ImGui::TextDisabled("-");
+        }
+        ImGui::EndTable();
+    }
+    if (ImGui::Button("New Tool")) {
+        int n = 1;
+        while (job.tool(n)) ++n;
+        CamTool t;
+        t.number = n;
+        cmd.commands.push_back(camToolCommand(t));
+        m_toolEdit = t;
+        m_toolEditNumber = n;
+        m_toolEditDirty = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Load from File...")) requestFile(FileToolsImport, st);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(job.tools.empty());
+    if (ImGui::Button("Save to File...")) requestFile(FileToolsExport, st);
+    ImGui::EndDisabled();
+    if (job.tools.empty() && ImGui::Button("Add a Starter Set (10 tools)")) {
+        for (const char* t : {"CAM TOOL 1 FLAT 6mm", "CAM TOOL 2 FLAT 3mm", "CAM TOOL 3 BALL 6mm", "CAM TOOL 4 BALL 3mm", "CAM TOOL 5 BULL 10mm CORNER 1mm",
+                              "CAM TOOL 6 FACE 50mm", "CAM TOOL 7 SPOT 10mm", "CAM TOOL 8 DRILL 5mm", "CAM TOOL 9 DRILL 6mm", "CAM TOOL 10 TAP 6mm"})
+            cmd.commands.push_back(t);
+    }
+    ImGui::EndChild();
+    ImGui::SameLine();
+
+    // The picked tool, and the user's library.
+    ImGui::BeginChild("##tooledit", {0, 0}, ImGuiChildFlags_None);
+    const CamTool* picked = job.tool(m_toolEditNumber);
+    if (picked && !m_toolEditDirty) m_toolEdit = *picked;
+    if (picked) {
+        CamTool& e = m_toolEdit;
+        ImGui::PushItemWidth(-110);
+        bool ch = false;
+        int type = static_cast<int>(e.type);
+        if (ImGui::Combo("Type", &type, kTypes, IM_ARRAYSIZE(kTypes))) e.type = static_cast<CamToolType>(type), ch = true;
+        ch |= numberField("Diameter mm", e.diameter, "%.4g", 0.05);
+        int flutes = e.flutes;
+        if (ImGui::InputInt("Flutes", &flutes)) e.flutes = std::clamp(flutes, 1, 20), ch = true;
+        ch |= numberField("Flute length mm", e.fluteLength, "%.4g", 0.1);
+        if (e.type == CamToolType::BullNose) ch |= numberField("Corner radius mm", e.cornerRadius, "%.4g", 0.0);
+        if (e.type == CamToolType::Drill || e.type == CamToolType::Spot || e.type == CamToolType::Chamfer) ch |= numberField("Point angle deg", e.tipAngle, "%.4g", 20.0);
+        if (e.type == CamToolType::Tap) ch |= numberField("Pitch mm", e.pitch, "%.4g", 0.05);
+        ch |= autoField("Stickout mm", e.stickout, 0.0, e.fluteLength + 5);
+        ch |= autoField("Holder dia mm", e.holderDiameter, 0.0, std::max(e.diameter * 2.5, 20.0));
+        ch |= numberField("Holder length mm", e.holderLength, "%.4g", 1.0);
+        ch |= ImGui::Checkbox("High-speed steel (HSS)", &e.hss);
+        ch |= autoField("Speed m/min", e.vc, 0.0, 200.0, false, "%.0f");
+        ch |= autoField("Chip load mm", e.fz, 0.0, 0.03, false, "%.3g");
+        char text[96];
+        std::snprintf(text, sizeof text, "%s", e.name.c_str());
+        if (ImGui::InputText("Name", text, sizeof text)) e.name = text, ch = true;
+        std::snprintf(text, sizeof text, "%s", e.vendor.c_str());
+        if (ImGui::InputText("Vendor", text, sizeof text)) e.vendor = text, ch = true;
+        std::snprintf(text, sizeof text, "%s", e.productId.c_str());
+        if (ImGui::InputText("Product", text, sizeof text)) e.productId = text, ch = true;
+        ImGui::PopItemWidth();
+        if (ch) m_toolEditDirty = true;
+        ImGui::BeginDisabled(!m_toolEditDirty);
+        if (ImGui::Button("Apply")) {
+            cmd.commands.push_back(camToolCommand(e));
+            m_toolEditDirty = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Revert")) m_toolEditDirty = false;
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Delete")) {
+            cmd.commands.push_back("CAM TOOL DELETE " + std::to_string(e.number));
+            m_toolEditNumber = -1;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Store in My Library")) {
+            cmd.commands.push_back("CAM LIBRARY STORE " + std::to_string(e.number));
+            m_userLibraryRead = false;
+        }
+        ImGui::TextColored(theme::vec(theme::kTextDim), "%s", picked->describe().c_str());
+    } else {
+        ImGui::TextWrapped("Pick a tool to change it, or add one with New Tool.");
+    }
+
+    // The user's own library (shared by all projects).
+    ImGui::Spacing();
+    ImGui::SeparatorText("My tool library");
+    if (!m_userLibraryRead) {
+        m_userLibrary.clear();
+        m_userLibraryError.clear();
+        const std::string path = toolLibraryPath();
+        std::error_code ec;
+        if (std::filesystem::exists(path, ec) && !loadToolFile(path, m_userLibrary, &m_userLibraryError, nullptr, ToolFileFormat::Native)) m_userLibrary.clear();
+        m_userLibraryRead = true;
+    }
+    if (!m_userLibraryError.empty()) ImGui::TextColored(theme::vec(theme::kError), "%s", m_userLibraryError.c_str());
+    if (m_userLibrary.empty()) ImGui::TextDisabled("Empty: store the job's tools, or import a catalogue");
+    if (ImGui::BeginChild("##userlib", {0, -ImGui::GetFrameHeightWithSpacing()}, ImGuiChildFlags_Borders)) {
+        for (std::size_t i = 0; i < m_userLibrary.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::SmallButton("Use")) cmd.commands.push_back("CAM LIBRARY USE #" + std::to_string(i + 1));
+            ImGui::SameLine();
+            ImGui::TextUnformatted(m_userLibrary[i].describe().c_str());
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::BeginDisabled(job.tools.empty());
+    if (ImGui::Button("Store All the Job's Tools")) {
+        cmd.commands.push_back("CAM LIBRARY STORE ALL");
+        m_userLibraryRead = false;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh")) m_userLibraryRead = false;
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+void LandingUI::drawCamMachineWindow(UiCommands& cmd, UiState& st) {
+    const CamJob& job = *st.cam;
+    ImGui::SetNextWindowSize({520, 600}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Machine", &st.showCamMachine)) {
+        ImGui::End();
+        return;
+    }
+    if (!m_machineEditDirty) m_machineEdit = job.setup.machine;
+    CamMachine& m = m_machineEdit;
+    ImGui::PushItemWidth(-160);
+    if (ImGui::BeginCombo("Start from a preset", m.name.c_str())) {
+        for (const CamMachine& p : camMachinePresets())
+            if (ImGui::Selectable(p.name.c_str(), p.name == m.name)) {
+                cmd.commands.push_back("CAM MACHINE PRESET " + p.name);
+                m_machineEditDirty = false;
+            }
+        ImGui::EndCombo();
+    }
+    ImGui::TextColored(theme::vec(theme::kTextDim), "Presets are typical figures: set your machine's own below.");
+    bool ch = false;
+    char name[64];
+    std::snprintf(name, sizeof name, "%s", m.name.c_str());
+    if (ImGui::InputText("Name", name, sizeof name)) m.name = name, ch = true;
+
+    ImGui::SeparatorText("Travel (spindle nose, machine coordinates, mm)");
+    const char* axes[] = {"X", "Y", "Z"};
+    for (int i = 0; i < 3; ++i) {
+        ImGui::PushID(i);
+        double lo = m.travelMin[i], hi = m.travelMax[i];
+        ImGui::SetNextItemWidth(110);
+        ch |= ImGui::InputDouble("##lo", &lo, 0, 0, "%.1f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        ch |= ImGui::InputDouble("##hi", &hi, 0, 0, "%.1f");
+        ImGui::SameLine();
+        ImGui::Text("%s  %s", axes[i], hi > lo ? "" : "(not checked)");
+        m.travelMin[i] = lo, m.travelMax[i] = hi;
+        ImGui::PopID();
+    }
+    ch |= ImGui::Checkbox("G54 work zero known", &m.hasWorkOffset);
+    if (m.hasWorkOffset) {
+        float w[3] = {static_cast<float>(m.workOffset[0]), static_cast<float>(m.workOffset[1]), static_cast<float>(m.workOffset[2])};
+        if (ImGui::InputFloat3("G54 at (mm)", w, "%.2f")) {
+            for (int i = 0; i < 3; ++i) m.workOffset[i] = w[i];
+            ch = true;
+        }
+    }
+
+    ImGui::SeparatorText("Rotary axes");
+    int kin = m.headHead() ? 2 : m.headTilts() ? 1 : 0;
+    if (ImGui::Combo("Kinematics", &kin, "Table tilts and turns (A, C)\0Head tilts (B), table turns (C)\0Head tilts and swivels (B, C)\0")) {
+        m.hasA = kin == 0, m.hasB = kin != 0, m.cHead = kin == 2;
+        ch = true;
+    }
+    auto rotary = [&](const char* label, bool& fitted, double& lo, double& hi) {
+        ImGui::PushID(label);
+        ch |= ImGui::Checkbox(label, &fitted);
+        if (fitted) {
+            bool cont = lo <= -99999 && hi >= 99999;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("continuous", &cont)) {
+                if (cont) lo = -99999, hi = 99999;
+                else lo = -120, hi = 120;
+                ch = true;
+            }
+            if (!cont) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80);
+                ch |= ImGui::InputDouble("##lo", &lo, 0, 0, "%.0f");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80);
+                ch |= ImGui::InputDouble("deg##hi", &hi, 0, 0, "%.0f");
+            }
+        }
+        ImGui::PopID();
+    };
+    if (kin == 0) rotary("A (table, about X)", m.hasA, m.aMin, m.aMax);
+    else rotary("B (head, about Y)", m.hasB, m.bMin, m.bMax);
+    rotary(kin == 2 ? "C (head, about Z)" : "C (table, about Z)", m.hasC, m.cMin, m.cMax);
+
+    ImGui::SeparatorText("Spindle, feeds and tools");
+    ch |= numberField("Max spindle rpm", m.maxRpm, "%.0f", 100);
+    ch |= numberField("Max feed mm/min", m.maxFeed, "%.0f", 10);
+    ch |= numberField("Rapid mm/min", m.rapid, "%.0f", 10);
+    ch |= numberField("Tool change s", m.toolChange, "%.3g", 0);
+    int pockets = m.toolPockets;
+    if (ImGui::InputInt("Tool pockets (0 any)", &pockets)) m.toolPockets = std::max(0, pockets), ch = true;
+    ImGui::PopItemWidth();
+    if (ch) m_machineEditDirty = true;
+    ImGui::Spacing();
+    ImGui::BeginDisabled(!m_machineEditDirty);
+    if (ImGui::Button("Apply", {120, 0})) {
+        cmd.commands.push_back(camMachineCommand(m));
+        m_machineEditDirty = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert", {120, 0})) m_machineEditDirty = false;
+    ImGui::EndDisabled();
+    ImGui::TextColored(theme::vec(theme::kTextDim), "%s", job.setup.machine.describe().c_str());
+    ImGui::End();
 }
 
 } // namespace sicdm

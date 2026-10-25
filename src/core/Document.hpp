@@ -67,7 +67,8 @@ public:
     virtual void setDisplay(int mode) = 0; // 0 shaded, 1 shaded+edges, 2 wireframe, 3 hidden line
     virtual void setGrid(std::optional<bool> on) = 0;  // nullopt toggles
     virtual void setPanel(std::optional<bool> on) = 0; // Model panel
-    virtual void setPanelPage(int page) { (void)page; }  // open the panel on a page: 0 Model, 1 Library, 2 CAM
+    // Open the panel on a page (0 Model, 1 Library, 2 CAM), or a CAM window (3 Tools, 4 Machine).
+    virtual void setPanelPage(int page) { (void)page; }
     virtual std::string describe() const = 0;          // window, plane, camera summary
 
     // Multi-document hosts keep each project in its own file tab. NEW / OPEN call

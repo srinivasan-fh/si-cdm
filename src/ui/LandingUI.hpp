@@ -278,10 +278,15 @@ private:
     bool m_latheEditDirty = false;
     std::size_t m_latheOpsSeen = 0;
     bool m_latheCycles = false;   // post rough turning and facing as G71 / G72
-    // Tool library window: the tool being added.
-    int m_newToolType = 0;
-    float m_newToolDiameter = 6.0f, m_newToolLength = 0.0f, m_newToolCorner = 1.0f;
-    // Machine window: edits before Apply.
+    // Tool library window: a copy of the picked tool the fields edit (Apply sends it as
+    // CAM TOOL), and the user's tool library as last read.
+    CamTool m_toolEdit;
+    int m_toolEditNumber = -1;
+    bool m_toolEditDirty = false;
+    std::vector<CamTool> m_userLibrary;
+    bool m_userLibraryRead = false;
+    std::string m_userLibraryError;
+    // Machine window: edits before Apply (CAM MACHINE).
     CamMachine m_machineEdit;
     bool m_machineEditDirty = false;
 

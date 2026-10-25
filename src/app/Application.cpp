@@ -2896,8 +2896,9 @@ void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.val
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
 
 void Application::setPanelPage(int page) {
-    m_uiState.showModelTree = true;
-    m_uiState.dockTab = page;
+    if (page == 3) m_uiState.showCamTools = true;
+    else if (page == 4) m_uiState.showCamMachine = true;
+    else m_uiState.showModelTree = true, m_uiState.dockTab = page;
 }
 
 void Application::updateSketchColors() {

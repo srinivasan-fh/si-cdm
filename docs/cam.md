@@ -125,6 +125,15 @@ holder against the stock and the part.
   drills) from a catalogue uses those instead of the material table's.
 - `RPM`, `FEED` and `PLUNGE` on an operation override the values from the tool and material.
 
+**The Tools window** (*Tools...* on the CAM panel, or `PANEL TOOLS`) lists the job's tools
+with how many operations use each. Pick one to change any of its settings (type, size,
+flutes, lengths, holder, HSS, its own cutting speed and chip load, name and catalogue
+numbers) and *Apply*; *New Tool*, *Delete*, *Load from File...* and *Save to File...* do the
+rest. Beside it, *My tool library* (shared by every project) lists the tools you stored:
+*Use* copies one into the job, *Store in My Library* and *Store All the Job's Tools* keep them.
+`CAM TOOL` also takes `VC` (m/min) and `FZ` (mm per tooth, both `AUTO` for the material's),
+`VENDOR` and `PRODUCT`.
+
 ### Tool libraries
 
 The cutters you own live in your tool library, apart from any one job. Jobs take tools from
@@ -514,6 +523,11 @@ CAM CHECK [post]                 (or Manufacture > Check the Program)
 CAM CHECK file.nc [post]         a program on disk, against the job
 CAM POST file.nc [post] [FORCE]
 ```
+
+**The Machine window** (*Machine...* on the CAM panel, or `PANEL MACHINE`) sets all of the
+below with the mouse: start from a preset, then the travel, the G54 work zero, the
+kinematics and rotary limits, and the spindle, feeds and tool changer; *Apply* sends it as
+one `CAM MACHINE` command.
 
 **The machine** is saved with the job. Its parts:
 

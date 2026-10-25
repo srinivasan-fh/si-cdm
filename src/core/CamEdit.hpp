@@ -14,4 +14,11 @@ namespace sicdm {
 std::string camEditArgs(const CamOperation& from, const CamOperation& to);
 std::string latheEditArgs(const LatheOperation& from, const LatheOperation& to);
 
+// The CAM TOOL command that makes `t` (every option given, so it replaces the tool with
+// that number whatever it was).
+std::string camToolCommand(const CamTool& t);
+
+// The CAM MACHINE command that sets the job's machine to `m` (every setting given).
+std::string camMachineCommand(const CamMachine& m);
+
 } // namespace sicdm
