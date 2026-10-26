@@ -12,6 +12,7 @@
 #include "core/Lathe.hpp"
 #include "core/Assembly.hpp"
 #include "core/Drawing.hpp"
+#include "core/Rig.hpp"
 #include "core/Scene.hpp"
 #include "core/Units.hpp"
 
@@ -47,6 +48,7 @@ struct ProjectState {
     LatheJob lathe;           // lathe CAM: setup, tools and operations
     Drawing drawing;          // the drawing sheet: views, dimensions, title block
     AssemblyState assembly;   // mates between the parts
+    RigState rigs;            // robots: morphology, base, auto-rigging tags
     std::vector<HistoryStep> history;     // the feature history
     std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)
     bool historyComplete = true;          // false: the model was also changed outside commands
@@ -68,7 +70,8 @@ struct ProjectState {
 //   7  adds drawing tolerances: dimension tolerances ("tol"), feature control frames
 //      ("frames"), datums, surface finish marks and the general tolerance
 //   8  adds the lathe job ("lathe")
-constexpr int kProjectVersion = 8;
+//   9  adds robot rigs ("robots": morphology, base, tags)
+constexpr int kProjectVersion = 9;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

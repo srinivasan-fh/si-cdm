@@ -10,6 +10,7 @@
 #include "core/CrashReport.hpp"
 #include "core/Licence.hpp"
 #include "core/Preferences.hpp"
+#include "core/RobotCommand.hpp"
 #include "core/UpdateCheck.hpp"
 #include "core/Notices.hpp"
 #include "core/Plugin.hpp"
@@ -317,7 +318,7 @@ bool bodyCommand(const std::string& cmd) {
     static const char* const kBody[] = {"BOX",     "CYLINDER", "CONE",   "SPHERE", "TORUS",   "WEDGE",      "PYRAMID",  "PRISM",
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
-                                        "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE"};
+                                        "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -746,6 +747,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.state.lathe = LatheJob{};
         doc.state.drawing = Drawing{};
         doc.state.assembly = AssemblyState{};
+        doc.state.rigs = RigState{};
         doc.state.history.clear();
         doc.state.historyRedo.clear();
         doc.state.historyComplete = true;
@@ -1840,6 +1842,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     if (cmd == "LATHE") return runLatheCommand(doc, a, pc.quoted);
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "RIG") return runRobotCommand(doc, cmd, a, pc.quoted);
     if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET" || cmd == "DRAG") return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
         cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES")
