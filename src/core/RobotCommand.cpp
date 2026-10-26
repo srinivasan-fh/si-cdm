@@ -7,6 +7,7 @@
 #include "core/FileIO.hpp"
 #include "core/Multibody.hpp"
 #include "core/Rig.hpp"
+#include "core/Sensors.hpp"
 #include "core/Scene.hpp"
 #include "core/Terrain.hpp"
 #include "core/Units.hpp"
@@ -28,13 +29,18 @@ std::string lowerOf(const std::string& s) {
     return o;
 }
 
-const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission"};
+const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission", "sensor", "sensors"};
 
 bool isRigWord(const std::string& w) {
     const std::string k = lowerOf(w);
     for (const char* q : kRigWords)
         if (k == q) return true;
     return false;
+}
+
+std::string toUpper(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return s;
 }
 
 int bodyIndex(const Document& doc, const std::string& name) {
@@ -124,6 +130,151 @@ std::string describeTerrain(const TerrainSettings& t) {
     default: break;
     }
     return s + ", friction " + fmtMm(t.friction);
+}
+
+// RIG [robot] SENSOR ...: `i` is at the word after SENSOR.
+CommandOutput runSensor(Document& doc, RigSettings& settings, const std::vector<std::string>& a, const std::vector<bool>& quoted, std::size_t i) {
+    CommandOutput out;
+    auto word = [&]() -> std::string { return i < a.size() ? a[i++] : std::string(); };
+    auto isQuoted = [&](std::size_t k) { return k < quoted.size() && quoted[k]; };
+    const std::string sub = lowerOf(word());
+    auto findSensor = [&](const std::string& n) -> SensorSpec* {
+        for (SensorSpec& s : settings.sensors)
+            if (lowerOf(s.name) == lowerOf(n)) return &s;
+        return nullptr;
+    };
+    auto timeOption = [&](float& t) -> bool {
+        if (i < a.size() && lowerOf(a[i]) == "at") {
+            ++i;
+            const auto v = parseNumber(word());
+            if (!v || *v < 0) return false;
+            t = *v;
+        }
+        return true;
+    };
+    if (sub.empty() || sub == "list") {
+        if (settings.sensors.empty()) out.say("No sensors (RIG SENSOR ADD IMU|GPS|FORCE|CAMERA|LIDAR name ON part)");
+        for (const SensorSpec& s : settings.sensors) {
+            char buf[256];
+            std::snprintf(buf, sizeof buf, "%s: %s on %s at (%g, %g, %g) mm looking (%g, %g, %g), %g Hz, noise x%g", s.name.c_str(), sensorKindKey(s.kind), s.body.c_str(), s.at.x,
+                          s.at.y, s.at.z, s.look.x, s.look.y, s.look.z, s.rate, s.noise);
+            out.say(buf);
+        }
+        return out;
+    }
+    if (sub == "add") {
+        SensorSpec s;
+        const auto kind = sensorKindFromKey(word());
+        if (!kind) return out.fail("SENSOR ADD IMU|GPS|FORCE|CAMERA|LIDAR name ON part [options]");
+        s.kind = *kind;
+        if (s.kind == SensorKind::Camera) s.rate = 30;
+        if (s.kind == SensorKind::Lidar) s.rate = 10;
+        if (s.kind == SensorKind::Gps) s.rate = 10;
+        s.name = word();
+        if (s.name.empty() || lowerOf(s.name) == "on") return out.fail("SENSOR ADD needs a name");
+        if (findSensor(s.name)) return out.fail("There is a sensor named " + s.name + " already");
+        bool atGiven = false;
+        for (; i < a.size();) {
+            const std::string k = lowerOf(word());
+            if (k == "on") {
+                std::string body;
+                if (isQuoted(i)) body = word();
+                else
+                    while (i < a.size() && !isQuoted(i)) {
+                        static const char* const keys[] = {"at", "look", "up", "rate", "noise", "bias", "seed", "size", "fov", "range", "channels", "samples", "vfov", "origin"};
+                        bool key = false;
+                        for (const char* q : keys) key = key || lowerOf(a[i]) == q;
+                        if (key) break;
+                        body += (body.empty() ? "" : " ") + word();
+                    }
+                const int bi = bodyIndex(doc, body);
+                if (bi < 0) return out.fail("No part named " + body);
+                s.body = doc.scene.bodies()[static_cast<std::size_t>(bi)].name;
+            } else if (k == "at" || k == "look" || k == "up") {
+                const auto v = parseVec3(word());
+                if (!v) return out.fail(toUpper(k) + " needs x,y,z");
+                if (k == "at") s.at = *v, atGiven = true;
+                else if (k == "look") s.look = *v;
+                else s.up = *v;
+            } else if (k == "size") {
+                const auto w = parseNumber(word()), h = parseNumber(word());
+                if (!w || !h || *w < 8 || *h < 8) return out.fail("SIZE needs a width and height in pixels (8 or more)");
+                s.width = static_cast<int>(*w), s.height = static_cast<int>(*h);
+            } else if (k == "origin") {
+                const auto v = parseVec3(word());
+                if (!v) return out.fail("ORIGIN needs latitude,longitude[,altitude]");
+                s.lat = v->x, s.lon = v->y, s.alt = v->z;
+            } else {
+                const auto v = parseNumber(word());
+                if (!v) return out.fail(toUpper(k) + " needs a number");
+                if (k == "rate" && *v > 0) s.rate = *v;
+                else if (k == "noise" && *v >= 0) s.noise = *v;
+                else if (k == "bias" && *v >= 0) s.bias = *v;
+                else if (k == "seed") s.seed = static_cast<int>(*v);
+                else if (k == "fov" && *v > 0 && *v < 180) s.fov = *v;
+                else if (k == "range" && *v > 0) s.range = *v;
+                else if (k == "channels" && *v >= 1) s.channels = static_cast<int>(*v);
+                else if (k == "samples" && *v >= 1) s.samples = static_cast<int>(*v);
+                else if (k == "vfov" && *v >= 0) s.vfov = *v;
+                else return out.fail("Bad or unknown sensor option " + k);
+            }
+        }
+        if (s.body.empty()) return out.fail("SENSOR ADD needs ON part (the part it is fixed to)");
+        if (!atGiven) s.at = doc.scene.bodies()[static_cast<std::size_t>(bodyIndex(doc, s.body))].bounds().center();
+        settings.sensors.push_back(s);
+        doc.scene.rigs().get(settings.name) = settings;
+        doc.dirty = true;
+        out.say(std::string("Sensor ") + s.name + ": " + sensorKindKey(s.kind) + " on " + s.body);
+        return out;
+    }
+    const std::string name = word();
+    SensorSpec* s = findSensor(name);
+    if (!s) return out.fail(name.empty() ? "Name the sensor" : "No sensor named " + name);
+    std::string err;
+    if (sub == "remove" || sub == "delete") {
+        const std::string n = s->name;
+        settings.sensors.erase(settings.sensors.begin() + (s - settings.sensors.data()));
+        doc.scene.rigs().get(settings.name) = settings;
+        doc.dirty = true;
+        out.say("Removed the sensor " + n);
+        return out;
+    }
+    if (sub == "read") {
+        float t = 0;
+        if (!timeOption(t)) return out.fail("AT needs seconds");
+        SensorReading r;
+        if (!readSensor(doc.scene, settings, *s, t, r, &err)) return out.fail(err);
+        out.say(s->name + " " + describeReading(r));
+        return out;
+    }
+    if (sub == "capture" || sub == "log") {
+        std::string path = isQuoted(i) ? word() : std::string();
+        if (path.empty()) {
+            while (i < a.size() && lowerOf(a[i]) != "at" && lowerOf(a[i]) != "from" && lowerOf(a[i]) != "to") path += (path.empty() ? "" : " ") + word();
+        }
+        if (path.empty()) return out.fail(toUpper(sub) + " needs a file");
+        if (sub == "capture") {
+            float t = 0;
+            if (!timeOption(t)) return out.fail("AT needs seconds");
+            const auto files = captureSensor(doc.scene, settings, *s, t, path, &err);
+            if (files.empty()) return out.fail(err);
+            for (const std::string& f : files) out.say("Wrote " + f);
+            return out;
+        }
+        float from = 0, to = doc.scene.physics().duration > 0 ? doc.scene.physics().duration : 10.0f;
+        while (i < a.size()) {
+            const std::string k = lowerOf(word());
+            const auto v = parseNumber(word());
+            if (!v || *v < 0) return out.fail("FROM / TO need seconds");
+            if (k == "from") from = *v;
+            else if (k == "to") to = *v;
+            else return out.fail("LOG name file [FROM t0] [TO t1]");
+        }
+        if (!logSensor(doc.scene, settings, *s, from, to, path, &err)) return out.fail(err);
+        out.say("Wrote " + path);
+        return out;
+    }
+    return out.fail("SENSOR ADD | REMOVE | LIST | READ name [AT t] | CAPTURE name file [AT t] | LOG name file [FROM t0] [TO t1]");
 }
 
 CommandOutput runTerrain(Document& doc, const std::vector<std::string>& a) {
@@ -283,6 +434,7 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
         const std::string k = lowerOf(a[i]);
         auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
         if (k == "show") continue;
+        if (k == "sensor" || k == "sensors") return runSensor(doc, settings, a, quoted, i + 1);
         if (k == "export") {
             for (++i; i < a.size(); ++i) exportPath += (exportPath.empty() ? "" : " ") + a[i];
             if (exportPath.empty()) return out.fail("EXPORT needs a file: robot.urdf, robot.sdf or robot.xml (MJCF)");

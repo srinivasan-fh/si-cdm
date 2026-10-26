@@ -85,7 +85,9 @@ constexpr CommandSpec kCommands[] = {
     // Files
     {"NEW", "", "NEW", "Start an empty project (in the app: a new file tab)"},
     {"OPEN", "", "OPEN path.sicdm", "Open a project (in the app: in its own file tab)"},
-    {"RIG", "ROBOTRIG", "RIG [robot] [LIST] [TAG part ROTOR|WHEEL|END_EFFECTOR|FOOT|KNEE|HINGE|BASE|NONE] [MORPHOLOGY m] [BASE FIXED|FLOATING|AUTO] [DENSITY kg/m3] [ENGINE AUTO|ARTICULATED|VEHICLE|OPTIMIZE|PARTICLE] [MISSION CLEAR|HOVER|VELOCITY vx,vy,vz|GOTO x,y,z|DRIVE speed [YAW|TURN deg/s] [AT t]] [SIMULATE ON|OFF] [STATE [AT t]] [EXPORT robot.urdf|.sdf|.xml] | RIG ENGINES",
+    {"RIG", "ROBOTRIG", "RIG [robot] [LIST] [TAG part ROTOR|WHEEL|END_EFFECTOR|FOOT|KNEE|HINGE|BASE|NONE] [MORPHOLOGY m] [BASE FIXED|FLOATING|AUTO] [DENSITY kg/m3] [ENGINE AUTO|ARTICULATED|VEHICLE|OPTIMIZE|PARTICLE] [MISSION CLEAR|HOVER|VELOCITY vx,vy,vz|GOTO x,y,z|DRIVE speed [YAW|TURN deg/s] [AT t]] [SIMULATE ON|OFF] [STATE [AT t]] [EXPORT robot.urdf|.sdf|.xml] | RIG ENGINES | "
+     "RIG [robot] SENSOR ADD IMU|GPS|FORCE|CAMERA|LIDAR name ON part [AT x,y,z] [LOOK x,y,z] [RATE hz] [NOISE k] [SIZE w h] [FOV deg] [RANGE m] ... | "
+     "SENSOR READ name [AT t] | CAPTURE name file [AT t] | LOG name file.csv [FROM t0] [TO t1] | LIST | REMOVE name",
      "A robot read from the parts and their motions: links with mass and inertia, joints, limits and couplings. Tags make wheels and rotors spin, limit knees, mark end effectors and feet"},
     {"TERRAIN", "GROUND", "TERRAIN [OFF | SLOPE | STAIRS | ROUGH | BLOCKS | DEM file.asc|image] [ANGLE deg] [DIRECTION deg] [RISE mm] [RUN mm] [STEPS n] "
      "[AMPLITUDE mm] [WAVELENGTH mm] [HEIGHT mm] [BLOCK mm] [CELL mm] [SIZE x [y]] [AT x,y] [SEED n] [FRICTION mu]",

@@ -80,6 +80,35 @@ std::optional<RigTag> rigTagFromKey(const std::string& key) noexcept {
     return std::nullopt;
 }
 
+const char* sensorKindKey(SensorKind k) noexcept {
+    switch (k) {
+    case SensorKind::Imu: return "imu";
+    case SensorKind::Gps: return "gps";
+    case SensorKind::ForceTorque: return "force_torque";
+    case SensorKind::Camera: return "camera";
+    case SensorKind::Lidar: return "lidar";
+    }
+    return "imu";
+}
+
+std::optional<SensorKind> sensorKindFromKey(const std::string& key) noexcept {
+    std::string k = lower(key);
+    for (char& c : k)
+        if (c == '-' || c == ' ') c = '_';
+    if (k == "imu" || k == "accelerometer" || k == "gyro") return SensorKind::Imu;
+    if (k == "gps" || k == "gnss") return SensorKind::Gps;
+    if (k == "force_torque" || k == "forcetorque" || k == "ft" || k == "force") return SensorKind::ForceTorque;
+    if (k == "camera" || k == "rgb" || k == "depth" || k == "rgbd") return SensorKind::Camera;
+    if (k == "lidar" || k == "laser" || k == "scanner") return SensorKind::Lidar;
+    return std::nullopt;
+}
+
+const SensorSpec* RigSettings::sensor(const std::string& n) const {
+    for (const SensorSpec& s : sensors)
+        if (lower(s.name) == lower(n)) return &s;
+    return nullptr;
+}
+
 const char* missionKindKey(MissionKind k) noexcept {
     switch (k) {
     case MissionKind::Hover: return "hover";
@@ -151,6 +180,21 @@ Json rigStateToJson(const RigState& s) {
             }
             j.set("mission", m);
         }
+        if (!r.sensors.empty()) {
+            Json list = Json::array();
+            auto v3 = [](const Vec3& v) { return Json(Json::Array{Json(v.x), Json(v.y), Json(v.z)}); };
+            for (const SensorSpec& sn : r.sensors) {
+                Json o = Json::object();
+                o.set("name", sn.name), o.set("kind", sensorKindKey(sn.kind)), o.set("body", sn.body);
+                o.set("at", v3(sn.at)), o.set("look", v3(sn.look)), o.set("up", v3(sn.up));
+                o.set("rate", sn.rate), o.set("noise", sn.noise), o.set("bias", sn.bias), o.set("seed", sn.seed);
+                o.set("width", sn.width), o.set("height", sn.height), o.set("fov", sn.fov), o.set("range", sn.range);
+                o.set("channels", sn.channels), o.set("samples", sn.samples), o.set("vfov", sn.vfov);
+                o.set("lat", sn.lat), o.set("lon", sn.lon), o.set("alt", sn.alt);
+                list.push(o);
+            }
+            j.set("sensors", list);
+        }
         Json tags = Json::object();
         for (const auto& [b, t] : r.tags) tags.set(b, rigTagKey(t));
         j.set("tags", tags);
@@ -182,6 +226,21 @@ void rigStateFromJson(const Json& j, RigState& s) {
             st.vec = {m[k]["vec"][0].asFloat(0), m[k]["vec"][1].asFloat(0), m[k]["vec"][2].asFloat(0)};
             st.rate = m[k]["rate"].asFloat(0);
             rs.mission.push_back(st);
+        }
+        const Json& sl = r["sensors"];
+        auto v3 = [](const Json& a, Vec3 d) { return a.isArray() ? Vec3{a[0].asFloat(d.x), a[1].asFloat(d.y), a[2].asFloat(d.z)} : d; };
+        for (std::size_t k = 0; k < sl.size(); ++k) {
+            const Json& o = sl[k];
+            SensorSpec sn;
+            sn.name = o["name"].asString(std::string());
+            sn.kind = sensorKindFromKey(o["kind"].asString(std::string("imu"))).value_or(SensorKind::Imu);
+            sn.body = o["body"].asString(std::string());
+            sn.at = v3(o["at"], sn.at), sn.look = v3(o["look"], sn.look), sn.up = v3(o["up"], sn.up);
+            sn.rate = o["rate"].asFloat(sn.rate), sn.noise = o["noise"].asFloat(sn.noise), sn.bias = o["bias"].asFloat(sn.bias), sn.seed = o["seed"].asInt(sn.seed);
+            sn.width = o["width"].asInt(sn.width), sn.height = o["height"].asInt(sn.height), sn.fov = o["fov"].asFloat(sn.fov), sn.range = o["range"].asFloat(sn.range);
+            sn.channels = o["channels"].asInt(sn.channels), sn.samples = o["samples"].asInt(sn.samples), sn.vfov = o["vfov"].asFloat(sn.vfov);
+            sn.lat = o["lat"].asNumber(0), sn.lon = o["lon"].asNumber(0), sn.alt = o["alt"].asNumber(0);
+            if (!sn.name.empty()) rs.sensors.push_back(sn);
         }
         if (const Json& tags = r["tags"]; tags.isObject())
             for (const auto& [b, v] : tags.members())

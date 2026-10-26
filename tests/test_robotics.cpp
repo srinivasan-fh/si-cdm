@@ -7,6 +7,10 @@
 #include "core/Physics.hpp"
 #include "core/Rig.hpp"
 #include "core/Scene.hpp"
+#include "core/Sensors.hpp"
+#include "core/Terrain.hpp"
+
+#include <stb_image.h>
 
 #include <cmath>
 #include <cstdint>
@@ -626,4 +630,124 @@ TEST_CASE("Robotics vehicles: a rover drives straight and turns at the rate aske
     CHECK(std::fabs(turned - 2.0 * 30 * 3.14159265358979 / 180) < 0.1);
     const V3d v2 = frameVelocity(*r, 6.0f);
     CHECK(std::fabs(std::hypot(v2[0], v2[1]) - 0.5) < 0.06);
+}
+
+TEST_CASE("Robotics sensors: an IMU and a GPS on a part that turns") {
+    Document d;
+    REQUIRE(run(d, "BOX 200 200 100 @0,0,0").ok);
+    // The block spins at 90 deg/s about Z through the origin; the IMU sits 500 mm out on it.
+    REQUIRE(run(d, "MOTION CIRCLE Spin AXIS Z AT 0,0,0 SPEED 90 BODIES \"Block 1\"").ok);
+    REQUIRE(run(d, "RIG SENSOR ADD IMU imu ON \"Block 1\" AT 500,0,50 NOISE 0 BIAS 0").ok);
+    REQUIRE(run(d, "RIG SENSOR ADD GPS gps ON \"Block 1\" AT 500,0,50 NOISE 0 ORIGIN 10,20,100").ok);
+    const RigSettings& s = d.scene.rigs().robots[0];
+    SensorReading r;
+    REQUIRE(readSensor(d.scene, s, *s.sensor("imu"), 1.0f, r));
+    const double w = 3.14159265358979 / 2, centripetal = 0.5 * w * w;
+    // Specific force in the sensor's frame (x out along the arm): -r w^2 toward the axis, +g up.
+    CHECK_NEAR(r.values[0], -centripetal, 0.01);
+    CHECK_NEAR(r.values[1], 0.0, 0.01);
+    CHECK_NEAR(r.values[2], 9.80665, 0.01);
+    CHECK_NEAR(r.values[5], w, 1e-3);
+    CHECK_NEAR(r.values[3], 0.0, 1e-6);
+    // A quarter turn later the GPS has gone round to +Y: latitude grows by 0.5 m of arc.
+    REQUIRE(readSensor(d.scene, s, *s.sensor("gps"), 1.0f, r));
+    CHECK_NEAR(r.values[0], 0.0, 1e-3);
+    CHECK_NEAR(r.values[1], 0.5, 1e-3);
+    CHECK_NEAR(r.values[6], 10.0 + 0.5 / 6378137.0 * 180.0 / 3.14159265358979, 1e-9);
+    CHECK_NEAR(r.values[7], 20.0, 1e-9);
+    CHECK_NEAR(r.values[8], 100.05, 1e-6);
+    // Noise: repeatable, and the size the model says.
+    REQUIRE(run(d, "RIG SENSOR ADD IMU noisy ON \"Block 1\" BIAS 0 RATE 200").ok);
+    const SensorSpec& noisy = *d.scene.rigs().robots[0].sensor("noisy");
+    SensorReading a, b;
+    REQUIRE(readSensor(d.scene, d.scene.rigs().robots[0], noisy, 0.5f, a));
+    REQUIRE(readSensor(d.scene, d.scene.rigs().robots[0], noisy, 0.5f, b));
+    CHECK(a.values == b.values);
+    double sum = 0, sum2 = 0;
+    const int n = 400;
+    SensorReading ideal;
+    SensorSpec clean = noisy;
+    clean.noise = 0;
+    for (int k = 0; k < n; ++k) {
+        const float t = 0.005f * static_cast<float>(k);
+        REQUIRE(readSensor(d.scene, d.scene.rigs().robots[0], noisy, t, a));
+        REQUIRE(readSensor(d.scene, d.scene.rigs().robots[0], clean, t, ideal));
+        const double e = a.values[0] - ideal.values[0];
+        sum += e, sum2 += e * e;
+    }
+    const double sigma = std::sqrt(sum2 / n - (sum / n) * (sum / n));
+    CHECK(std::fabs(sigma - typicalNoise(SensorKind::Imu, 0).white) < 0.25 * typicalNoise(SensorKind::Imu, 0).white);
+    // Saved with the project.
+    const std::string path = (fs::temp_directory_path() / "sicdm-sensors.sicdm").string();
+    REQUIRE(run(d, "SAVE \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
+    REQUIRE(e.scene.rigs().robots.size() == 1);
+    CHECK(e.scene.rigs().robots[0].sensors.size() == 3);
+    CHECK(e.scene.rigs().robots[0].sensor("gps")->lat == 10.0);
+    fs::remove(path);
+    CHECK(!run(d, "RIG SENSOR ADD IMU imu ON \"Block 1\"").ok); // the name is taken
+    CHECK(!run(d, "RIG SENSOR ADD SONAR x ON \"Block 1\"").ok);
+    CHECK(run(d, "RIG SENSOR REMOVE noisy").ok);
+}
+
+TEST_CASE("Robotics sensors: cameras and LiDARs see the scene, PNGs and point clouds") {
+    Document d;
+    REQUIRE(run(d, "BOX 100 100 100 @0,0,0").ok);         // Block 1: carries the sensors
+    REQUIRE(run(d, "BOX 400 2000 2000 @2200,0,0").ok);     // Block 2: a wall, its face 2 m away at x = 2000
+    REQUIRE(run(d, "RIG SENSOR ADD CAMERA cam ON \"Block 1\" AT 0,0,500 LOOK 1,0,0 SIZE 64 48 FOV 60 NOISE 0").ok);
+    REQUIRE(run(d, "RIG SENSOR ADD LIDAR lid ON \"Block 1\" AT 0,0,500 CHANNELS 1 SAMPLES 36 RANGE 10 NOISE 0").ok);
+    const RigSettings& s = d.scene.rigs().robots[0];
+    SensorReading c;
+    REQUIRE(readSensor(d.scene, s, *s.sensor("cam"), 0.0f, c));
+    REQUIRE(c.width == 64 && c.height == 48);
+    const std::size_t centre = static_cast<std::size_t>(24 * 64 + 32);
+    CHECK_NEAR(c.depth[centre], 2.0, 0.01);
+    CHECK(c.instance[centre] == 1);
+    CHECK(c.semantic[centre] == 3); // the wall is not part of the robot
+    CHECK(c.semantic[static_cast<std::size_t>(47 * 64 + 32)] == 1); // the floor at the bottom of the view
+    // The LiDAR's level ring meets the wall straight ahead at 2 m.
+    SensorReading l;
+    REQUIRE(readSensor(d.scene, s, *s.sensor("lid"), 0.0f, l));
+    REQUIRE(!l.ranges.empty());
+    CHECK_NEAR(l.points[0][0], 2.0, 0.01); // azimuth 0 is first
+    CHECK_NEAR(l.ranges[0], 2.0, 0.01);
+    // Files: three PNGs (RGB, 16-bit depth in mm, segmentation) and a point cloud.
+    const fs::path dir = fs::temp_directory_path() / "sicdm_tests" / "sensors";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    REQUIRE(run(d, "RIG SENSOR CAPTURE cam \"" + (dir / "view.png").string() + "\"").ok);
+    int w = 0, h = 0, n = 0;
+    unsigned char* px = stbi_load((dir / "view_rgb.png").string().c_str(), &w, &h, &n, 0);
+    REQUIRE(px != nullptr);
+    CHECK(w == 64 && h == 48 && n == 3);
+    stbi_image_free(px);
+    unsigned short* depth = stbi_load_16((dir / "view_depth.png").string().c_str(), &w, &h, &n, 0);
+    REQUIRE(depth != nullptr);
+    CHECK(std::abs(static_cast<int>(depth[centre]) - 2000) <= 5);
+    stbi_image_free(depth);
+    REQUIRE(run(d, "RIG SENSOR CAPTURE lid \"" + (dir / "scan.csv").string() + "\"").ok);
+    CHECK(fs::file_size(dir / "scan.csv") > 20);
+    CHECK(!run(d, "RIG SENSOR LOG cam \"" + (dir / "x.csv").string() + "\"").ok); // cameras capture, they don't log
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Robotics sensors: a force-torque sensor feels the arm it holds") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 200 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 30 400 30 @0,200,200").ok); // a rod out along +Y from the pivot
+    REQUIRE(run(d, "JOINT \"Block 2\" TO \"Block 1\" AT 0,0,215 AXIS X RANGE -60 90").ok);
+    d.scene.motions()[0].keys = {{0.0f, 0.0f}};      // held level
+    REQUIRE(run(d, "RIG SIMULATE ON").ok);
+    REQUIRE(run(d, "RIG SENSOR ADD FORCE ft ON \"Block 2\" AT 0,0,215 LOOK 1,0,0 NOISE 0").ok);
+    const RigSettings& s = d.scene.rigs().robots[0];
+    SensorReading r;
+    REQUIRE(readSensor(d.scene, s, *s.sensor("ft"), 3.0f, r));
+    RobotRig rig;
+    REQUIRE(buildRig(d.scene, s, rig));
+    const double m = rig.links[1].mass, arm = rig.links[1].com[1];
+    CHECK_NEAR(r.values[2], m * 9.80665, 0.02 * m * 9.80665);   // the joint holds the rod up
+    CHECK_NEAR(std::fabs(r.values[3]), m * 9.80665 * arm, 0.03 * m * 9.80665 * arm); // and its moment about X
+    REQUIRE(run(d, "RIG SIMULATE OFF").ok);
+    CHECK(!readSensor(d.scene, d.scene.rigs().robots[0], *d.scene.rigs().robots[0].sensor("ft"), 3.0f, r));
 }

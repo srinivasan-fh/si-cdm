@@ -242,6 +242,10 @@ std::shared_ptr<const RobotRun> robotRun(const Scene& scene, const RigSettings& 
         for (double v : mb.q()) f.q.push_back(static_cast<float>(v));
         f.com = mb.centreOfMass();
         for (const ContactPoint& c : mb.contacts()) f.contactForce += c.force[2];
+        for (std::size_t j = 0; j < run->rig.joints.size(); ++j) {
+            const auto w = mb.jointWrench(j);
+            f.wrench.push_back({w.first[0], w.first[1], w.first[2], w.second[0], w.second[1], w.second[2]});
+        }
         run->frames.push_back(std::move(f));
     };
     record();

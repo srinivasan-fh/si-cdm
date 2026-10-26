@@ -166,6 +166,7 @@ struct RobotRunFrame {
     std::vector<float> q;
     V3d com{};
     double contactForce = 0; // total normal force on the ground (N)
+    std::vector<std::array<double, 6>> wrench; // each joint's force (N) and torque (N m) on its child, at its axis point
 };
 struct RobotRun {
     std::string robot;

@@ -56,6 +56,31 @@ struct MissionStep {
     float rate = 0;
 };
 
+// A sensor on a robot part (see Sensors.hpp). Its mount is given where the part is at
+// rest, in the scene's millimetres: it rides with the part.
+enum class SensorKind { Imu, Gps, ForceTorque, Camera, Lidar };
+const char* sensorKindKey(SensorKind k) noexcept;
+std::optional<SensorKind> sensorKindFromKey(const std::string& key) noexcept;
+struct SensorSpec {
+    std::string name;
+    SensorKind kind = SensorKind::Imu;
+    std::string body;          // the part it is fixed to
+    Vec3 at{};                 // mm, at rest
+    Vec3 look{1, 0, 0};        // where it points at rest (cameras, LiDAR)
+    Vec3 up{0, 0, 1};
+    float rate = 100;          // Hz
+    float noise = 1;           // x the kind's typical noise (0: ideal)
+    float bias = 1;            // x the kind's typical bias drift
+    int seed = 1;
+    int width = 320, height = 240;
+    float fov = 60;            // deg, horizontal (cameras)
+    float range = 30;          // m (LiDAR, depth)
+    int channels = 16;         // LiDAR rings
+    int samples = 360;         // LiDAR points per ring
+    float vfov = 30;           // deg, LiDAR vertical spread
+    double lat = 0, lon = 0, alt = 0; // GPS: where the scene's origin is on the Earth
+};
+
 // A robot's settings, saved with the project (the tree itself is read from the scene).
 struct RigSettings {
     std::string name;                  // the robot: a component, an assembly path, or "" (every jointed part)
@@ -66,6 +91,8 @@ struct RigSettings {
     std::string engine;                // "" (from the morphology) or an engine key, see Multibody.hpp
     bool simulate = false;             // the Simulation plays it with its engine (its motions are the servo targets)
     std::vector<MissionStep> mission;  // drones and rovers: what the flight / drive controller is told, in time order
+    std::vector<SensorSpec> sensors;
+    const SensorSpec* sensor(const std::string& name) const;
 
     RigTag tagOf(const std::string& body) const;
     void setTag(const std::string& body, RigTag tag); // None removes it
