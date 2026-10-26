@@ -85,7 +85,7 @@ constexpr CommandSpec kCommands[] = {
     // Files
     {"NEW", "", "NEW", "Start an empty project (in the app: a new file tab)"},
     {"OPEN", "", "OPEN path.sicdm", "Open a project (in the app: in its own file tab)"},
-    {"RIG", "ROBOTRIG", "RIG [robot] [LIST] [TAG part ROTOR|WHEEL|END_EFFECTOR|FOOT|KNEE|HINGE|BASE|NONE] [MORPHOLOGY m] [BASE FIXED|FLOATING|AUTO] [DENSITY kg/m3] [ENGINE e]",
+    {"RIG", "ROBOTRIG", "RIG [robot] [LIST] [TAG part ROTOR|WHEEL|END_EFFECTOR|FOOT|KNEE|HINGE|BASE|NONE] [MORPHOLOGY m] [BASE FIXED|FLOATING|AUTO] [DENSITY kg/m3] [ENGINE e] [EXPORT robot.urdf|.sdf|.xml]",
      "A robot read from the parts and their motions: links with mass and inertia, joints, limits and couplings. Tags make wheels and rotors spin, limit knees, mark end effectors and feet"},
     {"RECENT", "", "RECENT [n | CLEAR]", "The projects opened or saved lately; RECENT n opens one"},
     {"PREFERENCES", "PREFS SETTINGS", "PREFERENCES [SHOW] | SET units|autosave|material|post|machine|updates|update-url value | RESET",
@@ -102,7 +102,8 @@ constexpr CommandSpec kCommands[] = {
     {"CLOSE", "", "CLOSE [DISCARD]", "Close the active file tab (DISCARD drops unsaved changes)"},
     {"IMPORT", "IMP", "IMPORT path [@x,y] [WIDTH mm]",
      "STEP or IGES solids and surfaces (exact; STEP assemblies placed) or STL/OBJ as bodies, DXF onto the sketch plane, PNG/JPG/... as a reference image"},
-    {"EXPORT", "EXP", "EXPORT path.step|.igs|.stl|.obj|.3mf|.dxf|.svg", "STEP or IGES (exact B-reps)/STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane"},
+    {"EXPORT", "EXP", "EXPORT path.step|.igs|.stl|.obj|.3mf|.dxf|.svg|.urdf|.sdf|.xml",
+     "STEP or IGES (exact B-reps)/STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane; URDF/SDF/MJCF (.xml) of the robot"},
     {"RUN", "SCRIPT", "RUN path.txt", "Run the commands in a text file, one a line (# starts a comment)"},
     // 3D printing
     {"REVOLVE", "REV", "REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [KEEP]",

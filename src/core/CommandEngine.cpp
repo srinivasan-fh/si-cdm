@@ -11,6 +11,7 @@
 #include "core/Licence.hpp"
 #include "core/Preferences.hpp"
 #include "core/RobotCommand.hpp"
+#include "core/RobotExport.hpp"
 #include "core/UpdateCheck.hpp"
 #include "core/Notices.hpp"
 #include "core/Plugin.hpp"
@@ -2849,6 +2850,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     if (cmd == "EXPORT") {
         if (a.empty()) return usage();
         const std::string path = joinArgs(a);
+        if (RobotFormat rf; robotFormatOf(path, rf)) return runRobotCommand(doc, "RIG", {"export", path}, {false, true});
         std::string err;
         if (path.size() > 4 && lower(path.substr(path.size() - 4)) == ".3mf") {
             if (!export3mf(doc.scene, path, &err)) return out.fail(err);

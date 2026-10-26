@@ -611,6 +611,38 @@ std::vector<std::string> applyRigTags(Scene& scene, const RigSettings& settings)
     return done;
 }
 
+std::vector<int> rigSubtree(const RobotRig& rig, int link) {
+    std::vector<int> out{link};
+    for (std::size_t k = 0; k < out.size(); ++k)
+        for (const RigJoint& j : rig.joints)
+            if (j.parent == out[k]) out.push_back(j.child);
+    return out;
+}
+
+double rigJointEffort(const RobotRig& rig, std::size_t joint) {
+    const RigJoint& j = rig.joints[joint];
+    if (j.effort > 0) return j.effort;
+    const std::vector<int> below = rigSubtree(rig, j.child);
+    double mass = 0, torque = 0;
+    for (int l : below) {
+        const RigLink& L = rig.links[static_cast<std::size_t>(l)];
+        mass += L.mass;
+        // Lever arm: the centre of mass's distance from the axis.
+        const double d[3] = {L.com[0] - j.origin[0], L.com[1] - j.origin[1], L.com[2] - j.origin[2]};
+        const double along = d[0] * j.axis[0] + d[1] * j.axis[1] + d[2] * j.axis[2];
+        const double r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - along * along;
+        torque += L.mass * 9.80665 * std::sqrt(std::max(r2, 0.0));
+    }
+    const double need = j.type == RigJointType::Prismatic ? mass * 9.80665 : torque;
+    return std::max(0.5, 2.0 * need);
+}
+
+double rigJointVelocity(const RobotRig& rig, std::size_t joint) {
+    const RigJoint& j = rig.joints[joint];
+    if (j.velocity > 0) return j.velocity;
+    return j.type == RigJointType::Prismatic ? 0.5 : 3.0;
+}
+
 std::vector<std::string> describeRig(const RobotRig& rig) {
     std::vector<std::string> out;
     char buf[400];

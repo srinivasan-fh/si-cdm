@@ -7,6 +7,9 @@
 #include "core/Scene.hpp"
 
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
 
@@ -178,4 +181,66 @@ TEST_CASE("Robotics: auto-rigging makes drones and rovers from plain parts") {
     REQUIRE(rigOf(v, "", rover));
     CHECK(rover.morphology == Morphology::Custom);
     CHECK(!rover.floatingBase);
+}
+
+TEST_CASE("Robotics: URDF, SDF and MJCF export with meshes") {
+    Document d;
+    REQUIRE(run(d, "PART robot_arm").ok);
+    const fs::path dir = fs::temp_directory_path() / "sicdm_tests" / "robot_export";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    auto slurp = [](const fs::path& p) {
+        std::string s;
+        if (FILE* f = std::fopen(p.string().c_str(), "rb")) {
+            char buf[65536];
+            for (std::size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) s.append(buf, n);
+            std::fclose(f);
+        }
+        return s;
+    };
+    auto count = [](const std::string& s, const std::string& what) {
+        std::size_t n = 0;
+        for (std::size_t p = s.find(what); p != std::string::npos; p = s.find(what, p + 1)) ++n;
+        return n;
+    };
+    REQUIRE(run(d, "EXPORT \"" + (dir / "arm.urdf").string() + "\"").ok);
+    const std::string u = slurp(dir / "arm.urdf");
+    CHECK(count(u, "<link name=") == 24);      // the 23 links and "world" (a fixed base)
+    CHECK(count(u, "<joint name=") == 23);     // 22 and the base's fixed joint
+    CHECK(count(u, "<mimic joint=") == 9);     // finger couplings
+    CHECK(count(u, "<inertia ixx=") == 23);
+    // The elbow sits 300 mm along the upper arm from the shoulder chain's frame.
+    CHECK(u.find("<child link=\"Robot_Arm_1_Elbow_link\"/>\n    <origin xyz=\"0 0.3 0\"") != std::string::npos);
+    CHECK(fs::exists(dir / "arm_meshes" / "Robot_Arm_1_Forearm_Rotation_link.stl"));
+    // A binary STL: 80 + 4 + 50 per triangle.
+    const std::string stl = slurp(dir / "arm_meshes" / "Robot_Arm_1_Forearm_Rotation_link.stl");
+    REQUIRE(stl.size() > 84);
+    std::uint32_t tris = 0;
+    std::memcpy(&tris, stl.data() + 80, 4);
+    CHECK(stl.size() == 84 + 50 * static_cast<std::size_t>(tris));
+
+    REQUIRE(run(d, "RIG EXPORT \"" + (dir / "arm.sdf").string() + "\"").ok);
+    const std::string s = slurp(dir / "arm.sdf");
+    CHECK(count(s, "<link name=") == 23);
+    CHECK(count(s, "<joint name=") == 23);
+    CHECK(s.find("<parent>world</parent>") != std::string::npos);
+
+    REQUIRE(run(d, "EXPORT \"" + (dir / "arm.xml").string() + "\"").ok);
+    const std::string m = slurp(dir / "arm.xml");
+    CHECK(count(m, "<body name=") == 23);
+    CHECK(count(m, "type=\"hinge\"") == 22);
+    CHECK(count(m, "polycoef=") == 9);
+    CHECK(count(m, "_servo\"") == 13);
+    CHECK(m.find("<freejoint") == std::string::npos); // the arm is bolted down
+    CHECK(!run(d, "RIG EXPORT \"" + (dir / "arm.txt").string() + "\"").ok);
+
+    // A floating humanoid: MJCF frees its base, URDF leaves the root unattached.
+    Document h;
+    REQUIRE(run(h, "PART humanoid").ok);
+    REQUIRE(run(h, "EXPORT \"" + (dir / "man.xml").string() + "\"").ok);
+    CHECK(count(slurp(dir / "man.xml"), "<freejoint") == 1);
+    REQUIRE(run(h, "EXPORT \"" + (dir / "man.urdf").string() + "\"").ok);
+    CHECK(slurp(dir / "man.urdf").find("<link name=\"world\"") == std::string::npos);
+    fs::remove_all(dir, ec);
 }

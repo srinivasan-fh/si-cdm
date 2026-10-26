@@ -138,6 +138,14 @@ bool buildRig(const Scene& scene, const RigSettings& settings, RobotRig& out, st
 // Returns what it changed, one line each.
 std::vector<std::string> applyRigTags(Scene& scene, const RigSettings& settings);
 
+// What a joint's drive should be able to give when it is not known: twice the torque that
+// holds the links below it straight out against gravity (N m; prismatic: N), at least 0.5;
+// and a speed of 3 rad/s (0.5 m/s), or the joint's own.
+double rigJointEffort(const RobotRig& rig, std::size_t joint);
+double rigJointVelocity(const RobotRig& rig, std::size_t joint);
+// The links at and below a link.
+std::vector<int> rigSubtree(const RobotRig& rig, int link);
+
 // One line per link and joint, for the RIG command.
 std::vector<std::string> describeRig(const RobotRig& rig);
 

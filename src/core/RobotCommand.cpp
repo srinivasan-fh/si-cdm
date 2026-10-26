@@ -6,6 +6,7 @@
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
 #include "core/Rig.hpp"
+#include "core/RobotExport.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -21,7 +22,7 @@ std::string lowerOf(const std::string& s) {
     return o;
 }
 
-const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show"};
+const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export"};
 
 bool isRigWord(const std::string& w) {
     const std::string k = lowerOf(w);
@@ -118,10 +119,16 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
     else settings.name = robot;
     bool changed = false;
     std::vector<std::string> notes;
+    std::string exportPath;
     for (; i < a.size(); ++i) {
         const std::string k = lowerOf(a[i]);
         auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
         if (k == "show") continue;
+        if (k == "export") {
+            for (++i; i < a.size(); ++i) exportPath += (exportPath.empty() ? "" : " ") + a[i];
+            if (exportPath.empty()) return out.fail("EXPORT needs a file: robot.urdf, robot.sdf or robot.xml (MJCF)");
+            break;
+        }
         if (k == "tag" || k == "untag") {
             // TAG body ROLE (body: quoted, or words up to the role)
             std::string body, role = k == "untag" ? "none" : "";
@@ -165,7 +172,7 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
             if (settings.engine == "auto") settings.engine.clear();
             changed = true;
         } else {
-            return out.fail("Usage: RIG [robot] [TAG part ROLE] [UNTAG part] [MORPHOLOGY m] [BASE FIXED|FLOATING|AUTO] [DENSITY kg/m3] [ENGINE e]");
+            return out.fail("Usage: RIG [robot] [TAG part ROLE] [UNTAG part] [MORPHOLOGY m] [BASE FIXED|FLOATING|AUTO] [DENSITY kg/m3] [ENGINE e] [EXPORT file]");
         }
     }
     if (changed) {
@@ -176,6 +183,15 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
     RobotRig rig;
     if (!buildRig(doc.scene, settings, rig, &err)) return out.fail(err);
     for (const std::string& l : notes) out.say(l);
+    if (!exportPath.empty()) {
+        const RobotExportResult r = exportRobot(doc.scene, rig, exportPath);
+        if (!r.ok) return out.fail(r.error);
+        RobotFormat f;
+        robotFormatOf(exportPath, f);
+        out.say(std::string("Exported ") + robotFormatName(f) + " " + exportPath + ": " + std::to_string(rig.links.size()) + " links, " +
+                std::to_string(rig.joints.size()) + " joints, " + std::to_string(r.files.size() - 1) + " meshes");
+        return out;
+    }
     for (const std::string& l : describeRig(rig)) out.say(l);
     return out;
 }
