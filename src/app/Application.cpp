@@ -292,6 +292,7 @@ StandardView planeView(SketchPlane p) {
     case SketchPlane::Top: return StandardView::Top;
     case SketchPlane::Front: return StandardView::Front;
     case SketchPlane::Right: return StandardView::Right;
+    case SketchPlane::Custom: break; // see orient2D()
     }
     return StandardView::Top;
 }
@@ -337,7 +338,7 @@ void Application::setMode(ViewMode mode) {
         setStatus(m_doc.scene.motions().empty() ? "Simulation window: add a Circular or Linear motion on the right"
                                                 : "Simulation window: Space plays / pauses");
     else
-        setStatus(mode == ViewMode::Drawing2D ? std::string("2D Drawing window: ") + planeName(m_uiState.plane)
+        setStatus(mode == ViewMode::Drawing2D ? std::string("2D Drawing window: ") + activePlaneName(m_doc.state)
                                               : std::string("3D Model window"));
 }
 
@@ -345,22 +346,32 @@ void Application::init2DCamera() {
     // First visit: plan view of the active plane, framed on the model.
     m_cam2D.setAspect(m_aspect);
     m_cam2D.setProjection(Projection::Orthographic);
-    m_cam2D.setStandardView(planeView(m_uiState.plane), false);
+    orient2D(false);
     if (m_doc.scene.bounds().valid()) m_cam2D.fitToBounds(m_doc.scene.bounds(), false);
     m_2DReady = true;
 }
 
+void Application::orient2D(bool animate) {
+    if (m_uiState.plane != SketchPlane::Custom) {
+        m_cam2D.setStandardView(planeView(m_uiState.plane), animate);
+        return;
+    }
+    const PlaneFrame& f = m_doc.state.customFrame; // plan-on, u to the right
+    m_cam2D.setViewFrame(f.normal, f.u, animate);
+}
+
 void Application::setPlane(SketchPlane plane) {
     m_sketcher.cancel();
-    const bool changed = plane != m_uiState.plane;
+    const bool changed = plane != m_uiState.plane || (plane == SketchPlane::Custom && !sameFrame(m_vp2D.gridFrame, m_doc.state.customFrame));
     m_uiState.plane = plane;
     m_doc.state.plane = plane;
     m_vp2D.gridPlane = plane;
+    m_vp2D.gridFrame = m_doc.state.customFrame;
     if (m_2DReady && changed) {
-        m_cam2D.setStandardView(planeView(plane), true);
+        orient2D(true);
         m_cam2D.fitToBounds(m_doc.scene.bounds(), true);
     }
-    if (changed) setStatus(std::string("Sketch plane: ") + planeName(plane));
+    if (changed) setStatus("Sketch plane: " + activePlaneName(m_doc.state));
 }
 
 std::optional<RayHit> Application::pick(float x, float y) const {
@@ -402,7 +413,7 @@ std::optional<Application::SketchGripHit> Application::pickSketchGrip(float x, f
         const SketchCurve& c = curves[i];
         if (!c.visible || c.pts.empty()) continue;
         const std::vector<std::pair<int, Vec2>> pts = gripPoints(c);
-        const PlaneFrame f = planeFrame(c.plane);
+        const PlaneFrame f = curveFrame(c);
         for (const auto& [k, q] : pts) {
             const auto sp = projectToScreen(camera(), f.toWorld(q), io.DisplaySize);
             if (!sp) continue;
@@ -423,7 +434,7 @@ std::optional<Application::SketchGripHit> Application::pickSketchGrip(float x, f
     const int ci = pickCurve(x, y);
     if (ci < 0) return std::nullopt;
     const SketchCurve& c = curves[static_cast<std::size_t>(ci)];
-    const PlaneFrame f = planeFrame(c.plane);
+    const PlaneFrame f = curveFrame(c);
     const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
     const float dn = dot(ray.dir, f.normal);
     if (std::fabs(dn) < 1e-6f) return std::nullopt;
@@ -441,7 +452,7 @@ void Application::updateSketchDrag(float x, float y) {
     if (m_sketchDrag.curve < 0 || m_sketchDrag.curve >= static_cast<int>(curves.size())) return;
     const SketchCurve& c = curves[static_cast<std::size_t>(m_sketchDrag.curve)];
     const ImGuiIO& io = ImGui::GetIO();
-    const PlaneFrame f = planeFrame(c.plane);
+    const PlaneFrame f = curveFrame(c);
     const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
     const float dn = dot(ray.dir, f.normal);
     if (std::fabs(dn) < 1e-6f) return;
@@ -493,7 +504,7 @@ void Application::addCurve(SketchCurve curve) {
     m_uiState.selectedCurve = static_cast<int>(m_doc.scene.sketch().curves().size()) - 1;
     m_uiState.selectedBody = m_uiState.selectedImage = -1;
     setStatus("Added " + c.name + "  " + c.measure());
-    log("Added " + c.name + " on " + planeName(c.plane) + "  " + c.measure(), UiState::LogLine::Output);
+    log("Added " + c.name + " on " + activePlaneName(m_doc.state) + "  " + c.measure(), UiState::LogLine::Output);
 }
 
 void Application::onCanvasClick(float x, float y, bool doubleClick) {
@@ -563,7 +574,7 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         const SketchCurve& c = m_doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
         const ImGuiIO& io = ImGui::GetIO();
         const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
-        const PlaneFrame f = planeFrame(c.plane);
+        const PlaneFrame f = curveFrame(c);
         const float dn = dot(ray.dir, f.normal);
         if (std::fabs(dn) < 1e-6f) {
             setStatus("Look at the sketch plane to edit its curves");
@@ -637,7 +648,7 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
             at = hit->point; // stack on the surface that was clicked
         } else {
             // 3D: the ground plane; 2D: the drawing plane (two-sided).
-            const PlaneFrame f = planeFrame(is2D ? m_uiState.plane : SketchPlane::Top);
+            const PlaneFrame f = is2D ? activePlaneFrame(m_doc.state) : planeFrame(SketchPlane::Top);
             const float d = dot(ray.dir, f.normal);
             if (std::fabs(d) < 1e-4f) {
                 setStatus("Click on the grid or a body to place it");
@@ -1132,10 +1143,10 @@ void Application::handleViewportInput() {
     if (onCanvas && io.MousePos.x > -1e30f) {
         const SnapOptions so{m_uiState.snapGrid, m_uiState.snapPoints};
         if (isSketchTool(tool)) {
-            if (m_sketcher.hover(m_doc.scene, cam, m_uiState.plane, io.MousePos, io.DisplaySize, so, io.KeyShift))
+            if (m_sketcher.hover(m_doc.scene, cam, m_uiState.plane, activePlaneFrame(m_doc.state), io.MousePos, io.DisplaySize, so, io.KeyShift))
                 m_uiState.cursorPlane = m_sketcher.cursor();
         } else {
-            const PlaneFrame f = planeFrame(m_uiState.plane);
+            const PlaneFrame f = activePlaneFrame(m_doc.state);
             const Ray r = cam.screenRay(mx, my, io.DisplaySize.x, wh);
             const float d = dot(r.dir, f.normal);
             if (std::fabs(d) > 0.05f) m_uiState.cursorPlane = f.toPlane(r.at(dot(f.origin - r.origin, f.normal) / d));
@@ -1465,6 +1476,10 @@ void Application::frame(float dt) {
     m_uiState.assembly = &m_doc.state.assembly;
     m_uiState.cam = &m_doc.state.cam;
     m_uiState.lathe = &m_doc.state.lathe;
+    m_uiState.activeFrame = activePlaneFrame(m_doc.state);
+    m_uiState.planeLabel = activePlaneName(m_doc.state);
+    m_uiState.datums.clear();
+    for (const DatumPlane& d : m_doc.state.datums) m_uiState.datums.push_back(d.name);
     const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
 
@@ -1585,7 +1600,7 @@ void Application::frame(float dt) {
         const std::optional<SketchGripHit> hot = m_leftDrag == DragMode::SketchGrip ? std::optional<SketchGripHit>(m_sketchDrag)
                                                                                      : pickSketchGrip(io.MousePos.x, io.MousePos.y);
         auto mark = [&](const SketchCurve& c, Vec2 q, bool lit) {
-            const auto sp = projectToScreen(camera(), planeFrame(c.plane).toWorld(q), io.DisplaySize);
+            const auto sp = projectToScreen(camera(), curveFrame(c).toWorld(q), io.DisplaySize);
             if (!sp) return;
             const float h = lit ? 5.0f : 3.5f;
             fg->AddRectFilled({sp->x - h, sp->y - h}, {sp->x + h, sp->y + h}, lit ? IM_COL32(255, 196, 64, 255) : IM_COL32(20, 24, 32, 230));
@@ -1704,7 +1719,9 @@ void Application::syncFromDoc() {
     m_uiState.selectedImage = m_doc.selectedImage;
     m_uiState.snapGrid = m_doc.snapGrid;
     m_uiState.snapPoints = m_doc.snapPoints;
-    if (m_doc.state.plane != m_uiState.plane) setPlane(m_doc.state.plane);
+    if (m_doc.state.plane != m_uiState.plane ||
+        (m_doc.state.plane == SketchPlane::Custom && !sameFrame(m_vp2D.gridFrame, m_doc.state.customFrame)))
+        setPlane(m_doc.state.plane);
 }
 
 void Application::afterDocumentReplaced() {
@@ -1720,12 +1737,13 @@ void Application::afterDocumentReplaced() {
     m_cam3D.setStandardView(StandardView::Isometric, false);
     if (m_doc.scene.bounds().valid()) m_cam3D.fitToBounds(m_doc.scene.bounds(), false);
     m_2DReady = false;
-    if (m_uiState.mode == ViewMode::Drawing2D) {
+    m_vp2D.gridPlane = m_doc.state.plane;
+    m_vp2D.gridFrame = m_doc.state.customFrame;
+    m_uiState.plane = m_doc.state.plane;
+    if (m_uiState.mode == ViewMode::Drawing2D) { // the 2D view square to the new plane
         m_uiState.mode = ViewMode::Model3D;
         setMode(ViewMode::Drawing2D);
     }
-    m_vp2D.gridPlane = m_doc.state.plane;
-    m_uiState.plane = m_doc.state.plane;
 }
 
 void Application::runCommandLine(const std::string& raw) {
@@ -1748,7 +1766,7 @@ void Application::runCommandLine(const std::string& raw) {
             p = Vec2{m_sketcher.lastPoint()->x + static_cast<float>(*r), m_sketcher.lastPoint()->y}; // typed radius
         if (p) {
             log(text, UiState::LogLine::Input);
-            if (auto c = m_sketcher.typedPoint(tool, m_uiState.plane, *p)) addCurve(std::move(*c));
+            if (auto c = m_sketcher.typedPoint(tool, m_uiState.plane, activePlaneFrame(m_doc.state), *p)) addCurve(std::move(*c));
             return;
         }
     }
@@ -1851,6 +1869,7 @@ std::uint64_t Application::signatureOf(const Document& doc) {
         mix(&c.radius, sizeof(c.radius));
         mix(&c.visible, sizeof(c.visible));
         mix(&c.plane, sizeof(c.plane));
+        mix(&c.frame, sizeof(c.frame));
     }
     for (const ImageRef& i : s.images()) {
         mixStr(i.name);
@@ -1871,6 +1890,11 @@ std::uint64_t Application::signatureOf(const Document& doc) {
         mix(e, sizeof(e));
     }
     mix(&doc.state.plane, sizeof(doc.state.plane));
+    mix(&doc.state.customFrame, sizeof(doc.state.customFrame));
+    for (const DatumPlane& d : doc.state.datums) {
+        mixStr(d.name);
+        mix(&d.frame, sizeof(d.frame));
+    }
     mix(&doc.state.simDuration, sizeof(doc.state.simDuration));
     return h;
 }
@@ -1944,7 +1968,7 @@ int Application::pickProfile(float x, float y) const {
         if (!curves[i].visible) continue;
         const auto p = profileFromSketch(m_doc.scene.sketch(), i);
         if (!p) continue;
-        const PlaneFrame f = planeFrame(curves[i].plane);
+        const PlaneFrame f = curveFrame(curves[i]);
         const float d = dot(ray.dir, f.normal);
         if (std::fabs(d) < 1e-5f) continue;
         const Vec2 q = f.toPlane(ray.at(dot(f.origin - ray.origin, f.normal) / d));
@@ -1996,7 +2020,7 @@ void Application::updateExtrudeFromMouse() {
     const auto profile = profileFromSketch(m_doc.scene.sketch(), static_cast<std::size_t>(m_extrudeCurve));
     if (!profile) return;
     const ImGuiIO& io = ImGui::GetIO();
-    const PlaneFrame f = planeFrame(c.plane);
+    const PlaneFrame f = curveFrame(c);
     const Vec3 base = f.toWorld(profileCentre(*profile));
     // Screen direction of the plane normal; if it points at the viewer (2D window),
     // vertical mouse motion sets the depth instead.
@@ -2046,7 +2070,7 @@ void Application::drawExtrudePreview() const {
     const SketchCurve& c = curves[static_cast<std::size_t>(m_extrudeCurve)];
     const auto profile = profileFromSketch(m_doc.scene.sketch(), static_cast<std::size_t>(m_extrudeCurve));
     if (!profile) return;
-    const PlaneFrame f = planeFrame(c.plane);
+    const PlaneFrame f = curveFrame(c);
     const float d = m_uiState.extrudeDistance;
     const float w0 = m_uiState.extrudeSymmetric ? -std::fabs(d) * 0.5f : std::min(0.0f, d);
     const float w1 = m_uiState.extrudeSymmetric ? std::fabs(d) * 0.5f : std::max(0.0f, d);
@@ -2414,11 +2438,11 @@ void Application::drawConstraintOverlay() const {
     for (const SketchConstraint& k : sk.constraints()) {
         if (k.refs.empty()) continue;
         const SketchCurve* first = find(k.refs[0].curve);
-        if (!first || first->plane != m_uiState.plane) continue;
+        if (!first || !onPlane(*first, m_uiState.plane, m_doc.state.customFrame)) continue;
         Vec2 a{}, b{};
         if (!anchor(k.refs[0], &a)) continue;
         if (k.refs.size() > 1 && anchor(k.refs[1], &b)) a = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
-        const auto s = projectToScreen(camera(), planeFrame(first->plane).toWorld(a), io.DisplaySize);
+        const auto s = projectToScreen(camera(), curveFrame(*first).toWorld(a), io.DisplaySize);
         if (!s) continue;
         std::string label;
         switch (k.kind) {
@@ -3016,7 +3040,7 @@ std::string Application::describe() const {
                   m_uiState.mode == ViewMode::Drawing2D   ? "2D Drawing"
                   : m_uiState.mode == ViewMode::Simulation ? "Simulation"
                                                            : "3D Model",
-                  planeName(m_uiState.plane),
+                  activePlaneName(m_doc.state).c_str(),
                   static_cast<double>(c.target().x), static_cast<double>(c.target().y), static_cast<double>(c.target().z),
                   static_cast<double>(c.distance()), static_cast<double>(degrees(c.yaw())),
                   static_cast<double>(degrees(c.pitch())), static_cast<double>(degrees(c.roll())),

@@ -31,7 +31,13 @@ std::optional<Profile> profileFromSketch(const Sketch& sketch, std::size_t index
 // normal (w1 > w0). Layout (all mm):
 //   [plane, w0, w1, 0, x0, y0, x1, y1, ...]   polygon
 //   [plane, w0, w1, 1, cx, cy, r]             circle
-std::vector<float> extrudeParams(const Profile& p, SketchPlane plane, float distance, bool symmetric);
+// A Custom plane (3) has its frame after the kind: origin, u, v (9 numbers), then the
+// profile's numbers as above.
+std::vector<float> extrudeParams(const Profile& p, SketchPlane plane, float distance, bool symmetric,
+                                 const PlaneFrame& custom = planeFrame(SketchPlane::Top));
+// The plane of extrusion parameters, and where the profile's numbers start in them. False
+// for an unknown plane or too few numbers.
+bool extrusionPlane(const std::vector<float>& params, PlaneFrame& frame, std::size_t& data);
 
 // Mesh for extrudeParams(); empty if the parameters are invalid.
 MeshData buildExtrusion(const std::vector<float>& params);

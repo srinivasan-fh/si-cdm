@@ -21,6 +21,7 @@ struct ViewportSettings {
     Vec3 edgeColor{0.08f, 0.09f, 0.11f};
     Vec3 sketchColor{1.0f, 0.66f, 0.28f};
     SketchPlane gridPlane = SketchPlane::Top;
+    PlaneFrame gridFrame = planeFrame(SketchPlane::Top); // the grid's plane when gridPlane is Custom
     float gridStrength = 1.0f;
     bool sketchOnTop = false; // draw sketch curves over bodies (2D drawing view)
     std::vector<Vec3> sketchColors; // per curve, in place of sketchColor (constraint status); empty: all sketchColor

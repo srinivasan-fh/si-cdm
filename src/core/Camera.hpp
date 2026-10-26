@@ -25,6 +25,9 @@ public:
     void setStandardView(StandardView view, bool animate = true) noexcept;
     // Look at the target from direction `towardsEye` (need not be normalised).
     void setViewDirection(const Vec3& towardsEye, bool animate = true) noexcept;
+    // The same, rolled so `rightDir` (across the view) points right on screen: a plan
+    // view of any plane, its u axis to the right.
+    void setViewFrame(const Vec3& towardsEye, const Vec3& rightDir, bool animate = true) noexcept;
     // Turn the view around world Z (ViewCube rotate arrows).
     void rotateAroundZ(float radians, bool animate = true) noexcept;
     // Roll the view around the viewing direction (ViewCube roll arrows).

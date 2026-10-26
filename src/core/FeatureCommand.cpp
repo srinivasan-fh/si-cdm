@@ -62,7 +62,7 @@ std::string leadingName(const std::vector<std::string>& a, const std::vector<boo
 
 // A sketch curve as a path of world points.
 bool curvePath(const SketchCurve& c, std::vector<Vec3>& path, bool& closed) {
-    const PlaneFrame f = planeFrame(c.plane);
+    const PlaneFrame f = curveFrame(c);
     path.clear();
     closed = false;
     switch (c.kind) {
@@ -158,7 +158,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 else if (!quotedAt(i) && (lw == "v" || lw == "vertical")) axis = {{Vec2{0, 0}, Vec2{0, 1}}};
                 else if (const int li = curveNamed(doc, w); li >= 0) {
                     const SketchCurve& l = doc.scene.sketch().curves()[static_cast<std::size_t>(li)];
-                    if (l.kind != CurveKind::Line || l.plane != curve.plane) return out.fail("The axis must be a sketch line on the profile's plane");
+                    if (l.kind != CurveKind::Line || !samePlane(l, curve)) return out.fail("The axis must be a sketch line on the profile's plane");
                     axis = {{l.pts[0], Vec2{l.pts[1].x - l.pts[0].x, l.pts[1].y - l.pts[0].y}}};
                     axisName = l.name;
                     hideCurve(doc, li);
@@ -177,11 +177,11 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         if (!profile) return out.fail("Cannot revolve " + curve.name + ": " + why);
         std::optional<MeshData> mesh;
         std::shared_ptr<Brep> exact;
-        if (axis) mesh = revolveProfile(*profile, curve.plane, axis->first, axis->second, angle, &why, &exact);
+        if (axis) mesh = revolveProfile(*profile, curveFrame(curve), axis->first, axis->second, angle, &why, &exact);
         else { // the vertical axis, else the horizontal one, through the plane's origin
-            mesh = revolveProfile(*profile, curve.plane, {0, 0}, {0, 1}, angle, &why, &exact);
+            mesh = revolveProfile(*profile, curveFrame(curve), {0, 0}, {0, 1}, angle, &why, &exact);
             if (!mesh) {
-                mesh = revolveProfile(*profile, curve.plane, {0, 0}, {1, 0}, angle, &why, &exact);
+                mesh = revolveProfile(*profile, curveFrame(curve), {0, 0}, {1, 0}, angle, &why, &exact);
                 axisName = "the plane's horizontal axis";
             }
         }
@@ -229,7 +229,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         std::vector<Vec3> path;
         bool closed = false;
         if (!curvePath(pathCurve, path, closed)) return out.fail(pathCurve.name + " can't be a path (a line, polyline, rectangle or circle)");
-        auto mesh = sweepProfile(*profile, profileCurve.plane, path, closed, &why);
+        auto mesh = sweepProfile(*profile, curveFrame(profileCurve), path, closed, &why);
         if (!mesh) return out.fail("Cannot sweep: " + why);
         const int serial = ++doc.primitiveSerial;
         Body b = featureBody("Sweep " + std::to_string(serial), std::move(*mesh), bodyColor(serial));
@@ -270,7 +270,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             std::string why;
             const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(ci), &why);
             if (!profile) return out.fail("Section " + c.name + ": " + why);
-            const PlaneFrame f = planeFrame(c.plane);
+            const PlaneFrame f = curveFrame(c);
             std::vector<Vec3> loop;
             for (const Vec2& p : profilePolygon(*profile)) loop.push_back(f.toWorld(p) + f.normal * off);
             loops.push_back(std::move(loop));
@@ -731,6 +731,8 @@ bool regenerateHistory(Document& doc, const std::vector<HistoryStep>& steps, Com
     doc.clearSelection();
     doc.primitiveSerial = 0;
     doc.state.plane = SketchPlane::Top;
+    doc.state.customPlane.clear();
+    doc.state.datums.clear(); // the PLANE steps make them again
     doc.replaying = true;
     for (std::size_t k = 0; k < steps.size(); ++k) {
         doc.apiMillimeters = steps[k].millimetres;

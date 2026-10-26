@@ -23,7 +23,7 @@ class SketchController {
 public:
     // Updates the hover point from the cursor. Returns false if the cursor
     // ray misses the plane (e.g. looking edge-on in 3D).
-    bool hover(const Scene& scene, const OrbitCamera& cam, SketchPlane plane, ImVec2 mouse, ImVec2 viewport,
+    bool hover(const Scene& scene, const OrbitCamera& cam, SketchPlane plane, const PlaneFrame& frame, ImVec2 mouse, ImVec2 viewport,
                const SnapOptions& snap, bool constrain);
 
     // Handles a click with a sketch tool; returns a finished curve if any.
@@ -33,7 +33,7 @@ public:
     std::optional<SketchCurve> finish();
 
     // Exact point typed on the command line (plane coordinates, mm).
-    std::optional<SketchCurve> typedPoint(ToolId tool, SketchPlane plane, Vec2 p);
+    std::optional<SketchCurve> typedPoint(ToolId tool, SketchPlane plane, const PlaneFrame& frame, Vec2 p);
 
     // Points placed so far for the curve in progress, and the last of them.
     int stage() const noexcept { return static_cast<int>(m_points.size()); }
@@ -62,6 +62,7 @@ private:
     std::optional<SketchCurve> pending(ToolId tool, Vec2 cursor) const;
 
     SketchPlane m_plane = SketchPlane::Top;
+    PlaneFrame m_frame = planeFrame(SketchPlane::Top); // the plane's frame (any plane)
     std::vector<Vec2> m_points; // clicked so far (plane coordinates)
     Vec2 m_hover{};
     bool m_hasHover = false;

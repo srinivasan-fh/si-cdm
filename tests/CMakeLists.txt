@@ -28,6 +28,7 @@ add_executable(sicdm_tests
     test_drawing.cpp
     test_assembly.cpp
     test_performance.cpp
+    test_datums.cpp
     test_sketch_edit.cpp
     test_lathe.cpp
     test_system.cpp

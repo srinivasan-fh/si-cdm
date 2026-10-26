@@ -110,7 +110,7 @@ Body featureBody(std::string name, MeshData world, Vec3 color) {
     return b;
 }
 
-std::optional<MeshData> revolveProfile(const Profile& profile, SketchPlane plane, Vec2 axisPoint, Vec2 axisDir, float degrees, std::string* error,
+std::optional<MeshData> revolveProfile(const Profile& profile, const PlaneFrame& f, Vec2 axisPoint, Vec2 axisDir, float degrees, std::string* error,
                                        std::shared_ptr<Brep>* exact) {
     auto fail = [&](const char* why) -> std::optional<MeshData> {
         if (error) *error = why;
@@ -132,7 +132,6 @@ std::optional<MeshData> revolveProfile(const Profile& profile, SketchPlane plane
     const float eps = 1e-4f * std::max(1.0f, hi - lo);
     if (lo < -eps && hi > eps) return fail("The profile crosses the axis: keep it on one side");
     if (hi - lo < eps) return fail("The profile lies on the axis");
-    const PlaneFrame f = planeFrame(plane);
     const Vec3 A = f.toWorld(axisPoint), D = normalize(f.u * d.x + f.v * d.y);
     Vec3 P = normalize(f.u * perp.x + f.v * perp.y);
     if (hi <= eps) { // on the negative side: measure the radius the other way
@@ -207,7 +206,7 @@ std::optional<MeshData> revolveProfile(const Profile& profile, SketchPlane plane
     return m.data();
 }
 
-std::optional<MeshData> sweepProfile(const Profile& profile, SketchPlane profilePlane, const std::vector<Vec3>& pathIn, bool closedPath,
+std::optional<MeshData> sweepProfile(const Profile& profile, const PlaneFrame& pf, const std::vector<Vec3>& pathIn, bool closedPath,
                                      std::string* error) {
     auto fail = [&](const char* why) -> std::optional<MeshData> {
         if (error) *error = why;
@@ -227,7 +226,6 @@ std::optional<MeshData> sweepProfile(const Profile& profile, SketchPlane profile
     for (const Vec2& q : poly) c = {c.x + q.x, c.y + q.y};
     c = {c.x / static_cast<float>(poly.size()), c.y / static_cast<float>(poly.size())};
     for (Vec2& q : poly) q = {q.x - c.x, q.y - c.y};
-    const PlaneFrame pf = planeFrame(profilePlane);
     std::vector<Vec3> nAxis(segs), bAxis(segs);
     nAxis[0] = turnLike(pf.u, pf.normal, dir[0]);
     bAxis[0] = turnLike(pf.v, pf.normal, dir[0]);
@@ -544,6 +542,9 @@ double nearestPair(const std::vector<Vec3>& pts, const MeshData& m, Vec3* from, 
 }
 
 } // namespace
+
+Vec3 closestPointOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) { return closestOnTriangle(p, a, b, c); }
+
 
 double meshDistance(const MeshData& a, const MeshData& b, Vec3* onA, Vec3* onB) {
     if (a.indices.empty() || b.indices.empty()) return -1.0;

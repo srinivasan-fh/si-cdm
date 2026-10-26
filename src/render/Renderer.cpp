@@ -170,13 +170,14 @@ uniform vec2 uCenter;   // patch centre in plane coordinates
 uniform float uExtent;
 uniform vec3 uAxisU;
 uniform vec3 uAxisV;
+uniform vec3 uOrigin;
 out vec2 vPlanePos;
 void main() {
     const vec2 corners[6] = vec2[](vec2(-1,-1), vec2(1,-1), vec2(1,1),
                                    vec2(-1,-1), vec2(1,1), vec2(-1,1));
     vec2 p = uCenter + corners[gl_VertexID] * uExtent;
     vPlanePos = p;
-    gl_Position = uViewProj * vec4(uAxisU * p.x + uAxisV * p.y, 1.0);
+    gl_Position = uViewProj * vec4(uOrigin + uAxisU * p.x + uAxisV * p.y, 1.0);
 }
 )";
 
@@ -592,7 +593,7 @@ void Renderer::drawGrid(const OrbitCamera& cam, const ViewportSettings& s) {
 
     m_grid.bind();
     m_grid.set("uViewProj", cam.viewProjection());
-    const PlaneFrame f = planeFrame(s.gridPlane);
+    const PlaneFrame f = s.gridPlane == SketchPlane::Custom ? s.gridFrame : planeFrame(s.gridPlane);
     const Vec2 c = f.toPlane(cam.target());
     // Axis line colours follow the world axis they lie along (X red, Y green, Z blue).
     auto axisColor = [](const Vec3& a) {
@@ -603,6 +604,7 @@ void Renderer::drawGrid(const OrbitCamera& cam, const ViewportSettings& s) {
     m_grid.set("uCenter", c);
     m_grid.set("uExtent", extent);
     m_grid.set("uLevel", level);
+    m_grid.set("uOrigin", f.origin);
     m_grid.set("uAxisU", f.u);
     m_grid.set("uAxisV", f.v);
     m_grid.set("uColorU", axisColor(f.u));

@@ -26,18 +26,21 @@ namespace sicdm {
 struct Body;
 struct Brep;
 
+// The point of triangle abc nearest p.
+Vec3 closestPointOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c);
+
 // The profile as a counter-clockwise polygon in its plane (circles as 96-gons).
 std::vector<Vec2> profilePolygon(const Profile& p, int circleSegments = 96);
 
 // Turns a closed profile about the axis through `axisPoint` along `axisDir` (sketch-plane
 // coordinates) by `degrees`; 360 closes it. The profile must stay on one side of the axis.
 // `exact`, if given, receives the exact B-rep of the same solid.
-std::optional<MeshData> revolveProfile(const Profile& profile, SketchPlane plane, Vec2 axisPoint, Vec2 axisDir, float degrees,
+std::optional<MeshData> revolveProfile(const Profile& profile, const PlaneFrame& f, Vec2 axisPoint, Vec2 axisDir, float degrees,
                                        std::string* error = nullptr, std::shared_ptr<Brep>* exact = nullptr);
 
 // Carries a closed profile (centred on its centroid, its plane turned square to the path)
 // along a path of world points; a closed path closes the tube.
-std::optional<MeshData> sweepProfile(const Profile& profile, SketchPlane profilePlane, const std::vector<Vec3>& path, bool closedPath,
+std::optional<MeshData> sweepProfile(const Profile& profile, const PlaneFrame& pf, const std::vector<Vec3>& path, bool closedPath,
                                      std::string* error = nullptr);
 
 // A solid through closed planar sections (world points) in order, ruled or smooth.

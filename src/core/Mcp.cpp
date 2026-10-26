@@ -11,12 +11,18 @@
 #include "core/Scene.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 
 namespace sicdm {
 
 namespace {
+
+std::string lowerCopy(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
 
 constexpr const char* kServerVersion = "0.1.0";
 constexpr const char* kSupportedVersions[] = {"2025-06-18", "2025-03-26", "2024-11-05"};
@@ -154,7 +160,7 @@ Json McpServer::toolDefinitions() {
         p.set("radius", prop("number", "Circle radius; ellipse minor radius; slot half width; polygon radius to the corners (mm)"));
         p.set("sides", prop("number", "Polygon: number of sides (default 6)"));
         p.set("construction", prop("boolean", "A construction (reference) curve: dashed, not part of profiles"));
-        p.set("plane", enumProp({"top", "front", "right"}, "Sketch plane (default: active plane)"));
+        p.set("plane", prop("string", "Sketch plane: top, front, right or a datum plane's name (default: active plane)"));
         p.set("closed", prop("boolean", "Polyline, spline: close back to the first point"));
         tools.push(tool("create_sketch", "Draw a 2D sketch curve on a sketch plane.", p, {"kind", "points"}));
     }
@@ -740,7 +746,7 @@ Json McpServer::sceneJson() const {
         .set("description", describeUnits(m_doc.state.units));
     project.set("display_units", du);
     s.set("project", project);
-    s.set("sketch_plane", planeKey(m_doc.state.plane));
+    s.set("sketch_plane", m_doc.state.plane == SketchPlane::Custom ? activePlaneName(m_doc.state) : std::string(planeKey(m_doc.state.plane)));
 
     Json bodies = Json::array();
     for (std::size_t i = 0; i < m_doc.scene.bodies().size(); ++i) {
@@ -835,10 +841,25 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!p.isArray() || p.size() < 2 || !p[0].isNumber() || !p[1].isNumber())
                 return textResult("each point must be [u, v]", true);
         const SketchPlane old = m_doc.state.plane;
+        const PlaneFrame oldFrame = m_doc.state.customFrame;
+        const std::string oldName = m_doc.state.customPlane;
+        auto restorePlane = [&] {
+            m_doc.state.plane = old;
+            m_doc.state.customFrame = oldFrame;
+            m_doc.state.customPlane = oldName;
+        };
         if (a["plane"].isString()) {
-            const auto p = planeFromKey(a["plane"].asString());
-            if (!p) return textResult("plane must be top, front or right", true);
-            m_doc.state.plane = *p;
+            const std::string pn = a["plane"].asString();
+            if (const auto p = planeFromKey(pn); p && *p != SketchPlane::Custom) {
+                m_doc.state.plane = *p;
+            } else {
+                const auto& ds = m_doc.state.datums;
+                const auto d = std::find_if(ds.begin(), ds.end(), [&](const DatumPlane& x) { return lowerCopy(x.name) == lowerCopy(pn); });
+                if (d == ds.end()) return textResult("plane must be top, front, right or a datum plane's name", true);
+                m_doc.state.plane = SketchPlane::Custom;
+                m_doc.state.customFrame = d->frame;
+                m_doc.state.customPlane = d->name;
+            }
         }
         std::string line;
         if (kind == "point") line = "POINT " + pointArg(pts[0]);
@@ -859,12 +880,12 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (!a["radius"].isNumber()) return textResult("polygon needs points [centre] and 'radius' (to its corners)", true);
             line = "POLYGON " + pointArg(pts[0]) + " " + num(a["radius"].asNumber()) + " " + num(a["sides"].isNumber() ? a["sides"].asNumber() : 6);
         } else {
-            m_doc.state.plane = old;
+            restorePlane();
             return textResult("kind must be point, line, polyline, rectangle, circle, arc, spline, ellipse, slot or polygon", true);
         }
         if (a["construction"].asBool()) line += " CONSTRUCTION";
         Json r = runLine(line);
-        m_doc.state.plane = old; // a one-off plane does not change the user's active plane
+        restorePlane(); // a one-off plane does not change the user's active plane
         return r;
     }
     if (name == "create_solid") {

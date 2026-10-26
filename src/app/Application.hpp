@@ -52,6 +52,7 @@ public:
     void openWindow(bool drawing2D) override;
     void standardView(StandardView v) override;
     void planeChanged(SketchPlane p) override;
+    void orient2D(bool animate); // the 2D view square to the sketch plane
     void fit() override;
     void zoomStep(float steps) override;
     void home() override;

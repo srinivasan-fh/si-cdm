@@ -41,6 +41,9 @@ struct HistoryStep {
 
 struct ProjectState {
     SketchPlane plane = SketchPlane::Top;
+    PlaneFrame customFrame = planeFrame(SketchPlane::Top); // the plane when `plane` is Custom
+    std::string customPlane;          // its datum's name ("" for an unnamed one)
+    std::vector<DatumPlane> datums;   // named datum planes (PLANE OFFSET, THROUGH...)
     UnitSettings units{};     // display / input units (geometry is always stored in mm)
     float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
     CamJob cam;               // CAM: setup, tools and operations (toolpaths are remade)
@@ -52,6 +55,10 @@ struct ProjectState {
     bool historyComplete = true;          // false: the model was also changed outside commands
     std::uint64_t historyRevision = 0;    // the scene's revision after the last command (not saved)
 };
+
+// The active sketch plane's frame, and its name ("Top (XY)", a datum's name, "Custom").
+PlaneFrame activePlaneFrame(const ProjectState& st);
+std::string activePlaneName(const ProjectState& st);
 
 // The project format: files carry "version" (the format that wrote them) and
 // "reader_version" (the oldest format a reader must understand to open them). A newer
@@ -69,7 +76,10 @@ struct ProjectState {
 //      ("frames"), datums, surface finish marks and the general tolerance
 //   8  adds the lathe job ("lathe")
 //   9  adds robot rigs ("robots": morphology, base, tags) and the terrain ("terrain")
-constexpr int kProjectVersion = 9;
+//   10 adds datum planes ("datums", "custom_plane") and sketches on them: curves on a
+//      "custom" plane carry its "frame" (origin, u, v), and so do extrusions from them (in
+//      their params); a file with either has reader_version 10
+constexpr int kProjectVersion = 10;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.
@@ -86,15 +96,18 @@ bool exportObj(const Scene& scene, const std::string& path, std::string* error);
 
 // Sketch curves on `plane`, in that plane's 2D coordinates (mm).
 // Returns the number of entities written, or -1 on error.
-int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error);
-int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error);
+int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error,
+              const PlaneFrame& custom = planeFrame(SketchPlane::Top)); // custom: the plane's frame when it is Custom
+int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error,
+              const PlaneFrame& custom = planeFrame(SketchPlane::Top)); // custom: the plane's frame when it is Custom
 
 // STL (ASCII or binary) or OBJ, as a "mesh" body named after the file.
 std::optional<Body> importMesh(const std::string& path, std::string* error);
 
 // LINE, CIRCLE, ARC, POINT, LWPOLYLINE and POLYLINE entities onto `plane`.
 // Returns the number of curves added, or -1 on error.
-int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::string* error);
+int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::string* error,
+              const PlaneFrame& custom = planeFrame(SketchPlane::Top)); // custom: the plane's frame when it is Custom
 
 // Decodes the image at img.path into img.pixels (RGBA8, top row first).
 bool loadImagePixels(ImageRef& img, std::string* error);

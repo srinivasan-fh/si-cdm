@@ -218,9 +218,9 @@ constexpr CommandSpec kCommands[] = {
     {"LIST", "LS", "LIST", "List bodies, sketch curves and images"},
     // Views & windows
     {"VIEW", "V", "VIEW TOP|FRONT|RIGHT|BACK|LEFT|BOTTOM|ISO", "Standard view (3D) or drawing plane (2D)"},
-    {"2D", "DRAWING", "2D [TOP|FRONT|RIGHT]", "Open the 2D Drawing window"},
+    {"2D", "DRAWING", "2D [TOP|FRONT|RIGHT|datum]", "Open the 2D Drawing window"},
     {"3D", "MODEL", "3D", "Open the 3D Model window"},
-    {"PLANE", "", "PLANE TOP|FRONT|RIGHT", "Active sketch plane"},
+    {"PLANE", "", "PLANE TOP|FRONT|RIGHT|datum | OFFSET d [FROM p] | ANGLE deg [ABOUT U|V] [FROM p] | THROUGH p1 p2 p3 | AT x,y,z NORMAL n [U u] | FACE x,y,z [ON body]  [NAME n] | LIST | DELETE name", "Sketch plane; datum planes anywhere, on faces"},
     {"ZOOM", "Z", "ZOOM E|IN|OUT", "Zoom extents (fit) or step in / out"},
     {"FIT", "ZE", "FIT", "Zoom to fit everything"},
     {"HOME", "", "HOME", "Home view: isometric, fit all (keeps the Simulation window; 2D opens 3D)"},

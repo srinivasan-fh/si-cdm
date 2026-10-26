@@ -16,8 +16,9 @@ namespace sicdm {
 // document replaces another (GPU caches compare stamps).
 std::uint64_t nextRevision() noexcept;
 
-// Principal sketch planes. Each maps to the matching 2D drawing view.
-enum class SketchPlane { Top, Front, Right };
+// Sketch planes: the three principal planes (each maps to the matching 2D drawing view),
+// or any other plane (a datum plane, a face), whose frame the curve or the project keeps.
+enum class SketchPlane { Top, Front, Right, Custom };
 
 // Orthonormal frame of a sketch plane: u to the right, v up as seen in its view.
 struct PlaneFrame {
@@ -28,8 +29,21 @@ struct PlaneFrame {
     Vec2 toPlane(const Vec3& w) const noexcept { return {dot(w - origin, u), dot(w - origin, v)}; }
 };
 
+// The frame of a principal plane (Custom: the Top frame; its own frame is kept elsewhere).
 PlaneFrame planeFrame(SketchPlane plane) noexcept;
 const char* planeName(SketchPlane plane) noexcept;
+// A right-handed frame on the plane through `origin` square to `normal`, its u along
+// `uHint` as near as the plane allows (any direction across the plane when it's along the
+// normal). False when the normal has no length.
+bool makePlaneFrame(Vec3 origin, Vec3 normal, Vec3 uHint, PlaneFrame& out) noexcept;
+// The same plane: origins, axes and normals within tolerance.
+bool sameFrame(const PlaneFrame& a, const PlaneFrame& b) noexcept;
+
+// A named datum plane of the project (PLANE OFFSET / ANGLE / THROUGH / AT / FACE).
+struct DatumPlane {
+    std::string name;
+    PlaneFrame frame;
+};
 
 enum class CurveKind { Point, Line, Polyline, Rectangle, Circle, Arc, Spline, Ellipse, Slot };
 
@@ -48,6 +62,7 @@ enum class CurveKind { Point, Line, Polyline, Rectangle, Circle, Arc, Spline, El
 struct SketchCurve {
     CurveKind kind = CurveKind::Line;
     SketchPlane plane = SketchPlane::Top;
+    PlaneFrame frame = planeFrame(SketchPlane::Top); // the plane's frame when plane is Custom
     std::vector<Vec2> pts;
     float radius = 0.0f;
     std::string name;
@@ -103,6 +118,14 @@ private:
 };
 
 const char* curveKindName(CurveKind k) noexcept;
+
+// The frame a curve is drawn in.
+inline PlaneFrame curveFrame(const SketchCurve& c) noexcept { return c.plane == SketchPlane::Custom ? c.frame : planeFrame(c.plane); }
+// Whether curve `c` lies on `plane` (`custom`: that plane's frame when it is Custom).
+inline bool onPlane(const SketchCurve& c, SketchPlane plane, const PlaneFrame& custom) noexcept {
+    return c.plane == plane && (plane != SketchPlane::Custom || sameFrame(c.frame, custom));
+}
+inline bool samePlane(const SketchCurve& a, const SketchCurve& b) noexcept { return onPlane(a, b.plane, b.frame); }
 
 // A point on the smooth curve through `pts` (centripetal Catmull-Rom: no loops or cusps
 // between close points), at t in [0, 1] along span `span` (pts[span] to pts[span + 1];

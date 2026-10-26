@@ -18,8 +18,28 @@ PlaneFrame planeFrame(SketchPlane plane) noexcept {
     case SketchPlane::Top: return {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
     case SketchPlane::Front: return {{0, 0, 0}, {1, 0, 0}, {0, 0, 1}, {0, -1, 0}};
     case SketchPlane::Right: return {{0, 0, 0}, {0, 1, 0}, {0, 0, 1}, {1, 0, 0}};
+    case SketchPlane::Custom: break;
     }
-    return {};
+    return {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+}
+
+bool makePlaneFrame(Vec3 origin, Vec3 normal, Vec3 uHint, PlaneFrame& out) noexcept {
+    const float nl = length(normal);
+    if (!(nl > 1e-9f) || !std::isfinite(nl)) return false;
+    const Vec3 n = normal / nl;
+    Vec3 u = uHint - n * dot(uHint, n);
+    if (!(length(u) > 1e-4f * std::max(1.0f, length(uHint)))) { // along the normal: X, else Y
+        const Vec3 alt = std::fabs(n.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+        u = alt - n * dot(alt, n);
+    }
+    u = normalize(u);
+    out = {origin, u, cross(n, u), n};
+    return true;
+}
+
+bool sameFrame(const PlaneFrame& a, const PlaneFrame& b) noexcept {
+    auto within = [](Vec3 p, Vec3 q, float tol) { return length(p - q) <= tol; };
+    return within(a.origin, b.origin, 1e-3f) && within(a.u, b.u, 1e-5f) && within(a.v, b.v, 1e-5f) && within(a.normal, b.normal, 1e-5f);
 }
 
 const char* planeName(SketchPlane plane) noexcept {
@@ -27,6 +47,7 @@ const char* planeName(SketchPlane plane) noexcept {
     case SketchPlane::Top: return "Top (XY)";
     case SketchPlane::Front: return "Front (XZ)";
     case SketchPlane::Right: return "Right (YZ)";
+    case SketchPlane::Custom: return "Custom";
     }
     return "";
 }
@@ -182,7 +203,7 @@ std::vector<Vec2> SketchCurve::planeStrip(float chord) const {
 }
 
 std::vector<Vec3> SketchCurve::worldStrip(int circleSegments) const {
-    const PlaneFrame f = planeFrame(plane);
+    const PlaneFrame f = curveFrame(*this);
     std::vector<Vec3> out;
     switch (kind) {
     case CurveKind::Point:

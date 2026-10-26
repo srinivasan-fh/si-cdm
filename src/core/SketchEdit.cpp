@@ -201,6 +201,7 @@ std::vector<Seg> piecesBetween(const std::vector<Seg>& segs, double s0, double s
 SketchCurve like(const SketchCurve& src) {
     SketchCurve c;
     c.plane = src.plane;
+    c.frame = src.frame;
     c.visible = src.visible;
     c.construction = src.construction;
     return c;
@@ -267,7 +268,7 @@ bool fail(std::string* why, const std::string& text) {
 
 std::vector<Vec2> curveIntersections(const SketchCurve& a, const SketchCurve& b) {
     std::vector<Vec2> out;
-    if (a.plane != b.plane) return out;
+    if (!samePlane(a, b)) return out;
     const std::vector<Seg> sa = segmentsOf(a, nullptr), sb = segmentsOf(b, nullptr);
     for (const Seg& p : sa)
         for (const Seg& q : sb) {
@@ -293,7 +294,7 @@ bool trimCurve(const Sketch& sketch, std::size_t index, Vec2 pick, std::vector<S
     // Where the other curves cross it.
     std::vector<double> cuts;
     for (std::size_t j = 0; j < curves.size(); ++j) {
-        if (j == index || curves[j].plane != c.plane || !curves[j].visible) continue;
+        if (j == index || !samePlane(curves[j], c) || !curves[j].visible) continue;
         const std::vector<Seg> other = segmentsOf(curves[j], nullptr);
         for (std::size_t i = 0; i < segs.size(); ++i)
             for (const Seg& q : other) {
@@ -344,7 +345,7 @@ bool extendCurve(const Sketch& sketch, std::size_t index, Vec2 pick, SketchCurve
     // Every piece of the other curves on the plane.
     std::vector<Seg> others;
     for (std::size_t j = 0; j < curves.size(); ++j)
-        if (j != index && curves[j].plane == c.plane && curves[j].visible)
+        if (j != index && samePlane(curves[j], c) && curves[j].visible)
             for (const Seg& g : segmentsOf(curves[j], nullptr)) others.push_back(g);
     out = c;
     if (c.kind == CurveKind::Line || (c.kind == CurveKind::Polyline && !c.isClosed() && c.pts.size() >= 2)) {
@@ -529,7 +530,7 @@ std::vector<Vec2> chainLoop(const Sketch& sketch, std::size_t index, std::vector
     const auto& curves = sketch.curves();
     if (index >= curves.size()) return {};
     auto usable = [&](const SketchCurve& c) {
-        return c.visible && !c.construction && c.plane == curves[index].plane && !c.isClosed() &&
+        return c.visible && !c.construction && samePlane(c, curves[index]) && !c.isClosed() &&
                (c.kind == CurveKind::Line || c.kind == CurveKind::Arc || c.kind == CurveKind::Polyline || c.kind == CurveKind::Spline);
     };
     if (!usable(curves[index])) return {};

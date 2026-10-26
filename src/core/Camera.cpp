@@ -155,6 +155,22 @@ void OrbitCamera::setViewDirection(const Vec3& d, bool animate) noexcept {
     startTransition(to, animate);
 }
 
+void OrbitCamera::setViewFrame(const Vec3& d, const Vec3& rightDir, bool animate) noexcept {
+    const Vec3 n = normalize(d);
+    if (length(n) == 0.0f) return;
+    Pose to{m_target, m_yaw, m_pitch, m_distance};
+    const float horizontal = std::sqrt(n.x * n.x + n.y * n.y);
+    to.pitch = std::atan2(n.z, horizontal);
+    to.yaw = horizontal > 1e-5f ? std::atan2(n.y, n.x) : -kPi * 0.5f;
+    // The level right axis and up of that pose, then the roll that turns right onto rightDir.
+    const float cp = std::cos(to.pitch);
+    const Vec3 fwd = -Vec3{cp * std::cos(to.yaw), cp * std::sin(to.yaw), std::sin(to.pitch)};
+    const Vec3 r0{-std::sin(to.yaw), std::cos(to.yaw), 0.0f}, u0 = cross(r0, fwd);
+    const Vec3 r = rightDir - n * dot(rightDir, n);
+    if (length(r) > 1e-6f) to.roll = std::atan2(-dot(r, u0), dot(r, r0));
+    startTransition(to, animate);
+}
+
 void OrbitCamera::rotateAroundZ(float rad, bool animate) noexcept {
     Pose to{m_target, m_yaw + rad, m_pitch, m_distance, m_roll};
     startTransition(to, animate);

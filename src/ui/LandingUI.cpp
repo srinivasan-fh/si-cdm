@@ -78,9 +78,13 @@ const char* shortPlaneName(SketchPlane p) {
     case SketchPlane::Top: return "Top";
     case SketchPlane::Front: return "Front";
     case SketchPlane::Right: return "Right";
+    case SketchPlane::Custom: return "Custom";
     }
     return "";
 }
+
+// The PLANE command that makes datum plane `name` the sketch plane.
+std::string datumCommand(const std::string& name) { return "PLANE \"" + name + "\""; }
 
 // Visibility toggle drawn as an eye (open / closed), like the layer lists of DCC tools.
 bool eyeToggle(const char* id, bool& visible) {
@@ -431,6 +435,12 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                 if (ImGui::MenuItem(planeName(p), nullptr, is2D && st.plane == p)) {
                     cmd.mode = ViewMode::Drawing2D;
                     cmd.plane = p;
+                }
+            if (!st.datums.empty()) ImGui::Separator();
+            for (const std::string& d : st.datums)
+                if (ImGui::MenuItem(d.c_str(), nullptr, is2D && st.plane == SketchPlane::Custom && st.planeLabel == d)) {
+                    cmd.mode = ViewMode::Drawing2D;
+                    cmd.commands.push_back(datumCommand(d));
                 }
             ImGui::EndMenu();
         }
@@ -858,11 +868,14 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::TextDisabled("Plane");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(110);
-        if (ImGui::BeginCombo("##plane", planeName(st.plane))) {
+        if (ImGui::BeginCombo("##plane", st.planeLabel.c_str())) {
             for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right})
                 if (ImGui::Selectable(planeName(p), st.plane == p)) cmd.plane = p;
+            for (const std::string& d : st.datums)
+                if (ImGui::Selectable(d.c_str(), st.plane == SketchPlane::Custom && st.planeLabel == d)) cmd.commands.push_back(datumCommand(d));
             ImGui::EndCombo();
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Datum planes: PLANE OFFSET / ANGLE / THROUGH / AT / FACE");
         ImGui::SameLine();
         ImGui::Checkbox("Snap to grid", &st.snapGrid);
         ImGui::SameLine();
@@ -1106,7 +1119,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         if (ImGui::Button("Redo")) cmd.commands.push_back("REDO");
     } else if (isPrimitiveTool(tool.id)) {
         const std::string snap = lengthText(5.0);
-        if (is2D) ImGui::TextDisabled("Click to place on the %s plane (%s snap)", shortPlaneName(st.plane), snap.c_str());
+        if (is2D) ImGui::TextDisabled("Click to place on the %s plane (%s snap)", (st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : shortPlaneName(st.plane)), snap.c_str());
         else ImGui::TextDisabled("Click the grid or a face to place (%s snap)", snap.c_str());
     } else if (tool.id == ToolId::Move || tool.id == ToolId::Select) {
         ImGui::TextDisabled("Auto-select:");
@@ -1127,7 +1140,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     const float groupStart = ImGui::GetCursorScreenPos().x;
     const bool isSim = st.mode == ViewMode::Simulation;
     if (segment("2D Drawing", is2D, ImDrawFlags_RoundCornersLeft, icon2D) && !is2D) cmd.mode = ViewMode::Drawing2D;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("2D drawing window: plan view of the %s plane  [Tab]", shortPlaneName(st.plane));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("2D drawing window: plan view of the %s plane  [Tab]", (st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : shortPlaneName(st.plane)));
     ImGui::SameLine(0, 2);
     if (segment("3D Model", st.mode == ViewMode::Model3D, ImDrawFlags_RoundCornersNone, icon3D) &&
         st.mode != ViewMode::Model3D)
@@ -1148,6 +1161,18 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kAccent));
             if (ImGui::Button(shortPlaneName(p))) cmd.plane = p;
             if (on) ImGui::PopStyleColor();
+            ImGui::SameLine();
+        }
+        if (!st.datums.empty()) { // the datum planes, in a list
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::BeginCombo("##datum", st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : "Datum...")) {
+                for (const std::string& d : st.datums)
+                    if (ImGui::Selectable(d.c_str(), st.plane == SketchPlane::Custom && st.planeLabel == d)) cmd.commands.push_back(datumCommand(d));
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+        } else if (st.plane == SketchPlane::Custom) {
+            ImGui::TextUnformatted(st.planeLabel.c_str());
             ImGui::SameLine();
         }
     } else {
@@ -1285,7 +1310,7 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
     const ImVec2 vp = io.DisplaySize;
     const float wpp = cam.worldPerPixel(vp.y);
     if (wpp <= 0.0f) return;
-    const PlaneFrame f = planeFrame(st.plane);
+    const PlaneFrame f = st.activeFrame;
     const Vec2 c = f.toPlane(cam.target());
     auto uAt = [&](float x) { return c.x + (x - vp.x * 0.5f) * wpp; };
     auto vAt = [&](float y) { return c.y - (y - vp.y * 0.5f) * wpp; };
@@ -1677,8 +1702,9 @@ void LandingUI::drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCa
 
     ImGui::SameLine(600.0f);
     ImGui::PushFont(theme::font(theme::Font::Mono));
-    const char* uName = st.plane == SketchPlane::Right ? "Y" : "X";
-    const char* vName = st.plane == SketchPlane::Top ? "Y" : "Z";
+    const bool custom = st.plane == SketchPlane::Custom;
+    const char* uName = custom ? "U" : st.plane == SketchPlane::Right ? "Y" : "X";
+    const char* vName = custom ? "V" : st.plane == SketchPlane::Top ? "Y" : "Z";
     // Fixed-width coordinate readout in the document units, so the digits do not jump.
     const UnitSettings& units = activeUnits();
     const bool each = units.fractional();

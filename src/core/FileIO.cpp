@@ -218,13 +218,42 @@ void dxfArc(std::string& out, const std::string& layer, Vec2 c, float r, float a
 }
 
 
+Json frameToJson(const PlaneFrame& f) {
+    Json a = Json::array();
+    for (const Vec3& v : {f.origin, f.u, f.v})
+        for (float x : {v.x, v.y, v.z}) a.push(Json(x));
+    return a;
+}
+
+// False (and `f` untouched) unless it holds an origin and two square unit axes.
+bool frameFromJson(const Json& j, PlaneFrame& f) {
+    const auto& n = j.items();
+    if (n.size() != 9) return false;
+    float x[9];
+    for (std::size_t i = 0; i < 9; ++i) x[i] = n[i].asFloat();
+    const Vec3 o{x[0], x[1], x[2]}, u{x[3], x[4], x[5]}, v{x[6], x[7], x[8]};
+    if (std::fabs(length(u) - 1.0f) > 1e-3f || std::fabs(length(v) - 1.0f) > 1e-3f || std::fabs(dot(u, v)) > 1e-3f) return false;
+    return makePlaneFrame(o, cross(u, v), u, f);
+}
+
 } // namespace
+
+// The active sketch plane's frame.
+PlaneFrame activePlaneFrame(const ProjectState& st) {
+    return st.plane == SketchPlane::Custom ? st.customFrame : planeFrame(st.plane);
+}
+
+std::string activePlaneName(const ProjectState& st) {
+    if (st.plane != SketchPlane::Custom) return planeName(st.plane);
+    return st.customPlane.empty() ? std::string("Custom") : st.customPlane;
+}
 
 const char* planeKey(SketchPlane p) {
     switch (p) {
     case SketchPlane::Top: return "top";
     case SketchPlane::Front: return "front";
     case SketchPlane::Right: return "right";
+    case SketchPlane::Custom: return "custom";
     }
     return "top";
 }
@@ -235,6 +264,7 @@ std::optional<SketchPlane> planeFromKey(const std::string& keyIn) {
     if (k == "top" || k == "xy") return SketchPlane::Top;
     if (k == "front" || k == "xz") return SketchPlane::Front;
     if (k == "right" || k == "yz") return SketchPlane::Right;
+    if (k == "custom") return SketchPlane::Custom;
     return std::nullopt;
 }
 
@@ -360,6 +390,20 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         .set("denominator", state.units.denominator);
     doc.set("display_units", du);
     doc.set("plane", planeKey(state.plane));
+    if (state.plane == SketchPlane::Custom) {
+        Json cp = Json::object();
+        cp.set("name", state.customPlane).set("frame", frameToJson(state.customFrame));
+        doc.set("custom_plane", cp);
+    }
+    if (!state.datums.empty()) {
+        Json ds = Json::array();
+        for (const DatumPlane& d : state.datums) {
+            Json jd = Json::object();
+            jd.set("name", d.name).set("frame", frameToJson(d.frame));
+            ds.push(jd);
+        }
+        doc.set("datums", ds);
+    }
 
     Json bodies = Json::array();
     for (const Body& b : scene.bodies()) {
@@ -450,11 +494,17 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     }
     doc.set("bodies", bodies);
     if (binaryMeshes) doc.set("reader_version", 5); // a reader before 5 can't read those meshes
+    bool customPlanes = false; // a reader before 10 would put them on the Top plane
+    for (const SketchCurve& c : scene.sketch().curves()) customPlanes = customPlanes || c.plane == SketchPlane::Custom;
+    for (const Body& b : scene.bodies())
+        customPlanes = customPlanes || (b.kind == "extrude" && !b.params.empty() && b.params[0] == static_cast<float>(SketchPlane::Custom));
+    if (customPlanes) doc.set("reader_version", 10);
 
     Json curves = Json::array();
     for (const SketchCurve& c : scene.sketch().curves()) {
         Json jc = Json::object();
         jc.set("name", c.name).set("kind", curveKey(c.kind)).set("plane", planeKey(c.plane));
+        if (c.plane == SketchPlane::Custom) jc.set("frame", frameToJson(c.frame));
         Json pts = Json::array();
         for (const Vec2& p : c.pts) pts.push(Json(Json::Array{p.x, p.y}));
         jc.set("points", pts).set("radius", c.radius).set("visible", c.visible);
@@ -580,6 +630,16 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     Scene loaded;
     ProjectState st;
     st.plane = planeFromKey((*doc)["plane"].asString()).value_or(SketchPlane::Top);
+    if (st.plane == SketchPlane::Custom) {
+        const Json& cp = (*doc)["custom_plane"];
+        st.customPlane = cp["name"].asString();
+        if (!frameFromJson(cp["frame"], st.customFrame)) st.plane = SketchPlane::Top, st.customPlane.clear();
+    }
+    for (const Json& jd : (*doc)["datums"].items()) {
+        DatumPlane d;
+        d.name = jd["name"].asString();
+        if (!d.name.empty() && frameFromJson(jd["frame"], d.frame)) st.datums.push_back(std::move(d));
+    }
 
     for (const Json& jb : (*doc)["bodies"].items()) {
         std::vector<float> params;
@@ -705,6 +765,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         SketchCurve c;
         c.kind = *kind;
         c.plane = planeFromKey(jc["plane"].asString()).value_or(SketchPlane::Top);
+        if (c.plane == SketchPlane::Custom && !frameFromJson(jc["frame"], c.frame)) continue; // nowhere to put it
         for (const Json& p : jc["points"].items()) c.pts.push_back({p[0].asFloat(), p[1].asFloat()});
         c.radius = jc["radius"].asFloat();
         c.name = jc["name"].asString();
@@ -960,7 +1021,7 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
 // ---------------------------------------------------------------------------
 // 2D drawings
 
-int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error) {
+int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error, const PlaneFrame& custom) {
     std::string out;
     dxfPair(out, 0, "SECTION");
     dxfPair(out, 2, "HEADER");
@@ -974,7 +1035,7 @@ int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, st
     const std::string layer = std::string("SKETCH_") + planeKey(plane);
     int count = 0;
     for (const SketchCurve& c : scene.sketch().curves()) {
-        if (c.plane != plane || !c.visible || c.pts.empty()) continue;
+        if (!onPlane(c, plane, custom) || !c.visible || c.pts.empty()) continue;
         const std::string curveLayer = c.construction ? layer + "_CONSTRUCTION" : layer;
         switch (c.kind) {
         case CurveKind::Point:
@@ -1044,11 +1105,11 @@ int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, st
     return writeFile(path, out, error) ? count : -1;
 }
 
-int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error) {
+int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, std::string* error, const PlaneFrame& custom) {
     AABB b;
     int count = 0;
     for (const SketchCurve& c : scene.sketch().curves()) {
-        if (c.plane != plane || !c.visible || c.pts.empty()) continue;
+        if (!onPlane(c, plane, custom) || !c.visible || c.pts.empty()) continue;
         ++count;
         for (const Vec2& p : c.pts) b.expand(Vec3{p.x, p.y, 0});
         for (const Vec2& p : c.planeStrip(0.1f)) b.expand(Vec3{p.x, p.y, 0});
@@ -1083,7 +1144,7 @@ int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, st
         return s;
     };
     for (const SketchCurve& c : scene.sketch().curves()) {
-        if (c.plane != plane || !c.visible || c.pts.empty()) continue;
+        if (!onPlane(c, plane, custom) || !c.visible || c.pts.empty()) continue;
         switch (c.kind) {
         case CurveKind::Point:
             std::snprintf(buf, sizeof(buf), "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"0.5\" fill=\"#000\"/>\n",
@@ -1120,7 +1181,7 @@ int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, st
     return writeFile(path, out, error) ? count : -1;
 }
 
-int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::string* error) {
+int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::string* error, const PlaneFrame& custom) {
     const auto data = readFile(path, error);
     if (!data) return -1;
     std::vector<DxfPair> pairs;
@@ -1146,6 +1207,7 @@ int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::str
         SketchCurve c;
         c.kind = k;
         c.plane = plane;
+        c.frame = custom;
         c.pts = std::move(pts);
         c.radius = r;
         scene.sketch().add(std::move(c));
@@ -1204,6 +1266,7 @@ int importDxf(Scene& scene, SketchPlane plane, const std::string& path, std::str
                     SketchCurve c;
                     c.kind = CurveKind::Spline;
                     c.plane = plane;
+                    c.frame = custom;
                     c.pts = std::move(pts);
                     c.closed = closedFlag;
                     scene.sketch().add(std::move(c));

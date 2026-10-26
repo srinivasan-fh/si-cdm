@@ -1222,10 +1222,12 @@ std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<floa
         const MeshData m = buildExtrusion(pf);
         if (m.indices.empty()) return nullptr;
         if (p[3] != 1.0) return meshToBrep(m); // a polygon's prism: flat faces
-        const PlaneFrame f = planeFrame(static_cast<SketchPlane>(static_cast<int>(p[0])));
+        PlaneFrame f;
+        std::size_t at = 0;
+        if (!extrusionPlane(pf, f, at)) return nullptr;
         const DVec3 u(f.u), v(f.v), n(f.normal), o(f.origin);
-        auto b = brepCylinder({0, 0, 0}, p[6], p[2] - p[1]);
-        b->transform(Placement::fromFrames(Frame{}, Frame::make(o + u * p[4] + v * p[5] + n * p[1], n, u)));
+        auto b = brepCylinder({0, 0, 0}, p[at + 2], p[2] - p[1]);
+        b->transform(Placement::fromFrames(Frame{}, Frame::make(o + u * p[at] + v * p[at + 1] + n * p[1], n, u)));
         return b;
     }
     // Flat-faced shapes: their facets are exact.

@@ -179,7 +179,7 @@ std::optional<Profile> profileFromSketch(const Sketch& sketch, std::size_t index
     return std::nullopt;
 }
 
-std::vector<float> extrudeParams(const Profile& p, SketchPlane plane, float distance, bool symmetric) {
+std::vector<float> extrudeParams(const Profile& p, SketchPlane plane, float distance, bool symmetric, const PlaneFrame& custom) {
     float w0 = 0.0f, w1 = distance;
     if (symmetric) {
         w0 = -std::fabs(distance) * 0.5f;
@@ -188,37 +188,52 @@ std::vector<float> extrudeParams(const Profile& p, SketchPlane plane, float dist
         w0 = distance;
         w1 = 0.0f;
     }
-    std::vector<float> params = {static_cast<float>(plane), w0, w1};
+    std::vector<float> params = {static_cast<float>(plane), w0, w1, p.kind == Profile::Kind::Circle ? 1.0f : 0.0f};
+    if (plane == SketchPlane::Custom)
+        for (const Vec3& a : {custom.origin, custom.u, custom.v}) params.insert(params.end(), {a.x, a.y, a.z});
     if (p.kind == Profile::Kind::Circle) {
-        params.insert(params.end(), {1.0f, p.center.x, p.center.y, p.radius});
+        params.insert(params.end(), {p.center.x, p.center.y, p.radius});
     } else {
-        params.push_back(0.0f);
         for (const Vec2& q : p.points) params.insert(params.end(), {q.x, q.y});
     }
     return params;
 }
 
+bool extrusionPlane(const std::vector<float>& prm, PlaneFrame& f, std::size_t& data) {
+    if (prm.size() < 7) return false;
+    const int planeIndex = static_cast<int>(prm[0]);
+    if (planeIndex < 0 || planeIndex > 3) return false;
+    data = 4;
+    if (planeIndex < 3) {
+        f = planeFrame(static_cast<SketchPlane>(planeIndex));
+        return true;
+    }
+    if (prm.size() < 16) return false;
+    const Vec3 o{prm[4], prm[5], prm[6]}, u{prm[7], prm[8], prm[9]}, v{prm[10], prm[11], prm[12]};
+    data = 13;
+    return makePlaneFrame(o, cross(u, v), u, f) && std::fabs(dot(f.v, v) - 1.0f) < 1e-3f;
+}
+
 MeshData buildExtrusion(const std::vector<float>& prm) {
     MeshData m;
-    if (prm.size() < 7) return m;
-    const int planeIndex = static_cast<int>(prm[0]);
-    if (planeIndex < 0 || planeIndex > 2) return m;
-    const PlaneFrame f = planeFrame(static_cast<SketchPlane>(planeIndex));
+    PlaneFrame f;
+    std::size_t at = 0;
+    if (!extrusionPlane(prm, f, at) || prm.size() < at + 3) return m;
     const float w0 = prm[1], w1 = prm[2];
     if (!(w1 - w0 > 1e-6f)) return m;
 
     std::vector<Vec2> poly;
     const bool circle = prm[3] == 1.0f;
     if (circle) {
-        const Vec2 c{prm[4], prm[5]};
-        const float r = prm[6];
+        const Vec2 c{prm[at], prm[at + 1]};
+        const float r = prm[at + 2];
         if (!(r > 0.0f)) return m;
         for (int i = 0; i < kCircleSegments; ++i) {
             const float a = 2.0f * kPi * static_cast<float>(i) / kCircleSegments;
             poly.push_back({c.x + r * std::cos(a), c.y + r * std::sin(a)});
         }
     } else {
-        for (std::size_t i = 4; i + 1 < prm.size(); i += 2) poly.push_back({prm[i], prm[i + 1]});
+        for (std::size_t i = at; i + 1 < prm.size(); i += 2) poly.push_back({prm[i], prm[i + 1]});
         if (poly.size() < 3) return m;
     }
     if (signedArea(poly) < 0) std::reverse(poly.begin(), poly.end());
@@ -235,7 +250,7 @@ MeshData buildExtrusion(const std::vector<float>& prm) {
         for (const Vec2& q : poly) m.vertices.push_back({world(q, w), nrm});
         if (circle) { // fan around the centre
             const auto centre = static_cast<std::uint32_t>(m.vertices.size());
-            m.vertices.push_back({world({prm[4], prm[5]}, w), nrm});
+            m.vertices.push_back({world({prm[at], prm[at + 1]}, w), nrm});
             for (std::uint32_t i = 0; i < n; ++i) {
                 const std::uint32_t a = base + i, b = base + (i + 1) % static_cast<std::uint32_t>(n);
                 if (top) m.indices.insert(m.indices.end(), {centre, a, b});
@@ -269,8 +284,8 @@ MeshData buildExtrusion(const std::vector<float>& prm) {
         };
         Vec3 na, nb;
         if (circle) { // smooth: radial normals
-            na = planeNormal({a.x - prm[4], a.y - prm[5]});
-            nb = planeNormal({b.x - prm[4], b.y - prm[5]});
+            na = planeNormal({a.x - prm[at], a.y - prm[at + 1]});
+            nb = planeNormal({b.x - prm[at], b.y - prm[at + 1]});
         } else {
             na = nb = normalize(f.u * d.y - f.v * d.x); // right-hand normal of a CCW edge points outward
         }

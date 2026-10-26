@@ -5,6 +5,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 
 | Kind | Features |
 | --- | --- |
+| Sketch planes | `PLANE`: Top, Front, Right, and datum planes anywhere or on a face |
 | Sketch constraints | `CONSTRAIN`, `DIM`, `CONSTRAINTS` and `CONSTRAINT EDIT` / `DELETE` |
 | Solids from sketch curves | `EXTRUDE`, `REVOLVE`, `SWEEP` and `LOFT` |
 | Copies of bodies | `PATTERN` and `MIRROR` |
@@ -18,6 +19,44 @@ Every model command goes into a **feature history** that can be edited and regen
 The picture comes from [examples/cad-demo.txt](examples/cad-demo.txt) (`RUN docs/examples/cad-demo.txt`).
 
 ## Sketching
+
+### Sketch planes and datum planes
+
+```text
+PLANE TOP | FRONT | RIGHT | name                       the sketch plane
+PLANE OFFSET d [FROM plane]                            parallel to a plane, d along its normal
+PLANE ANGLE deg [ABOUT U | V] [FROM plane]             a plane turned about its own u or v axis
+PLANE THROUGH x,y,z x,y,z x,y,z                        through three points
+PLANE AT x,y,z NORMAL x,y,z [U x,y,z]                  through a point, square to a direction
+PLANE FACE x,y,z [ON body]                             on the face of a body nearest the point
+PLANE LIST | PLANE DELETE name
+```
+
+New curves go on the **sketch plane**. Besides the three main planes, any plane can be a sketch
+plane: each of the forms above makes a **datum plane** (named "Plane 1", "Plane 2"... or with
+`NAME`) and makes it the sketch plane. `FROM` starts from a main plane or a datum plane, by
+default the sketch plane itself.
+
+- A datum plane's u axis is level where it can be (so v points up), and along X on level
+  planes. The main planes come out the same: `PLANE AT 0,0,0 NORMAL 0,-1,0` is Front.
+- Sketches drawn on a datum plane stay on it. `EXTRUDE`, `REVOLVE` (about the plane's u or v
+  axis, or a line on it) and `SWEEP` work on them as on the main planes, and circles extrude
+  to exact cylinders along the plane's normal.
+- `2D name` opens the 2D Drawing window square to a datum plane, u to the right. The options
+  bar lists the datum planes beside Top, Front and Right.
+- Datum planes are saved with the project, and the `PLANE` steps are in the feature history:
+  REGEN makes them again (a `FACE` plane finds its face on the rebuilt bodies).
+- DXF and SVG export and import work on a datum plane; images go on the main planes.
+
+```text
+BOX 60 40 15 @0,0,0
+PLANE FACE 10,10,40 NAME Lid
+CIRCLE 0,0 6
+EXTRUDE 12
+PLANE THROUGH 0,0,15 30,0,40 0,20,15
+RECT 5,5 20,15
+EXTRUDE 4
+```
 
 ### Curves
 

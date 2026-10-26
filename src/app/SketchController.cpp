@@ -28,13 +28,14 @@ float gridStep(const OrbitCamera& cam) {
     return std::pow(10.0f, std::floor(std::log10(std::max(viewSize / 20.0f, 1e-4f))));
 }
 
-bool SketchController::hover(const Scene& scene, const OrbitCamera& cam, SketchPlane plane, ImVec2 mouse,
+bool SketchController::hover(const Scene& scene, const OrbitCamera& cam, SketchPlane plane, const PlaneFrame& frame, ImVec2 mouse,
                              ImVec2 vp, const SnapOptions& snap, bool constrain) {
-    if (plane != m_plane) {
+    if (plane != m_plane || !sameFrame(frame, m_frame)) {
         m_points.clear(); // a curve never spans two planes
         m_plane = plane;
+        m_frame = frame;
     }
-    const PlaneFrame f = planeFrame(plane);
+    const PlaneFrame f = frame;
     const Ray ray = cam.screenRay(mouse.x, mouse.y, vp.x, vp.y);
     float t = 0.0f;
     const float facing = std::fabs(dot(ray.dir, f.normal));
@@ -61,7 +62,7 @@ bool SketchController::hover(const Scene& scene, const OrbitCamera& cam, SketchP
             }
         };
         for (const SketchCurve& c : scene.sketch().curves())
-            if (c.visible && c.plane == plane)
+            if (c.visible && onPlane(c, plane, frame))
                 for (Vec2 q : c.keyPoints()) consider(q);
         for (Vec2 q : m_points) consider(q);
     }
@@ -85,6 +86,7 @@ SketchCurve SketchController::makeCurve(CurveKind kind, std::vector<Vec2> pts, f
     SketchCurve c;
     c.kind = kind;
     c.plane = m_plane;
+    c.frame = m_frame;
     c.pts = std::move(pts);
     c.radius = radius;
     return c;
@@ -237,10 +239,11 @@ std::optional<SketchCurve> SketchController::click(ToolId tool, bool doubleClick
     }
 }
 
-std::optional<SketchCurve> SketchController::typedPoint(ToolId tool, SketchPlane plane, Vec2 p) {
-    if (plane != m_plane) {
+std::optional<SketchCurve> SketchController::typedPoint(ToolId tool, SketchPlane plane, const PlaneFrame& frame, Vec2 p) {
+    if (plane != m_plane || !sameFrame(frame, m_frame)) {
         m_points.clear();
         m_plane = plane;
+        m_frame = frame;
     }
     m_hover = p;
     m_hasHover = true;
@@ -261,7 +264,7 @@ std::optional<SketchCurve> SketchController::finish() {
 
 void SketchController::drawOverlay(ImDrawList* dl, const OrbitCamera& cam, ImVec2 vp, ToolId tool) const {
     if (!m_hasHover) return;
-    const PlaneFrame f = planeFrame(m_plane);
+    const PlaneFrame f = m_frame;
     auto scr = [&](Vec2 q) { return projectToScreen(cam, f.toWorld(q), vp); };
     const auto h = scr(m_hover);
     if (!h) return;

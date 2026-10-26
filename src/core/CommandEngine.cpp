@@ -28,6 +28,7 @@
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
 #include "core/Units.hpp"
+#include "core/Features.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -145,11 +146,12 @@ bool parsePoints(const std::vector<std::string>& args, std::vector<Vec2>& out, s
 CommandOutput addCurve(Document& doc, SketchCurve c) {
     CommandOutput out;
     c.plane = doc.state.plane;
+    if (c.plane == SketchPlane::Custom) c.frame = doc.state.customFrame;
     const SketchCurve& added = doc.scene.sketch().add(std::move(c));
     doc.selectedCurve = static_cast<int>(doc.scene.sketch().curves().size()) - 1;
     doc.selectedBody = doc.selectedImage = -1;
     markChanged(doc);
-    out.say("Added " + added.name + " on " + planeName(added.plane) + "  " + added.measure());
+    out.say("Added " + added.name + " on " + activePlaneName(doc.state) + "  " + added.measure());
     return out;
 }
 
@@ -173,6 +175,192 @@ int findMotion(const Document& d, const std::string& name) {
 }
 
 std::string vecText(const Vec3& v) { return lengthsText({v.x, v.y, v.z}, ", ", "(", ")"); }
+
+namespace {
+
+int findDatum(const ProjectState& st, const std::string& name) {
+    for (std::size_t i = 0; i < st.datums.size(); ++i)
+        if (iequal(st.datums[i].name, name)) return static_cast<int>(i);
+    return -1;
+}
+
+// An axis across a plane with this normal: level (square to Z) unless the plane is about
+// level itself, then along X, so the principal planes come out as Top, Front and Right.
+Vec3 levelAxis(Vec3 n) {
+    n = normalize(n);
+    if (std::fabs(n.z) > 0.9f) return {1, 0, 0};
+    return cross(Vec3{0, 0, 1}, n);
+}
+
+std::string frameText(const PlaneFrame& f) {
+    auto dir = [](Vec3 v) {
+        char b[96];
+        std::snprintf(b, sizeof b, "(%.4g, %.4g, %.4g)", v.x, v.y, v.z);
+        return std::string(b);
+    };
+    return "origin " + lengthsText({f.origin.x, f.origin.y, f.origin.z}, ", ", "(", ")") + "  normal " + dir(f.normal) + "  u " + dir(f.u);
+}
+
+} // namespace
+
+// PLANE TOP|FRONT|RIGHT|<datum>, PLANE OFFSET / ANGLE / THROUGH / AT / FACE (a new datum
+// plane, made the sketch plane), PLANE LIST, PLANE DELETE name.
+CommandOutput runPlaneCommand(Document& doc, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
+    CommandOutput out;
+    ProjectState& st = doc.state;
+    static const char* const kUsage =
+        "Usage: PLANE TOP|FRONT|RIGHT|<datum>  |  PLANE OFFSET d [FROM plane]  |  PLANE ANGLE deg [ABOUT U|V] [FROM plane]  |  "
+        "PLANE THROUGH p1 p2 p3  |  PLANE AT x,y,z NORMAL x,y,z [U x,y,z]  |  PLANE FACE x,y,z [ON body]  "
+        "(any of them [NAME name])  |  PLANE LIST  |  PLANE DELETE name";
+    if (a.empty()) return out.fail(kUsage);
+    const bool isQuoted = !quoted.empty() && quoted[0];
+    const std::string sub = isQuoted ? std::string() : lower(a[0]);
+    auto activate = [&](SketchPlane p, const PlaneFrame& f, const std::string& name) {
+        st.plane = p;
+        st.customFrame = p == SketchPlane::Custom ? f : planeFrame(SketchPlane::Top);
+        st.customPlane = p == SketchPlane::Custom ? name : std::string();
+    };
+    if (sub == "list") {
+        out.say("Sketch plane: " + activePlaneName(st));
+        if (st.datums.empty()) out.say("No datum planes (PLANE OFFSET / ANGLE / THROUGH / AT / FACE make them)");
+        for (const DatumPlane& d : st.datums) out.say("  " + d.name + "  " + frameText(d.frame));
+        return out;
+    }
+    if (sub == "delete") {
+        if (a.size() != 2) return out.fail("Usage: PLANE DELETE name");
+        const int k = findDatum(st, a[1]);
+        if (k < 0) return out.fail("No datum plane named " + a[1]);
+        const std::string name = st.datums[static_cast<std::size_t>(k)].name;
+        st.datums.erase(st.datums.begin() + k);
+        if (st.plane == SketchPlane::Custom && iequal(st.customPlane, name)) st.customPlane.clear(); // its sketches stay where they are
+        markChanged(doc);
+        out.say("Deleted datum plane " + name);
+        return out;
+    }
+    const bool make = sub == "offset" || sub == "angle" || sub == "through" || sub == "at" || sub == "face";
+    if (!make) {
+        if (a.size() != 1) return out.fail(kUsage);
+        if (!isQuoted)
+            if (const auto p = planeFromKey(a[0])) {
+                activate(*p, st.customFrame, st.customPlane);
+                out.say("Sketch plane: " + activePlaneName(st));
+                return out;
+            }
+        const int k = findDatum(st, a[0]);
+        if (k < 0) return out.fail("No plane or datum plane named " + a[0] + "   (PLANE LIST shows them)");
+        const DatumPlane& d = st.datums[static_cast<std::size_t>(k)];
+        activate(SketchPlane::Custom, d.frame, d.name);
+        out.say("Sketch plane: " + d.name);
+        return out;
+    }
+
+    // A new datum plane. Optional words: FROM plane, ABOUT U|V, ON body, U x,y,z, NAME name.
+    std::vector<std::string> v; // the values after the sub-command, options taken out
+    std::string from, about = "u", onBody, name;
+    std::optional<Vec3> uDir, normal;
+    for (std::size_t i = 1; i < a.size(); ++i) {
+        const std::string k = (i < quoted.size() && quoted[i]) ? std::string() : lower(a[i]);
+        auto next = [&](const char* what) -> std::optional<std::string> {
+            if (i + 1 >= a.size()) return std::nullopt;
+            (void)what;
+            return a[++i];
+        };
+        if (k == "from" || k == "about" || k == "on" || k == "name" || k == "normal" || (k == "u" && sub == "at")) {
+            const auto w = next(k.c_str());
+            if (!w) return out.fail(toUpper(k) + " needs a value");
+            if (k == "from") from = *w;
+            else if (k == "about") about = lower(*w);
+            else if (k == "on") onBody = *w;
+            else if (k == "name") name = *w;
+            else if (k == "normal") {
+                if (!(normal = axisFromWord(*w))) return out.fail("NORMAL needs X, Y, Z or x,y,z");
+            } else if (!(uDir = axisFromWord(*w))) return out.fail("U needs X, Y, Z or x,y,z");
+        } else {
+            v.push_back(a[i]);
+        }
+    }
+    if (!name.empty()) {
+        if (planeFromKey(name) || findDatum(st, name) >= 0) return out.fail("There is already a plane named " + name);
+    } else {
+        for (int n = static_cast<int>(st.datums.size()) + 1;; ++n)
+            if (findDatum(st, name = "Plane " + std::to_string(n)) < 0) break;
+    }
+    // The plane OFFSET and ANGLE start from: the one named, else the sketch plane.
+    PlaneFrame base = activePlaneFrame(st);
+    if (!from.empty()) {
+        if (const auto p = planeFromKey(from); p && *p != SketchPlane::Custom) base = planeFrame(*p);
+        else if (const int k = findDatum(st, from); k >= 0) base = st.datums[static_cast<std::size_t>(k)].frame;
+        else return out.fail("No plane or datum plane named " + from);
+    }
+    PlaneFrame f;
+    if (sub == "offset") {
+        const auto d = v.size() == 1 ? parseLength(v[0]) : std::nullopt;
+        if (!d || !std::isfinite(*d)) return out.fail("Usage: PLANE OFFSET distance [FROM plane] [NAME name]");
+        f = base;
+        f.origin = base.origin + base.normal * static_cast<float>(*d);
+    } else if (sub == "angle") {
+        const auto deg = v.size() == 1 ? parseNumber(v[0]) : std::nullopt;
+        if (!deg || !std::isfinite(*deg) || (about != "u" && about != "v"))
+            return out.fail("Usage: PLANE ANGLE degrees [ABOUT U|V] [FROM plane] [NAME name]");
+        const float t = radians(*deg), c = std::cos(t), sn = std::sin(t);
+        f = base;
+        if (about == "u") { // the plane tips about its own u axis: v rises towards the normal
+            f.v = normalize(base.v * c + base.normal * sn);
+            f.normal = normalize(base.normal * c - base.v * sn);
+        } else {
+            f.u = normalize(base.u * c - base.normal * sn);
+            f.normal = normalize(base.normal * c + base.u * sn);
+        }
+    } else if (sub == "through") {
+        if (v.size() != 3) return out.fail("Usage: PLANE THROUGH x,y,z x,y,z x,y,z [NAME name]");
+        Vec3 p[3];
+        for (int k = 0; k < 3; ++k) {
+            const auto q = parseVec3(v[static_cast<std::size_t>(k)]);
+            if (!q) return out.fail("Not a point: " + v[static_cast<std::size_t>(k)]);
+            p[k] = *q;
+        }
+        const Vec3 e1 = p[1] - p[0], e2 = p[2] - p[0];
+        const Vec3 n = cross(e1, e2);
+        if (!(length(n) > 1e-6f * std::max(1.0f, length(e1) * length(e2))) || !makePlaneFrame(p[0], n, e1, f))
+            return out.fail("The three points are in line: they make no plane");
+    } else if (sub == "at") {
+        const auto o = v.size() == 1 ? parseVec3(v[0]) : std::nullopt;
+        if (!o || !normal) return out.fail("Usage: PLANE AT x,y,z NORMAL x,y,z [U x,y,z] [NAME name]");
+        if (!makePlaneFrame(*o, *normal, uDir ? *uDir : levelAxis(*normal), f)) return out.fail("NORMAL needs a direction");
+    } else { // face
+        const auto at = v.size() == 1 ? parseVec3(v[0]) : std::nullopt;
+        if (!at) return out.fail("Usage: PLANE FACE x,y,z [ON body] [NAME name]   (the face of a body nearest the point)");
+        int only = -1;
+        if (!onBody.empty() && (only = findBody(doc, onBody)) < 0) return out.fail("No body named " + onBody);
+        double best = 1e300;
+        Vec3 bestPoint{}, bestNormal{};
+        std::string bestBody;
+        for (std::size_t bi = 0; bi < doc.scene.bodies().size(); ++bi) {
+            const Body& b = doc.scene.bodies()[bi];
+            if (only >= 0 ? static_cast<int>(bi) != only : !b.visible) continue;
+            const MeshData m = worldMesh(b);
+            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+                const Vec3 p0 = m.vertices[m.indices[t]].position, p1 = m.vertices[m.indices[t + 1]].position, p2 = m.vertices[m.indices[t + 2]].position;
+                const Vec3 n = cross(p1 - p0, p2 - p0);
+                if (!(length(n) > 1e-12f)) continue;
+                const Vec3 q = closestPointOnTriangle(*at, p0, p1, p2);
+                const double d = length(q - *at);
+                if (d < best) best = d, bestPoint = q, bestNormal = normalize(n), bestBody = b.name;
+            }
+        }
+        if (bestBody.empty()) return out.fail(only >= 0 ? onBody + " has no faces" : "No visible body to put the plane on");
+        if (!makePlaneFrame(bestPoint, bestNormal, levelAxis(bestNormal), f)) return out.fail("That face has no direction");
+        out.say("On " + bestBody + "'s face at " + vecText(bestPoint));
+    }
+    if (!std::isfinite(f.origin.x + f.origin.y + f.origin.z + f.normal.x + f.normal.y + f.normal.z))
+        return out.fail("That plane is out of range");
+    st.datums.push_back({name, f});
+    activate(SketchPlane::Custom, f, name);
+    markChanged(doc);
+    out.say("Datum plane " + name + ": " + frameText(f) + "   (now the sketch plane)");
+    return out;
+}
+
 
 // Poses of the moving bodies and the motion values at time t.
 std::vector<std::string> describePoses(const Document& doc, float t) {
@@ -265,7 +453,8 @@ Body defaultPrimitive(const std::string& kind, int serial) {
 
 std::vector<std::string> describeDocument(const Document& doc) {
     std::vector<std::string> l;
-    l.push_back("Project: " + doc.title() + "   sketch plane: " + planeName(doc.state.plane));
+    l.push_back("Project: " + doc.title() + "   sketch plane: " + activePlaneName(doc.state));
+    for (const DatumPlane& d : doc.state.datums) l.push_back("  datum plane " + d.name);
     l.push_back("Bodies (" + std::to_string(doc.scene.bodies().size()) + "):");
     for (const Body& b : doc.scene.bodies()) {
         const AABB bb = b.bounds();
@@ -370,12 +559,22 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
         return;
     }
     if (!historyCommand(cmd)) return;
+    if (cmd == "PLANE" && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
     if (st.history.empty() && st.plane != SketchPlane::Top && cmd != "PLANE") { // the plane the history starts on
         HistoryStep plane;
         plane.line = "PLANE " + toUpper(planeKey(st.plane));
         plane.undoable = false;
         plane.unit = st.units.unit;
+        if (st.plane == SketchPlane::Custom) { // the plane itself, in mm
+            const PlaneFrame& f = st.customFrame;
+            char buf[256];
+            std::snprintf(buf, sizeof buf, "PLANE AT %.9g,%.9g,%.9g NORMAL %.9g,%.9g,%.9g U %.9g,%.9g,%.9g", f.origin.x, f.origin.y, f.origin.z,
+                          f.normal.x, f.normal.y, f.normal.z, f.u.x, f.u.y, f.u.z);
+            plane.line = buf;
+            if (!st.customPlane.empty()) plane.line += " NAME \"" + st.customPlane + "\"";
+            plane.millimetres = true;
+        }
         st.history.push_back(std::move(plane));
     }
     HistoryStep step;
@@ -713,7 +912,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         Body b = defaultPrimitive("box", ++doc.primitiveSerial); // name / colour series
         b.name = "Extrude " + std::to_string(doc.primitiveSerial);
         b.kind = "extrude";
-        b.params = extrudeParams(*profile, c.plane, *distance, symmetric);
+        b.params = extrudeParams(*profile, c.plane, *distance, symmetric, c.frame);
         b.mesh = buildExtrusion(b.params);
         if (b.mesh.indices.empty()) return out.fail("Extrusion failed for " + c.name);
         b.offset = {};
@@ -2875,10 +3074,10 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             return out;
         case FileKind::Dxf:
         case FileKind::Svg: {
-            const int n = fileKindOf(path) == FileKind::Dxf ? exportDxf(doc.scene, doc.state.plane, path, &err)
-                                                            : exportSvg(doc.scene, doc.state.plane, path, &err);
+            const int n = fileKindOf(path) == FileKind::Dxf ? exportDxf(doc.scene, doc.state.plane, path, &err, doc.state.customFrame)
+                                                            : exportSvg(doc.scene, doc.state.plane, path, &err, doc.state.customFrame);
             if (n < 0) return out.fail(err);
-            out.say("Exported " + std::to_string(n) + " curves on " + planeName(doc.state.plane) + " to " + path);
+            out.say("Exported " + std::to_string(n) + " curves on " + activePlaneName(doc.state) + " to " + path);
             return out;
         }
         case FileKind::Step:
@@ -2947,13 +3146,14 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             return out;
         }
         case FileKind::Dxf: {
-            const int n = importDxf(doc.scene, doc.state.plane, path, &err);
+            const int n = importDxf(doc.scene, doc.state.plane, path, &err, doc.state.customFrame);
             if (n <= 0) return out.fail(err.empty() ? "Nothing imported" : err);
             markChanged(doc);
-            out.say("Imported " + std::to_string(n) + " curves onto " + planeName(doc.state.plane));
+            out.say("Imported " + std::to_string(n) + " curves onto " + activePlaneName(doc.state));
             return out;
         }
         case FileKind::Image: {
+            if (doc.state.plane == SketchPlane::Custom) return out.fail("Images go on the Top, Front or Right plane: PLANE TOP first");
             auto img = importImage(path, doc.state.plane, at.value_or(Vec2{}), &err);
             if (!img) return out.fail(err);
             if (width && *width > 0) img->width = *width;
@@ -3139,23 +3339,19 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
 
     // ---- Views & windows --------------------------------------------------
     if (cmd == "PLANE") {
-        const auto p = a.empty() ? std::nullopt : planeFromKey(a[0]);
-        if (!p) return usage();
-        doc.state.plane = *p;
-        if (view) view->planeChanged(*p);
-        out.say(std::string("Sketch plane: ") + planeName(*p));
+        out = runPlaneCommand(doc, a, pc.quoted);
+        if (out.ok && view) view->planeChanged(doc.state.plane);
         return out;
     }
     if (cmd == "2D") {
-        if (!a.empty()) {
-            const auto p = planeFromKey(a[0]);
-            if (!p) return usage();
-            doc.state.plane = *p;
-        }
         if (auto o = needView(view, "2D"); !o.ok) return o;
+        if (!a.empty()) { // a plane or datum plane, as PLANE takes it
+            if (a.size() != 1) return usage();
+            if (auto r = runPlaneCommand(doc, a, pc.quoted); !r.ok) return r;
+        }
         view->planeChanged(doc.state.plane);
         view->openWindow(true);
-        out.say(std::string("2D Drawing window: ") + planeName(doc.state.plane));
+        out.say("2D Drawing window: " + activePlaneName(doc.state));
         return out;
     }
     if (cmd == "3D") {

@@ -62,6 +62,8 @@ shot physics --command "PHYSICS DEMO" --command "SIM PLAY"
 shot simulation --command "SIM"
 shot robots --command "RUN docs/examples/robot-arm-sim.txt" --command "SIM"
 shot sculpt-sample --command "RUN docs/examples/head-bust.txt"
+shot datum-planes --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 60 40 15 @0,0,0" --command "PLANE FACE 10,10,40 NAME Lid" --command "CIRCLE 0,0 6" --command "EXTRUDE 12" --command "PLANE THROUGH 0,0,15 30,0,40 0,20,15" --command "RECT 5,5 20,15" --command "EXTRUDE 4"
+shot datum-2d --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 60 40 15 @0,0,0" --command "PLANE ANGLE 30 ABOUT U FROM TOP NAME Tilt" --command "RECT 0,0 30,20" --command "CIRCLE 15,10 5" --command "2D Tilt"
 shot save-reopen --command "BOX 20 20 20" --command "SAVE \"$state/smoke.sicdm\"" --command "NEW" --command "RECENT 1" --command "BOX 5 5 5" --command "UNDO"
 
 if [ "$failed" -gt 0 ]; then

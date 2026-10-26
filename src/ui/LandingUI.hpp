@@ -27,6 +27,9 @@ ImVec4 motionColor(std::size_t i);
 struct UiState {
     ViewMode mode = ViewMode::Model3D;
     SketchPlane plane = SketchPlane::Top; // active sketch / drawing plane
+    PlaneFrame activeFrame = planeFrame(SketchPlane::Top); // its frame (a datum plane's when Custom)
+    std::string planeLabel = "Top (XY)";  // its name
+    std::vector<std::string> datums;      // the project's datum planes
     bool showModelTree = false; // docked panel beside the tool rail
     int dockTab = 0;            // its page: 0 Model, 1 Library, 2 CAM
     bool showControls = false;
