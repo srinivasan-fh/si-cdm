@@ -3,6 +3,8 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
+#include "core/Multibody.hpp"
+#include "core/Physics.hpp"
 #include "core/Rig.hpp"
 #include "core/Scene.hpp"
 
@@ -29,7 +31,7 @@ CommandOutput run(Document& d, const std::string& line) { return executeCommand(
 
 bool rigOf(const Document& d, const std::string& name, RobotRig& rig) {
     RigSettings s;
-    if (const RigSettings* r = d.state.rigs.find(name)) s = *r;
+    if (const RigSettings* r = d.scene.rigs().find(name)) s = *r;
     else s.name = name;
     return buildRig(d.scene, s, rig);
 }
@@ -133,10 +135,10 @@ TEST_CASE("Robotics: a robot made with JOINT, tags and save") {
     REQUIRE(run(d, "SAVE \"" + path + "\"").ok);
     Document e;
     REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
-    REQUIRE(e.state.rigs.robots.size() == 1);
-    CHECK(e.state.rigs.robots[0].tagOf("Block 2") == RigTag::EndEffector);
-    CHECK(e.state.rigs.robots[0].density == 2700.0f);
-    CHECK(e.state.rigs.robots[0].floatingBase.value_or(false));
+    REQUIRE(e.scene.rigs().robots.size() == 1);
+    CHECK(e.scene.rigs().robots[0].tagOf("Block 2") == RigTag::EndEffector);
+    CHECK(e.scene.rigs().robots[0].density == 2700.0f);
+    CHECK(e.scene.rigs().robots[0].floatingBase.value_or(false));
     fs::remove(path);
     CHECK(!run(d, "RIG TAG \"Nothing\" WHEEL").ok);
     CHECK(!run(d, "RIG TAG \"Block 2\" FLIPPER").ok);
@@ -243,4 +245,186 @@ TEST_CASE("Robotics: URDF, SDF and MJCF export with meshes") {
     REQUIRE(run(h, "EXPORT \"" + (dir / "man.urdf").string() + "\"").ok);
     CHECK(slurp(dir / "man.urdf").find("<link name=\"world\"") == std::string::npos);
     fs::remove_all(dir, ec);
+}
+
+namespace {
+
+RobotRig rigFor(Document& d, const std::string& name = "") {
+    RigSettings s;
+    if (const RigSettings* r = d.scene.rigs().find(name)) s = *r;
+    else s.name = name;
+    RobotRig rig;
+    buildRig(d.scene, s, rig);
+    return rig;
+}
+
+} // namespace
+
+TEST_CASE("Robotics engine: free fall, momentum and energy of a free body") {
+    Document d;
+    REQUIRE(run(d, "BOX 100 200 300 @0,0,1000").ok);
+    RobotRig rig = rigFor(d);
+    rig.floatingBase = true;
+    MultibodyOptions o;
+    o.contacts = false;
+    Multibody fall(rig, o);
+    const V3d c0 = fall.centreOfMass();
+    fall.advance(1.0);
+    CHECK(std::fabs((fall.centreOfMass()[2] - c0[2]) - (-0.5 * 9.80665)) < 0.01); // semi-implicit Euler: g dt t / 2 off
+
+    o.gravity = {0, 0, 0};
+    Multibody spin(rig, o);
+    spin.setBaseVelocity({1.0, 0.2, 3.0}, {0.5, 0, 0});
+    const double e0 = spin.kineticEnergy();
+    const V3d s0 = spin.centreOfMass();
+    spin.advance(5.0);
+    CHECK(std::fabs(spin.kineticEnergy() - e0) < 0.005 * e0);            // torque-free tumbling keeps its energy
+    CHECK(std::fabs(spin.centreOfMass()[0] - s0[0] - 2.5) < 1e-3);         // and its momentum
+    CHECK(std::fabs(spin.centreOfMass()[1] - s0[1]) < 1e-6);
+}
+
+TEST_CASE("Robotics engine: a pendulum swings at its period, a servo holds, stops stop") {
+    Document d;
+    REQUIRE(run(d, "BOX 20 20 400 @0,0,100").ok);
+    REQUIRE(run(d, "BOX 20 400 20 @0,200,500").ok); // a rod from the pivot out along +Y
+    REQUIRE(run(d, "JOINT \"Block 2\" TO \"Block 1\" AT 0,0,510 AXIS X RANGE -180 180").ok);
+    RobotRig rig = rigFor(d);
+    REQUIRE(rig.joints.size() == 1);
+    CHECK(!rig.floatingBase);
+    rig.joints[0].type = RigJointType::Continuous;
+    MultibodyOptions o;
+    o.contacts = false;
+    o.jointDamping = 0;
+    Multibody mb(rig, o);
+    JointControl passive;
+    passive.mode = ActuatorMode::Passive;
+    mb.setControl(0, passive);
+    // Hanging straight down is q = -90 deg (the rod points +Y at rest, X turns it).
+    const double hang = -3.14159265358979 / 2;
+    mb.setJointState({hang + 0.05}, {0.0});
+    const RigLink& L = rig.links[1];
+    const double dy = L.com[1], dz = L.com[2] - 0.51;
+    const double d2 = dy * dy + dz * dz;
+    const double Ipivot = L.inertia[0] + L.mass * d2;
+    // 1 % of armature (motor inertia) is part of every joint.
+    const double expected = 2 * 3.14159265358979 * std::sqrt(Ipivot * 1.01 / (L.mass * 9.80665 * std::sqrt(d2)));
+    double last = mb.q()[0] - hang, t0 = -1, t1 = -1;
+    int crossings = 0;
+    for (int i = 0; i < 40000 && t1 < 0; ++i) {
+        mb.step();
+        const double x = mb.q()[0] - hang;
+        if (last > 0 && x <= 0) {
+            if (++crossings == 1) t0 = mb.time();
+            else if (crossings == 2) t1 = mb.time();
+        }
+        last = x;
+    }
+    REQUIRE(t1 > 0);
+    CHECK(std::fabs((t1 - t0) - expected) < 0.005 * expected);
+    // Energy over large swings: within 1 % of m g d over 10 s (semi-implicit Euler).
+    mb.reset();
+    mb.setControl(0, passive);
+    const double e0 = mb.kineticEnergy() + mb.potentialEnergy();
+    mb.advance(10.0);
+    CHECK(std::fabs(mb.kineticEnergy() + mb.potentialEnergy() - e0) < 0.01 * L.mass * 9.80665 * std::sqrt(d2));
+
+    // A position servo holds the rod out against gravity, on target (its integral takes the sag out).
+    RobotRig held = rigFor(d);
+    Multibody servo(held);
+    JointControl c;
+    c.target = 0.5;
+    servo.setControl(0, c);
+    servo.advance(3.0);
+    CHECK(std::fabs(servo.q()[0] - 0.5) < 1e-3);
+    CHECK(std::fabs(servo.torques()[0]) > 0.1); // it is working against the load
+    // A tight joint (0..30 deg) let go at 20 deg falls onto its lower stop.
+    held.joints[0].lo = 0;
+    held.joints[0].hi = 30 * 3.14159265358979 / 180;
+    Multibody stop(held);
+    stop.setControl(0, passive);
+    stop.setJointState({0.35}, {0.0});
+    double lowest = 1;
+    for (int i = 0; i < 6000; ++i) {
+        stop.step();
+        lowest = std::min(lowest, stop.q()[0]);
+    }
+    CHECK(lowest > -2.0 * 3.14159265358979 / 180); // through the stop by less than 2 degrees
+    CHECK(std::fabs(stop.q()[0]) < 0.5 * 3.14159265358979 / 180); // and resting on it
+}
+
+TEST_CASE("Robotics engine: resting, standing and coupled fingers") {
+    Document d;
+    REQUIRE(run(d, "BOX 200 200 100 @0,0,0").ok);
+    RobotRig box = rigFor(d);
+    box.floatingBase = true;
+    Multibody rest(box);
+    rest.advance(2.0);
+    double fz = 0;
+    for (const ContactPoint& c : rest.contacts()) fz += c.force[2];
+    CHECK(std::fabs(fz - box.totalMass() * 9.80665) < 0.01 * box.totalMass() * 9.80665);
+    const V3d c0 = rest.centreOfMass();
+    rest.advance(2.0);
+    CHECK(std::fabs(rest.centreOfMass()[0] - c0[0]) + std::fabs(rest.centreOfMass()[1] - c0[1]) < 1e-5); // no creep
+
+    // The humanoid stands on its own feet, servos holding its rest pose.
+    Document h;
+    REQUIRE(run(h, "PART humanoid").ok);
+    const RobotRig man = rigFor(h, "Male Humanoid Robot 1");
+    Multibody stand(man);
+    const V3d s0 = stand.centreOfMass();
+    stand.advance(5.0);
+    REQUIRE(!stand.diverged());
+    const V3d s1 = stand.centreOfMass();
+    CHECK(std::fabs(s1[0] - s0[0]) < 0.02 && std::fabs(s1[1] - s0[1]) < 0.02 && std::fabs(s1[2] - s0[2]) < 0.01);
+    double ground = 0;
+    for (const ContactPoint& c : stand.contacts()) ground += c.force[2];
+    CHECK(std::fabs(ground - man.totalMass() * 9.80665) < 0.05 * man.totalMass() * 9.80665);
+
+    // One drive closes a finger: the coupled joints follow at their ratios.
+    Document a;
+    REQUIRE(run(a, "PART robot_arm").ok);
+    const RobotRig arm = rigFor(a, "Robot Arm 1");
+    Multibody grip(arm);
+    const int mcp = arm.jointNamed("Index MCP"), pip = arm.jointNamed("Index PIP");
+    REQUIRE(mcp >= 0 && pip >= 0);
+    JointControl close;
+    close.target = 0.8;
+    grip.setControl(static_cast<std::size_t>(mcp), close);
+    grip.advance(1.5);
+    CHECK(std::fabs(grip.q()[static_cast<std::size_t>(mcp)] - 0.8) < 0.01);
+    CHECK(std::fabs(grip.q()[static_cast<std::size_t>(pip)] - 0.8 * arm.joints[static_cast<std::size_t>(pip)].mimicRatio) < 0.02);
+}
+
+TEST_CASE("Robotics engine: engines by morphology, playback and state") {
+    CHECK(defaultEngine(Morphology::Humanoid) == SimEngine::Articulated);
+    CHECK(defaultEngine(Morphology::Drone) == SimEngine::Vehicle);
+    CHECK(defaultEngine(Morphology::Rover) == SimEngine::Vehicle);
+    CHECK(simEngineFromKey("mujoco") == SimEngine::Articulated);
+    CHECK(!simEngineFromKey("warp"));
+
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 200 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 30 400 30 @0,200,200").ok);
+    REQUIRE(run(d, "JOINT \"Block 2\" TO \"Block 1\" AT 0,0,215 AXIS X RANGE -60 90 PERIOD 4").ok);
+    CHECK(!run(d, "RIG ENGINE WARP").ok);
+    REQUIRE(run(d, "RIG ENGINE ARTICULATED SIMULATE ON").ok);
+    REQUIRE(d.scene.rigs().robots.size() == 1);
+    CHECK(d.scene.rigs().robots[0].simulate);
+    // Playback: the joint follows its keyframes (90 deg at a quarter period) under gravity.
+    const std::vector<Mat4> tf = simulationTransforms(d.scene, 1.0f);
+    REQUIRE(tf.size() == d.scene.bodies().size());
+    const Vec3 tip = tf[1].transformPoint({0, 400, 215});
+    CHECK(tip.z > 400); // swung up from the horizontal toward 90 deg
+    const CommandOutput st = run(d, "RIG STATE AT 1");
+    REQUIRE(st.ok);
+    CHECK(st.lines[0].find("articulated engine") != std::string::npos);
+    // The followed angle is close to its target.
+    const RobotRig rig = rigFor(d);
+    const auto runPtr = robotRun(d.scene, d.scene.rigs().robots[0], 10.0f);
+    REQUIRE(runPtr != nullptr);
+    const RobotRunFrame f = runPtr->at(1.0f);
+    const MotionTargets tg = motionTargets(d.scene, rig, 1.0f);
+    CHECK(std::fabs(f.q[0] - tg.value[0]) < 0.05);
+    REQUIRE(run(d, "RIG SIMULATE OFF").ok);
+    CHECK(robotRuns(d.scene).empty());
 }

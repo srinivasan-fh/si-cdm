@@ -52,6 +52,7 @@ struct RigSettings {
     std::vector<std::pair<std::string, RigTag>> tags; // body name -> tag
     float density = 0.0f;              // kg/m^3 for parts without their own; 0: each body's
     std::string engine;                // "" (from the morphology) or an engine key, see Multibody.hpp
+    bool simulate = false;             // the Simulation plays it with its engine (its motions are the servo targets)
 
     RigTag tagOf(const std::string& body) const;
     void setTag(const std::string& body, RigTag tag); // None removes it
@@ -79,6 +80,9 @@ struct RigLink {
     int parentJoint = -1;            // -1: the base
     RigTag tag = RigTag::None;
     std::array<double, 3> boxMin{}, boxMax{}; // its parts' bounds at rest (m)
+    // Where it can touch the ground: its parts' extreme points in 26 directions (and around
+    // a wheel's rim), at rest (world, m).
+    std::vector<std::array<double, 3>> contactPoints;
 };
 
 enum class RigJointType { Revolute, Continuous, Prismatic };
@@ -145,6 +149,9 @@ double rigJointEffort(const RobotRig& rig, std::size_t joint);
 double rigJointVelocity(const RobotRig& rig, std::size_t joint);
 // The links at and below a link.
 std::vector<int> rigSubtree(const RobotRig& rig, int link);
+// What the robot stands on: FOOT and WHEEL links, else the links reaching within 2 cm of
+// its lowest point.
+std::vector<int> rigSupportLinks(const RobotRig& rig);
 
 // One line per link and joint, for the RIG command.
 std::vector<std::string> describeRig(const RobotRig& rig);

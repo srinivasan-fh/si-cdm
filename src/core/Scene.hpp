@@ -4,6 +4,7 @@
 #include "core/Geometry.hpp"
 #include "core/Motion.hpp"
 #include "core/Physics.hpp"
+#include "core/Rig.hpp"
 #include "core/Sketch.hpp"
 
 #include <array>
@@ -116,6 +117,9 @@ public:
     // The physical environment (gravity, fields, air...) of the Simulation.
     PhysicsSettings& physics() noexcept { return m_physics; }
     const PhysicsSettings& physics() const noexcept { return m_physics; }
+    // Robots: their settings and auto-rigging tags (the tree is read from the parts, see Rig.hpp).
+    RigState& rigs() noexcept { return m_rigs; }
+    const RigState& rigs() const noexcept { return m_rigs; }
 
     Sketch& sketch() noexcept { return m_sketch; }
     const Sketch& sketch() const noexcept { return m_sketch; }
@@ -200,6 +204,7 @@ private:
     std::vector<ImageRef> m_images;
     std::vector<Motion> m_motions;
     PhysicsSettings m_physics;
+    RigState m_rigs;
     std::uint64_t m_imageRevision = nextRevision();
     struct BodyState { // what a later move or rename may change
         std::string name;

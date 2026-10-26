@@ -79,6 +79,8 @@ add_library(sicdm_core STATIC
     src/core/Preferences.cpp
     src/core/Rig.cpp
     src/core/RobotExport.cpp
+    src/core/Multibody.cpp
+    src/core/RobotRun.cpp
     src/core/RobotCommand.cpp
     src/core/UpdateCheck.cpp
     src/core/CrashReport.cpp

@@ -1,5 +1,6 @@
 #include "core/Physics.hpp"
 
+#include "core/Multibody.hpp"
 #include "core/Scene.hpp"
 #include "core/Units.hpp"
 
@@ -675,8 +676,12 @@ std::shared_ptr<const PhysicsRun> physicsRun(const Scene& scene) {
 
 std::vector<Mat4> simulationTransforms(const Scene& scene, float t) {
     std::vector<Mat4> tf = motionTransforms(scene, t);
+    applyRobotRuns(scene, t, tf);
     const auto run = physicsRun(scene);
-    if (!run || run->frames.empty()) return tf;
+    if (!run || run->frames.empty()) {
+        applyAttachments(scene, tf);
+        return tf;
+    }
     const PhysicsFrame f = run->at(t);
     for (std::size_t i = 0; i < run->bodies.size(); ++i) {
         const PhysicsBodyInfo& b = run->bodies[i];

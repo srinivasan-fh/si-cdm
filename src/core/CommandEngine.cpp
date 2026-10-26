@@ -748,7 +748,6 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.state.lathe = LatheJob{};
         doc.state.drawing = Drawing{};
         doc.state.assembly = AssemblyState{};
-        doc.state.rigs = RigState{};
         doc.state.history.clear();
         doc.state.historyRedo.clear();
         doc.state.historyComplete = true;

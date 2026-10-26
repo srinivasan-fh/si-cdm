@@ -127,6 +127,7 @@ Json rigStateToJson(const RigState& s) {
         if (r.floatingBase) j.set("floating_base", *r.floatingBase);
         if (r.density > 0) j.set("density", r.density);
         if (!r.engine.empty()) j.set("engine", r.engine);
+        if (r.simulate) j.set("simulate", true);
         Json tags = Json::object();
         for (const auto& [b, t] : r.tags) tags.set(b, rigTagKey(t));
         j.set("tags", tags);
@@ -148,6 +149,7 @@ void rigStateFromJson(const Json& j, RigState& s) {
         if (r["floating_base"].isBool()) rs.floatingBase = r["floating_base"].asBool();
         rs.density = r["density"].asFloat(0.0f);
         rs.engine = r["engine"].asString(std::string());
+        rs.simulate = r["simulate"].asBool(false);
         if (const Json& tags = r["tags"]; tags.isObject())
             for (const auto& [b, v] : tags.members())
                 if (const auto t = rigTagFromKey(v.asString(std::string())); t && *t != RigTag::None) rs.tags.emplace_back(b, *t);
@@ -549,6 +551,52 @@ bool buildRig(const Scene& scene, const RigSettings& settings, RobotRig& out, st
     out.morphology = mo;
     out.floatingBase = settings.floatingBase.value_or(bases == 0 && mo != Morphology::Manipulator);
 
+    // Contact points: extreme vertices along 26 directions, and 36 around a wheel's rim.
+    for (std::size_t l = 0; l < out.links.size(); ++l) {
+        RigLink& link = out.links[l];
+        if (link.bodies.empty()) continue;
+        std::vector<std::array<double, 3>> dirs;
+        for (int x = -1; x <= 1; ++x)
+            for (int y = -1; y <= 1; ++y)
+                for (int z = -1; z <= 1; ++z)
+                    if (x || y || z) {
+                        const double n = std::sqrt(static_cast<double>(x * x + y * y + z * z));
+                        dirs.push_back({x / n, y / n, z / n});
+                    }
+        if (link.tag == RigTag::Wheel && link.parentJoint >= 0) {
+            const auto& ax = out.joints[static_cast<std::size_t>(link.parentJoint)].axis;
+            // Two directions across the axis.
+            std::array<double, 3> e1 = std::fabs(ax[2]) < 0.9 ? std::array<double, 3>{-ax[1], ax[0], 0} : std::array<double, 3>{0, -ax[2], ax[1]};
+            double n1 = std::sqrt(e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2]);
+            for (double& v : e1) v /= n1;
+            const std::array<double, 3> e2{ax[1] * e1[2] - ax[2] * e1[1], ax[2] * e1[0] - ax[0] * e1[2], ax[0] * e1[1] - ax[1] * e1[0]};
+            for (int k = 0; k < 36; ++k) {
+                const double t = k * 3.14159265358979323846 / 18.0;
+                dirs.push_back({std::cos(t) * e1[0] + std::sin(t) * e2[0], std::cos(t) * e1[1] + std::sin(t) * e2[1], std::cos(t) * e1[2] + std::sin(t) * e2[2]});
+            }
+        }
+        std::vector<double> best(dirs.size(), -1e300);
+        std::vector<std::array<double, 3>> pick(dirs.size());
+        for (std::size_t b : link.bodies) {
+            const Body& body = bodies[b];
+            for (const Vertex& vx : body.mesh.vertices) {
+                const Vec3 w = vx.position + body.offset;
+                const std::array<double, 3> p{w.x * 1e-3, w.y * 1e-3, w.z * 1e-3};
+                for (std::size_t d = 0; d < dirs.size(); ++d) {
+                    const double s = p[0] * dirs[d][0] + p[1] * dirs[d][1] + p[2] * dirs[d][2];
+                    if (s > best[d]) best[d] = s, pick[d] = p;
+                }
+            }
+        }
+        for (std::size_t d = 0; d < dirs.size(); ++d) {
+            if (best[d] < -1e299) continue;
+            bool dup = false;
+            for (const auto& q : link.contactPoints)
+                dup = dup || (std::fabs(q[0] - pick[d][0]) + std::fabs(q[1] - pick[d][1]) + std::fabs(q[2] - pick[d][2]) < 1e-4);
+            if (!dup) link.contactPoints.push_back(pick[d]);
+        }
+    }
+
     if (massless > 0) out.notes.push_back(std::to_string(massless) + " link(s) have no parts (joint chains such as a ball joint): given 1 g");
     if (out.joints.empty()) out.notes.push_back("No joints: the robot is one rigid body (give its parts motions, JOINT, or tag ROTOR / WHEEL)");
     return true;
@@ -619,10 +667,39 @@ std::vector<int> rigSubtree(const RobotRig& rig, int link) {
     return out;
 }
 
+std::vector<int> rigSupportLinks(const RobotRig& rig) {
+    std::vector<int> out;
+    for (std::size_t l = 0; l < rig.links.size(); ++l)
+        if (rig.links[l].tag == RigTag::Foot || rig.links[l].tag == RigTag::Wheel) out.push_back(static_cast<int>(l));
+    if (!out.empty()) return out;
+    double lowest = 1e300;
+    for (const RigLink& l : rig.links)
+        for (const auto& p : l.contactPoints) lowest = std::min(lowest, p[2]);
+    for (std::size_t l = 0; l < rig.links.size(); ++l)
+        for (const auto& p : rig.links[l].contactPoints)
+            if (p[2] < lowest + 0.02) {
+                out.push_back(static_cast<int>(l));
+                break;
+            }
+    return out;
+}
+
 double rigJointEffort(const RobotRig& rig, std::size_t joint) {
     const RigJoint& j = rig.joints[joint];
     if (j.effort > 0) return j.effort;
     const std::vector<int> below = rigSubtree(rig, j.child);
+    // A joint between a floating base and what it stands on carries the rest of the robot:
+    // its weight on a 12 cm lever (a leg's hip, knee and ankle).
+    double carried = 0;
+    if (rig.floatingBase) {
+        bool supports = false;
+        for (int s : rigSupportLinks(rig)) supports = supports || std::find(below.begin(), below.end(), s) != below.end();
+        if (supports) {
+            double rest = rig.totalMass();
+            for (int l : below) rest -= rig.links[static_cast<std::size_t>(l)].mass;
+            carried = rest * 9.80665 * (j.type == RigJointType::Prismatic ? 1.0 : 0.12);
+        }
+    }
     double mass = 0, torque = 0;
     for (int l : below) {
         const RigLink& L = rig.links[static_cast<std::size_t>(l)];
@@ -633,7 +710,7 @@ double rigJointEffort(const RobotRig& rig, std::size_t joint) {
         const double r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - along * along;
         torque += L.mass * 9.80665 * std::sqrt(std::max(r2, 0.0));
     }
-    const double need = j.type == RigJointType::Prismatic ? mass * 9.80665 : torque;
+    const double need = std::max(j.type == RigJointType::Prismatic ? mass * 9.80665 : torque, carried);
     return std::max(0.5, 2.0 * need);
 }
 
