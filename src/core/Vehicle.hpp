@@ -58,6 +58,11 @@ VehicleModel vehicleModel(const RobotRig& rig, const V3d& wind);
 // hover drag, and to spin up to hover speed in 0.2 s; top speed 2.5 x hover.
 void sizeRotorMotors(RobotRig& rig, const VehicleModel& model);
 
+// The engine step a vehicle needs: a rotor turns at most 0.1 rad per step at hover speed
+// (spinning faster per step, the explicitly integrated gyroscopic terms of the rotors pump
+// energy into the frame's tilt and it wobbles).
+double vehicleStep(const VehicleModel& model, double dt);
+
 // Adds the rotors' thrust and drag torque and the air's drag to `mb` before every step.
 void addVehicleForces(Multibody& mb, const VehicleModel& model);
 

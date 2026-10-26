@@ -139,6 +139,11 @@ void sizeRotorMotors(RobotRig& rig, const VehicleModel& model) {
     }
 }
 
+double vehicleStep(const VehicleModel& model, double dt) {
+    if (model.rotors.empty() || model.hoverSpeed <= 0) return dt;
+    return std::min(dt, 0.1 / model.hoverSpeed);
+}
+
 void addVehicleForces(Multibody& mb, const VehicleModel& model) {
     mb.addForceHook([model](Multibody& m) {
         const std::vector<double> qd = m.qd();

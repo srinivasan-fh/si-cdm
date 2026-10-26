@@ -605,15 +605,22 @@ TEST_CASE("Robotics vehicles: a drone holds its position in a crosswind") {
     Document d;
     makeDrone(d);
     REQUIRE(run(d, "RIG MISSION GOTO 0,0,800").ok);
-    REQUIRE(run(d, "PHYSICS WIND 3,0,0").ok);
+    REQUIRE(run(d, "PHYSICS WIND 8,0,0").ok);
     const auto r = robotRun(d.scene, d.scene.rigs().robots[0], 10.0f);
     REQUIRE(r != nullptr);
-    const RobotRunFrame f = r->at(10.0f);
-    CHECK(std::fabs(f.com[0]) < 0.1);       // leans into the wind and stays put
-    CHECK(std::fabs(f.com[2] - 0.8) < 0.1);
-    // It leans into the wind: its body z axis tips toward -X (R's third column, x row).
-    const LinkPose b = f.links[0];
-    CHECK(b.R[2] < -0.001);
+    // Over its last four seconds it stays put and steady, leaning into the wind: its body z
+    // axis tips toward -X (R's third column, x row).
+    double lean = 0, wobble = 0;
+    int n = 0;
+    for (float t = 6.0f; t <= 10.0f; t += 0.01f, ++n) {
+        const RobotRunFrame f = r->at(t);
+        CHECK(std::fabs(f.com[0]) < 0.1);
+        CHECK(std::fabs(f.com[2] - 0.8) < 0.1);
+        lean += f.links[0].R[2];
+        wobble += f.links[0].R[5] * f.links[0].R[5]; // sideways tilt: none to make
+    }
+    CHECK(lean / n < -0.01);
+    CHECK(std::sqrt(wobble / n) < 0.03);
 }
 
 TEST_CASE("Robotics vehicles: a rover drives straight and turns at the rate asked") {

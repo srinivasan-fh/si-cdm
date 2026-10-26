@@ -164,6 +164,10 @@ std::shared_ptr<const RobotRun> robotRun(const Scene& scene, const RigSettings& 
     opt.ground = sceneGround(scene);
     opt.gravity = {scene.physics().g.x, scene.physics().g.y, scene.physics().g.z};
     if (scene.physics().gravity == GravityMode::Off) opt.gravity = {0, 0, 0};
+    if (run->engine == SimEngine::Vehicle) {
+        const Vec3 w = scene.physics().wind;
+        opt.dt = vehicleStep(vehicleModel(run->rig, {w.x, w.y, w.z}), opt.dt);
+    }
     Multibody mb(run->rig, opt);
     // Start in the programmed pose, the base set down so nothing is below the ground.
     MotionTargets t0 = motionTargets(scene, run->rig, 0.0f);

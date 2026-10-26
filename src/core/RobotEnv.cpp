@@ -206,6 +206,10 @@ std::unique_ptr<RobotEnv> RobotEnv::create(const Scene& scene, const RigSettings
     mo.ground = sceneGround(scene);
     mo.gravity = {scene.physics().g.x, scene.physics().g.y, scene.physics().g.z};
     if (scene.physics().gravity == GravityMode::Off) mo.gravity = {0, 0, 0};
+    if (engine == SimEngine::Vehicle) {
+        const Vec3 w = scene.physics().wind;
+        mo.dt = vehicleStep(vehicleModel(I.rig, {w.x, w.y, w.z}), mo.dt);
+    }
     I.start = std::make_unique<Multibody>(I.rig, mo);
     Multibody& mb = *I.start;
     // The programmed pose at time 0, set down on the ground (as a simulation run starts).
