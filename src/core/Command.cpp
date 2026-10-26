@@ -145,6 +145,10 @@ constexpr CommandSpec kCommands[] = {
      "SHEETMETAL BASE curve THICKNESS t [RADIUS r] [K k] | SHEETMETAL FLANGE [body] EDGE n | NEAR x,y,z LENGTH l [ANGLE deg] [DOWN] [RADIUS r] | "
      "SHEETMETAL EDGES | FLAT [SKETCH] | INFO [body]",
      "Sheet metal: a base plate, flanges bent on its edges, and the flat pattern (bend allowance from the K factor)"},
+    {"FEA", "STRESS ANALYSE ANALYZE",
+     "FEA [body] FIX FACE x,y,z | NEAR x,y,z r ... LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ... [MATERIAL m] [E MPa] [NU v] [YIELD MPa] [CELL size] "
+     "[PLOT] [DEFORM scale] | FEA MATERIALS",
+     "Linear static stress analysis: von Mises stress, displacement and factor of safety; PLOT colours the body by stress"},
     {"DRAFT", "TAPER", "DRAFT [body] ANGLE deg [PULL x,y,z | X | Y | Z] [NEUTRAL x,y,z]",
      "Tilt a body's side faces (those along the pull) for moulding, about the neutral plane (default: its bottom)"},
     {"FILLET", "ROUND", "FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v] [EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|TOP|BOTTOM|n...|"

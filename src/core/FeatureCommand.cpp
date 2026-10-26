@@ -9,6 +9,7 @@
 #include "core/Features.hpp"
 #include "core/HoleWizard.hpp"
 #include "core/SheetMetal.hpp"
+#include "core/Fea.hpp"
 #include "core/FileIO.hpp"
 #include "core/Sculpt.hpp"
 #include "core/SketchEdit.hpp"
@@ -1491,6 +1492,129 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             return out;
         }
         return out.fail(usage);
+    }
+
+    if (cmd == "FEA") {
+        // FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ...  LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ...
+        //     [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]
+        //     FEA MATERIALS
+        static const char* const kKeys[] = {"fix", "load", "force", "material", "e", "nu", "yield", "cell", "plot", "deform", "face", "near"};
+        auto isKey = [](const std::string& w) {
+            for (const char* k : kKeys)
+                if (w == k) return true;
+            return w.find(',') != std::string::npos;
+        };
+        const char* usage = "Usage: FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ... LOAD FACE x,y,z | LOAD NEAR x,y,z r FORCE fx,fy,fz ... "
+                            "[MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]  |  FEA MATERIALS";
+        if (a.size() == 1 && lower(a[0]) == "materials") {
+            for (const FeaMaterial& m : feaMaterials())
+                out.say("  " + m.name + fmt3(":  E %g MPa", m.E) + fmt3(", nu %g", m.nu) + fmt3(", yield %g MPa", m.yield) + fmt3(", %g g/cm3", m.density));
+            return out;
+        }
+        std::size_t i = 0;
+        const std::string name = leadingName(a, quoted, i, isKey);
+        const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select a body to analyse, or name it" : "No body named " + name);
+        FeaSetup setup;
+        setup.material = *feaMaterial("steel");
+        bool plot = false;
+        float deform = 0;
+        auto selection = [&](FeaSelection& sel) -> bool { // FACE x,y,z | NEAR x,y,z r
+            if (i + 1 >= a.size()) return false;
+            const std::string k = lower(a[++i]);
+            const auto p = i + 1 < a.size() ? parseVec3(a[i + 1]) : std::nullopt;
+            if (!p) return false;
+            ++i;
+            sel.point = *p;
+            if (k == "face") sel.kind = FeaSelection::Kind::Face;
+            else if (k == "near") {
+                const auto r = i + 1 < a.size() ? parseLength(a[i + 1]) : std::nullopt;
+                if (!r || !(*r > 0)) return false;
+                ++i;
+                sel.kind = FeaSelection::Kind::Near, sel.radius = static_cast<float>(*r);
+            } else return false;
+            return true;
+        };
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            auto number = [&](double& v) {
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x || !(*x > 0)) return false;
+                v = *x;
+                return true;
+            };
+            if (k == "fix") {
+                FeaSelection sel;
+                if (!selection(sel)) return out.fail("FIX takes FACE x,y,z or NEAR x,y,z r");
+                setup.fixed.push_back(sel);
+            } else if (k == "load") {
+                FeaLoad l;
+                if (!selection(l.where)) return out.fail("LOAD takes FACE x,y,z or NEAR x,y,z r, then FORCE fx,fy,fz");
+                if (i + 2 >= a.size() || lower(a[i + 1]) != "force") return out.fail("LOAD ... FORCE fx,fy,fz (N)");
+                i += 2;
+                const auto fv = parseVec3(a[i]);
+                if (!fv || !(length(*fv) > 0)) return out.fail("FORCE needs fx,fy,fz in newtons");
+                l.force = *fv;
+                setup.loads.push_back(l);
+            } else if (k == "material") {
+                const auto m = i + 1 < a.size() ? feaMaterial(a[++i]) : std::nullopt;
+                if (!m) return out.fail("No such material (FEA MATERIALS lists them)");
+                setup.material = *m;
+            } else if (k == "e") {
+                if (!number(setup.material.E)) return out.fail("E needs Young's modulus in MPa");
+                setup.material.name = "custom";
+            } else if (k == "nu") {
+                if (!number(setup.material.nu) || setup.material.nu >= 0.5) return out.fail("NU is Poisson's ratio, below 0.5");
+            } else if (k == "yield") {
+                if (!number(setup.material.yield)) return out.fail("YIELD needs the yield strength in MPa");
+            } else if (k == "cell") {
+                const auto x = i + 1 < a.size() ? parseLength(a[++i]) : std::nullopt;
+                if (!x || !(*x > 0)) return out.fail("CELL needs the cubes' size");
+                setup.cell = static_cast<float>(*x);
+            } else if (k == "plot") plot = true;
+            else if (k == "deform") {
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x || *x < 0) return out.fail("DEFORM needs a scale (1: true size)");
+                deform = *x, plot = true;
+            } else return out.fail(usage);
+        }
+        const Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        MeshData world = worldMesh(body);
+        if (openEdgeCount(world) != 0) return out.fail(body.name + " isn't closed: REPAIR it first");
+        if (plot) { // a plot needs vertices to show the stress between corners: finer surface triangles
+            const AABB wb = world.bounds();
+            const float detail = std::max({wb.max.x - wb.min.x, wb.max.y - wb.min.y, wb.max.z - wb.min.z}) / 80.0f;
+            Body fine = meshBody("fine", world);
+            sculptRefine(fine, setup.cell > 0 ? std::min(detail, setup.cell) : detail);
+            world = worldMesh(fine);
+        }
+        FeaResult r;
+        std::string why;
+        if (!runFea(world, setup, r, &why)) return out.fail("Cannot analyse " + body.name + ": " + why);
+        out.say("Stress analysis of " + body.name + " (" + setup.material.name + ", E " + fmt3("%g", setup.material.E) + " MPa, yield " +
+                fmt3("%g", setup.material.yield) + " MPa): " + std::to_string(r.cells) + " cubes of " + lengthText(r.cell) + ", " +
+                std::to_string(r.fixedNodes) + " nodes fixed, " + std::to_string(r.loadedNodes) + " loaded");
+        out.say("  max von Mises stress " + fmt3("%.4g", r.maxStress) + " MPa at " + pointText(r.maxStressAt));
+        out.say("  max displacement " + fmt3("%.4g", r.maxDisplacement) + " mm at " + pointText(r.maxDisplacementAt));
+        out.say("  factor of safety " + fmt3("%.3g", r.safetyFactor) + (r.safetyFactor < 1 ? "  (yields!)" : r.safetyFactor < 1.5 ? "  (thin margin)" : ""));
+        if (!r.converged) out.say("  (the solver stopped after " + std::to_string(r.iterations) + " steps before converging: results are rough)");
+        if (plot) {
+            MeshData m = world;
+            const double top = r.maxStress > 0 ? r.maxStress : 1.0;
+            for (std::size_t v = 0; v < m.vertices.size(); ++v) {
+                m.vertices[v].mask = static_cast<float>(std::clamp(static_cast<double>(r.surfaceStress[v]) / top, 0.0, 1.0));
+                if (deform > 0) m.vertices[v].position = m.vertices[v].position + r.surfaceDisplacement[v] * deform;
+            }
+            int k = 1;
+            while (bodyNamed(doc, body.name + " stress" + (k > 1 ? " " + std::to_string(k) : "")) >= 0) ++k;
+            Body res = meshBody(body.name + " stress" + (k > 1 ? " " + std::to_string(k) : ""), std::move(m), body.color);
+            res.field = "von Mises stress, MPa: 0 (blue) to " + fmt3("%.4g", r.maxStress) + " (red)";
+            doc.scene.bodies()[static_cast<std::size_t>(bi)].visible = false; // the plot in its place
+            doc.scene.pushUndo("FEA " + body.name);
+            out.say("  plot: " + res.name + " (" + res.field + (deform > 0 ? ", shape x" + fmt3("%g", deform) : std::string()) + ")");
+            addBody(doc, std::move(res));
+        }
+        return out;
     }
 
     if (cmd == "MASSPROPS") {

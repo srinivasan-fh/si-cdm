@@ -710,7 +710,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
-                                        "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL"};
+                                        "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -725,7 +725,7 @@ bool historyCommand(const std::string& cmd) {
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
-                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL"};
+                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -764,6 +764,8 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (!historyCommand(cmd)) return;
     if ((cmd == "PLANE" || cmd == "REFAXIS" || cmd == "REFPOINT") && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (cmd == "SHEETMETAL" && !pc.args.empty() && (iequal(pc.args[0], "edges") || iequal(pc.args[0], "info"))) return;
+    if (cmd == "FEA" && std::none_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "plot") || iequal(w, "deform"); }))
+        return; // a report only: the history keeps analyses that leave a plot
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
     if (st.history.empty() && st.plane != SketchPlane::Top && cmd != "PLANE") { // the plane the history starts on
         HistoryStep plane;
@@ -2441,7 +2443,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         cmd == "SKETCHMIRROR" || cmd == "SKETCHPATTERN" || cmd == "PROJECT")
         return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
-        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT" || cmd == "THREAD" || cmd == "SHEETMETAL")
+        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT" || cmd == "THREAD" || cmd == "SHEETMETAL" || cmd == "FEA")
         return runFeatureCommand(doc, cmd, a, pc.quoted);
     if (cmd == "HISTORY" || cmd == "REGEN") return runHistoryCommand(doc, cmd, a, pc.quoted);
     if (cmd == "VAR" || cmd == "CONFIG") return runVariableCommand(doc, cmd, a);

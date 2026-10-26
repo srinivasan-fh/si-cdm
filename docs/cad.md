@@ -14,7 +14,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Moulding | `DRAFT`: side faces tilted to come out of a mould |
 | Sheet metal | `SHEETMETAL`: base plate, flanges, flat pattern |
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
-| Analysis | `MASSPROPS` and `MEASURE` |
+| Analysis | `MASSPROPS`, `MEASURE` and `FEA` (stress analysis) |
 | Design intent | `VAR`: global variables and equations; `CONFIG`: configurations and design tables |
 
 Every model command goes into a **feature history** that can be edited and regenerated.
@@ -643,6 +643,41 @@ Block 1 (steel, 7.85 g/cm3)
 - **Materials:** steel, stainless, aluminium, brass, copper, cast iron, iron, titanium,
   magnesium, gold, silver, ABS, PLA, PETG, nylon, POM, acrylic, carbon, wood, glass, concrete,
   water.
+
+## Stress analysis (FEA)
+
+```text
+FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ...
+           LOAD FACE x,y,z | LOAD NEAR x,y,z r  FORCE fx,fy,fz ...
+           [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]
+FEA MATERIALS
+```
+
+FEA works out how a part bends and where it is stressed under loads: a linear static
+analysis (small displacements, linear elastic, isotropic material).
+
+- **Holding and loading:** `FIX FACE x,y,z` holds the flat face nearest the point still;
+  `LOAD FACE x,y,z FORCE fx,fy,fz` pushes on one with a force in newtons, spread evenly over
+  it. `NEAR x,y,z r` picks the surface within `r` of a point instead. Give as many as needed.
+- **Material:** steel by default; `FEA MATERIALS` lists the others (stainless, aluminium,
+  titanium, brass, copper, ABS, PLA, PETG, nylon), or give `E`, `NU` and `YIELD`.
+- **Results:** the largest von Mises stress and where, the largest displacement and where,
+  and the factor of safety (yield over that stress).
+- **PLOT** colours a copy of the body by stress, blue to red, with a legend (the body itself
+  is hidden); `DEFORM s` also shows its shape bent `s` times over. An analysis with a plot
+  goes into the feature history, so it is worked out again when the model changes.
+- **How:** the body is filled with cubes (`CELL`, about 40 across its longest side by
+  default, at most 120,000 of them), each an 8-node element; the equations are solved by
+  conjugate gradients. A 100 x 10 x 10 mm steel cantilever with 100 N on its end comes out
+  at 0.1995 mm and 61.7 MPa (with `CELL 1`), against 0.200 mm and 60 MPa from beam theory.
+  Finer cubes resolve small features (fillets, thin walls) better; stresses right at a
+  held face or a sharp inside corner run high, as they do in any such analysis.
+
+```text
+BOX 100 10 10 @50,0,0
+HOLE "Block 1" AT 30,0,10 DIAMETER 4 THROUGH
+FEA "Block 1" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 CELL 1 DEFORM 50
+```
 
 ## Measure
 

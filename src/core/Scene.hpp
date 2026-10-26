@@ -46,6 +46,7 @@ struct Body {
     std::string assembly;   // the sub-assembly it sits in ("Gearbox/Input shaft"; "" = the top level)
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
     std::vector<HoleNote> holes; // hole wizard callouts (tapped holes carry a cosmetic thread)
+    std::string field;      // a result plot ("von Mises stress, MPa: 0 to 120"): the mesh's mask is the value, 0..1, drawn in colours
     // Exact geometry (STEP imports and the primitives), in the mesh's own frame: good
     // while the mesh is still the one made with it (a sculpt, boolean or remesh leaves it
     // behind, and exports fall back to the mesh's facets).

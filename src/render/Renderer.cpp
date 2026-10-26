@@ -67,7 +67,16 @@ uniform float uOrtho;
 uniform float uHiddenLine;
 uniform vec3 uPaper;      // hidden-line face fill
 uniform vec3 uInk;        // hidden-line silhouette colour
+uniform float uField;     // 1: the mask is a result (0..1), drawn blue - green - red
 out vec4 fragColor;
+vec3 fieldColour(float t) {
+    t = clamp(t, 0.0, 1.0);
+    vec3 a = vec3(0.10, 0.25, 0.95), b = vec3(0.10, 0.85, 0.95), c = vec3(0.20, 0.90, 0.25), d = vec3(0.98, 0.90, 0.15), e = vec3(0.95, 0.15, 0.10);
+    if (t < 0.25) return mix(a, b, t / 0.25);
+    if (t < 0.5) return mix(b, c, (t - 0.25) / 0.25);
+    if (t < 0.75) return mix(c, d, (t - 0.5) / 0.25);
+    return mix(d, e, (t - 0.75) / 0.25);
+}
 void main() {
     vec3 N = normalize(vNormal);
     vec3 V = uOrtho > 0.5 ? -uCamDir : normalize(uCamPos - vWorldPos);
@@ -97,7 +106,8 @@ void main() {
     vec3 ambient = mix(vec3(0.16, 0.15, 0.14), vec3(0.24, 0.26, 0.30), hemi);
 
     vec3 base = mix(uColor, vec3(0.30, 0.65, 1.00), uHighlight * 0.55);
-    base *= 1.0 - 0.6 * clamp(vMask, 0.0, 1.0); // masked: darker
+    if (uField > 0.5) base = mix(fieldColour(vMask), vec3(0.30, 0.65, 1.00), uHighlight * 0.3);
+    else base *= 1.0 - 0.6 * clamp(vMask, 0.0, 1.0); // masked: darker
     vec3 c = base * (ambient + diff) + vec3(spec);
     // Light rim to separate silhouettes from the background.
     c += pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.08;
@@ -718,6 +728,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         for (std::size_t i = 0; i < count; ++i) {
             if (!bodies[i].visible) continue;
             m_mesh.set("uColor", bodies[i].color);
+            m_mesh.set("uField", bodies[i].field.empty() ? 0.0f : 1.0f);
             m_mesh.set("uModel", model(i));
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
             glBindVertexArray(gpu(i).vao);

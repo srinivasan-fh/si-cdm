@@ -1637,6 +1637,7 @@ void Application::frame(float dt) {
     if (m_uiState.mode == ViewMode::Drawing2D && !m_doc.scene.sketch().constraints().empty()) drawConstraintOverlay();
     if (m_uiState.mode == ViewMode::Model3D && (!m_doc.state.datums.empty() || !m_doc.state.refAxes.empty() || !m_doc.state.refPoints.empty()))
         drawDatumOverlay();
+    if (m_uiState.mode == ViewMode::Model3D) drawFieldLegend();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active())))
         drawSculptOverlay();
@@ -2408,6 +2409,24 @@ void Application::updateLoopShapes() {
 
 // Sketch constraints in the 2D view: each dimension's value by its geometry, and a
 // short tag (H, V, //, perpendicular, T, =, ...) for the geometric ones. Unmet ones red.
+// The colour scale of a result plot (FEA PLOT) shown in the window: its legend in the corner.
+void Application::drawFieldLegend() const {
+    const Body* shown = nullptr;
+    for (const Body& b : m_doc.scene.bodies())
+        if (b.visible && !b.field.empty()) shown = &b;
+    if (!shown) return;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    const ImVec2 lo = m_ui.canvasMin();
+    const float x = lo.x + 16, y = m_ui.canvasMax().y - 120, w = 220, hgt = 14;
+    static const ImU32 stops[5] = {IM_COL32(26, 64, 242, 255), IM_COL32(26, 217, 242, 255), IM_COL32(51, 230, 64, 255), IM_COL32(250, 230, 38, 255),
+                                   IM_COL32(242, 38, 26, 255)};
+    for (int k = 0; k < 4; ++k)
+        dl->AddRectFilledMultiColor(ImVec2(x + w * static_cast<float>(k) / 4, y), ImVec2(x + w * static_cast<float>(k + 1) / 4, y + hgt), stops[k], stops[k + 1],
+                                    stops[k + 1], stops[k]);
+    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + hgt), IM_COL32(200, 205, 215, 160));
+    dl->AddText(ImVec2(x, y - 18), IM_COL32(220, 225, 235, 230), (shown->name + ": " + shown->field).c_str());
+}
+
 // Datum planes as framed squares (the sketch plane brighter), reference axes as long dashed
 // lines and reference points as crosses, each with its name.
 void Application::drawDatumOverlay() const {

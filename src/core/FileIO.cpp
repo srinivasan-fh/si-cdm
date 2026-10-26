@@ -476,6 +476,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (!b.component.empty()) jb.set("component", b.component);
         if (!b.attachedTo.empty()) jb.set("attached_to", b.attachedTo);
         if (!b.assembly.empty()) jb.set("assembly", b.assembly);
+        if (!b.field.empty()) jb.set("field", b.field);
         if (!b.holes.empty()) {
             Json hs = Json::array();
             for (const HoleNote& h : b.holes) {
@@ -821,6 +822,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         b.component = jb["component"].asString();
         b.attachedTo = jb["attached_to"].asString();
         b.assembly = jb["assembly"].asString();
+        b.field = jb["field"].asString();
         for (const Json& jh : jb["holes"].items())
             b.holes.push_back({jsonVec3(jh["at"]), jsonVec3(jh["dir"], {0, 0, -1}), jh["callout"].asString(), jh["thread"].asFloat(),
                                jh["pitch"].asFloat(), jh["thread_depth"].asFloat(), jh["modelled"].asBool(false)});

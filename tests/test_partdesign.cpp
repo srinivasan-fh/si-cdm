@@ -7,6 +7,7 @@
 #include "core/HoleWizard.hpp"
 #include "core/Variables.hpp"
 #include "core/SheetMetal.hpp"
+#include "core/Fea.hpp"
 #include "core/Json.hpp"
 #include "core/Brep.hpp"
 #include "core/Scene.hpp"
@@ -719,4 +720,48 @@ TEST_CASE("Sheet metal: base, flanges, bend allowance and the flat pattern") {
     REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
     std::filesystem::remove(path);
     CHECK_NEAR(volumeOf(e.scene.bodies()[0]), volumeOf(d.scene.bodies()[0]), 1e-2);
+}
+
+TEST_CASE("FEA: a cantilever's deflection and bending stress match beam theory") {
+    // 100 x 10 x 10 steel, held at one end, 100 N down at the other:
+    // deflection P L^3 / (3 E I) = 0.2 mm, root stress M c / I = 60 MPa.
+    Document d;
+    REQUIRE(run(d, "BOX 100 10 10 @50,0,0").ok);
+    FeaSetup setup;
+    setup.material = *feaMaterial("steel");
+    setup.fixed.push_back({FeaSelection::Kind::Face, {0, 0, 5}, 0});
+    setup.loads.push_back({{FeaSelection::Kind::Face, {100, 0, 5}, 0}, {0, 0, -100}});
+    setup.cell = 1;
+    FeaResult r;
+    std::string why;
+    REQUIRE(runFea(worldMesh(last(d)), setup, r, &why));
+    CHECK(r.converged);
+    CHECK(r.cells == 10000);
+    CHECK_NEAR(r.maxDisplacement, 0.2, 0.2 * 0.05);
+    CHECK_NEAR(r.maxStress, 60.0, 60.0 * 0.08);
+    CHECK_NEAR(r.maxDisplacementAt.x, 100.0f, 1e-3);
+    CHECK(r.maxStressAt.x < 5.0f); // at the root
+    CHECK_NEAR(r.safetyFactor, 250.0 / r.maxStress, 1e-9);
+    // Aluminium bends E_steel / E_al times as much.
+    setup.material = *feaMaterial("aluminum");
+    FeaResult al;
+    REQUIRE(runFea(worldMesh(last(d)), setup, al, &why));
+    CHECK_NEAR(al.maxDisplacement / r.maxDisplacement, 200000.0 / 69000.0, 0.01);
+    // Refused: nothing held, nothing loaded.
+    setup.fixed.clear();
+    CHECK(!runFea(worldMesh(last(d)), setup, al, &why));
+
+    // The command: a report, and with PLOT a coloured copy (kept in the history).
+    const CommandOutput o = run(d, "FEA \"Block 1\" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 CELL 2 PLOT");
+    REQUIRE(o.ok);
+    REQUIRE(d.scene.bodies().size() == 2);
+    CHECK(!d.scene.bodies()[0].visible);
+    CHECK(!last(d).field.empty());
+    float hi = 0;
+    for (const Vertex& v : last(d).mesh.vertices) hi = std::max(hi, v.mask);
+    CHECK_NEAR(hi, 1.0f, 0.05);
+    CHECK(d.state.history.back().line.find("FEA") == 0);
+    CHECK(run(d, "FEA MATERIALS").ok);
+    CHECK(!run(d, "FEA \"Block 1\" LOAD FACE 100,0,5 FORCE 0,0,-100").ok);
+    CHECK(!run(d, "FEA \"Block 1\" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 MATERIAL unobtainium").ok);
 }
