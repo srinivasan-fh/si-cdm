@@ -572,3 +572,42 @@ TEST_CASE("Variables and equations drive the model; configurations and design ta
     REQUIRE(run(e, "CONFIG large").ok);
     CHECK_NEAR(volumeOf(last(e)), 80 * 40 * 10 - 3.14159265 * 36 * 10, 8.0);
 }
+
+TEST_CASE("PATTERN along a curve, at sketch points, and filling a region") {
+    Document d;
+    REQUIRE(run(d, "CYLINDER 2 5 @0,0,0").ok);
+    REQUIRE(run(d, "ARC CENTER 0,40 0,0 40,40").ok); // a quarter circle from (0,0) to (40,40)
+    REQUIRE(run(d, "PATTERN \"Cylinder 1\" ALONG \"Arc 1\" 5").ok);
+    REQUIRE(d.scene.bodies().size() == 5);
+    CHECK_NEAR(d.scene.bodies()[4].offset.x, 40.0f, 0.05);
+    CHECK_NEAR(d.scene.bodies()[4].offset.y, 40.0f, 0.05);
+    // The middle one halfway round: 45 degrees.
+    CHECK_NEAR(d.scene.bodies()[2].offset.x, 40 * std::sin(3.14159265f / 4), 0.05);
+    CHECK(!run(d, "PATTERN \"Cylinder 1\" ALONG \"Arc 1\"").ok); // how many?
+
+    Document p;
+    for (const char* q : {"POINT 100,0", "POINT 110,10", "POINT 120,0"}) REQUIRE(run(p, q).ok);
+    REQUIRE(run(p, "CYLINDER 2 5 @100,0,0").ok);
+    REQUIRE(run(p, "PATTERN \"Cylinder 1\" POINTS").ok);
+    REQUIRE(p.scene.bodies().size() == 3); // the original already sits on the first
+    CHECK_NEAR(p.scene.bodies()[1].offset.x, 110.0f, 1e-4);
+    CHECK_NEAR(p.scene.bodies()[1].offset.y, 10.0f, 1e-4);
+    CHECK_NEAR(p.scene.bodies()[1].offset.z, 0.0f, 1e-4);
+
+    // 24 holes filling a 60 x 40 rectangle 10 apart, 3 in from its edge, cut through a plate.
+    Document f;
+    REQUIRE(run(f, "RECT 200,0 260,40").ok);
+    REQUIRE(run(f, "BOX 70 50 5 @230,20,-5").ok);
+    REQUIRE(run(f, "CYLINDER 2 10 @205,5,-5").ok);
+    REQUIRE(run(f, "PATTERN \"Cylinder 2\" FILL \"Rectangle 1\" SPACING 10 MARGIN 3 SUBTRACT \"Block 1\"").ok);
+    REQUIRE(f.scene.bodies().size() == 1);
+    CHECK_NEAR(volumeOf(last(f)), 70 * 50 * 5 - 24 * 3.14159265 * 4 * 5, 15.0);
+    CHECK(openEdgeCount(last(f).mesh) == 0);
+    // Staggered rows fit differently.
+    Document g;
+    REQUIRE(run(g, "RECT 200,0 260,40").ok);
+    REQUIRE(run(g, "CYLINDER 2 5 @205,5,0").ok);
+    REQUIRE(run(g, "PATTERN \"Cylinder 1\" FILL \"Rectangle 1\" SPACING 10 STAGGER MARGIN 3").ok);
+    CHECK(g.scene.bodies().size() == 22);
+    CHECK(!run(g, "PATTERN \"Cylinder 1\" FILL \"Rectangle 1\"").ok); // SPACING
+}

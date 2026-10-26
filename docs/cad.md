@@ -448,10 +448,22 @@ LOFT makes a solid through two or more closed sections in order.
 ```text
 PATTERN [body] LINEAR n SPACING d [DIR X|Y|Z|x,y,z] [ROWS m SPACING2 d DIR2 x,y,z]
 PATTERN [body] CIRCULAR n [ANGLE a] [AXIS X|Y|Z|x,y,z] [AT x,y,z]
+PATTERN [body] ALONG curve n [ALIGN]
+PATTERN [body] POINTS [REF x,y,z]
+PATTERN [body] FILL curve SPACING d [SPACING2 d] [STAGGER] [MARGIN m] [REF x,y,z]
         [UNION "target" | SUBTRACT "target"]
 ```
 
 PATTERN makes copies of a body: `n` along a line, or `n` × `m` in rows, or `n` round an axis.
+
+- **Along a curve:** `n` spaced evenly along a sketch curve, the original at its start
+  (round a closed one, evenly all the way). `ALIGN` turns each copy with the curve.
+- **At sketch points:** a copy at each visible sketch point (`POINT x,y`). The body's
+  reference point goes onto each: its centre, on the points' plane, or `REF`.
+- **Filling a region:** copies on a grid `SPACING` apart (rows `SPACING2` apart, the same by
+  default) inside a closed sketch profile, `MARGIN` in from its edge; `STAGGER` shifts every
+  other row by half. The grid runs through the reference point (as for `POINTS`), where the
+  original stays.
 
 - **Circular:** a full turn spaces the copies evenly. A partial `ANGLE` puts the first and last
   copies at its ends.

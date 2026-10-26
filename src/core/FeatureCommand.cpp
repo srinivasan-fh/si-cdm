@@ -656,7 +656,8 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
 
     if (cmd == "PATTERN" || cmd == "MIRROR") {
         static const char* const kKeys[] = {"linear", "circular", "spacing", "dir", "rows", "spacing2", "dir2", "angle", "axis", "at",
-                                            "union", "subtract", "plane", "normal", "copy", "move", "into", "xy", "yz", "xz", "zx"};
+                                            "union", "subtract", "plane", "normal", "copy", "move", "into", "xy", "yz", "xz", "zx",
+                                            "along", "align", "points", "fill", "stagger", "margin", "ref"};
         auto isKey = [](const std::string& w) {
             for (const char* k : kKeys)
                 if (w == k) return true;
@@ -682,10 +683,34 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             float spacing = 0, spacing2 = 0, angle = 360;
             Vec3 dir{1, 0, 0}, dir2{0, 1, 0}, axis{0, 0, 1}, at = src.bounds().center();
             bool atGiven = false;
+            // Along a curve, at sketch points, or filling a region.
+            std::string alongName, fillName;
+            bool align = false, points = false, stagger = false;
+            float margin = 0;
+            std::optional<Vec3> ref;
             for (; i < a.size(); ++i) {
                 const std::string k = lower(a[i]);
                 auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
-                if (k == "linear" || k == "circular") {
+                if (k == "along" || k == "fill") {
+                    ++i;
+                    (k == "along" ? alongName : fillName) = leadingName(a, quoted, i, [&](const std::string& w) { return isKey(w) || parseNumber(w).has_value(); });
+                    --i;
+                    if (k == "along" && i + 1 < a.size()) {
+                        if (const auto v = parseNumber(a[i + 1])) {
+                            if (*v < 2 || *v > 500) return out.fail("The count is 2 to 500");
+                            n = static_cast<int>(*v), ++i;
+                        }
+                    }
+                } else if (k == "align") align = true;
+                else if (k == "points") points = true;
+                else if (k == "stagger") stagger = true;
+                else if (k == "margin") {
+                    const auto v = parseLength(next());
+                    if (!v || *v < 0) return out.fail("MARGIN needs a length");
+                    margin = static_cast<float>(*v);
+                } else if (k == "ref") {
+                    if (!(ref = parseVec3(next()))) return out.fail("REF needs the point x,y,z that goes onto each place");
+                } else if (k == "linear" || k == "circular") {
                     circular = k == "circular";
                     const auto v = parseNumber(next());
                     if (!v || *v < 2 || *v > 500) return out.fail("The count is 2 to 500");
@@ -718,10 +743,130 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                     into = leadingName(a, quoted, i, isKey);
                     --i;
                 } else return out.fail("Usage: PATTERN [body] LINEAR n SPACING d [DIR x,y,z] [ROWS m SPACING2 d DIR2 x,y,z] | CIRCULAR n [ANGLE a] "
-                                       "[AXIS X|Y|Z|x,y,z] [AT x,y,z] [UNION|SUBTRACT \"target\"]");
+                                       "[AXIS X|Y|Z|x,y,z] [AT x,y,z] | ALONG curve n [ALIGN] | POINTS [REF x,y,z] | FILL curve SPACING d "
+                                       "[SPACING2 d] [STAGGER] [MARGIN m] [REF x,y,z]  [UNION|SUBTRACT \"target\"]");
             }
-            if (n < 2) return out.fail("Give LINEAR n or CIRCULAR n");
-            if (!circular) {
+            const bool special = !alongName.empty() || !fillName.empty() || points;
+            auto place = [&](const Mat4& t) {
+                placements.push_back(t);
+                if (!merge) return;
+                MeshData m = world;
+                m.transform(t);
+                copies.push_back(std::move(m));
+            };
+            if (special) {
+                if ((!alongName.empty()) + (!fillName.empty()) + points > 1) return out.fail("ALONG, POINTS and FILL go one at a time");
+                const Vec3 centre = src.bounds().center();
+                if (!alongName.empty()) {
+                    // n copies spaced evenly along a curve (the original at its start).
+                    const int pc = curveNamed(doc, alongName);
+                    if (pc < 0) return out.fail("No sketch curve named " + alongName);
+                    if (n < 2) return out.fail("ALONG curve n: how many, the original the first");
+                    std::vector<Vec3> path;
+                    bool closedPath = false;
+                    const SketchCurve& pcurve = doc.scene.sketch().curves()[static_cast<std::size_t>(pc)];
+                    path.clear();
+                    for (const Vec3& q : pcurve.worldStrip(96)) path.push_back(q);
+                    closedPath = pcurve.isClosed();
+                    if (closedPath && path.size() > 1 && length(path.front() - path.back()) < 1e-5f) path.pop_back();
+                    if (path.size() < 2) return out.fail(alongName + " has no length");
+                    std::vector<float> cum{0};
+                    const std::size_t segs = closedPath ? path.size() : path.size() - 1;
+                    for (std::size_t k = 0; k < segs; ++k) cum.push_back(cum.back() + length(path[(k + 1) % path.size()] - path[k]));
+                    const float total = cum.back();
+                    if (!(total > 1e-6f)) return out.fail(alongName + " has no length");
+                    auto pointAt = [&](float sArc, Vec3& tangent) {
+                        std::size_t k = static_cast<std::size_t>(std::upper_bound(cum.begin(), cum.end(), sArc) - cum.begin());
+                        k = std::clamp<std::size_t>(k, 1, segs) - 1;
+                        const Vec3 p0 = path[k], p1 = path[(k + 1) % path.size()];
+                        const float l = std::max(cum[k + 1] - cum[k], 1e-9f);
+                        tangent = normalize(p1 - p0);
+                        return p0 + (p1 - p0) * ((sArc - cum[k]) / l);
+                    };
+                    Vec3 t0;
+                    const Vec3 p0 = pointAt(0, t0);
+                    for (int k = 1; k < n; ++k) {
+                        const float sArc = total * static_cast<float>(k) / static_cast<float>(closedPath ? n : n - 1);
+                        Vec3 tk;
+                        const Vec3 pk = pointAt(std::min(sArc, total), tk);
+                        Mat4 t = translate(pk - p0);
+                        if (align) { // turned with the curve, about its own point on it
+                            const Vec3 c = cross(t0, tk);
+                            const float sn = length(c), cs = dot(t0, tk);
+                            if (sn > 1e-6f) t = translate(pk) * rotateAxis(c / sn, std::atan2(sn, cs)) * translate(-p0);
+                            else if (cs < 0) t = translate(pk) * rotateAxis(std::fabs(t0.z) < 0.9f ? normalize(cross(t0, Vec3{0, 0, 1})) : Vec3{1, 0, 0}, kPi) * translate(-p0);
+                        }
+                        place(t);
+                    }
+                    what = std::to_string(n) + " along " + pcurve.name + (align ? " (aligned)" : "");
+                } else if (points) {
+                    // A copy at each visible sketch point, its reference point (the body's centre
+                    // on the points' plane, or REF) moved onto it.
+                    std::vector<const SketchCurve*> pts;
+                    for (const SketchCurve& c : doc.scene.sketch().curves())
+                        if (c.visible && c.kind == CurveKind::Point && !c.pts.empty()) pts.push_back(&c);
+                    if (pts.empty()) return out.fail("No sketch points to pattern at (POINT x,y makes them)");
+                    const PlaneFrame f = curveFrame(*pts[0]);
+                    const Vec3 r = ref ? *ref : centre - f.normal * dot(centre - f.origin, f.normal);
+                    for (const SketchCurve* c : pts) {
+                        const Vec3 off = curveFrame(*c).toWorld(c->pts[0]) - r;
+                        if (length(off) < 1e-5f) continue; // where the original is
+                        place(translate(off));
+                    }
+                    what = std::to_string(placements.size() + 1) + " at sketch points";
+                } else {
+                    // Filling a closed sketch profile on a grid SPACING apart (rows SPACING2,
+                    // default the same; STAGGER shifts every other row), MARGIN in from its edge.
+                    const int fc = curveNamed(doc, fillName);
+                    if (fc < 0) return out.fail("No sketch curve named " + fillName);
+                    if (!(spacing > 0)) return out.fail("FILL needs SPACING");
+                    const float s2 = spacing2 > 0 ? spacing2 : spacing;
+                    std::string why;
+                    const auto prof = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(fc), &why);
+                    if (!prof) return out.fail("Cannot fill " + fillName + ": " + why);
+                    const SketchCurve& fcurve = doc.scene.sketch().curves()[static_cast<std::size_t>(fc)];
+                    const PlaneFrame f = curveFrame(fcurve);
+                    const std::vector<Vec2> poly = profilePolygon(*prof);
+                    const Vec3 r = ref ? *ref : centre - f.normal * dot(centre - f.origin, f.normal);
+                    const Vec2 rp = f.toPlane(r);
+                    auto inside = [&](Vec2 q) {
+                        bool in = false;
+                        for (std::size_t k = 0, j = poly.size() - 1; k < poly.size(); j = k++) {
+                            const Vec2 a2 = poly[k], b2 = poly[j];
+                            if ((a2.y > q.y) != (b2.y > q.y) && q.x < (b2.x - a2.x) * (q.y - a2.y) / (b2.y - a2.y) + a2.x) in = !in;
+                        }
+                        if (!in || margin <= 0) return in;
+                        for (std::size_t k = 0; k < poly.size(); ++k) { // far enough from every side
+                            const Vec2 a2 = poly[k], b2 = poly[(k + 1) % poly.size()];
+                            const float dx = b2.x - a2.x, dy = b2.y - a2.y, l2 = dx * dx + dy * dy;
+                            const float t = l2 > 0 ? std::clamp(((q.x - a2.x) * dx + (q.y - a2.y) * dy) / l2, 0.0f, 1.0f) : 0.0f;
+                            if (std::hypot(q.x - (a2.x + dx * t), q.y - (a2.y + dy * t)) < margin) return false;
+                        }
+                        return true;
+                    };
+                    Vec2 lo = poly[0], hi = poly[0];
+                    for (const Vec2& q : poly) lo = {std::min(lo.x, q.x), std::min(lo.y, q.y)}, hi = {std::max(hi.x, q.x), std::max(hi.y, q.y)};
+                    // The grid runs through the reference point.
+                    const long r0 = static_cast<long>(std::floor((lo.y - rp.y) / s2)) - 1, r1 = static_cast<long>(std::ceil((hi.y - rp.y) / s2)) + 1;
+                    if (static_cast<float>(r1 - r0) * ((hi.x - lo.x) / spacing + 3) > 5000) return out.fail("That fills more than 5000 places: a wider SPACING");
+                    int count = 0;
+                    for (long row = r0; row <= r1; ++row) {
+                        const float shift = stagger && (row % 2 != 0) ? spacing * 0.5f : 0.0f;
+                        const long c0 = static_cast<long>(std::floor((lo.x - rp.x - shift) / spacing)) - 1;
+                        const long c1 = static_cast<long>(std::ceil((hi.x - rp.x - shift) / spacing)) + 1;
+                        for (long col = c0; col <= c1; ++col) {
+                            const Vec2 q{rp.x + shift + spacing * static_cast<float>(col), rp.y + s2 * static_cast<float>(row)};
+                            if (!inside(q)) continue;
+                            ++count;
+                            if (std::hypot(q.x - rp.x, q.y - rp.y) < 1e-5f) continue; // the original's place
+                            place(translate(f.toWorld(q) - r));
+                        }
+                    }
+                    if (placements.empty()) return out.fail("No place inside " + fillName + " for a copy (the reference point and SPACING set the grid)");
+                    what = std::to_string(count) + " filling " + fcurve.name;
+                }
+            } else if (n < 2) return out.fail("Give LINEAR n, CIRCULAR n, ALONG curve n, POINTS or FILL curve");
+            else if (!circular) {
                 if (spacing == 0) return out.fail("LINEAR needs SPACING");
                 if (rows > 1 && spacing2 == 0) return out.fail("ROWS needs SPACING2");
                 for (int r = 0; r < rows; ++r)
