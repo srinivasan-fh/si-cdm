@@ -1,6 +1,7 @@
 #include "core/SketchEdit.hpp"
 
 #include "core/Extrude.hpp"
+#include "core/Units.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -573,6 +574,207 @@ std::vector<Vec2> chainLoop(const Sketch& sketch, std::size_t index, std::vector
     if (poly.size() < 3) return {};
     if (signedArea(poly) < 0) std::reverse(poly.begin(), poly.end());
     return poly;
+}
+
+// --- corners, mirrors and patterns -------------------------------------------------------
+
+namespace {
+float dist(Vec2 a, Vec2 b) { return std::hypot(a.x - b.x, a.y - b.y); }
+} // namespace
+
+bool cornerPath(const SketchCurve& c, std::vector<Vec2>& pts, bool& closed) {
+    pts.clear();
+    closed = false;
+    switch (c.kind) {
+    case CurveKind::Line:
+        if (c.pts.size() < 2) return false;
+        pts = {c.pts[0], c.pts[1]};
+        return true;
+    case CurveKind::Polyline:
+        for (const Vec2& p : c.pts)
+            if (pts.empty() || dist(pts.back(), p) > 1e-6f) pts.push_back(p);
+        if (pts.size() > 2 && dist(pts.front(), pts.back()) < 1e-4f) pts.pop_back(), closed = true;
+        return pts.size() >= 2;
+    case CurveKind::Rectangle: {
+        if (c.pts.size() < 2) return false;
+        const Vec2 a = c.pts[0], b = c.pts[1];
+        pts = {a, {b.x, a.y}, b, {a.x, b.y}};
+        if (signedArea(pts) < 0) std::reverse(pts.begin(), pts.end());
+        closed = true;
+        return true;
+    }
+    default: return false;
+    }
+}
+
+namespace {
+
+SketchCurve pieceLike(const SketchCurve& src, CurveKind kind) {
+    SketchCurve c;
+    c.kind = kind;
+    c.plane = src.plane;
+    c.frame = src.frame;
+    c.construction = src.construction;
+    c.visible = src.visible;
+    return c;
+}
+
+// The fillet or chamfer at corner p between the side arriving along d1 and the one leaving
+// along d2 (unit): how far back along each side it starts (t), and the piece between.
+bool cornerPiece(const SketchCurve& like, Vec2 p, Vec2 d1, Vec2 d2, float size, bool chamfer, float& t, SketchCurve& piece) {
+    const float c = std::clamp(-(d1.x * d2.x + d1.y * d2.y), -1.0f, 1.0f); // cos of the angle inside the corner
+    const float inside = std::acos(c);
+    if (inside < radians(0.5f) || inside > radians(179.5f)) return false; // folded back, or straight on
+    const Vec2 t1dir{-d1.x, -d1.y};
+    if (chamfer) {
+        t = size;
+        piece = pieceLike(like, CurveKind::Line);
+        piece.pts = {{p.x + t1dir.x * t, p.y + t1dir.y * t}, {p.x + d2.x * t, p.y + d2.y * t}};
+        return true;
+    }
+    t = size / std::tan(inside * 0.5f);
+    const Vec2 a{p.x + t1dir.x * t, p.y + t1dir.y * t}, b{p.x + d2.x * t, p.y + d2.y * t};
+    Vec2 bis{t1dir.x + d2.x, t1dir.y + d2.y};
+    const float bl = std::hypot(bis.x, bis.y);
+    bis = {bis.x / bl, bis.y / bl};
+    const float h = size / std::sin(inside * 0.5f);
+    const Vec2 centre{p.x + bis.x * h, p.y + bis.y * h};
+    piece = pieceLike(like, CurveKind::Arc);
+    piece.radius = size;
+    const bool left = d1.x * d2.y - d1.y * d2.x > 0; // turning left: the arc runs counter-clockwise from a to b
+    piece.pts = left ? std::vector<Vec2>{centre, a, b} : std::vector<Vec2>{centre, b, a};
+    return true;
+}
+
+} // namespace
+
+bool roundCorners(const SketchCurve& c, const std::vector<int>& cornersIn, float size, bool chamfer, std::vector<SketchCurve>& out, std::string* why) {
+    auto fail = [&](std::string w) {
+        if (why) *why = std::move(w);
+        return false;
+    };
+    out.clear();
+    if (!(size > 0.0f)) return fail(chamfer ? "The chamfer needs a size" : "The fillet needs a radius");
+    std::vector<Vec2> p;
+    bool closed = false;
+    if (!cornerPath(c, p, closed)) return fail(c.name + " has no corners to round (lines, polylines and rectangles do)");
+    const int n = static_cast<int>(p.size());
+    std::vector<char> pick(static_cast<std::size_t>(n), 0);
+    const int first = closed ? 0 : 1, last = closed ? n - 1 : n - 2;
+    if (last < first) return fail(c.name + " has no corners");
+    if (cornersIn.empty())
+        for (int i = first; i <= last; ++i) pick[static_cast<std::size_t>(i)] = 1;
+    for (int k : cornersIn) {
+        if (k < first || k > last) return fail("Corner " + std::to_string(k + 1) + " isn't a corner of " + c.name);
+        pick[static_cast<std::size_t>(k)] = 1;
+    }
+    // Each picked corner: how far it eats into its two sides, and its piece.
+    std::vector<float> trim(static_cast<std::size_t>(n), 0.0f);
+    std::vector<SketchCurve> piece(static_cast<std::size_t>(n));
+    std::vector<char> made(static_cast<std::size_t>(n), 0);
+    auto dir = [&](int i, int j) {
+        const Vec2 d{p[static_cast<std::size_t>(j)].x - p[static_cast<std::size_t>(i)].x, p[static_cast<std::size_t>(j)].y - p[static_cast<std::size_t>(i)].y};
+        const float l = std::hypot(d.x, d.y);
+        return Vec2{d.x / l, d.y / l};
+    };
+    for (int i = 0; i < n; ++i) {
+        if (!pick[static_cast<std::size_t>(i)]) continue;
+        const int prev = (i + n - 1) % n, next = (i + 1) % n;
+        float t = 0;
+        if (!cornerPiece(c, p[static_cast<std::size_t>(i)], dir(prev, i), dir(i, next), size, chamfer, t, piece[static_cast<std::size_t>(i)]))
+            continue; // a straight-through point: nothing to round
+        trim[static_cast<std::size_t>(i)] = t;
+        made[static_cast<std::size_t>(i)] = 1;
+    }
+    // Every side must keep room for the corners at both its ends.
+    const int sides = closed ? n : n - 1;
+    for (int s = 0; s < sides; ++s) {
+        const int i = s, j = (s + 1) % n;
+        const float len = dist(p[static_cast<std::size_t>(i)], p[static_cast<std::size_t>(j)]);
+        if (trim[static_cast<std::size_t>(i)] + trim[static_cast<std::size_t>(j)] > len + 1e-5f)
+            return fail(std::string(chamfer ? "A chamfer" : "A fillet") + " of " + lengthText(size) + " doesn't fit side " + std::to_string(s + 1) + " of " + c.name +
+                        " (" + lengthText(len) + " long)");
+    }
+    if (std::find(made.begin(), made.end(), 1) == made.end()) return fail("No corner of " + c.name + " to round there");
+    // Walk the sides from a rounded corner (closed) or the start (open), gathering straight
+    // runs into polylines with the corner pieces between.
+    const int start = closed ? static_cast<int>(std::find(made.begin(), made.end(), 1) - made.begin()) : 0;
+    std::vector<Vec2> run;
+    auto flush = [&] {
+        if (run.size() >= 2) {
+            SketchCurve r = pieceLike(c, run.size() == 2 ? CurveKind::Line : CurveKind::Polyline);
+            r.pts = run;
+            out.push_back(std::move(r));
+        }
+        run.clear();
+    };
+    for (int s = 0; s < sides; ++s) {
+        const int i = (start + s) % n, j = (i + 1) % n;
+        const Vec2 d = dir(i, j);
+        const Vec2 a{p[static_cast<std::size_t>(i)].x + d.x * trim[static_cast<std::size_t>(i)], p[static_cast<std::size_t>(i)].y + d.y * trim[static_cast<std::size_t>(i)]};
+        const Vec2 b{p[static_cast<std::size_t>(j)].x - d.x * trim[static_cast<std::size_t>(j)], p[static_cast<std::size_t>(j)].y - d.y * trim[static_cast<std::size_t>(j)]};
+        if (run.empty()) run.push_back(a);
+        if (dist(run.back(), b) > 1e-6f) run.push_back(b);
+        if (made[static_cast<std::size_t>(j)] && (closed || j != n - 1)) {
+            flush();
+            out.push_back(piece[static_cast<std::size_t>(j)]);
+        }
+    }
+    flush();
+    return true;
+}
+
+bool filletLines(const SketchCurve& a, const SketchCurve& b, float size, bool chamfer, SketchCurve& outA, SketchCurve& outB, SketchCurve& between,
+                 std::string* why) {
+    auto fail = [&](const char* w) {
+        if (why) *why = w;
+        return false;
+    };
+    if (a.kind != CurveKind::Line || b.kind != CurveKind::Line || a.pts.size() < 2 || b.pts.size() < 2) return fail("Fillet two lines, or the corners of one curve");
+    if (!samePlane(a, b)) return fail("The lines are on different planes");
+    // Where they meet, extended.
+    const Vec2 p = a.pts[0], r{a.pts[1].x - a.pts[0].x, a.pts[1].y - a.pts[0].y};
+    const Vec2 q = b.pts[0], s{b.pts[1].x - b.pts[0].x, b.pts[1].y - b.pts[0].y};
+    const float den = r.x * s.y - r.y * s.x;
+    if (std::fabs(den) < 1e-9f * std::max(1.0f, std::hypot(r.x, r.y) * std::hypot(s.x, s.y))) return fail("The lines are parallel");
+    const float ta = ((q.x - p.x) * s.y - (q.y - p.y) * s.x) / den;
+    const Vec2 x{p.x + r.x * ta, p.y + r.y * ta};
+    // Each line keeps its end away from the corner.
+    auto far = [&](const SketchCurve& l, int& keep) {
+        keep = dist(l.pts[0], x) >= dist(l.pts[1], x) ? 0 : 1;
+        return l.pts[static_cast<std::size_t>(keep)];
+    };
+    int ka = 0, kb = 0;
+    const Vec2 fa = far(a, ka), fb = far(b, kb);
+    const float la = dist(fa, x), lb = dist(fb, x);
+    if (la < 1e-6f || lb < 1e-6f) return fail("A line ends where they meet: nothing to round");
+    const Vec2 d1{(x.x - fa.x) / la, (x.y - fa.y) / la}, d2{(fb.x - x.x) / lb, (fb.y - x.y) / lb};
+    float t = 0;
+    if (!cornerPiece(a, x, d1, d2, size, chamfer, t, between)) return fail("The lines are in line: nothing to round");
+    if (t > la + 1e-5f || t > lb + 1e-5f) return fail(chamfer ? "The chamfer is longer than a line" : "The fillet is too big for the lines");
+    outA = a, outB = b;
+    outA.pts[static_cast<std::size_t>(1 - ka)] = {x.x - d1.x * t, x.y - d1.y * t};
+    outB.pts[static_cast<std::size_t>(1 - kb)] = {x.x + d2.x * t, x.y + d2.y * t};
+    return true;
+}
+
+SketchCurve mapCurve(const SketchCurve& c, const float m[4], Vec2 t) {
+    auto f = [&](Vec2 p) { return Vec2{m[0] * p.x + m[1] * p.y + t.x, m[2] * p.x + m[3] * p.y + t.y}; };
+    SketchCurve o = c;
+    o.name.clear();
+    const bool mirror = m[0] * m[3] - m[1] * m[2] < 0;
+    if (c.kind == CurveKind::Rectangle && c.pts.size() >= 2) {
+        const bool axisAligned = (std::fabs(m[1]) < 1e-6f && std::fabs(m[2]) < 1e-6f) || (std::fabs(m[0]) < 1e-6f && std::fabs(m[3]) < 1e-6f);
+        if (!axisAligned) { // turned: a closed polyline through its corners
+            const Vec2 a = c.pts[0], b = c.pts[1];
+            o.kind = CurveKind::Polyline;
+            o.pts = {f(a), f({b.x, a.y}), f(b), f({a.x, b.y}), f(a)};
+            return o;
+        }
+    }
+    for (Vec2& p : o.pts) p = f(p);
+    if (c.kind == CurveKind::Arc && mirror && o.pts.size() >= 3) std::swap(o.pts[1], o.pts[2]); // still counter-clockwise
+    return o;
 }
 
 } // namespace sicdm

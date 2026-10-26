@@ -497,7 +497,8 @@ namespace {
 bool sketchCommand(const std::string& cmd) {
     static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",
                                           "ELLIPSE",  "SKETCHSLOT",   "POLYGON", "TRIM",  "EXTEND",    "OFFSET",     "CONSTRUCTION",
-                                          "CONSTRAIN", "DIM",         "CONSTRAINT", "DRAG",  "ERASE"};
+                                          "CONSTRAIN", "DIM",         "CONSTRAINT", "DRAG",  "ERASE",     "SKETCHFILLET", "SKETCHCHAMFER",
+                                          "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT"};
     for (const char* k : kSketch)
         if (cmd == k) return true;
     return false;
@@ -523,7 +524,8 @@ bool historyCommand(const std::string& cmd) {
                                          "PART",     "PARAM",   "ROTATE",  "SCALE",    "ERASE",     "MOVE",    "SELECT",   "REPAIR",  "ORIENT",
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
-                                         "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG"};
+                                         "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
+                                         "SKETCHPATTERN", "PROJECT"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -2061,7 +2063,9 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
     if (cmd == "RIG" || cmd == "TERRAIN" || cmd == "ARM") return runRobotCommand(doc, cmd, a, pc.quoted);
-    if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET" || cmd == "DRAG") return runSketchCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET" || cmd == "DRAG" || cmd == "SKETCHFILLET" || cmd == "SKETCHCHAMFER" ||
+        cmd == "SKETCHMIRROR" || cmd == "SKETCHPATTERN" || cmd == "PROJECT")
+        return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
         cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES")
         return runFeatureCommand(doc, cmd, a, pc.quoted);

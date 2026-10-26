@@ -9,8 +9,14 @@
 #include "core/Units.hpp"
 #include "core/Extrude.hpp"
 #include "core/SketchEdit.hpp"
+#include "core/FileIO.hpp"
+#include "core/Features.hpp"
+#include "core/Sculpt.hpp"
+#include "core/Section.hpp"
 
 #include <algorithm>
+#include <map>
+#include <tuple>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -222,6 +228,341 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         sketch.touch();
         doc.dirty = true;
         out.say("Extended " + target.name + "  " + target.measure());
+        return out;
+    }
+
+    // Curve names from word i on (each the longest run of words naming one), up to a keyword.
+    auto curveList = [&](std::size_t& i, std::initializer_list<const char*> keys, std::vector<int>& which) -> std::string {
+        auto isKey = [&](std::size_t j) {
+            if (j < quoted.size() && quoted[j]) return false;
+            for (const char* k : keys)
+                if (lower(a[j]) == k) return true;
+            return false;
+        };
+        while (i < a.size() && !isKey(i)) {
+            int found = -1;
+            std::size_t used = 0;
+            std::string name;
+            for (std::size_t j = i; j < a.size() && !isKey(j); ++j) {
+                name += (name.empty() ? "" : " ") + a[j];
+                for (std::size_t k = 0; k < sketch.curves().size(); ++k)
+                    if (lower(sketch.curves()[k].name) == lower(name)) found = static_cast<int>(k), used = j - i + 1;
+                if (j < quoted.size() && quoted[j]) break;
+            }
+            if (found < 0) return a[i];
+            which.push_back(found);
+            i += used;
+        }
+        if (which.empty() && doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(sketch.curves().size())) which.push_back(doc.selectedCurve);
+        return {};
+    };
+
+    if (cmd == "SKETCHFILLET" || cmd == "SKETCHCHAMFER") {
+        // SKETCHFILLET curve [CORNER n...] radius | SKETCHFILLET line line radius
+        const bool chamfer = cmd == "SKETCHCHAMFER";
+        const std::string usage = std::string("Usage: ") + cmd + " curve [CORNER n...] " + (chamfer ? "distance" : "radius") + "  |  " + cmd + " line line " +
+                                  (chamfer ? "distance" : "radius");
+        if (a.empty()) return out.fail(usage);
+        const auto size = parseLength(a.back());
+        if (!size || !(*size > 0)) return out.fail(usage);
+        std::vector<std::string> words(a.begin(), a.end() - 1);
+        std::vector<int> corners;
+        std::vector<std::string> names;
+        for (std::size_t k = 0; k < words.size(); ++k) {
+            if (!(k < quoted.size() && quoted[k]) && (lower(words[k]) == "corner" || lower(words[k]) == "vertex")) {
+                const auto n = k + 1 < words.size() ? parseNumber(words[k + 1]) : std::nullopt;
+                if (!n || *n < 1) return out.fail("CORNER takes a corner number (1, 2, ...)");
+                corners.push_back(static_cast<int>(*n) - 1);
+                ++k;
+            } else {
+                names.push_back(words[k]);
+            }
+        }
+        std::vector<int> which; // one curve, or two lines: each the longest run of words naming one
+        for (std::size_t j = 0; j < names.size();) {
+            int hit = -1;
+            std::size_t used = 0;
+            std::string name;
+            for (std::size_t k = j; k < names.size(); ++k) {
+                name += (name.empty() ? "" : " ") + names[k];
+                for (std::size_t q = 0; q < sketch.curves().size(); ++q)
+                    if (lower(sketch.curves()[q].name) == lower(name)) hit = static_cast<int>(q), used = k - j + 1;
+            }
+            if (hit < 0) return out.fail("No sketch curve named " + names[j]);
+            which.push_back(hit);
+            j += used;
+        }
+        if (which.empty() && doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(sketch.curves().size())) which.push_back(doc.selectedCurve);
+        if (which.empty() || which.size() > 2) return out.fail(usage);
+        const float r = static_cast<float>(*size);
+        std::string why;
+        if (which.size() == 2) {
+            if (!corners.empty()) return out.fail(usage);
+            const SketchCurve la = sketch.curves()[static_cast<std::size_t>(which[0])], lb = sketch.curves()[static_cast<std::size_t>(which[1])];
+            SketchCurve na, nb, mid;
+            if (!filletLines(la, lb, r, chamfer, na, nb, mid, &why)) return out.fail(why);
+            sketch.curves()[static_cast<std::size_t>(which[0])].pts = na.pts;
+            sketch.curves()[static_cast<std::size_t>(which[1])].pts = nb.pts;
+            const SketchCurve& added = sketch.add(mid);
+            doc.selectedCurve = static_cast<int>(sketch.curves().size()) - 1;
+            doc.dirty = true;
+            out.say((chamfer ? "Chamfered " : "Filleted ") + la.name + " and " + lb.name + ": " + added.name + "  " + added.measure());
+            return out;
+        }
+        const std::size_t ci = static_cast<std::size_t>(which[0]);
+        const SketchCurve c = sketch.curves()[ci];
+        std::vector<SketchCurve> pieces;
+        if (!roundCorners(c, corners, r, chamfer, pieces, &why)) return out.fail(why);
+        const std::string names2 = replaceCurve(ci, pieces);
+        out.say(std::string(chamfer ? "Chamfered " : "Filleted ") + c.name + " (" + lengthText(r) + "): " + names2);
+        return out;
+    }
+
+    if (cmd == "SKETCHMIRROR") {
+        // SKETCHMIRROR curve... ABOUT line | ABOUT x,y x,y
+        const char* usage = "Usage: SKETCHMIRROR curve... ABOUT line | ABOUT x,y x,y";
+        std::size_t i = 0;
+        std::vector<int> which;
+        if (const std::string bad = curveList(i, {"about", "across"}, which); !bad.empty()) return out.fail("No sketch curve named " + bad);
+        if (which.empty() || i >= a.size()) return out.fail(usage);
+        ++i; // ABOUT
+        Vec2 p0, p1;
+        std::string axisName;
+        std::vector<int> axisCurve;
+        std::size_t j = i;
+        if (const std::string bad = curveList(j, {}, axisCurve); bad.empty() && axisCurve.size() == 1 && j == a.size()) {
+            const SketchCurve& l = sketch.curves()[static_cast<std::size_t>(axisCurve[0])];
+            if (l.kind != CurveKind::Line || l.pts.size() < 2) return out.fail("Mirror about a line (a construction centreline, say), or two points x,y x,y");
+            p0 = l.pts[0], p1 = l.pts[1];
+            axisName = l.name;
+            for (int w : which)
+                if (!samePlane(sketch.curves()[static_cast<std::size_t>(w)], l)) return out.fail(sketch.curves()[static_cast<std::size_t>(w)].name + " isn't on " + l.name + "'s plane");
+        } else {
+            const auto q0 = i < a.size() ? parsePointInput(a[i]) : std::nullopt;
+            const auto q1 = i + 1 < a.size() ? parsePointInput(a[i + 1]) : std::nullopt;
+            if (!q0 || !q1 || i + 2 != a.size()) return out.fail(usage);
+            p0 = q0->resolve({}), p1 = q1->resolve({});
+            axisName = "the line given";
+        }
+        const float dx = p1.x - p0.x, dy = p1.y - p0.y, l2 = dx * dx + dy * dy;
+        if (!(l2 > 1e-12f)) return out.fail("The mirror line needs two different points");
+        // Reflection across the line: m = 2 d d^T / |d|^2 - I, through p0.
+        const float m[4] = {(dx * dx - dy * dy) / l2, 2 * dx * dy / l2, 2 * dx * dy / l2, (dy * dy - dx * dx) / l2};
+        const Vec2 t{p0.x - (m[0] * p0.x + m[1] * p0.y), p0.y - (m[2] * p0.x + m[3] * p0.y)};
+        std::string names;
+        for (int w : which) {
+            const SketchCurve src = sketch.curves()[static_cast<std::size_t>(w)];
+            names += (names.empty() ? "" : ", ") + sketch.add(mapCurve(src, m, t)).name;
+        }
+        doc.selectedCurve = static_cast<int>(sketch.curves().size()) - 1;
+        doc.dirty = true;
+        out.say("Mirrored across " + axisName + ": " + names);
+        return out;
+    }
+
+    if (cmd == "SKETCHPATTERN") {
+        // SKETCHPATTERN curve... LINEAR n dx,dy [ROWS m dx,dy] | CIRCULAR n [ABOUT x,y] [ANGLE deg]
+        const char* usage = "Usage: SKETCHPATTERN curve... LINEAR n dx,dy [ROWS m dx,dy] | CIRCULAR n [ABOUT x,y] [ANGLE deg]";
+        std::size_t i = 0;
+        std::vector<int> which;
+        if (const std::string bad = curveList(i, {"linear", "circular"}, which); !bad.empty()) return out.fail("No sketch curve named " + bad);
+        if (which.empty() || i >= a.size()) return out.fail(usage);
+        const bool circular = lower(a[i++]) == "circular";
+        const auto n = i < a.size() ? parseNumber(a[i++]) : std::nullopt;
+        if (!n || *n < 2 || *n > 1000) return out.fail("The count is 2 to 1000 (the original is the first)");
+        const int count = static_cast<int>(*n);
+        std::vector<std::pair<float, Vec2>> place; // turn (deg) about `about`, then shift
+        Vec2 about{};
+        if (!circular) {
+            const auto d1 = i < a.size() ? parsePointInput(a[i++]) : std::nullopt;
+            if (!d1) return out.fail(usage);
+            const Vec2 s1 = d1->resolve({});
+            int rows = 1;
+            Vec2 s2{};
+            if (i < a.size() && lower(a[i]) == "rows") {
+                const auto m = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
+                const auto d2 = i + 2 < a.size() ? parsePointInput(a[i + 2]) : std::nullopt;
+                if (!m || *m < 1 || *m > 1000 || !d2) return out.fail(usage);
+                rows = static_cast<int>(*m), s2 = d2->resolve({});
+                i += 3;
+            }
+            if (i != a.size()) return out.fail(usage);
+            if (static_cast<long>(count) * rows > 2000) return out.fail("At most 2000 copies");
+            for (int r = 0; r < rows; ++r)
+                for (int k = 0; k < count; ++k)
+                    if (r || k) place.push_back({0.0f, {s1.x * static_cast<float>(k) + s2.x * static_cast<float>(r), s1.y * static_cast<float>(k) + s2.y * static_cast<float>(r)}});
+        } else {
+            float total = 360.0f;
+            while (i < a.size()) {
+                const std::string k = lower(a[i]);
+                if (k == "about" && i + 1 < a.size()) {
+                    const auto c = parsePointInput(a[i + 1]);
+                    if (!c) return out.fail("ABOUT takes the centre x,y");
+                    about = c->resolve({});
+                    i += 2;
+                } else if (k == "angle" && i + 1 < a.size()) {
+                    const auto v = parseNumber(a[i + 1]);
+                    if (!v || std::fabs(*v) < 1e-3f || std::fabs(*v) > 360.0f) return out.fail("ANGLE is up to 360 degrees");
+                    total = *v;
+                    i += 2;
+                } else return out.fail(usage);
+            }
+            // A full turn spaces them evenly; less spans the angle from the first to the last.
+            const float step = std::fabs(std::fabs(total) - 360.0f) < 1e-3f ? total / static_cast<float>(count) : total / static_cast<float>(count - 1);
+            for (int k = 1; k < count; ++k) place.push_back({step * static_cast<float>(k), {}});
+        }
+        std::string first, lastName;
+        int made = 0;
+        for (const auto& [deg, shift] : place)
+            for (int w : which) {
+                const SketchCurve src = sketch.curves()[static_cast<std::size_t>(w)];
+                const float r = radians(deg), cs = std::cos(r), sn = std::sin(r);
+                const float m[4] = {cs, -sn, sn, cs};
+                const Vec2 t{about.x - (cs * about.x - sn * about.y) + shift.x, about.y - (sn * about.x + cs * about.y) + shift.y};
+                const std::string nm = sketch.add(mapCurve(src, m, t)).name;
+                if (first.empty()) first = nm;
+                lastName = nm;
+                ++made;
+            }
+        doc.selectedCurve = static_cast<int>(sketch.curves().size()) - 1;
+        doc.dirty = true;
+        out.say(std::string(circular ? "Circular" : "Linear") + " pattern: " + std::to_string(made) + " copies (" + first + (made > 1 ? " to " + lastName : "") + ")");
+        return out;
+    }
+
+    if (cmd == "PROJECT") {
+        // PROJECT body [EDGES | SECTION] [CONSTRUCTION]
+        const char* usage = "Usage: PROJECT body [EDGES | SECTION] [CONSTRUCTION]";
+        bool section = false, construction = false;
+        std::vector<std::string> words;
+        for (std::size_t k = 0; k < a.size(); ++k) {
+            const std::string w = (k < quoted.size() && quoted[k]) ? std::string() : lower(a[k]);
+            if (w == "edges") section = false;
+            else if (w == "section" || w == "intersect" || w == "intersection") section = true;
+            else if (w == "construction" || w == "constr") construction = true;
+            else words.push_back(a[k]);
+        }
+        std::string name;
+        for (const std::string& w : words) name += (name.empty() ? "" : " ") + w;
+        int bi = -1;
+        for (std::size_t k = 0; k < doc.scene.bodies().size(); ++k)
+            if (lower(doc.scene.bodies()[k].name) == lower(name)) bi = static_cast<int>(k);
+        if (name.empty()) bi = doc.selectedBody;
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? std::string(usage) : "No body named " + name);
+        const Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const PlaneFrame f = activePlaneFrame(doc.state);
+        const MeshData m = worldMesh(body);
+        if (m.indices.empty()) return out.fail(body.name + " has no surface");
+        auto add = [&](std::vector<Vec2> pts, bool closedLoop) -> std::string {
+            SketchCurve c;
+            c.plane = doc.state.plane;
+            c.frame = f;
+            c.construction = construction;
+            if (closedLoop) pts.push_back(pts.front());
+            c.kind = pts.size() == 2 ? CurveKind::Line : CurveKind::Polyline;
+            c.pts = std::move(pts);
+            return sketch.add(std::move(c)).name;
+        };
+        // Points along a path that turn less than a hair are dropped (facets of a flat face).
+        auto simplify = [](std::vector<Vec2> pts, bool closedLoop) {
+            bool changed = true;
+            while (changed && pts.size() > (closedLoop ? 3u : 2u)) {
+                changed = false;
+                for (std::size_t k = closedLoop ? 0 : 1; k < pts.size() - (closedLoop ? 0 : 1); ++k) {
+                    const std::size_t n = pts.size();
+                    const Vec2 p0 = pts[(k + n - 1) % n], p1 = pts[k], p2 = pts[(k + 1) % n];
+                    const float l = std::hypot(p2.x - p0.x, p2.y - p0.y);
+                    const float cr = std::fabs((p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x));
+                    if (cr <= 1e-5f * std::max(l, 1.0f) * std::max(l, 1.0f) || std::hypot(p1.x - p0.x, p1.y - p0.y) < 1e-6f) {
+                        pts.erase(pts.begin() + static_cast<std::ptrdiff_t>(k));
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            return pts;
+        };
+        int made = 0;
+        if (section) {
+            // The section follows triangles through shared corners: one index per position.
+            std::vector<Vec3> pp;
+            std::vector<std::uint32_t> at(m.vertices.size());
+            {
+                std::map<std::tuple<long long, long long, long long>, std::uint32_t> seen;
+                const AABB bb = m.bounds();
+                const float q = std::max(1e-6f, 1e-6f * length(bb.max - bb.min));
+                for (std::size_t k = 0; k < m.vertices.size(); ++k) {
+                    const Vec3 w = m.vertices[k].position;
+                    const auto key = std::make_tuple(std::llround(w.x / q), std::llround(w.y / q), std::llround(w.z / q));
+                    auto [it, fresh] = seen.emplace(key, static_cast<std::uint32_t>(pp.size()));
+                    if (fresh) {
+                        const Vec3 d = w - f.origin;
+                        pp.push_back({dot(d, f.u), dot(d, f.v), dot(d, f.normal)});
+                    }
+                    at[k] = it->second;
+                }
+            }
+            std::vector<section::Tri> tris;
+            std::vector<std::uint32_t> cand;
+            float diag = 0;
+            for (const Vec3& q : pp) diag = std::max(diag, std::fabs(q.x) + std::fabs(q.y) + std::fabs(q.z));
+            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+                const section::Tri tri{at[m.indices[t]], at[m.indices[t + 1]], at[m.indices[t + 2]]};
+                if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2]) continue;
+                const float z0 = pp[tri[0]].z, z1 = pp[tri[1]].z, z2 = pp[tri[2]].z;
+                if (std::min({z0, z1, z2}) > 1e-3f * diag || std::max({z0, z1, z2}) < -1e-3f * diag) continue;
+                cand.push_back(static_cast<std::uint32_t>(tris.size()));
+                tris.push_back(tri);
+            }
+            // Just off the plane when it runs through vertices (a face lying in it).
+            double level = 0;
+            for (const Vec3& q : pp)
+                if (std::fabs(q.z) < 1e-6f * std::max(diag, 1.0f)) {
+                    level = -1e-5 * std::max(diag, 1.0f);
+                    break;
+                }
+            const std::vector<section::Loop> loops = section::contours(pp, tris, cand, level);
+            for (const section::Loop& l : loops) {
+                std::vector<Vec2> pts;
+                for (const section::P2& q : l) pts.push_back({static_cast<float>(q.x), static_cast<float>(q.y)});
+                pts = simplify(std::move(pts), true);
+                if (pts.size() < 3) continue;
+                add(std::move(pts), true);
+                ++made;
+            }
+            if (made == 0) return out.fail("The sketch plane doesn't cut " + body.name);
+        } else {
+            std::vector<std::vector<Vec2>> drawn; // edges behind others land on them: once each
+            auto sameAs = [](const std::vector<Vec2>& x, const std::vector<Vec2>& y) {
+                if (x.size() != y.size()) return false;
+                bool fwd = true, back = true;
+                for (std::size_t k = 0; k < x.size(); ++k) {
+                    const Vec2 p = x[k], q = y[k], r = y[y.size() - 1 - k];
+                    fwd = fwd && std::hypot(p.x - q.x, p.y - q.y) < 1e-3f;
+                    back = back && std::hypot(p.x - r.x, p.y - r.y) < 1e-3f;
+                }
+                return fwd || back;
+            };
+            for (const EdgeChain& ch : edgeChains(m)) {
+                std::vector<Vec2> pts;
+                for (const Vec3& q : ch.pts) pts.push_back(f.toPlane(q));
+                pts = simplify(std::move(pts), ch.closed);
+                // Seen edge-on (square to the plane): nothing to draw.
+                float span = 0;
+                for (const Vec2& q : pts) span = std::max(span, std::hypot(q.x - pts[0].x, q.y - pts[0].y));
+                if (pts.size() < 2 || span < 1e-4f) continue;
+                if (ch.closed && pts.size() < 3) continue;
+                if (std::any_of(drawn.begin(), drawn.end(), [&](const std::vector<Vec2>& d) { return sameAs(d, pts); })) continue;
+                drawn.push_back(pts);
+                add(std::move(pts), ch.closed);
+                ++made;
+            }
+            if (made == 0) return out.fail(body.name + " has no edges to project");
+        }
+        doc.selectedCurve = static_cast<int>(sketch.curves().size()) - 1;
+        doc.dirty = true;
+        out.say(std::string("Projected ") + body.name + (section ? "'s section" : "'s edges") + " onto " + activePlaneName(doc.state) + ": " +
+                std::to_string(made) + (made == 1 ? " curve" : " curves") + (construction ? " (construction)" : ""));
         return out;
     }
 

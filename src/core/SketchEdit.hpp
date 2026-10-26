@@ -44,4 +44,21 @@ std::vector<Vec2> chainLoop(const Sketch& sketch, std::size_t index, std::vector
 // the ways it can still move, -2 a constraint on it can't be met.
 std::vector<int> curveFreedom(const Sketch& sketch);
 
+// The corners of a straight-sided curve (a line, polyline or rectangle), without the
+// closing repeat; `closed` when it loops.
+bool cornerPath(const SketchCurve& c, std::vector<Vec2>& pts, bool& closed);
+// Rounds (or with `chamfer`, bevels) corners of a straight-sided curve: `corners` are
+// indices into cornerPath() (empty: every corner). The pieces that replace it, in order end
+// to end: lines, polylines and arcs on the same plane. False (why) when a side is too short.
+bool roundCorners(const SketchCurve& c, const std::vector<int>& corners, float size, bool chamfer, std::vector<SketchCurve>& out,
+                  std::string* why = nullptr);
+// Rounds or bevels the corner where two lines meet (or would, extended): both trimmed (or
+// extended) to it, and the arc or line between. The ends nearest the corner move.
+bool filletLines(const SketchCurve& a, const SketchCurve& b, float size, bool chamfer, SketchCurve& outA, SketchCurve& outB,
+                 SketchCurve& between, std::string* why = nullptr);
+// A copy of `c` (unnamed) moved by an affine map of the plane: p -> m * p + t. A mirror
+// (negative determinant) keeps arcs counter-clockwise; rectangles that end up turned
+// become closed polylines.
+SketchCurve mapCurve(const SketchCurve& c, const float m[4], Vec2 t);
+
 } // namespace sicdm

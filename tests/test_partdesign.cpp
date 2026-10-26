@@ -344,3 +344,97 @@ TEST_CASE("Hole wizard: standard sizes, counterbores, countersinks, tapped holes
     CHECK(e.scene.bodies()[0].holes[0].callout == "dia 6.6 thru (M6 clearance), counterbore 11 x 6.4");
     std::filesystem::remove(path);
 }
+
+namespace {
+const SketchCurve* curve(const Document& d, const std::string& name) {
+    for (const SketchCurve& c : d.scene.sketch().curves())
+        if (c.name == name) return &c;
+    return nullptr;
+}
+} // namespace
+
+TEST_CASE("Sketch fillets and chamfers: every corner, chosen corners, two lines") {
+    Document d;
+    REQUIRE(run(d, "RECT 0,0 40,20").ok);
+    REQUIRE(run(d, "SKETCHFILLET \"Rectangle 1\" 5").ok);
+    CHECK(curve(d, "Rectangle 1") == nullptr);
+    int arcs = 0, lines = 0;
+    for (const SketchCurve& c : d.scene.sketch().curves()) arcs += c.kind == CurveKind::Arc, lines += c.kind == CurveKind::Line;
+    CHECK(arcs == 4);
+    CHECK(lines == 4);
+    // The pieces close into a loop: a rounded slab, 40 x 20 less the four corners.
+    REQUIRE(run(d, "EXTRUDE \"Line 2\" 10").ok);
+    CHECK_NEAR(volumeOf(last(d)), (800 - (4 - 3.14159265) * 25) * 10, 8.0); // arcs as facets
+
+    // Two corners of a rectangle bevelled.
+    REQUIRE(run(d, "RECT 100,0 140,20").ok);
+    REQUIRE(run(d, "SKETCHCHAMFER \"Rectangle 10\" CORNER 1 CORNER 3 4").ok);
+    const std::size_t n = d.scene.sketch().curves().size();
+    REQUIRE(run(d, "EXTRUDE \"" + d.scene.sketch().curves()[n - 1].name + "\" 1").ok);
+    CHECK_NEAR(volumeOf(last(d)), 800 - 2 * 8, 1e-3);
+    // Two lines meeting at a corner: both trimmed back 6 mm, an arc between.
+    REQUIRE(run(d, "LINE 200,0 240,0").ok);
+    REQUIRE(run(d, "LINE 200,30 200,0").ok);
+    const std::string l1 = d.scene.sketch().curves()[d.scene.sketch().curves().size() - 2].name, l2 = d.scene.sketch().curves().back().name;
+    REQUIRE(run(d, "SKETCHFILLET \"" + l1 + "\" \"" + l2 + "\" 6").ok);
+    const SketchCurve& arc = d.scene.sketch().curves().back();
+    CHECK(arc.kind == CurveKind::Arc);
+    CHECK_NEAR(arc.pts[0].x, 206.0f, 1e-4);
+    CHECK_NEAR(arc.pts[0].y, 6.0f, 1e-4);
+    CHECK_NEAR(curve(d, l1)->pts[0].x, 206.0f, 1e-4);
+    CHECK_NEAR(curve(d, l2)->pts[1].y, 6.0f, 1e-4);
+    // Too big for the sides.
+    REQUIRE(run(d, "RECT 300,0 310,10").ok);
+    CHECK(!run(d, "SKETCHFILLET \"" + d.scene.sketch().curves().back().name + "\" 6").ok);
+    CHECK(!run(d, "SKETCHFILLET \"Circle 99\" 2").ok);
+}
+
+TEST_CASE("Sketch mirror and patterns, and projecting a body onto the sketch plane") {
+    Document d;
+    REQUIRE(run(d, "LINE 0,-10 0,50 CONSTRUCTION").ok);
+    REQUIRE(run(d, "ARC CENTER 10,10 14,10 10,14").ok); // a quarter, counter-clockwise
+    REQUIRE(run(d, "SKETCHMIRROR \"Arc 2\" ABOUT \"Line 1\"").ok);
+    const SketchCurve& m = d.scene.sketch().curves().back();
+    REQUIRE(m.kind == CurveKind::Arc);
+    CHECK_NEAR(m.pts[0].x, -10.0f, 1e-5); // centre across the line
+    // Still counter-clockwise: from (-10, 14) round to (-14, 10).
+    CHECK_NEAR(m.pts[1].x, -10.0f, 1e-5);
+    CHECK_NEAR(m.pts[1].y, 14.0f, 1e-5);
+    CHECK_NEAR(m.pts[2].x, -14.0f, 1e-5);
+    // A tilted rectangle comes out as a closed polyline.
+    REQUIRE(run(d, "RECT 20,0 30,5").ok);
+    REQUIRE(run(d, "SKETCHMIRROR \"Rectangle 4\" ABOUT 0,0 10,5").ok);
+    CHECK(d.scene.sketch().curves().back().kind == CurveKind::Polyline);
+
+    REQUIRE(run(d, "CIRCLE 50,0 2").ok);
+    const std::size_t before = d.scene.sketch().curves().size();
+    REQUIRE(run(d, "SKETCHPATTERN \"Circle 6\" CIRCULAR 6 ABOUT 40,0").ok);
+    REQUIRE(d.scene.sketch().curves().size() == before + 5);
+    const SketchCurve& third = d.scene.sketch().curves()[before + 2]; // 180 degrees round
+    CHECK_NEAR(third.pts[0].x, 30.0f, 1e-4);
+    CHECK_NEAR(third.pts[0].y, 0.0f, 1e-4);
+    REQUIRE(run(d, "SKETCHPATTERN \"Circle 6\" LINEAR 3 0,12 ROWS 2 20,0").ok);
+    CHECK(d.scene.sketch().curves().size() == before + 10);
+    CHECK_NEAR(d.scene.sketch().curves().back().pts[0].x, 70.0f, 1e-4);
+    CHECK_NEAR(d.scene.sketch().curves().back().pts[0].y, 24.0f, 1e-4);
+    CHECK(!run(d, "SKETCHPATTERN \"Circle 6\" LINEAR 1 5,0").ok);
+
+    // The Front plane cuts a block in a square; its edges seen from the front are 4 lines.
+    REQUIRE(run(d, "BOX 30 30 30 @500,0,0").ok);
+    REQUIRE(run(d, "PLANE FRONT").ok);
+    const std::size_t c0 = d.scene.sketch().curves().size();
+    REQUIRE(run(d, "PROJECT \"Block 1\" SECTION").ok);
+    REQUIRE(d.scene.sketch().curves().size() == c0 + 1);
+    const SketchCurve& sec = d.scene.sketch().curves().back();
+    CHECK(sec.plane == SketchPlane::Front);
+    CHECK(sec.isClosed());
+    std::string why;
+    const auto prof = profileFromCurve(sec, &why);
+    REQUIRE(prof.has_value());
+    CHECK_NEAR(std::fabs(signedArea(prof->points)), 900.0f, 1e-2);
+    REQUIRE(run(d, "PROJECT \"Block 1\" EDGES CONSTRUCTION").ok);
+    CHECK(d.scene.sketch().curves().size() == c0 + 5);
+    CHECK(d.scene.sketch().curves().back().construction);
+    REQUIRE(run(d, "PLANE OFFSET 40 FROM FRONT").ok);
+    CHECK(!run(d, "PROJECT \"Block 1\" SECTION").ok); // misses it
+}

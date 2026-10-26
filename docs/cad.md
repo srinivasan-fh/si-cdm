@@ -138,6 +138,38 @@ around.
 - *Extend*: click near the end to carry on.
 - *Offset*: click the curve on the side to offset to; the distance is in the options bar.
 
+### Fillets, chamfers, mirrors and patterns
+
+```text
+SKETCHFILLET curve [CORNER n...] radius      every corner of a polyline or rectangle, or those named
+SKETCHFILLET line line radius                where two lines meet (or would, extended)
+SKETCHCHAMFER ...                            the same, bevelled by a distance
+SKETCHMIRROR curve... ABOUT line | ABOUT x,y x,y
+SKETCHPATTERN curve... LINEAR n dx,dy [ROWS m dx,dy] | CIRCULAR n [ABOUT x,y] [ANGLE deg]
+```
+
+- **Fillet / chamfer:** a rounded rectangle or polyline becomes lines and arcs end to end,
+  which still extrude as one profile. Corners count from 1 along the curve (a rectangle's
+  counter-clockwise from its first corner). Two lines are trimmed (or extended) to the
+  arc. A fillet too big for a side is refused.
+- **Mirror:** copies across a line (a construction centreline, say) or through two points.
+  Arcs stay counter-clockwise; a rectangle mirrored across a slanted line becomes a closed
+  polyline.
+- **Pattern:** `LINEAR` n copies (the original the first) `dx,dy` apart, in `ROWS` too;
+  `CIRCULAR` n round a point, evenly round a full turn, or spread over `ANGLE`.
+
+### Sketching from bodies
+
+```text
+PROJECT body [EDGES | SECTION] [CONSTRUCTION]
+```
+
+- **EDGES:** the body's edges seen square to the sketch plane, as lines and polylines
+  (edges seen end on, or lying on others, once).
+- **SECTION:** where the sketch plane cuts the body, as closed polylines: profiles to
+  extrude, revolve or cut from.
+- `CONSTRUCTION` makes them reference curves.
+
 ### Dragging
 
 With the **Select** tool, drag sketch geometry and the constraints hold while it moves:
