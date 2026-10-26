@@ -8,6 +8,7 @@
 #include "core/Brep.hpp"
 #include "core/Features.hpp"
 #include "core/HoleWizard.hpp"
+#include "core/FileIO.hpp"
 #include "core/Sculpt.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/Step.hpp"
@@ -445,7 +446,14 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 const std::string lw = lower(w);
                 if (!quotedAt(i) && (lw == "u" || lw == "h" || lw == "horizontal")) axis = {{Vec2{0, 0}, Vec2{1, 0}}}, axisName = "the plane's horizontal axis";
                 else if (!quotedAt(i) && (lw == "v" || lw == "vertical")) axis = {{Vec2{0, 0}, Vec2{0, 1}}};
-                else if (const int li = curveNamed(doc, w); li >= 0) {
+                else if (const DatumAxis* ra = findRefAxis(doc.state, w)) { // in the profile's plane
+                    const PlaneFrame f = curveFrame(curve);
+                    if (std::fabs(dot(ra->dir, f.normal)) > 1e-4f || std::fabs(dot(ra->origin - f.origin, f.normal)) > 1e-3f)
+                        return out.fail(ra->name + " doesn't lie in " + curve.name + "'s plane");
+                    const Vec2 p0 = f.toPlane(ra->origin);
+                    axis = {{p0, Vec2{dot(ra->dir, f.u), dot(ra->dir, f.v)}}};
+                    axisName = ra->name;
+                } else if (const int li = curveNamed(doc, w); li >= 0) {
                     const SketchCurve& l = doc.scene.sketch().curves()[static_cast<std::size_t>(li)];
                     if (l.kind != CurveKind::Line || !samePlane(l, curve)) return out.fail("The axis must be a sketch line on the profile's plane");
                     axis = {{l.pts[0], Vec2{l.pts[1].x - l.pts[0].x, l.pts[1].y - l.pts[0].y}}};
@@ -724,8 +732,13 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                     if (!v) return out.fail(toUpper(k) + " needs a length");
                     (k == "spacing" ? spacing : spacing2) = static_cast<float>(*v);
                 } else if (k == "dir" || k == "dir2" || k == "axis") {
-                    const auto v = axisWord(next());
-                    if (!v) return out.fail(toUpper(k) + " needs X, Y, Z or x,y,z");
+                    const std::string w = next();
+                    auto v = axisWord(w);
+                    if (const DatumAxis* ra = v ? nullptr : findRefAxis(doc.state, w)) { // a reference axis: its line
+                        v = ra->dir;
+                        if (k == "axis" && !atGiven) at = ra->origin, atGiven = true;
+                    }
+                    if (!v) return out.fail(toUpper(k) + " needs X, Y, Z, x,y,z or a reference axis");
                     (k == "dir" ? dir : k == "dir2" ? dir2 : axis) = *v;
                 } else if (k == "angle") {
                     const auto v = parseNumber(next());
@@ -1399,7 +1412,9 @@ bool regenerateHistory(Document& doc, const std::vector<HistoryStep>& steps, Com
     doc.primitiveSerial = 0;
     doc.state.plane = SketchPlane::Top;
     doc.state.customPlane.clear();
-    doc.state.datums.clear(); // the PLANE steps make them again
+    doc.state.datums.clear(); // the PLANE, REFAXIS and REFPOINT steps make them again
+    doc.state.refAxes.clear();
+    doc.state.refPoints.clear();
     doc.replaying = true;
     for (std::size_t k = 0; k < steps.size(); ++k) {
         doc.apiMillimeters = steps[k].millimetres;

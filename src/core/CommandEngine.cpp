@@ -205,6 +205,203 @@ std::string frameText(const PlaneFrame& f) {
 
 } // namespace
 
+// A point typed as x,y,z or a reference point's name.
+std::optional<Vec3> pointOrRef(const ProjectState& st, const std::string& w) {
+    if (w.find(',') != std::string::npos) return parseVec3(w);
+    if (const DatumPoint* p = findRefPoint(st, w)) return p->at;
+    return std::nullopt;
+}
+
+// A direction: X, Y, Z, x,y,z or a reference axis's name.
+std::optional<Vec3> directionOrRef(const ProjectState& st, const std::string& w) {
+    if (const auto v = axisFromWord(w)) return v;
+    if (const DatumAxis* a = findRefAxis(st, w)) return a->dir;
+    return std::nullopt;
+}
+
+// A plane by name: TOP, FRONT, RIGHT or a datum plane.
+std::optional<PlaneFrame> planeNamed(const ProjectState& st, const std::string& w) {
+    if (const auto p = planeFromKey(w); p && *p != SketchPlane::Custom) return planeFrame(*p);
+    for (const DatumPlane& d : st.datums)
+        if (iequal(d.name, w)) return d.frame;
+    return std::nullopt;
+}
+
+// The eigenvector of a symmetric 3x3 matrix whose eigenvalue stands furthest from the other
+// two: a round body's axis from its inertia (Jacobi rotations).
+Vec3 distinctAxis(const double in[3][3]) {
+    double m[3][3], v[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) m[i][j] = in[i][j];
+    for (int sweep = 0; sweep < 50; ++sweep) {
+        for (int p = 0; p < 2; ++p)
+            for (int q = p + 1; q < 3; ++q) {
+                if (std::fabs(m[p][q]) < 1e-15 * (std::fabs(m[p][p]) + std::fabs(m[q][q]) + 1e-300)) continue;
+                const double th = 0.5 * std::atan2(2 * m[p][q], m[q][q] - m[p][p]), c = std::cos(th), sn = std::sin(th);
+                for (int k = 0; k < 3; ++k) { // columns
+                    const double a = m[k][p], b = m[k][q];
+                    m[k][p] = c * a - sn * b, m[k][q] = sn * a + c * b;
+                }
+                for (int k = 0; k < 3; ++k) { // rows
+                    const double a = m[p][k], b = m[q][k];
+                    m[p][k] = c * a - sn * b, m[q][k] = sn * a + c * b;
+                }
+                for (int k = 0; k < 3; ++k) {
+                    const double a = v[k][p], b = v[k][q];
+                    v[k][p] = c * a - sn * b, v[k][q] = sn * a + c * b;
+                }
+            }
+    }
+    const double e[3] = {m[0][0], m[1][1], m[2][2]};
+    int best = 0;
+    double gap = -1;
+    for (int i = 0; i < 3; ++i) {
+        const double g = std::fabs(e[i] - 0.5 * (e[(i + 1) % 3] + e[(i + 2) % 3]));
+        if (g > gap) gap = g, best = i;
+    }
+    return normalize(Vec3{static_cast<float>(v[0][best]), static_cast<float>(v[1][best]), static_cast<float>(v[2][best])});
+}
+
+// REFAXIS name THROUGH p p | AT p DIR d | PLANES a b | OF body; REFPOINT name AT p |
+// CENTRE body; LIST, DELETE name.
+CommandOutput runReferenceCommand(Document& doc, const std::string& cmd, const std::vector<std::string>& a) {
+    CommandOutput out;
+    ProjectState& st = doc.state;
+    const bool axis = cmd == "REFAXIS";
+    const char* usage = axis ? "Usage: REFAXIS name THROUGH p p | AT p DIR x,y,z | PLANES plane plane | OF body  |  REFAXIS LIST | REFAXIS DELETE name"
+                             : "Usage: REFPOINT name AT x,y,z | CENTRE body  |  REFPOINT LIST | REFPOINT DELETE name";
+    if (a.empty() || (a.size() == 1 && iequal(a[0], "list"))) {
+        if (axis) {
+            if (st.refAxes.empty()) out.say("No reference axes");
+            for (const DatumAxis& x : st.refAxes) out.say("  " + x.name + "  through " + vecText(x.origin) + fmt("  along (%.4g, %.4g, %.4g)", x.dir.x, x.dir.y, x.dir.z));
+        } else {
+            if (st.refPoints.empty()) out.say("No reference points");
+            for (const DatumPoint& x : st.refPoints) out.say("  " + x.name + "  " + vecText(x.at));
+        }
+        return out;
+    }
+    if (iequal(a[0], "delete")) {
+        if (a.size() != 2) return out.fail(usage);
+        const std::size_t before = axis ? st.refAxes.size() : st.refPoints.size();
+        if (axis) std::erase_if(st.refAxes, [&](const DatumAxis& x) { return iequal(x.name, a[1]); });
+        else std::erase_if(st.refPoints, [&](const DatumPoint& x) { return iequal(x.name, a[1]); });
+        if ((axis ? st.refAxes.size() : st.refPoints.size()) == before) return out.fail(std::string("No reference ") + (axis ? "axis" : "point") + " named " + a[1]);
+        markChanged(doc);
+        out.say("Deleted " + a[1]);
+        return out;
+    }
+    if (a.size() < 3) return out.fail(usage);
+    const std::string name = a[0], how = lower(a[1]);
+    if (findRefAxis(st, name) || findRefPoint(st, name) || planeNamed(st, name) || name.find(',') != std::string::npos)
+        return out.fail("There is already a plane, axis or point named " + name);
+    auto bodyAt = [&](const std::string& n) -> const Body* {
+        const int bi = findBody(doc, n);
+        return bi < 0 ? nullptr : &doc.scene.bodies()[static_cast<std::size_t>(bi)];
+    };
+    if (axis) {
+        Vec3 o{}, d{};
+        if (how == "through" && a.size() == 4) {
+            const auto p = pointOrRef(st, a[2]), q = pointOrRef(st, a[3]);
+            if (!p || !q) return out.fail("THROUGH takes two points: x,y,z or reference points");
+            if (!(length(*q - *p) > 1e-6f)) return out.fail("The two points are the same");
+            o = *p, d = normalize(*q - *p);
+        } else if (how == "at" && a.size() == 5 && iequal(a[3], "dir")) {
+            const auto p = pointOrRef(st, a[2]);
+            const auto v = directionOrRef(st, a[4]);
+            if (!p || !v) return out.fail(usage);
+            o = *p, d = normalize(*v);
+        } else if (how == "planes" && a.size() == 4) {
+            const auto f1 = planeNamed(st, a[2]), f2 = planeNamed(st, a[3]);
+            if (!f1 || !f2) return out.fail("PLANES takes two planes: TOP, FRONT, RIGHT or datum planes");
+            const Vec3 n1 = f1->normal, n2 = f2->normal, u = cross(n1, n2);
+            const float uu = dot(u, u);
+            if (!(uu > 1e-8f)) return out.fail("Those planes are parallel: they don't meet in a line");
+            const float d1 = dot(n1, f1->origin), d2 = dot(n2, f2->origin);
+            o = (cross(n2, u) * d1 + cross(u, n1) * d2) / uu;
+            d = normalize(u);
+        } else if (how == "of" && a.size() == 3) {
+            const Body* b = bodyAt(a[2]);
+            if (!b) return out.fail("No body named " + a[2]);
+            const SolidMass m = solidMass(worldMesh(*b), 1.0);
+            if (!(m.volume > 0)) return out.fail(b->name + " has no volume to find an axis in");
+            o = m.centroid, d = distinctAxis(m.inertia);
+        } else return out.fail(usage);
+        st.refAxes.push_back({name, o, d});
+        markChanged(doc);
+        out.say("Reference axis " + name + " through " + vecText(o) + fmt(" along (%.4g, %.4g, %.4g)", d.x, d.y, d.z));
+        return out;
+    }
+    Vec3 p{};
+    if (how == "at" && a.size() == 3) {
+        const auto q = pointOrRef(st, a[2]);
+        if (!q) return out.fail("AT needs x,y,z");
+        p = *q;
+    } else if ((how == "centre" || how == "center") && a.size() == 3) {
+        const Body* b = bodyAt(a[2]);
+        if (!b) return out.fail("No body named " + a[2]);
+        const SolidMass m = solidMass(worldMesh(*b), 1.0);
+        p = m.volume > 0 ? m.centroid : worldMesh(*b).bounds().center();
+    } else return out.fail(usage);
+    st.refPoints.push_back({name, p});
+    markChanged(doc);
+    out.say("Reference point " + name + " at " + vecText(p));
+    return out;
+}
+
+// SPLIT [body] BY plane | SPLIT [body] [PLANE] x,y,z NORMAL x,y,z: the body cut in two by a
+// plane, both pieces kept (the one the normal points to as "name (2)").
+CommandOutput runSplitCommand(Document& doc, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
+    CommandOutput out;
+    const char* usage = "Usage: SPLIT [body] BY plane | SPLIT [body] [PLANE] x,y,z NORMAL x,y,z";
+    std::size_t i = 0;
+    std::string name;
+    auto isKey = [&](std::size_t k) {
+        const std::string w = lower(a[k]);
+        return !(k < quoted.size() && quoted[k]) && (w == "by" || w == "plane" || w == "normal" || a[k].find(',') != std::string::npos);
+    };
+    if (!a.empty() && !quoted.empty() && quoted[0]) name = a[i++];
+    else
+        while (i < a.size() && !isKey(i)) name += (name.empty() ? "" : " ") + a[i++];
+    const int bi = name.empty() ? doc.selectedBody : findBody(doc, name);
+    if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select a body to split, or name it" : "No body named " + name);
+    std::optional<Vec3> point, normal;
+    for (; i < a.size(); ++i) {
+        const std::string k = lower(a[i]);
+        if (k == "by" && i + 1 < a.size()) {
+            const auto f = planeNamed(doc.state, a[++i]);
+            if (!f) return out.fail("BY takes a plane: TOP, FRONT, RIGHT or a datum plane");
+            point = f->origin, normal = f->normal;
+        } else if (k == "plane") continue;
+        else if (k == "normal" && i + 1 < a.size()) {
+            if (!(normal = directionOrRef(doc.state, a[++i]))) return out.fail("NORMAL needs X, Y, Z, x,y,z or a reference axis");
+        } else if (!point && (point = pointOrRef(doc.state, a[i]))) continue;
+        else return out.fail(usage);
+    }
+    if (!point || !normal) return out.fail(usage);
+    Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+    Body other = body;
+    std::string why;
+    doc.scene.pushUndo("SPLIT " + body.name);
+    const Vec3 n = normalize(*normal);
+    if (!trimByPlane(body, *point, n, &why) || !trimByPlane(other, *point, -n, &why)) {
+        doc.scene.undo();
+        return out.fail("Cannot split " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + (why.empty() ? "the plane doesn't cut it" : why));
+    }
+    int k = 2;
+    while (findBody(doc, body.name + " (" + std::to_string(k) + ")") >= 0) ++k;
+    other.name = body.name + " (" + std::to_string(k) + ")";
+    // The wizard's holes stay with the piece they're in.
+    std::erase_if(body.holes, [&](const HoleNote& h) { return dot(h.at + body.offset - *point, n) > 0; });
+    std::erase_if(other.holes, [&](const HoleNote& h) { return dot(h.at + other.offset - *point, n) <= 0; });
+    const std::string kept = body.name, made = other.name;
+    doc.scene.add(std::move(other));
+    doc.scene.touchBodies();
+    doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+    markChanged(doc);
+    out.say("Split " + kept + " in two: " + kept + " and " + made);
+    return out;
+}
+
 // PLANE TOP|FRONT|RIGHT|<datum>, PLANE OFFSET / ANGLE / THROUGH / AT / FACE (a new datum
 // plane, made the sketch plane), PLANE LIST, PLANE DELETE name.
 CommandOutput runPlaneCommand(Document& doc, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
@@ -275,14 +472,15 @@ CommandOutput runPlaneCommand(Document& doc, const std::vector<std::string>& a, 
             else if (k == "on") onBody = *w;
             else if (k == "name") name = *w;
             else if (k == "normal") {
-                if (!(normal = axisFromWord(*w))) return out.fail("NORMAL needs X, Y, Z or x,y,z");
-            } else if (!(uDir = axisFromWord(*w))) return out.fail("U needs X, Y, Z or x,y,z");
+                if (!(normal = directionOrRef(st, *w))) return out.fail("NORMAL needs X, Y, Z, x,y,z or a reference axis");
+            } else if (!(uDir = directionOrRef(st, *w))) return out.fail("U needs X, Y, Z, x,y,z or a reference axis");
         } else {
             v.push_back(a[i]);
         }
     }
     if (!name.empty()) {
-        if (planeFromKey(name) || findDatum(st, name) >= 0) return out.fail("There is already a plane named " + name);
+        if (planeFromKey(name) || findDatum(st, name) >= 0 || findRefAxis(st, name) || findRefPoint(st, name))
+            return out.fail("There is already a plane, axis or point named " + name);
     } else {
         for (int n = static_cast<int>(st.datums.size()) + 1;; ++n)
             if (findDatum(st, name = "Plane " + std::to_string(n)) < 0) break;
@@ -317,7 +515,7 @@ CommandOutput runPlaneCommand(Document& doc, const std::vector<std::string>& a, 
         if (v.size() != 3) return out.fail("Usage: PLANE THROUGH x,y,z x,y,z x,y,z [NAME name]");
         Vec3 p[3];
         for (int k = 0; k < 3; ++k) {
-            const auto q = parseVec3(v[static_cast<std::size_t>(k)]);
+            const auto q = pointOrRef(st, v[static_cast<std::size_t>(k)]);
             if (!q) return out.fail("Not a point: " + v[static_cast<std::size_t>(k)]);
             p[k] = *q;
         }
@@ -326,11 +524,11 @@ CommandOutput runPlaneCommand(Document& doc, const std::vector<std::string>& a, 
         if (!(length(n) > 1e-6f * std::max(1.0f, length(e1) * length(e2))) || !makePlaneFrame(p[0], n, e1, f))
             return out.fail("The three points are in line: they make no plane");
     } else if (sub == "at") {
-        const auto o = v.size() == 1 ? parseVec3(v[0]) : std::nullopt;
+        const auto o = v.size() == 1 ? pointOrRef(st, v[0]) : std::nullopt;
         if (!o || !normal) return out.fail("Usage: PLANE AT x,y,z NORMAL x,y,z [U x,y,z] [NAME name]");
         if (!makePlaneFrame(*o, *normal, uDir ? *uDir : levelAxis(*normal), f)) return out.fail("NORMAL needs a direction");
     } else { // face
-        const auto at = v.size() == 1 ? parseVec3(v[0]) : std::nullopt;
+        const auto at = v.size() == 1 ? pointOrRef(st, v[0]) : std::nullopt;
         if (!at) return out.fail("Usage: PLANE FACE x,y,z [ON body] [NAME name]   (the face of a body nearest the point)");
         int only = -1;
         if (!onBody.empty() && (only = findBody(doc, onBody)) < 0) return out.fail("No body named " + onBody);
@@ -512,7 +710,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
-                                        "DRAFT",   "THREAD"};
+                                        "DRAFT",   "THREAD",   "SPLIT"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -527,7 +725,7 @@ bool historyCommand(const std::string& cmd) {
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
-                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD"};
+                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -564,7 +762,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
         return;
     }
     if (!historyCommand(cmd)) return;
-    if (cmd == "PLANE" && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
+    if ((cmd == "PLANE" || cmd == "REFAXIS" || cmd == "REFPOINT") && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
     if (st.history.empty() && st.plane != SketchPlane::Top && cmd != "PLANE") { // the plane the history starts on
         HistoryStep plane;
@@ -1135,6 +1333,8 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.state.historyComplete = true;
         doc.state.simDuration = 0.0f;
         doc.state.datums.clear();
+        doc.state.refAxes.clear();
+        doc.state.refPoints.clear();
         doc.state.customPlane.clear();
         if (doc.state.plane == SketchPlane::Custom) doc.state.plane = SketchPlane::Top;
         if (const auto u = parseUnitName(preferences().units)) doc.state.units.unit = *u; // Preferences: units for new projects
@@ -2244,6 +2444,8 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return runFeatureCommand(doc, cmd, a, pc.quoted);
     if (cmd == "HISTORY" || cmd == "REGEN") return runHistoryCommand(doc, cmd, a, pc.quoted);
     if (cmd == "VAR" || cmd == "CONFIG") return runVariableCommand(doc, cmd, a);
+    if (cmd == "REFAXIS" || cmd == "REFPOINT") return runReferenceCommand(doc, cmd, a);
+    if (cmd == "SPLIT") return runSplitCommand(doc, a, pc.quoted);
     if (cmd == "CONSTRAIN" || cmd == "DIM" || cmd == "CONSTRAINTS" || cmd == "CONSTRAINT") return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "PRINTCHECK" || cmd == "REPAIR" || cmd == "ORIENT" || cmd == "SLICE") {
         // PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]      REPAIR [body]      ORIENT [body] [OVERHANG deg]

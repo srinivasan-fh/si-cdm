@@ -44,6 +44,15 @@ struct DatumPlane {
     std::string name;
     PlaneFrame frame;
 };
+// A named reference axis (REFAXIS) and point (REFPOINT).
+struct DatumAxis {
+    std::string name;
+    Vec3 origin, dir;
+};
+struct DatumPoint {
+    std::string name;
+    Vec3 at;
+};
 
 enum class CurveKind { Point, Line, Polyline, Rectangle, Circle, Arc, Spline, Ellipse, Slot };
 

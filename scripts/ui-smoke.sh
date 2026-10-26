@@ -67,6 +67,7 @@ shot datum-2d --command "NEW" --command "PREFERENCES SET units mm" --command "BO
 shot extrude-options --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 60 40 20 @0,0,0" --command "PLANE FACE 0,0,30 NAME Lid" --command "CIRCLE 0,0 5" --command "EXTRUDE THROUGH REVERSE CUT" --command "RECT -25,-15 -15,-5" --command "EXTRUDE 8 DRAFT 5 JOIN" --command "PLINE -20,10 20,10" --command "EXTRUDE 6 THIN 2 JOIN" --command "FIT"
 shot hole-wizard --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 80 60 20 @0,0,0" --command "HOLE \"Block 1\" AT -25,-15,20 25,-15,20 SIZE M6 CBORE THROUGH" --command "HOLE \"Block 1\" AT -25,15,20 25,15,20 SIZE M8 TAPPED DEPTH 15" --command "HOLE \"Block 1\" AT 0,0,20 SIZE 1/4-20 CSINK THROUGH" --command "FIT"
 shot spring-thread --command "NEW" --command "PREFERENCES SET units mm" --command "PLANE FRONT" --command "CIRCLE 20,0 2" --command "SWEEP \"Circle 1\" HELIX PITCH 8 TURNS 5" --command "CYLINDER 5 30 @60,0,0" --command "THREAD \"Cylinder 2\" AT 60,0,30 AXIS 0,0,-1 SIZE M10 LENGTH 20" --command "FIT"
+shot references --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 60 40 20 @0,0,0" --command "PLANE OFFSET 30 FROM TOP NAME Upper" --command "PLANE ANGLE 30 ABOUT U FROM FRONT NAME Tilted" --command "REFAXIS A1 PLANES FRONT RIGHT" --command "REFPOINT P1 AT 30,20,20" --command "FIT"
 shot save-reopen --command "BOX 20 20 20" --command "SAVE \"$state/smoke.sicdm\"" --command "NEW" --command "RECENT 1" --command "BOX 5 5 5" --command "UNDO"
 
 if [ "$failed" -gt 0 ]; then

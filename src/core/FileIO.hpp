@@ -45,6 +45,8 @@ struct ProjectState {
     PlaneFrame customFrame = planeFrame(SketchPlane::Top); // the plane when `plane` is Custom
     std::string customPlane;          // its datum's name ("" for an unnamed one)
     std::vector<DatumPlane> datums;   // named datum planes (PLANE OFFSET, THROUGH...)
+    std::vector<DatumAxis> refAxes;   // reference axes (REFAXIS)
+    std::vector<DatumPoint> refPoints; // reference points (REFPOINT)
     std::vector<Variable> variables;  // global variables and equations (VAR), used as {expr}
     std::vector<Configuration> configs; // named sets of their values (CONFIG)
     std::string config;               // the configuration last applied
@@ -59,6 +61,10 @@ struct ProjectState {
     bool historyComplete = true;          // false: the model was also changed outside commands
     std::uint64_t historyRevision = 0;    // the scene's revision after the last command (not saved)
 };
+
+// A reference axis or point by name (case-insensitive); nullptr when there is none.
+const DatumAxis* findRefAxis(const ProjectState& st, const std::string& name);
+const DatumPoint* findRefPoint(const ProjectState& st, const std::string& name);
 
 // The active sketch plane's frame, and its name ("Top (XY)", a datum's name, "Custom").
 PlaneFrame activePlaneFrame(const ProjectState& st);
@@ -83,8 +89,9 @@ std::string activePlaneName(const ProjectState& st);
 //   10 adds datum planes ("datums", "custom_plane") and sketches on them: curves on a
 //      "custom" plane carry its "frame" (origin, u, v), and so do extrusions from them (in
 //      their params); a file with either has reader_version 10. Bodies keep their hole
-//      wizard callouts ("holes"), and the project its variables ("variables") and
-//      configurations ("configs", "config")
+//      wizard callouts ("holes"), and the project its variables ("variables"),
+//      configurations ("configs", "config") and reference axes and points
+//      ("ref_axes", "ref_points")
 constexpr int kProjectVersion = 10;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then

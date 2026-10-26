@@ -5,7 +5,8 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 
 | Kind | Features |
 | --- | --- |
-| Sketch planes | `PLANE`: Top, Front, Right, and datum planes anywhere or on a face |
+| Sketch planes and references | `PLANE`: Top, Front, Right, and datum planes anywhere or on a face; `REFAXIS`, `REFPOINT` |
+| Multibody | `SPLIT` a body in two; `BOOLEAN` joins, cuts and intersects bodies |
 | Sketch constraints | `CONSTRAIN`, `DIM`, `CONSTRAINTS` and `CONSTRAINT EDIT` / `DELETE` |
 | Solids from sketch curves | `EXTRUDE`, `REVOLVE`, `SWEEP` and `LOFT` |
 | Holes and threads | `HOLE`: standard sizes, counterbored, countersunk and tapped; `THREAD`: modelled threads |
@@ -60,6 +61,33 @@ PLANE THROUGH 0,0,15 30,0,40 0,20,15
 RECT 5,5 20,15
 EXTRUDE 4
 ```
+
+### Reference axes and points
+
+```text
+REFAXIS name THROUGH p p | AT p DIR x,y,z | PLANES plane plane | OF body
+REFPOINT name AT x,y,z | CENTRE body
+REFAXIS LIST | REFPOINT LIST | REFAXIS DELETE name | REFPOINT DELETE name
+```
+
+- **Axes:** through two points, through a point along a direction, where two planes meet,
+  or a round body's own axis (`OF`: its axis of symmetry, through its centre of mass).
+- **Points:** at a position, or a body's centre of mass.
+- Planes take them: `PLANE AT P1 NORMAL A1`, `PLANE THROUGH P1 P2 P3`; so do `PATTERN ...
+  CIRCULAR n AXIS A1` (about that line) and `REVOLVE ... AXIS A1` (an axis lying in the
+  profile's plane).
+- They are drawn in the 3D window with their names (datum planes as framed squares, the
+  sketch plane's highlighted), saved with the project, and REGEN makes them again.
+
+### Splitting a body
+
+```text
+SPLIT [body] BY plane              TOP, FRONT, RIGHT or a datum plane
+SPLIT [body] [PLANE] x,y,z NORMAL x,y,z
+```
+
+SPLIT cuts a body in two along a plane and keeps both pieces, the cuts capped: the piece the
+normal points to becomes *Body (2)*. Hole wizard callouts stay with the piece they're in.
 
 ### Curves
 

@@ -218,6 +218,11 @@ void dxfArc(std::string& out, const std::string& layer, Vec2 c, float r, float a
 }
 
 
+std::string lowerCopyOf(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
 Json frameToJson(const PlaneFrame& f) {
     Json a = Json::array();
     for (const Vec3& v : {f.origin, f.u, f.v})
@@ -237,6 +242,18 @@ bool frameFromJson(const Json& j, PlaneFrame& f) {
 }
 
 } // namespace
+
+const DatumAxis* findRefAxis(const ProjectState& st, const std::string& name) {
+    for (const DatumAxis& a : st.refAxes)
+        if (lowerCopyOf(a.name) == lowerCopyOf(name)) return &a;
+    return nullptr;
+}
+
+const DatumPoint* findRefPoint(const ProjectState& st, const std::string& name) {
+    for (const DatumPoint& p : st.refPoints)
+        if (lowerCopyOf(p.name) == lowerCopyOf(name)) return &p;
+    return nullptr;
+}
 
 // The active sketch plane's frame.
 PlaneFrame activePlaneFrame(const ProjectState& st) {
@@ -414,6 +431,24 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         }
         doc.set("configs", cs);
         if (!state.config.empty()) doc.set("config", state.config);
+    }
+    if (!state.refAxes.empty()) {
+        Json as = Json::array();
+        for (const DatumAxis& x : state.refAxes) {
+            Json j = Json::object();
+            j.set("name", x.name).set("origin", vec3Json(x.origin)).set("dir", vec3Json(x.dir));
+            as.push(j);
+        }
+        doc.set("ref_axes", as);
+    }
+    if (!state.refPoints.empty()) {
+        Json ps = Json::array();
+        for (const DatumPoint& x : state.refPoints) {
+            Json j = Json::object();
+            j.set("name", x.name).set("at", vec3Json(x.at));
+            ps.push(j);
+        }
+        doc.set("ref_points", ps);
     }
     if (!state.datums.empty()) {
         Json ds = Json::array();
@@ -679,6 +714,12 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         st.configs.push_back(std::move(c));
     }
     st.config = (*doc)["config"].asString();
+    for (const Json& j : (*doc)["ref_axes"].items()) {
+        const Vec3 d = jsonVec3(j["dir"], {0, 0, 1});
+        if (!j["name"].asString().empty() && length(d) > 1e-6f) st.refAxes.push_back({j["name"].asString(), jsonVec3(j["origin"]), normalize(d)});
+    }
+    for (const Json& j : (*doc)["ref_points"].items())
+        if (!j["name"].asString().empty()) st.refPoints.push_back({j["name"].asString(), jsonVec3(j["at"])});
     for (const Json& jd : (*doc)["datums"].items()) {
         DatumPlane d;
         d.name = jd["name"].asString();

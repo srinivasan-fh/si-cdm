@@ -611,3 +611,55 @@ TEST_CASE("PATTERN along a curve, at sketch points, and filling a region") {
     CHECK(g.scene.bodies().size() == 22);
     CHECK(!run(g, "PATTERN \"Cylinder 1\" FILL \"Rectangle 1\"").ok); // SPACING
 }
+
+TEST_CASE("Reference axes and points, used by planes, patterns and revolves; SPLIT") {
+    Document d;
+    REQUIRE(run(d, "CYLINDER 10 40 @0,0,0").ok);
+    REQUIRE(run(d, "ROTATE \"Cylinder 1\" 0,90,0").ok); // lying along X
+    REQUIRE(run(d, "REFAXIS A1 OF \"Cylinder 1\"").ok);
+    const DatumAxis* a1 = findRefAxis(d.state, "a1");
+    REQUIRE(a1 != nullptr);
+    CHECK_NEAR(std::fabs(a1->dir.x), 1.0f, 1e-4);
+    REQUIRE(run(d, "REFPOINT P1 CENTRE \"Cylinder 1\"").ok);
+    CHECK_NEAR(findRefPoint(d.state, "P1")->at.x, 20.0f, 1e-3);
+    REQUIRE(run(d, "REFAXIS Z0 PLANES FRONT RIGHT").ok); // the Z axis
+    CHECK_NEAR(std::fabs(findRefAxis(d.state, "Z0")->dir.z), 1.0f, 1e-6);
+    CHECK(!run(d, "REFAXIS Bad PLANES TOP TOP").ok);
+    CHECK(!run(d, "REFAXIS A1 THROUGH 0,0,0 1,0,0").ok); // name taken
+
+    // A plane through the point square to the axis, and a split there.
+    REQUIRE(run(d, "PLANE AT P1 NORMAL A1 NAME Mid").ok);
+    CHECK_NEAR(std::fabs(d.state.customFrame.normal.x), 1.0f, 1e-4);
+    const double whole = volumeOf(last(d));
+    REQUIRE(run(d, "SPLIT \"Cylinder 1\" BY Mid").ok);
+    REQUIRE(d.scene.bodies().size() == 2);
+    CHECK_NEAR(volumeOf(d.scene.bodies()[0]) + volumeOf(d.scene.bodies()[1]), whole, whole * 1e-3);
+    CHECK_NEAR(volumeOf(d.scene.bodies()[0]), whole / 2, whole * 1e-2);
+    CHECK(d.scene.bodies()[1].name == "Cylinder 1 (2)");
+    CHECK(!run(d, "SPLIT \"Cylinder 1\" 500,0,0 NORMAL X").ok); // misses it
+
+    // A circular pattern about the reference axis, and a revolve about one in the sketch plane.
+    REQUIRE(run(d, "BOX 5 5 5 @30,0,100").ok);
+    REQUIRE(run(d, "PATTERN \"Block 2\" CIRCULAR 4 AXIS Z0").ok);
+    CHECK_NEAR(d.scene.bodies().back().offset.y, -30.0f, 1e-3);
+    REQUIRE(run(d, "PLANE FRONT").ok);
+    REQUIRE(run(d, "REFAXIS V0 AT 0,0,0 DIR Z").ok);
+    REQUIRE(run(d, "RECT 50,0 60,10").ok);
+    REQUIRE(run(d, "REVOLVE \"" + d.scene.sketch().curves().back().name + "\" AXIS V0").ok);
+    CHECK_NEAR(volumeOf(last(d)), 3.14159265 * (3600 - 2500) * 10, 40.0);
+    REQUIRE(run(d, "REFAXIS Off AT 0,5,0 DIR Z").ok);
+    REQUIRE(run(d, "RECT 50,20 60,30").ok);
+    CHECK(!run(d, "REVOLVE \"" + d.scene.sketch().curves().back().name + "\" AXIS Off").ok); // not in the plane
+
+    // Saved, and REGEN makes them again.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_refs_test.sicdm").string();
+    REQUIRE(run(d, "SAVE \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
+    std::filesystem::remove(path);
+    CHECK(e.state.refAxes.size() == 4);
+    CHECK(e.state.refPoints.size() == 1);
+    REQUIRE(run(e, "REGEN").ok);
+    CHECK(e.state.refAxes.size() == 4);
+    CHECK(e.scene.bodies().size() == d.scene.bodies().size());
+}

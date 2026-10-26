@@ -1635,6 +1635,8 @@ void Application::frame(float dt) {
     if (m_extrudeCurve >= 0) drawExtrudePreview();
     if (m_uiState.mode == ViewMode::Model3D && (m_doc.state.cam.showPaths || m_doc.state.lathe.showPaths)) drawToolpathOverlay();
     if (m_uiState.mode == ViewMode::Drawing2D && !m_doc.scene.sketch().constraints().empty()) drawConstraintOverlay();
+    if (m_uiState.mode == ViewMode::Model3D && (!m_doc.state.datums.empty() || !m_doc.state.refAxes.empty() || !m_doc.state.refPoints.empty()))
+        drawDatumOverlay();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active())))
         drawSculptOverlay();
@@ -2406,6 +2408,52 @@ void Application::updateLoopShapes() {
 
 // Sketch constraints in the 2D view: each dimension's value by its geometry, and a
 // short tag (H, V, //, perpendicular, T, =, ...) for the geometric ones. Unmet ones red.
+// Datum planes as framed squares (the sketch plane brighter), reference axes as long dashed
+// lines and reference points as crosses, each with its name.
+void Application::drawDatumOverlay() const {
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    dl->PushClipRect(m_ui.canvasMin(), m_ui.canvasMax(), true);
+    const AABB box = m_doc.scene.bounds();
+    const float size = box.valid() ? std::max(10.0f, 0.35f * length(box.max - box.min)) : 50.0f;
+    auto scr = [&](const Vec3& p) { return projectToScreen(camera(), p, io.DisplaySize); };
+    const ImU32 plane = IM_COL32(120, 170, 255, 110), active = IM_COL32(255, 190, 90, 200), text = IM_COL32(200, 215, 240, 220);
+    for (const DatumPlane& d : m_doc.state.datums) {
+        const bool on = m_doc.state.plane == SketchPlane::Custom && d.name == m_doc.state.customPlane;
+        const PlaneFrame& f = d.frame;
+        const Vec3 c[4] = {f.toWorld({-size, -size}), f.toWorld({size, -size}), f.toWorld({size, size}), f.toWorld({-size, size})};
+        std::optional<ImVec2> s[4];
+        bool all = true;
+        for (int k = 0; k < 4; ++k) all = (s[k] = scr(c[k])).has_value() && all;
+        if (!all) continue;
+        const ImU32 col = on ? active : plane;
+        for (int k = 0; k < 4; ++k) dl->AddLine(*s[k], *s[(k + 1) % 4], col, on ? 2.0f : 1.2f);
+        dl->AddQuadFilled(*s[0], *s[1], *s[2], *s[3], (col & 0x00FFFFFF) | (on ? 0x22000000u : 0x14000000u));
+        dl->AddText(ImVec2(s[3]->x + 4, s[3]->y + 2), on ? active : text, d.name.c_str());
+    }
+    for (const DatumAxis& x : m_doc.state.refAxes) {
+        const auto a = scr(x.origin - x.dir * (size * 1.4f)), b = scr(x.origin + x.dir * (size * 1.4f));
+        if (!a || !b) continue;
+        const float len = std::hypot(b->x - a->x, b->y - a->y);
+        const int dashes = std::max(1, static_cast<int>(len / 12.0f));
+        for (int k = 0; k < dashes; k += 2) { // dash, gap, dash...
+            const float t0 = static_cast<float>(k) / static_cast<float>(dashes), t1 = static_cast<float>(k + 1) / static_cast<float>(dashes);
+            dl->AddLine(ImVec2(a->x + (b->x - a->x) * t0, a->y + (b->y - a->y) * t0), ImVec2(a->x + (b->x - a->x) * t1, a->y + (b->y - a->y) * t1),
+                        IM_COL32(120, 230, 200, 210), 1.5f);
+        }
+        dl->AddText(ImVec2(b->x + 4, b->y - 14), text, x.name.c_str());
+    }
+    for (const DatumPoint& p : m_doc.state.refPoints) {
+        const auto s = scr(p.at);
+        if (!s) continue;
+        const ImU32 col = IM_COL32(255, 220, 120, 230);
+        dl->AddLine(ImVec2(s->x - 5, s->y - 5), ImVec2(s->x + 5, s->y + 5), col, 1.6f);
+        dl->AddLine(ImVec2(s->x - 5, s->y + 5), ImVec2(s->x + 5, s->y - 5), col, 1.6f);
+        dl->AddText(ImVec2(s->x + 7, s->y - 7), text, p.name.c_str());
+    }
+    dl->PopClipRect();
+}
+
 void Application::drawConstraintOverlay() const {
     const ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
