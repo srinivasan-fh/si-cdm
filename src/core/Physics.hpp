@@ -59,6 +59,7 @@ struct PhysicsSettings {
     bool floor = true;          // solid ground at z = 0
     float friction = 0.4f;      // floor friction coefficient
     bool air = false;           // quadratic air drag (sea-level air, sphere drag coefficient)
+    Vec3 wind{};                // m/s: the air's velocity, felt by robots (drones, rovers) in the robot engines
     Vec3 electricField{};       // V/m, uniform
     Vec3 magneticField{};       // T, uniform
     float ambient = 293.15f;    // K, air and floor temperature

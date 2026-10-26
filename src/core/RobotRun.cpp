@@ -5,6 +5,7 @@
 #include "core/Motion.hpp"
 #include "core/Multibody.hpp"
 #include "core/Scene.hpp"
+#include "core/Vehicle.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -153,6 +154,11 @@ std::shared_ptr<const RobotRun> robotRun(const Scene& scene, const RigSettings& 
     if (!buildRig(scene, settings, run->rig, &err)) return nullptr;
     run->engine = engineFor(run->rig, settings);
     if (run->engine == SimEngine::Particle) return nullptr;
+    // Vehicles: size the rotor motors before the engine is made.
+    if (run->engine == SimEngine::Vehicle) {
+        const Vec3 w = scene.physics().wind;
+        sizeRotorMotors(run->rig, vehicleModel(run->rig, {w.x, w.y, w.z}));
+    }
     MultibodyOptions opt;
     opt.ground = sceneGround(scene);
     opt.gravity = {scene.physics().g.x, scene.physics().g.y, scene.physics().g.z};
@@ -179,6 +185,52 @@ std::shared_ptr<const RobotRun> robotRun(const Scene& scene, const RigSettings& 
             mb.setBasePose(b);
         }
     }
+    // Vehicles: rotor thrust, air and wind; a mission flies or drives them.
+    std::vector<char> controlled(run->rig.joints.size(), 0);
+    if (run->engine == SimEngine::Vehicle) {
+        const Vec3 w = scene.physics().wind;
+        const VehicleModel vm = vehicleModel(run->rig, {w.x, w.y, w.z});
+        addVehicleForces(mb, vm);
+        if (!settings.mission.empty()) {
+            auto mission = settings.mission;
+            std::stable_sort(mission.begin(), mission.end(), [](const MissionStep& a, const MissionStep& b) { return a.t < b.t; });
+            constexpr double kDegRad = 3.14159265358979323846 / 180.0;
+            if (vm.rotors.size() >= 3) {
+                auto fc = std::make_shared<FlightController>(run->rig, vm);
+                for (std::size_t j : fc->joints()) controlled[j] = 1;
+                auto current = std::make_shared<int>(-1);
+                mb.addForceHook([fc, mission, current](Multibody& m) {
+                    int k = -1;
+                    for (std::size_t i = 0; i < mission.size(); ++i)
+                        if (mission[i].t <= m.time() + 1e-9) k = static_cast<int>(i);
+                    if (k != *current) {
+                        *current = k;
+                        if (k < 0) fc->hover();
+                        else {
+                            const MissionStep& s = mission[static_cast<std::size_t>(k)];
+                            if (s.kind == MissionKind::Velocity) fc->velocity({s.vec.x, s.vec.y, s.vec.z}, s.rate * kDegRad);
+                            else if (s.kind == MissionKind::Goto) fc->moveTo({s.vec.x * 1e-3, s.vec.y * 1e-3, s.vec.z * 1e-3}, s.rate * kDegRad);
+                            else fc->hover();
+                        }
+                    }
+                    fc->update(m);
+                });
+            } else if (!vm.wheels.empty()) {
+                auto dc = std::make_shared<DriveController>(vm);
+                for (std::size_t j : dc->joints()) controlled[j] = 1;
+                mb.addForceHook([dc, mission](Multibody& m) {
+                    int k = -1;
+                    for (std::size_t i = 0; i < mission.size(); ++i)
+                        if (mission[i].t <= m.time() + 1e-9) k = static_cast<int>(i);
+                    if (k < 0 || mission[static_cast<std::size_t>(k)].kind != MissionKind::Drive) dc->drive(0, 0);
+                    else dc->drive(mission[static_cast<std::size_t>(k)].vec.x, mission[static_cast<std::size_t>(k)].rate * kDegRad);
+                    dc->update(m);
+                });
+            } else {
+                run->note = "A mission needs three or more ROTOR parts (a multirotor) or WHEEL parts (a rover)";
+            }
+        }
+    }
     const double dt = opt.dt;
     const long steps = std::lround(duration / dt);
     const long perFrame = std::max(1L, std::lround(run->frameStep / dt));
@@ -197,6 +249,7 @@ std::shared_ptr<const RobotRun> robotRun(const Scene& scene, const RigSettings& 
         if (s % perTarget == 0) {
             const MotionTargets tg = motionTargets(scene, run->rig, static_cast<float>(mb.time()));
             for (std::size_t j = 0; j < tg.value.size(); ++j) {
+                if (controlled[j]) continue; // the flight or drive controller has it
                 JointControl c;
                 c.mode = tg.velocity[j] ? ActuatorMode::Velocity : ActuatorMode::Position;
                 c.target = tg.velocity[j] ? tg.rate[j] : tg.value[j];

@@ -512,6 +512,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         ph.set("floor", p.floor);
         ph.set("friction", p.friction);
         ph.set("air", p.air);
+        if (p.wind.x != 0 || p.wind.y != 0 || p.wind.z != 0) ph.set("wind", vec3Json(p.wind));
         ph.set("electric_field", vec3Json(p.electricField));
         ph.set("magnetic_field", vec3Json(p.magneticField));
         ph.set("ambient", p.ambient);
@@ -776,6 +777,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         p.floor = ph["floor"].asBool(true);
         p.friction = std::max(ph["friction"].asFloat(p.friction), 0.0f);
         p.air = ph["air"].asBool();
+        p.wind = jsonVec3(ph["wind"]);
         p.electricField = jsonVec3(ph["electric_field"]);
         p.magneticField = jsonVec3(ph["magnetic_field"]);
         p.ambient = std::max(ph["ambient"].asFloat(p.ambient), 0.0f);

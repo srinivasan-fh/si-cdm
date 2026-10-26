@@ -1477,6 +1477,14 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             ps.air = *on;
             return changed("");
         }
+        if (sub == "wind") {
+            // PHYSICS WIND x,y,z (m/s) | OFF: the air robots fly and drive through
+            if (a.size() < 2) return usage();
+            if (iequal(a[1], "off")) ps.wind = {};
+            else if (const auto w = parseVec3(a[1])) ps.wind = *w;
+            else return out.fail("WIND needs x,y,z in m/s, or OFF");
+            return changed("");
+        }
         if (sub == "field") {
             if (a.size() < 3 && !(a.size() == 2 && iequal(a[1], "off"))) return usage();
             if (iequal(a[1], "off")) {

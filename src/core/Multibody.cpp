@@ -475,9 +475,10 @@ void Multibody::Impl::dynamics() {
         }
         if (mode != ActuatorMode::Passive) t += ctl.torque;
         tau[j] = t;
-        // Joint friction.
-        t -= opt.jointDamping * qd[j];
-        x += opt.jointDamping * dt;
+        // Joint friction (bearings of spinning joints, wheels and rotors, far less).
+        const double b = jt.type == RigJointType::Continuous ? opt.jointDamping * 0.005 : opt.jointDamping;
+        t -= b * qd[j];
+        x += b * dt;
         // Hard stops.
         if (jt.limited) {
             if (q[j] < jt.lo) {
@@ -567,7 +568,10 @@ void Multibody::step() {
     Impl& s = *m;
     if (s.diverged) return;
     for (auto& w : s.fext) w = {};
-    for (ForceHook& h : s.hooks) h(*this);
+    if (!s.hooks.empty()) {
+        s.kinematics(); // hooks see this step's poses and velocities
+        for (ForceHook& h : s.hooks) h(*this);
+    }
     s.kinematics();
     for (const auto* list : {&s.once, &s.persistent})
         for (const Impl::Wrench& w : *list)

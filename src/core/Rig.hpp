@@ -44,6 +44,18 @@ enum class RigTag { None, Rotor, Wheel, EndEffector, Foot, Knee, Hinge, Base };
 const char* rigTagKey(RigTag t) noexcept;
 std::optional<RigTag> rigTagFromKey(const std::string& key) noexcept;
 
+// A step of a vehicle's mission, from time t (s) until the next: hover where it is, fly at a
+// velocity (m/s, world) turning at `rate` deg/s, fly to a point (mm), or (rovers) drive at
+// vec.x m/s turning at `rate` deg/s.
+enum class MissionKind { Hover, Velocity, Goto, Drive };
+const char* missionKindKey(MissionKind k) noexcept;
+struct MissionStep {
+    float t = 0;
+    MissionKind kind = MissionKind::Hover;
+    Vec3 vec{};
+    float rate = 0;
+};
+
 // A robot's settings, saved with the project (the tree itself is read from the scene).
 struct RigSettings {
     std::string name;                  // the robot: a component, an assembly path, or "" (every jointed part)
@@ -53,6 +65,7 @@ struct RigSettings {
     float density = 0.0f;              // kg/m^3 for parts without their own; 0: each body's
     std::string engine;                // "" (from the morphology) or an engine key, see Multibody.hpp
     bool simulate = false;             // the Simulation plays it with its engine (its motions are the servo targets)
+    std::vector<MissionStep> mission;  // drones and rovers: what the flight / drive controller is told, in time order
 
     RigTag tagOf(const std::string& body) const;
     void setTag(const std::string& body, RigTag tag); // None removes it

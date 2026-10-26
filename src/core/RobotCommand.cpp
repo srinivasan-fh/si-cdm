@@ -28,7 +28,7 @@ std::string lowerOf(const std::string& s) {
     return o;
 }
 
-const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines"};
+const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission"};
 
 bool isRigWord(const std::string& w) {
     const std::string k = lowerOf(w);
@@ -332,6 +332,67 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
             else if (const auto se = simEngineFromKey(e)) settings.engine = simEngineKey(*se);
             else return out.fail("ENGINE is AUTO, ARTICULATED, VEHICLE, OPTIMIZE or PARTICLE (RIG ENGINES lists them)");
             changed = true;
+        } else if (k == "mission") {
+            // MISSION CLEAR | HOVER | VELOCITY vx,vy,vz [YAW deg/s] | GOTO x,y,z [YAW deg/s] | DRIVE speed [TURN deg/s], each [AT t]
+            const std::string what = lowerOf(next());
+            if (what == "clear") {
+                settings.mission.clear();
+                changed = true;
+                continue;
+            }
+            MissionStep st;
+            if (what == "hover") st.kind = MissionKind::Hover;
+            else if (what == "velocity" || what == "fly") {
+                st.kind = MissionKind::Velocity;
+                const auto v = parseVec3(next());
+                if (!v) return out.fail("VELOCITY needs vx,vy,vz in m/s");
+                st.vec = *v;
+            } else if (what == "goto" || what == "to") {
+                st.kind = MissionKind::Goto;
+                const std::string p = next();
+                const auto v = parseVec3(p);
+                if (!v) return out.fail("GOTO needs x,y,z");
+                // Lengths in the document's units, like any typed point.
+                std::vector<float> comps;
+                std::size_t start = 0;
+                const std::string body = p[0] == '@' ? p.substr(1) : p;
+                for (std::size_t c = 0; c <= body.size(); ++c)
+                    if (c == body.size() || body[c] == ',') {
+                        const auto l = parseLength(body.substr(start, c - start));
+                        if (!l) return out.fail("GOTO needs x,y,z");
+                        comps.push_back(static_cast<float>(*l));
+                        start = c + 1;
+                    }
+                if (comps.size() != 3) return out.fail("GOTO needs x,y,z");
+                st.vec = {comps[0], comps[1], comps[2]};
+            } else if (what == "drive") {
+                st.kind = MissionKind::Drive;
+                const auto v = parseNumber(next());
+                if (!v) return out.fail("DRIVE needs a speed in m/s");
+                st.vec = {*v, 0, 0};
+            } else {
+                return out.fail("MISSION is CLEAR, HOVER, VELOCITY vx,vy,vz, GOTO x,y,z or DRIVE speed (each [AT t])");
+            }
+            // Options of the step.
+            while (i + 1 < a.size()) {
+                const std::string o = lowerOf(a[i + 1]);
+                if (o == "yaw" || o == "turn") {
+                    ++i;
+                    const auto v = parseNumber(next());
+                    if (!v) return out.fail("YAW / TURN needs deg/s");
+                    st.rate = *v;
+                } else if (o == "at") {
+                    ++i;
+                    const auto v = parseNumber(next());
+                    if (!v || *v < 0) return out.fail("AT needs seconds");
+                    st.t = *v;
+                } else {
+                    break;
+                }
+            }
+            settings.mission.push_back(st);
+            std::stable_sort(settings.mission.begin(), settings.mission.end(), [](const MissionStep& x, const MissionStep& y) { return x.t < y.t; });
+            changed = true;
         } else if (k == "simulate" || k == "sim") {
             const std::string v = lowerOf(next());
             if (v == "on" || v == "yes") settings.simulate = true;
@@ -349,7 +410,7 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
             stateAt = t;
         } else {
             return out.fail("Usage: RIG [robot] [TAG part ROLE] [UNTAG part] [MORPHOLOGY m] [BASE FIXED|FLOATING|AUTO] [DENSITY kg/m3] [ENGINE e] "
-                            "[SIMULATE ON|OFF] [STATE [AT t]] [EXPORT file]");
+                            "[MISSION ...] [SIMULATE ON|OFF] [STATE [AT t]] [EXPORT file]");
         }
     }
     if (changed) {
@@ -398,6 +459,18 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
         return out;
     }
     for (const std::string& l : describeRig(rig)) out.say(l);
+    for (const MissionStep& st : settings.mission) {
+        char buf[200];
+        switch (st.kind) {
+        case MissionKind::Hover: std::snprintf(buf, sizeof buf, "  mission %6.2f s: hover", st.t); break;
+        case MissionKind::Velocity:
+            std::snprintf(buf, sizeof buf, "  mission %6.2f s: fly at (%g, %g, %g) m/s, yaw %g deg/s", st.t, st.vec.x, st.vec.y, st.vec.z, st.rate);
+            break;
+        case MissionKind::Goto: std::snprintf(buf, sizeof buf, "  mission %6.2f s: go to (%g, %g, %g) mm", st.t, st.vec.x, st.vec.y, st.vec.z); break;
+        case MissionKind::Drive: std::snprintf(buf, sizeof buf, "  mission %6.2f s: drive at %g m/s, turning %g deg/s", st.t, st.vec.x, st.rate); break;
+        }
+        out.say(buf);
+    }
     return out;
 }
 

@@ -537,3 +537,93 @@ TEST_CASE("Robotics terrain: friction holds a block on a gentle slope and lets i
         CHECK(std::fabs(accel - expected) < 0.02 * std::max(expected, 1.0));
     }
 }
+
+namespace {
+
+// A 2.3 kg quadcopter: a frame and four 240 mm rotors tagged ROTOR.
+void makeDrone(Document& d) {
+    REQUIRE(run(d, "BOX 200 200 40 @0,0,100").ok);
+    for (const char* at : {"@-170,-170,150", "@170,-170,150", "@-170,170,150", "@170,170,150"}) REQUIRE(run(d, std::string("CYLINDER 120 4 ") + at).ok);
+    for (int i = 2; i <= 5; ++i) REQUIRE(run(d, "RIG TAG \"Cylinder " + std::to_string(i) + "\" ROTOR").ok);
+}
+
+V3d frameVelocity(const RobotRun& r, float t) {
+    const RobotRunFrame a = r.at(t - 0.05f), b = r.at(t + 0.05f);
+    return {(b.com[0] - a.com[0]) / 0.1, (b.com[1] - a.com[1]) / 0.1, (b.com[2] - a.com[2]) / 0.1};
+}
+
+double frameYaw(const RobotRun& r, float t) {
+    const LinkPose b = r.at(t).links[0];
+    return std::atan2(b.R[3], b.R[0]);
+}
+
+} // namespace
+
+TEST_CASE("Robotics vehicles: a quadcopter takes off, holds, flies at a velocity and yaws") {
+    Document d;
+    makeDrone(d);
+    REQUIRE(run(d, "RIG MISSION GOTO 0,0,1000").ok);
+    REQUIRE(run(d, "RIG MISSION VELOCITY 1,0,0 YAW 30 AT 6").ok);
+    REQUIRE(run(d, "RIG MISSION HOVER AT 9").ok);
+    REQUIRE(d.scene.rigs().robots[0].mission.size() == 3);
+    const RigSettings s = d.scene.rigs().robots[0];
+    RobotRig rig;
+    REQUIRE(buildRig(d.scene, s, rig));
+    CHECK(engineFor(rig, s) == SimEngine::Vehicle);
+    const auto r = robotRun(d.scene, s, 12.0f);
+    REQUIRE(r != nullptr);
+    CHECK(!r->diverged);
+    // Up and holding a metre (the centre of mass starts 107 mm up).
+    const RobotRunFrame f5 = r->at(5.5f);
+    CHECK(std::fabs(f5.com[2] - 1.0) < 0.12);
+    CHECK(std::fabs(f5.com[0]) < 0.02 && std::fabs(f5.com[1]) < 0.02);
+    // Forward at 1 m/s, turning at 30 deg/s.
+    const V3d v = frameVelocity(*r, 8.0f);
+    CHECK(std::fabs(v[0] - 1.0) < 0.1 && std::fabs(v[1]) < 0.1);
+    const double turned = frameYaw(*r, 8.5f) - frameYaw(*r, 7.0f);
+    CHECK(std::fabs(turned - 1.5 * 30 * 3.14159265358979 / 180) < 0.1);
+    // Then it stops (braking takes a second or two) and holds.
+    const V3d stopped = frameVelocity(*r, 11.8f);
+    CHECK(std::hypot(stopped[0], stopped[1]) < 0.15);
+    // The mission is saved, cleared and reported.
+    CHECK(run(d, "RIG").lines.back().find("hover") != std::string::npos);
+    REQUIRE(run(d, "RIG MISSION CLEAR").ok);
+    CHECK(d.scene.rigs().robots[0].mission.empty());
+    CHECK(!run(d, "RIG MISSION SOAR").ok);
+}
+
+TEST_CASE("Robotics vehicles: a drone holds its position in a crosswind") {
+    Document d;
+    makeDrone(d);
+    REQUIRE(run(d, "RIG MISSION GOTO 0,0,800").ok);
+    REQUIRE(run(d, "PHYSICS WIND 3,0,0").ok);
+    const auto r = robotRun(d.scene, d.scene.rigs().robots[0], 10.0f);
+    REQUIRE(r != nullptr);
+    const RobotRunFrame f = r->at(10.0f);
+    CHECK(std::fabs(f.com[0]) < 0.1);       // leans into the wind and stays put
+    CHECK(std::fabs(f.com[2] - 0.8) < 0.1);
+    // It leans into the wind: its body z axis tips toward -X (R's third column, x row).
+    const LinkPose b = f.links[0];
+    CHECK(b.R[2] < -0.001);
+}
+
+TEST_CASE("Robotics vehicles: a rover drives straight and turns at the rate asked") {
+    Document d;
+    REQUIRE(run(d, "BOX 400 250 60 @0,0,60").ok);
+    int n = 2;
+    for (const char* at : {"@-150,-150,60", "@150,-150,60", "@-150,150,60", "@150,150,60"}) {
+        REQUIRE(run(d, std::string("CYLINDER 60 30 ") + at).ok);
+        REQUIRE(run(d, "ROTATE \"Cylinder " + std::to_string(n++) + "\" 90,0,0").ok);
+    }
+    for (int i = 2; i <= 5; ++i) REQUIRE(run(d, "RIG TAG \"Cylinder " + std::to_string(i) + "\" WHEEL").ok);
+    REQUIRE(run(d, "RIG MISSION DRIVE 1").ok);
+    REQUIRE(run(d, "RIG MISSION DRIVE 0.5 TURN 30 AT 3").ok);
+    const auto r = robotRun(d.scene, d.scene.rigs().robots[0], 8.0f);
+    REQUIRE(r != nullptr);
+    const V3d v = frameVelocity(*r, 2.0f);
+    CHECK(std::fabs(v[0] - 1.0) < 0.05 && std::fabs(v[1]) < 0.05);
+    const double turned = frameYaw(*r, 7.0f) - frameYaw(*r, 5.0f);
+    CHECK(std::fabs(turned - 2.0 * 30 * 3.14159265358979 / 180) < 0.1);
+    const V3d v2 = frameVelocity(*r, 6.0f);
+    CHECK(std::fabs(std::hypot(v2[0], v2[1]) - 0.5) < 0.06);
+}

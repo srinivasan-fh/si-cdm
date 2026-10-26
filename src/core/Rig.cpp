@@ -80,6 +80,16 @@ std::optional<RigTag> rigTagFromKey(const std::string& key) noexcept {
     return std::nullopt;
 }
 
+const char* missionKindKey(MissionKind k) noexcept {
+    switch (k) {
+    case MissionKind::Hover: return "hover";
+    case MissionKind::Velocity: return "velocity";
+    case MissionKind::Goto: return "goto";
+    case MissionKind::Drive: return "drive";
+    }
+    return "hover";
+}
+
 const char* rigJointTypeKey(RigJointType t) noexcept {
     switch (t) {
     case RigJointType::Revolute: return "revolute";
@@ -129,6 +139,18 @@ Json rigStateToJson(const RigState& s) {
         if (r.density > 0) j.set("density", r.density);
         if (!r.engine.empty()) j.set("engine", r.engine);
         if (r.simulate) j.set("simulate", true);
+        if (!r.mission.empty()) {
+            Json m = Json::array();
+            for (const MissionStep& st : r.mission) {
+                Json step = Json::object();
+                step.set("t", st.t);
+                step.set("kind", missionKindKey(st.kind));
+                step.set("vec", Json(Json::Array{Json(st.vec.x), Json(st.vec.y), Json(st.vec.z)}));
+                step.set("rate", st.rate);
+                m.push(step);
+            }
+            j.set("mission", m);
+        }
         Json tags = Json::object();
         for (const auto& [b, t] : r.tags) tags.set(b, rigTagKey(t));
         j.set("tags", tags);
@@ -151,6 +173,16 @@ void rigStateFromJson(const Json& j, RigState& s) {
         rs.density = r["density"].asFloat(0.0f);
         rs.engine = r["engine"].asString(std::string());
         rs.simulate = r["simulate"].asBool(false);
+        const Json& m = r["mission"];
+        for (std::size_t k = 0; k < m.size(); ++k) {
+            MissionStep st;
+            st.t = m[k]["t"].asFloat(0);
+            const std::string kind = m[k]["kind"].asString(std::string("hover"));
+            st.kind = kind == "velocity" ? MissionKind::Velocity : kind == "goto" ? MissionKind::Goto : kind == "drive" ? MissionKind::Drive : MissionKind::Hover;
+            st.vec = {m[k]["vec"][0].asFloat(0), m[k]["vec"][1].asFloat(0), m[k]["vec"][2].asFloat(0)};
+            st.rate = m[k]["rate"].asFloat(0);
+            rs.mission.push_back(st);
+        }
         if (const Json& tags = r["tags"]; tags.isObject())
             for (const auto& [b, v] : tags.members())
                 if (const auto t = rigTagFromKey(v.asString(std::string())); t && *t != RigTag::None) rs.tags.emplace_back(b, *t);
