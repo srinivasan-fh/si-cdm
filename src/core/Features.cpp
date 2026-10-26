@@ -432,6 +432,95 @@ std::optional<MeshData> extrudeShape(const std::vector<Vec2>& outlineIn, bool cl
     return m;
 }
 
+// --- draft ---------------------------------------------------------------------------------
+
+std::optional<MeshData> draftMesh(const MeshData& world, Vec3 pullIn, Vec3 neutral, float deg, std::string* why, int* sides) {
+    auto fail = [&](const char* w) -> std::optional<MeshData> {
+        if (why) *why = w;
+        return std::nullopt;
+    };
+    if (world.indices.empty()) return fail("The body has no faces");
+    if (!(std::fabs(deg) > 0.0f && std::fabs(deg) < 45.0f)) return fail("The draft angle is more than 0 and less than 45 degrees");
+    const Vec3 pull = normalize(pullIn);
+    if (!(length(pull) > 0.5f)) return fail("The pull direction needs a length");
+    // One index per position, so corners shared by faces move together.
+    const AABB bb = world.bounds();
+    const float q = std::max(1e-6f, 1e-6f * length(bb.max - bb.min));
+    std::unordered_map<std::uint64_t, std::uint32_t> seen;
+    std::vector<std::uint32_t> at(world.vertices.size());
+    std::vector<Vec3> pos;
+    for (std::size_t k = 0; k < world.vertices.size(); ++k) {
+        const Vec3 w = world.vertices[k].position;
+        const auto key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(std::llround(w.x / q))) * 73856093ULL) ^
+                         (static_cast<std::uint64_t>(static_cast<std::uint32_t>(std::llround(w.y / q))) * 19349663ULL) ^
+                         (static_cast<std::uint64_t>(static_cast<std::uint32_t>(std::llround(w.z / q))) * 83492791ULL);
+        // Hash collisions are told apart by position.
+        auto it = seen.find(key);
+        if (it != seen.end() && length(pos[it->second] - w) <= q * 2) {
+            at[k] = it->second;
+            continue;
+        }
+        at[k] = static_cast<std::uint32_t>(pos.size());
+        if (it == seen.end()) seen.emplace(key, at[k]);
+        pos.push_back(w);
+    }
+    // The side faces' directions (across the pull) at each corner.
+    Vec3 e1 = cross(pull, std::fabs(pull.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0});
+    e1 = normalize(e1);
+    const Vec3 e2 = cross(pull, e1);
+    std::vector<std::vector<Vec2>> dirs(pos.size());
+    std::vector<Vec3> oldN(world.indices.size() / 3);
+    int sideCount = 0;
+    for (std::size_t t = 0; t + 2 < world.indices.size(); t += 3) {
+        const Vec3 a = pos[at[world.indices[t]]], b = pos[at[world.indices[t + 1]]], c = pos[at[world.indices[t + 2]]];
+        const Vec3 n = cross(b - a, c - a);
+        const float l = length(n);
+        oldN[t / 3] = n;
+        if (!(l > 0.0f) || std::fabs(dot(n, pull)) / l > 0.02f) continue;
+        ++sideCount;
+        Vec2 d{dot(n, e1), dot(n, e2)};
+        const float dl = std::hypot(d.x, d.y);
+        d = {d.x / dl, d.y / dl};
+        for (int k = 0; k < 3; ++k) {
+            auto& list = dirs[at[world.indices[t + static_cast<std::size_t>(k)]]];
+            if (std::none_of(list.begin(), list.end(), [&](Vec2 o) { return o.x * d.x + o.y * d.y > 0.99999f; })) list.push_back(d);
+        }
+    }
+    if (sideCount == 0) return fail("No faces run along the pull direction to draft");
+    if (sides) *sides = sideCount;
+    // Each corner moves square to the pull so every side face through it moves in by
+    // h tan(deg), h its height above the neutral plane: the mitre of those faces.
+    const float tanD = std::tan(radians(deg));
+    std::vector<Vec3> moved = pos;
+    for (std::size_t v = 0; v < pos.size(); ++v) {
+        const auto& list = dirs[v];
+        if (list.empty()) continue;
+        const float s = dot(pos[v] - neutral, pull) * tanD;
+        Vec2 d{};
+        float sxx = 0, sxy = 0, syy = 0, bx = 0, by = 0;
+        for (const Vec2& n : list) sxx += n.x * n.x, sxy += n.x * n.y, syy += n.y * n.y, bx -= s * n.x, by -= s * n.y;
+        const float det = sxx * syy - sxy * sxy;
+        if (list.size() >= 2 && det > 1e-6f) {
+            d = {(syy * bx - sxy * by) / det, (sxx * by - sxy * bx) / det};
+        } else { // one face, or faces all but in line: along their mean
+            Vec2 m{};
+            for (const Vec2& n : list) m = {m.x + n.x, m.y + n.y};
+            const float ml = std::hypot(m.x, m.y);
+            if (ml > 0) d = {-s * m.x / ml, -s * m.y / ml};
+        }
+        moved[v] = pos[v] + e1 * d.x + e2 * d.y;
+    }
+    MeshData out = world;
+    for (std::size_t k = 0; k < out.vertices.size(); ++k) out.vertices[k].position = moved[at[k]];
+    // No face may turn over.
+    for (std::size_t t = 0; t + 2 < out.indices.size(); t += 3) {
+        const Vec3 a = out.vertices[out.indices[t]].position, b = out.vertices[out.indices[t + 1]].position, c = out.vertices[out.indices[t + 2]].position;
+        if (dot(cross(b - a, c - a), oldN[t / 3]) < 0.0f) return fail("The draft folds faces over: a smaller angle, or the neutral plane nearer the middle");
+    }
+    out.edgeVertices.clear();
+    return out;
+}
+
 std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& sectionsIn, bool smooth, std::string* error) {
     auto fail = [&](const char* why) -> std::optional<MeshData> {
         if (error) *error = why;

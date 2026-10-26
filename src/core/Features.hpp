@@ -62,6 +62,13 @@ struct ExtrudeShape {
 std::optional<MeshData> extrudeShape(const std::vector<Vec2>& outline, bool closed, const PlaneFrame& f, const ExtrudeShape& s,
                                      std::string* error = nullptr);
 
+// Draft: the faces of a solid running along `pull` (its sides) tilted by `deg` about where
+// they cross the neutral plane (through `neutral`, square to `pull`), leaning in going
+// along `pull` (out when negative), as a part is drafted to come out of a mould. Corners
+// stay mitred. `sides` gets how many triangles were side faces. Nullopt (why) when there
+// are none or the draft turns faces over.
+std::optional<MeshData> draftMesh(const MeshData& world, Vec3 pull, Vec3 neutral, float deg, std::string* why = nullptr, int* sides = nullptr);
+
 // A solid through closed planar sections (world points) in order, ruled or smooth.
 std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& sections, bool smooth, std::string* error = nullptr);
 

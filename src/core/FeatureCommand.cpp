@@ -926,6 +926,63 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         return out;
     }
 
+    if (cmd == "DRAFT") {
+        // DRAFT [body] ANGLE deg [PULL x,y,z | X | Y | Z] [NEUTRAL x,y,z]
+        auto isKey = [](const std::string& w) { return w == "angle" || w == "pull" || w == "neutral"; };
+        const char* usage = "Usage: DRAFT [body] ANGLE deg [PULL x,y,z | X | Y | Z] [NEUTRAL x,y,z]";
+        std::size_t i = 0;
+        const std::string name = leadingName(a, quoted, i, isKey);
+        const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select a body to draft, or name it" : "No body named " + name);
+        std::optional<float> angle;
+        Vec3 pull{0, 0, 1};
+        std::optional<Vec3> neutral;
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (k == "angle" && i + 1 < a.size()) {
+                const auto v = parseNumber(a[++i]);
+                if (!v) return out.fail("ANGLE needs degrees");
+                angle = *v;
+            } else if (k == "pull" && i + 1 < a.size()) {
+                std::string w = a[++i];
+                const bool neg = !w.empty() && w[0] == '-' && w.find(',') == std::string::npos;
+                const auto v = axisWord(neg ? w.substr(1) : w);
+                if (!v) return out.fail("PULL needs X, Y, Z or x,y,z");
+                pull = neg ? -*v : *v;
+            } else if (k == "neutral" && i + 1 < a.size()) {
+                if (!(neutral = parseVec3(a[++i]))) return out.fail("NEUTRAL needs a point x,y,z on the neutral plane");
+            } else return out.fail(usage);
+        }
+        if (!angle) return out.fail(usage);
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const MeshData world = worldMesh(body);
+        if (!neutral) { // the bottom, along the pull: the part narrows away from it
+            float lo = 1e30f;
+            for (const Vertex& v : world.vertices) lo = std::min(lo, dot(v.position, normalize(pull)));
+            neutral = normalize(pull) * lo;
+        }
+        std::string why;
+        int sides = 0;
+        auto drafted = draftMesh(world, pull, *neutral, *angle, &why, &sides);
+        if (!drafted) return out.fail("Cannot draft " + body.name + ": " + why);
+        const double before = meshVolume(world);
+        doc.scene.pushUndo("DRAFT " + body.name);
+        Body old = body;
+        Body made = featureBody(old.name, std::move(*drafted), old.color);
+        made.visible = old.visible, made.component = old.component, made.assembly = old.assembly, made.attachedTo = old.attachedTo;
+        made.physics = old.physics;
+        for (HoleNote h : old.holes) { // the callouts keep their place in the world
+            h.at = h.at + old.offset - made.offset;
+            made.holes.push_back(h);
+        }
+        body = std::move(made);
+        doc.scene.touchBodies();
+        doc.dirty = true;
+        out.say("Drafted " + body.name + " " + fmt3("%g", *angle) + " deg (" + std::to_string(sides) + " side triangles): " + closedText(body.mesh) +
+                ", volume " + fmt3("%.1f", before / 1000.0) + " -> " + fmt3("%.1f", meshVolume(worldMesh(body)) / 1000.0) + " cm3");
+        return out;
+    }
+
     if (cmd == "MASSPROPS") {
         auto isKey = [](const std::string& w) { return w == "density" || w == "material"; };
         std::size_t i = 0;

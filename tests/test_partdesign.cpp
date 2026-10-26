@@ -438,3 +438,29 @@ TEST_CASE("Sketch mirror and patterns, and projecting a body onto the sketch pla
     REQUIRE(run(d, "PLANE OFFSET 40 FROM FRONT").ok);
     CHECK(!run(d, "PROJECT \"Block 1\" SECTION").ok); // misses it
 }
+
+TEST_CASE("DRAFT tilts a body's side faces about the neutral plane") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 20 @0,0,0").ok);
+    REQUIRE(run(d, "DRAFT \"Block 1\" ANGLE 5").ok);
+    const double t = 40 - 2 * 20 * std::tan(5 * 3.14159265 / 180);
+    CHECK_NEAR(volumeOf(last(d)), 20.0 / 3 * (1600 + t * t + 40 * t), 0.05);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    const AABB b = boundsOf(last(d));
+    CHECK_NEAR(b.max.x, 20.0f, 1e-3); // the bottom keeps its size
+    // About a neutral plane in the middle: wider below it, narrower above.
+    REQUIRE(run(d, "BOX 40 40 20 @100,0,0").ok);
+    REQUIRE(run(d, "DRAFT \"Block 2\" ANGLE 5 NEUTRAL 0,0,10").ok);
+    CHECK_NEAR(boundsOf(last(d)).max.x, 100 + 20 + 10 * std::tan(5 * 3.14159265f / 180), 1e-3);
+    // Along X: the faces across X stay, the others tilt.
+    REQUIRE(run(d, "BOX 20 20 20 @200,0,0").ok);
+    REQUIRE(run(d, "DRAFT \"Block 3\" ANGLE 4 PULL X").ok);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    CHECK(volumeOf(last(d)) < 8000);
+    // Refused: folding over, nothing to draft, angle out of range.
+    REQUIRE(run(d, "BOX 10 10 50 @300,0,0").ok);
+    CHECK(!run(d, "DRAFT \"Block 4\" ANGLE 10").ok);
+    REQUIRE(run(d, "SPHERE 10 @400,0,0").ok);
+    CHECK(!run(d, "DRAFT \"Sphere 5\" ANGLE 3").ok);
+    CHECK(!run(d, "DRAFT \"Block 1\" ANGLE 60").ok);
+}

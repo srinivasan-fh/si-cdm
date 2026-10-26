@@ -10,6 +10,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Solids from sketch curves | `EXTRUDE`, `REVOLVE`, `SWEEP` and `LOFT` |
 | Holes | `HOLE`: standard sizes, counterbored, countersunk and tapped |
 | Copies of bodies | `PATTERN` and `MIRROR` |
+| Moulding | `DRAFT`: side faces tilted to come out of a mould |
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
 | Analysis | `MASSPROPS` and `MEASURE` |
 
@@ -447,6 +448,23 @@ MIRROR [body] [PLANE XY|YZ|XZ] [AT x,y,z] [NORMAL x,y,z] [COPY | MOVE] [UNION]
 - **Plane:** the YZ plane through the origin by default. `AT` gives a point on the plane.
 - **Copy:** a mirrored copy is the default. `MOVE` flips the body itself.
 - **UNION:** joins the copy to the body, which makes a half model whole.
+
+## Draft
+
+```text
+DRAFT [body] ANGLE deg [PULL x,y,z | X | Y | Z] [NEUTRAL x,y,z]
+```
+
+DRAFT tilts the faces that run along the pull direction (+Z by default), the sides a part
+slides out of a mould along, by the angle: they lean in going along the pull (out with a
+negative angle). They turn about the neutral plane, through `NEUTRAL` square to the pull,
+by default the body's bottom (it keeps its size there). Corners stay mitred, so a block
+becomes a frustum and a cylinder a cone. A draft that would fold faces over is refused.
+
+```text
+BOX 40 40 20 @0,0,0
+DRAFT "Block 1" ANGLE 5
+```
 
 ## Fillet and chamfer on chosen edges
 
