@@ -3,6 +3,7 @@
 #include "core/Json.hpp"
 #include "core/Motion.hpp"
 #include "core/Scene.hpp"
+#include "core/Terrain.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -217,6 +218,8 @@ std::vector<char> robotBodies(const Scene& scene, const std::string& name) {
             const Body& b = bodies[i];
             in[i] = b.component == name || b.assembly == name || b.assembly.rfind(name + "/", 0) == 0 || b.name == name;
         }
+    for (std::size_t i = 0; i < bodies.size(); ++i)
+        if (bodies[i].component == kTerrainBody) in[i] = 0; // the ground is not part of a robot
     // Bodies attached to one of them ride along.
     for (bool grew = true; grew;) {
         grew = false;

@@ -68,7 +68,7 @@ struct ProjectState {
 //   7  adds drawing tolerances: dimension tolerances ("tol"), feature control frames
 //      ("frames"), datums, surface finish marks and the general tolerance
 //   8  adds the lathe job ("lathe")
-//   9  adds robot rigs ("robots": morphology, base, tags)
+//   9  adds robot rigs ("robots": morphology, base, tags) and the terrain ("terrain")
 constexpr int kProjectVersion = 9;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then

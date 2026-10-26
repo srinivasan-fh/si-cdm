@@ -337,6 +337,7 @@ void Scene::clear() {
     m_motions.clear();
     m_physics = PhysicsSettings{};
     m_rigs = RigState{};
+    m_terrain = TerrainSettings{};
     m_sketch = Sketch{};
     m_revision = nextRevision();
     m_imageRevision = nextRevision();
@@ -351,6 +352,7 @@ void Scene::assign(Scene&& other) {
     m_motions = std::move(other.m_motions);
     m_physics = other.m_physics;
     m_rigs = other.m_rigs;
+    m_terrain = other.m_terrain;
     m_sketch = std::move(other.m_sketch);
     m_revision = nextRevision();
     m_imageRevision = nextRevision();
@@ -365,6 +367,7 @@ void Scene::restore(Scene&& other) {
     m_motions = std::move(other.m_motions);
     m_physics = other.m_physics;
     m_rigs = other.m_rigs;
+    m_terrain = other.m_terrain;
     m_sketch = std::move(other.m_sketch);
     m_revision = other.m_revision;
     m_imageRevision = other.m_imageRevision;

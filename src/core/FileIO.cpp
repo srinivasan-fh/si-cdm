@@ -527,6 +527,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     if (!state.lathe.empty()) doc.set("lathe", latheToJson(state.lathe));
     if (!state.assembly.empty()) doc.set("assembly", assemblyToJson(state.assembly));
     if (!scene.rigs().empty()) doc.set("robots", rigStateToJson(scene.rigs()));
+    if (scene.terrain().active()) doc.set("terrain", terrainToJson(scene.terrain()));
     if (!state.drawing.empty()) doc.set("drawing", drawingToJson(state.drawing));
     if (!state.history.empty()) {
         Json h = Json::array();
@@ -789,6 +790,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     if (const Json& lj = (*doc)["lathe"]; lj.isObject()) latheFromJson(lj, st.lathe);
     if (const Json& aj = (*doc)["assembly"]; aj.isObject()) assemblyFromJson(aj, st.assembly);
     if (const Json& rj = (*doc)["robots"]; rj.isObject()) rigStateFromJson(rj, loaded.rigs());
+    if (const Json& tj = (*doc)["terrain"]; tj.isObject()) terrainFromJson(tj, loaded.terrain());
     if (const Json& dj = (*doc)["drawing"]; dj.isObject()) drawingFromJson(dj, st.drawing);
     for (const Json& j : (*doc)["history"].items()) {
         HistoryStep step;

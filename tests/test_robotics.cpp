@@ -428,3 +428,112 @@ TEST_CASE("Robotics engine: engines by morphology, playback and state") {
     REQUIRE(run(d, "RIG SIMULATE OFF").ok);
     CHECK(robotRuns(d.scene).empty());
 }
+
+TEST_CASE("Robotics terrain: stairs, slopes, blocks, rough ground and DEM files") {
+    Document d;
+    REQUIRE(run(d, "TERRAIN STAIRS RISE 150 RUN 300 STEPS 4 SIZE 3000").ok);
+    const TerrainSettings& t = d.scene.terrain();
+    CHECK(t.kind == TerrainKind::Stairs);
+    CHECK_NEAR(terrainHeight(t, -100, 0), 0.0, 1e-9);
+    CHECK_NEAR(terrainHeight(t, 10, 0), 150.0, 1e-9);
+    CHECK_NEAR(terrainHeight(t, 650, 300), 450.0, 1e-9);
+    CHECK_NEAR(terrainHeight(t, 1400, 0), 600.0, 1e-9); // the landing
+    CHECK_NEAR(terrainHeight(t, 1600, 0), 0.0, 1e-9);   // off the patch: the floor
+    REQUIRE(d.scene.bodies().size() == 1);
+    CHECK(d.scene.bodies()[0].name == "Terrain");
+    CHECK(std::fabs(d.scene.bodies()[0].bounds().max.z - 600.0f) < 1e-3f);
+
+    REQUIRE(run(d, "TERRAIN SLOPE ANGLE 20 DIRECTION 90 SIZE 2000").ok);
+    CHECK_NEAR(terrainHeight(d.scene.terrain(), 0, 0), 1000.0 * std::tan(20 * 3.14159265358979 / 180), 1e-6);
+    const Vec3 n = terrainNormal(d.scene.terrain(), 0, 0);
+    CHECK(std::fabs(n.y + std::sin(20 * 3.14159265358979 / 180)) < 1e-3); // tilted toward -Y: it climbs toward +Y
+
+    REQUIRE(run(d, "TERRAIN ROUGH AMPLITUDE 50 SEED 3").ok);
+    double lo = 1e9, hi = -1e9;
+    for (int x = -800; x <= 800; x += 40)
+        for (int y = -800; y <= 800; y += 40) {
+            const double h = terrainHeight(d.scene.terrain(), x, y);
+            lo = std::min(lo, h), hi = std::max(hi, h);
+        }
+    CHECK(lo >= 0 && hi <= 50.0 && hi - lo > 10.0);
+    CHECK_NEAR(terrainHeight(d.scene.terrain(), 999, 0), 0.0, 0.5); // fades to the floor at its edge (x = 1000)
+
+    REQUIRE(run(d, "TERRAIN BLOCKS HEIGHT 80 BLOCK 200").ok);
+    int raised = 0;
+    for (int x = -900; x <= 900; x += 200) raised += terrainHeight(d.scene.terrain(), x + 100, 100) > 0 ? 1 : 0;
+    CHECK(raised > 0 && raised < 10);
+
+    // A DEM: an ESRI ASCII grid (heights in metres) ...
+    const fs::path dir = fs::temp_directory_path() / "sicdm_tests" / "dem";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    {
+        FILE* f = std::fopen((dir / "hill.asc").string().c_str(), "w");
+        REQUIRE(f != nullptr);
+        std::fprintf(f, "ncols 5\nnrows 3\nxllcorner 1000\nyllcorner 2000\ncellsize 0.5\nNODATA_value -9999\n");
+        std::fprintf(f, "10.0 10.2 10.4 10.6 10.8\n10.0 10.1 10.2 10.3 10.4\n10.0 10.0 10.0 10.0 -9999\n"); // the first row is north (+Y)
+        std::fclose(f);
+    }
+    REQUIRE(run(d, "TERRAIN DEM \"" + (dir / "hill.asc").string() + "\"").ok);
+    const TerrainSettings& dem = d.scene.terrain();
+    CHECK(dem.nx == 5 && dem.ny == 3);
+    CHECK_NEAR(dem.cell, 500.0, 1e-3);
+    CHECK_NEAR(dem.sizeX, 2000.0, 1e-3);
+    CHECK_NEAR(terrainHeight(dem, 1000, 500), 800.0, 0.5); // north-east corner: 10.8 m - the lowest 10.0 m
+    CHECK_NEAR(terrainHeight(dem, -1000, -500), 0.0, 0.5);
+    CHECK_NEAR(terrainHeight(dem, 500, 0), 300.0, 0.5);
+    // ... saved with the project, heights and all.
+    const std::string path = (dir / "terrain.sicdm").string();
+    REQUIRE(run(d, "SAVE \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
+    CHECK(e.scene.terrain().kind == TerrainKind::Dem);
+    CHECK_NEAR(terrainHeight(e.scene.terrain(), 500, 0), 300.0, 0.5);
+    // ... or a greyscale image over a height range.
+    {
+        FILE* f = std::fopen((dir / "ramp.pgm").string().c_str(), "wb");
+        REQUIRE(f != nullptr);
+        std::fprintf(f, "P5\n4 2\n255\n");
+        const unsigned char px[8] = {0, 85, 170, 255, 0, 85, 170, 255};
+        std::fwrite(px, 1, 8, f);
+        std::fclose(f);
+    }
+    REQUIRE(run(d, "TERRAIN DEM \"" + (dir / "ramp.pgm").string() + "\" CELL 100 HEIGHT 300").ok);
+    CHECK_NEAR(terrainHeight(d.scene.terrain(), 150, 0), 300.0, 0.5);
+    CHECK_NEAR(terrainHeight(d.scene.terrain(), -150, 0), 0.0, 0.5);
+    CHECK(!run(d, "TERRAIN DEM \"" + (dir / "missing.asc").string() + "\"").ok);
+    fs::remove_all(dir, ec);
+
+    REQUIRE(run(d, "TERRAIN OFF").ok);
+    CHECK(d.scene.bodies().empty());
+    CHECK(!d.scene.terrain().active());
+}
+
+TEST_CASE("Robotics terrain: friction holds a block on a gentle slope and lets it slide on a steep one") {
+    for (const double angle : {30.0, 50.0}) {
+        Document d;
+        REQUIRE(run(d, "TERRAIN SLOPE ANGLE " + std::to_string(angle) + " SIZE 8000").ok);
+        REQUIRE(run(d, "BOX 200 200 100 @0,0,0").ok);
+        RigSettings s;
+        s.name = "Block 1";
+        RobotRig rig;
+        REQUIRE(buildRig(d.scene, s, rig));
+        CHECK(rig.links[0].bodies.size() == 1); // the terrain is not part of it
+        rig.floatingBase = true;
+        MultibodyOptions o;
+        o.ground = sceneGround(d.scene);
+        Multibody mb(rig, o);
+        const double th = angle * 3.14159265358979 / 180, c = std::cos(th), sn = std::sin(th);
+        LinkPose p;
+        p.R = {c, 0, -sn, 0, 1, 0, sn, 0, c};
+        p.t = {-sn * 0.0005, 0, 4.0 * std::tan(th) + 0.0005 * c};
+        mb.setBasePose(p);
+        mb.advance(0.5);
+        const V3d v1 = mb.linkVelocity(0);
+        mb.advance(1.0);
+        const V3d v2 = mb.linkVelocity(0);
+        const double accel = std::hypot(v2[0], v2[2]) - std::hypot(v1[0], v1[2]);
+        const double expected = std::max(0.0, 9.80665 * (sn - 0.9 * c)); // mu = 0.9
+        CHECK(std::fabs(accel - expected) < 0.02 * std::max(expected, 1.0));
+    }
+}

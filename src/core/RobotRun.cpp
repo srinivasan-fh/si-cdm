@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <mutex>
 
 namespace sicdm {
@@ -52,6 +53,8 @@ std::uint64_t runKey(const Scene& scene, const RigSettings& settings, float dura
         h = fnv(h, m.follow.data(), m.follow.size());
         for (const std::string& n : m.bodies) h = fnv(h, n.data(), n.size());
     }
+    const std::string terrain = terrainToJson(scene.terrain()).dump();
+    h = fnv(h, terrain.data(), terrain.size());
     const PhysicsSettings& ps = scene.physics();
     h = mix(h, ps.g), h = mix(h, ps.floor), h = mix(h, ps.friction);
     return h;
@@ -90,8 +93,19 @@ LinkPose lerpPose(const LinkPose& a, const LinkPose& b, double u) {
 } // namespace
 
 Ground sceneGround(const Scene& scene) {
-    (void)scene;
-    return Ground::flat(0.0, 0.9);
+    const TerrainSettings& t = scene.terrain();
+    bool drawn = false;
+    for (const Body& b : scene.bodies()) drawn = drawn || b.name == kTerrainBody;
+    if (!t.active() || !drawn) return Ground::flat(0.0, 0.9);
+    Ground g;
+    auto shared = std::make_shared<TerrainSettings>(t);
+    g.height = [shared](double x, double y) { return terrainHeight(*shared, x * 1e3, y * 1e3) * 1e-3; };
+    g.normal = [shared](double x, double y) {
+        const Vec3 n = terrainNormal(*shared, x * 1e3, y * 1e3);
+        return V3d{n.x, n.y, n.z};
+    };
+    g.friction = t.friction;
+    return g;
 }
 
 MotionTargets motionTargets(const Scene& scene, const RobotRig& rig, float t) {

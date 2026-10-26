@@ -7,10 +7,14 @@
 #include "core/FileIO.hpp"
 #include "core/Multibody.hpp"
 #include "core/Rig.hpp"
+#include "core/Scene.hpp"
+#include "core/Terrain.hpp"
+#include "core/Units.hpp"
 #include "core/RobotExport.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <optional>
 
@@ -97,8 +101,156 @@ bool pickRobot(const Document& doc, const std::vector<std::string>& a, const std
     return false;
 }
 
+namespace {
+
+std::string fmtMm(double v) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%g", std::round(v * 10.0) / 10.0);
+    return b;
+}
+
+std::string describeTerrain(const TerrainSettings& t) {
+    if (!t.active()) return "No terrain: robots stand on the floor at z = 0";
+    std::string s = std::string("Terrain: ") + terrainKindKey(t.kind) + ", " + fmtMm(t.sizeX) + " x " + fmtMm(t.sizeY) + " mm at (" + fmtMm(t.centre.x) + ", " +
+                    fmtMm(t.centre.y) + ")";
+    switch (t.kind) {
+    case TerrainKind::Slope: s += ", " + fmtMm(t.angle) + " deg climbing toward " + fmtMm(t.direction) + " deg"; break;
+    case TerrainKind::Stairs: s += ", " + std::to_string(t.steps) + " steps of " + fmtMm(t.rise) + " mm up, " + fmtMm(t.run) + " mm deep"; break;
+    case TerrainKind::Rough: s += ", bumps up to " + fmtMm(t.amplitude) + " mm, " + fmtMm(t.wavelength) + " mm across (seed " + std::to_string(t.seed) + ")"; break;
+    case TerrainKind::Blocks: s += ", blocks up to " + fmtMm(t.blockHeight) + " mm on a " + fmtMm(t.blockSize) + " mm grid"; break;
+    case TerrainKind::Dem:
+        s += ", " + std::to_string(t.nx) + " x " + std::to_string(t.ny) + " heights every " + fmtMm(t.cell) + " mm from " + t.demPath;
+        break;
+    default: break;
+    }
+    return s + ", friction " + fmtMm(t.friction);
+}
+
+CommandOutput runTerrain(Document& doc, const std::vector<std::string>& a) {
+    CommandOutput out;
+    TerrainSettings t = doc.scene.terrain();
+    if (a.empty()) {
+        out.say(describeTerrain(t));
+        return out;
+    }
+    std::size_t i = 0;
+    const std::string first = lowerOf(a[0]);
+    std::string demFile;
+    float demCell = 0, demHeight = 0;
+    if (const auto k = terrainKindFromKey(first)) {
+        if (*k != t.kind) {
+            const TerrainSettings defaults;
+            const Vec2 c = t.centre;
+            const float sx = t.sizeX, sy = t.sizeY;
+            t = defaults;
+            t.centre = c, t.sizeX = sx, t.sizeY = sy;
+        }
+        t.kind = *k;
+        ++i;
+        if (*k == TerrainKind::Dem) {
+            if (i >= a.size()) return out.fail("TERRAIN DEM needs a file: .asc (ESRI grid) or a greyscale image");
+            demFile = a[i++];
+        }
+    }
+    auto lengthArg = [&](float& v, const char* what) -> bool {
+        if (i + 1 >= a.size()) return false;
+        const auto l = parseLength(a[++i]);
+        if (!l || *l <= 0) {
+            out.fail(std::string(what) + " needs a length");
+            return false;
+        }
+        v = static_cast<float>(*l);
+        return true;
+    };
+    for (; i < a.size(); ++i) {
+        const std::string k = lowerOf(a[i]);
+        auto number = [&](float& v) -> bool {
+            if (i + 1 >= a.size()) return false;
+            const auto n = parseNumber(a[++i]);
+            if (!n) return false;
+            v = *n;
+            return true;
+        };
+        if (k == "angle") {
+            if (!number(t.angle) || t.angle < 0 || t.angle > 60) return out.fail("ANGLE needs 0 to 60 degrees");
+        } else if (k == "direction" || k == "toward") {
+            if (!number(t.direction)) return out.fail("DIRECTION needs degrees from +X");
+        } else if (k == "rise") {
+            if (!lengthArg(t.rise, "RISE")) return out.fail("RISE needs a length");
+        } else if (k == "run" || k == "depth") {
+            if (!lengthArg(t.run, "RUN")) return out.fail("RUN needs a length");
+        } else if (k == "steps" || k == "count") {
+            float n = 0;
+            if (!number(n) || n < 1 || n > 200) return out.fail("STEPS needs 1 to 200");
+            t.steps = static_cast<int>(n);
+        } else if (k == "amplitude" || k == "bumps") {
+            if (!lengthArg(t.amplitude, "AMPLITUDE")) return out.fail("AMPLITUDE needs a length");
+        } else if (k == "wavelength" || k == "scale") {
+            if (!lengthArg(t.wavelength, "WAVELENGTH")) return out.fail("WAVELENGTH needs a length");
+        } else if (k == "height") {
+            float h = 0;
+            if (!lengthArg(h, "HEIGHT")) return out.fail("HEIGHT needs a length");
+            t.blockHeight = h, demHeight = h;
+        } else if (k == "block" || k == "blocksize") {
+            if (!lengthArg(t.blockSize, "BLOCK")) return out.fail("BLOCK needs a length");
+        } else if (k == "cell") {
+            if (!lengthArg(demCell, "CELL")) return out.fail("CELL needs a length");
+        } else if (k == "size") {
+            if (!lengthArg(t.sizeX, "SIZE")) return out.fail("SIZE needs x [y]");
+            t.sizeY = t.sizeX;
+            if (i + 1 < a.size())
+                if (const auto l = parseLength(a[i + 1]); l && *l > 0) t.sizeY = static_cast<float>(*l), ++i;
+        } else if (k == "at") {
+            const auto p = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt;
+            if (!p) return out.fail("AT needs x,y");
+            t.centre = {p->x, p->y};
+        } else if (k == "seed") {
+            float s = 0;
+            if (!number(s)) return out.fail("SEED needs a number");
+            t.seed = static_cast<int>(s);
+        } else if (k == "friction") {
+            if (!number(t.friction) || t.friction < 0 || t.friction > 3) return out.fail("FRICTION needs 0 to 3");
+        } else {
+            return out.fail("Usage: TERRAIN [OFF | SLOPE | STAIRS | ROUGH | BLOCKS | DEM file] [ANGLE deg] [DIRECTION deg] [RISE mm] [RUN mm] [STEPS n] "
+                            "[AMPLITUDE mm] [WAVELENGTH mm] [HEIGHT mm] [BLOCK mm] [CELL mm] [SIZE x [y]] [AT x,y] [SEED n] [FRICTION mu]");
+        }
+        if (!out.ok) return out;
+    }
+    if (!demFile.empty()) {
+        std::string err;
+        const Vec2 c = t.centre;
+        if (!loadDem(demFile, t, demCell, demHeight, &err)) return out.fail(err);
+        t.centre = c;
+    }
+    // The body that shows it.
+    auto& bodies = doc.scene.bodies();
+    int bi = -1;
+    for (std::size_t k = 0; k < bodies.size(); ++k)
+        if (bodies[k].name == kTerrainBody) bi = static_cast<int>(k);
+    if (!t.active()) {
+        if (bi >= 0) doc.scene.remove(static_cast<std::size_t>(bi));
+    } else {
+        Body body = meshBody(kTerrainBody, terrainMesh(t), {0.55f, 0.50f, 0.42f});
+        body.component = kTerrainBody;
+        if (bi >= 0) {
+            bodies[static_cast<std::size_t>(bi)].mesh = std::move(body.mesh);
+            bodies[static_cast<std::size_t>(bi)].offset = {};
+            doc.scene.touchBodies();
+        } else {
+            doc.scene.add(std::move(body));
+        }
+    }
+    doc.scene.terrain() = t;
+    doc.dirty = true;
+    out.say(describeTerrain(t));
+    return out;
+}
+
+} // namespace
+
 CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
     CommandOutput out;
+    if (cmd == "TERRAIN") return runTerrain(doc, a);
     if (cmd != "RIG") return out.fail("Unknown robot command " + cmd);
     if (!a.empty() && lowerOf(a[0]) == "engines") {
         for (const SimEngineInfo& e : simEngines()) out.say(std::string(e.key) + ": " + e.title + ". " + e.summary);
