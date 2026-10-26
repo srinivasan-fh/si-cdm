@@ -7,6 +7,7 @@
 #include "core/Kinematics.hpp"
 #include "core/Mcp.hpp"
 #include "core/RobotEnv.hpp"
+#include "core/RobotExport.hpp"
 #include "core/Motion.hpp"
 #include "core/Multibody.hpp"
 #include "core/Physics.hpp"
@@ -22,6 +23,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <set>
 #include <string>
 
 using namespace sicdm;
@@ -1177,4 +1181,148 @@ TEST_CASE("Robotics: the robot arm sample runs headless") {
     const auto run1 = robotRun(d.scene, d.scene.rigs().robots[0], 7.0f);
     REQUIRE(run1 != nullptr);
     CHECK(!run1->diverged);
+}
+
+TEST_CASE("Robotics fixes: tags make and take back spins; a base can't spin") {
+    Document d;
+    REQUIRE(run(d, "BOX 100 100 100 @0,0,0").ok);
+    const CommandOutput lone = run(d, "RIG TAG \"Block 1\" ROTOR");
+    REQUIRE(lone.ok);
+    CHECK(d.scene.motions().empty()); // the only part is the base: nothing to spin on
+    CHECK(lone.lines[0].find("base") != std::string::npos);
+    REQUIRE(run(d, "RIG UNTAG \"Block 1\"").ok);
+    REQUIRE(run(d, "BOX 200 200 40 @0,0,300").ok);
+    REQUIRE(run(d, "CYLINDER 120 4 @-170,-170,350").ok);
+    REQUIRE(run(d, "RIG TAG \"Cylinder 3\" ROTOR").ok);
+    REQUIRE(d.scene.motions().size() == 1);
+    CHECK_NEAR(d.scene.motions()[0].speed, 1800.0, 1e-3);
+    REQUIRE(run(d, "RIG TAG \"Cylinder 3\" WHEEL").ok); // a wheel turns at a wheel's speed
+    REQUIRE(d.scene.motions().size() == 1);
+    CHECK_NEAR(d.scene.motions()[0].speed, 180.0, 1e-3);
+    REQUIRE(run(d, "RIG UNTAG \"Cylinder 3\"").ok); // and stops spinning with the tag gone
+    CHECK(d.scene.motions().empty());
+    // A motion of the user's that happens to have the name stays.
+    REQUIRE(run(d, "MOTION CIRCLE \"Cylinder 3 Spin\" AXIS Z BODIES \"Cylinder 3\" \"Block 2\"").ok);
+    REQUIRE(run(d, "RIG TAG \"Cylinder 3\" FOOT").ok);
+    REQUIRE(run(d, "RIG UNTAG \"Cylinder 3\"").ok);
+    CHECK(d.scene.motions().size() == 1);
+}
+
+TEST_CASE("Robotics fixes: sensors see out of their own part; checks on logs and forces") {
+    Document d;
+    REQUIRE(run(d, "BOX 100 100 100 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 100 100 40 @0,0,100").ok);
+    REQUIRE(run(d, "JOINT \"Block 2\" TO \"Block 1\" AT 0,0,100 AXIS Y RANGE -10 10").ok);
+    for (Motion& m : d.scene.motions()) m.keys = {{0.0f, 0.0f}};
+    REQUIRE(run(d, "BOX 50 400 400 @1000,0,0").ok); // a wall 950 mm in front of the block's centre
+    // Mounted at the block's centre (the default), looking +X: it sees the wall, not the block.
+    REQUIRE(run(d, "RIG SENSOR ADD CAMERA cam ON \"Block 2\" LOOK 1,0,0 SIZE 16 16 FOV 10 NOISE 0").ok);
+    REQUIRE(run(d, "RIG SENSOR ADD LIDAR lid ON \"Block 2\" CHANNELS 1 SAMPLES 4 NOISE 0").ok);
+    const RigSettings& s = d.scene.rigs().robots[0];
+    SensorReading cam, lid;
+    REQUIRE(readSensor(d.scene, s, *s.sensor("cam"), 0.0f, cam));
+    CHECK_NEAR(cam.depth[8 * 16 + 8], 0.975, 0.01);
+    REQUIRE(readSensor(d.scene, s, *s.sensor("lid"), 0.0f, lid));
+    REQUIRE(!lid.ranges.empty());
+    CHECK_NEAR(lid.ranges[0], 0.975, 0.01); // the beam along +X
+    // A log's times in order; magnets hold the robot to something else.
+    REQUIRE(run(d, "RIG SENSOR ADD GPS gps ON \"Block 2\"").ok);
+    CHECK(!run(d, "RIG SENSOR LOG gps \"" + (fs::temp_directory_path() / "sicdm_gps.csv").string() + "\" FROM 5 TO 1").ok);
+    CHECK(!run(d, "RIG FORCE ADD MAGNET m ON \"Block 2\" ONTO \"Block 2\"").ok); // its own part
+    CHECK(!run(d, "RIG FORCE ADD WRENCH w ON \"Block 2\" ONTO \"Block 3\"").ok);
+    REQUIRE(run(d, "RIG FORCE ADD MAGNET m ON \"Block 2\" ONTO \"Block 3\"").ok);
+    // A force that can't act is reported, when added and in the state.
+    const CommandOutput added = run(d, "RIG FORCE ADD SCRIPT f ON \"Block 2\" FUNCTION nobody");
+    REQUIRE(added.ok);
+    bool warned = false;
+    for (const std::string& l : added.lines) warned = warned || l.find("no C++ force") != std::string::npos;
+    CHECK(warned);
+    const CommandOutput state = run(d, "RIG STATE AT 0.5");
+    REQUIRE(state.ok);
+    CHECK(state.lines.back().find("nobody") != std::string::npos);
+}
+
+TEST_CASE("Robotics fixes: exports with awkward names, DEM files out of range") {
+    Document d;
+    REQUIRE(run(d, "BOX 100 100 100 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 40 40 100 @0,0,100").ok);
+    REQUIRE(run(d, "BOX 40 40 100 @0,0,200").ok);
+    REQUIRE(run(d, "JOINT \"Block 2\" TO \"Block 1\" AT 0,0,100 AXIS Y RANGE -10 10").ok);
+    REQUIRE(run(d, "JOINT \"Block 3\" TO \"Block 2\" AT 0,0,200 AXIS Y RANGE -10 10").ok);
+    RigSettings s;
+    RobotRig rig;
+    REQUIRE(buildRig(d.scene, s, rig));
+    REQUIRE(rig.links.size() == 3);
+    rig.links[1].name = "Arm"; // link names that differ only in case
+    rig.links[2].name = "arm";
+    rig.name = "Mk--2";
+    const fs::path dir = fs::temp_directory_path() / "sicdm_export_names";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const RobotExportResult r = exportRobot(d.scene, rig, (dir / "r.urdf").string());
+    REQUIRE(r.ok);
+    // Every mesh its own file, even where names differ only in case.
+    std::set<std::string> lower;
+    for (const std::string& f : r.files) {
+        std::string l = fs::path(f).filename().string();
+        for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        CHECK(lower.insert(l).second);
+    }
+    std::ifstream in(dir / "r.urdf");
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::size_t open = text.find("<!--"), close = text.find("-->", open);
+    REQUIRE(open != std::string::npos && close != std::string::npos);
+    CHECK(text.substr(open + 4, close - open - 4).find("--") == std::string::npos);
+    fs::remove_all(dir);
+
+    // DEM grids too big to hold, or with heights no engine can use.
+    const fs::path big = fs::temp_directory_path() / "sicdm_big.asc";
+    {
+        std::ofstream o(big);
+        o << "ncols 2000000000\nnrows 2000000000\ncellsize 1\n1 2 3 4\n";
+    }
+    CHECK(!run(d, "TERRAIN DEM \"" + big.string() + "\"").ok);
+    {
+        std::ofstream o(big);
+        o << "ncols 2\nnrows 2\ncellsize 1\n0 0 0 1e38\n";
+    }
+    CHECK(!run(d, "TERRAIN DEM \"" + big.string() + "\"").ok);
+    fs::remove(big);
+}
+
+TEST_CASE("Robotics fixes: an arm moves on from a wrist that has spun many turns") {
+    Document d;
+    makeArm(d);
+    REQUIRE(run(d, "BOX 60 20 20 @0,0,760").ok); // Block 5: a tool that rolls on the forearm
+    for (Motion& m : d.scene.motions()) m.bodies.push_back("Block 5");
+    Motion roll;
+    roll.name = "Roll";
+    roll.kind = MotionKind::Circular;
+    roll.bodies = {"Block 5"};
+    roll.axis = {0, 0, 1};
+    roll.origin = {0, 0, 770};
+    roll.speed = 90; // continuous: 900 deg by 10 s
+    d.scene.motions().push_back(roll);
+    REQUIRE(run(d, "RIG UNTAG \"Block 4\"").ok);
+    REQUIRE(run(d, "RIG TAG \"Block 5\" END_EFFECTOR").ok);
+    RigSettings s;
+    RobotRig rig;
+    REQUIRE(buildRig(d.scene, s, rig));
+    const int rj = rig.jointNamed("Roll");
+    REQUIRE(rj >= 0);
+    CHECK(rig.joints[static_cast<std::size_t>(rj)].type == RigJointType::Continuous);
+    REQUIRE(run(d, "ARM MOVE_TO 300,200,300 AT 10").ok);
+    const Motion* m = nullptr;
+    for (const Motion& x : d.scene.motions())
+        if (x.name == "Roll") m = &x;
+    REQUIRE(m != nullptr);
+    REQUIRE(!m->keys.empty());
+    // It carries on from where it had turned to and stays there (rolling the tool doesn't
+    // move its centre, so there is nothing to unwind), and the tool gets there.
+    const float end = m->keys.back().t + m->start;
+    CHECK_NEAR(motionValue(d.scene, *m, 10.0f), 900.0, 1.0);
+    CHECK_NEAR(motionValue(d.scene, *m, end), 900.0, 1.0);
+    const RobotKinematics kin(rig);
+    const V3d tip = kin.forward(motionTargets(d.scene, rig, end).value)[static_cast<std::size_t>(rig.endEffectors().front())].apply({0, 0, 0.770});
+    CHECK(std::hypot(tip[0] - 0.3, tip[1] - 0.2, tip[2] - 0.3) < 0.002);
 }

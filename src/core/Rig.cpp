@@ -746,6 +746,27 @@ bool buildRig(const Scene& scene, const RigSettings& settings, RobotRig& out, st
     return true;
 }
 
+std::string tagSpinName(const std::string& body) { return body + " Spin"; }
+
+bool removeTagSpin(Scene& scene, const std::string& body) {
+    auto& motions = scene.motions();
+    for (std::size_t k = 0; k < motions.size(); ++k) {
+        const Motion& m = motions[k];
+        // Only the motion the tag made: its name, spinning this part (and what is attached to it).
+        if (m.name != tagSpinName(body) || m.bodies.empty() || m.bodies.front() != body) continue;
+        bool ownParts = true;
+        for (std::size_t b = 1; b < m.bodies.size(); ++b) {
+            bool attached = false;
+            for (const Body& x : scene.bodies()) attached = attached || (x.name == m.bodies[b] && x.attachedTo == body);
+            ownParts = ownParts && attached;
+        }
+        if (!ownParts) continue;
+        motions.erase(motions.begin() + static_cast<std::ptrdiff_t>(k));
+        return true;
+    }
+    return false;
+}
+
 std::vector<std::string> applyRigTags(Scene& scene, const RigSettings& settings) {
     std::vector<std::string> done;
     const auto drives = driveNames(scene);
@@ -777,7 +798,7 @@ std::vector<std::string> applyRigTags(Scene& scene, const RigSettings& settings)
             if (size.x <= size.y && size.x <= size.z) axis = {1, 0, 0};
             else if (size.y <= size.x && size.y <= size.z) axis = {0, 1, 0};
             Motion m;
-            m.name = name + " Spin";
+            m.name = tagSpinName(name);
             m.kind = MotionKind::Circular;
             m.bodies.push_back(name);
             for (const Body& b : scene.bodies())
@@ -787,6 +808,14 @@ std::vector<std::string> applyRigTags(Scene& scene, const RigSettings& settings)
             m.speed = tag == RigTag::Rotor ? 1800.0f : 180.0f;
             m.mode = MotionMode::Continuous;
             scene.motions().push_back(std::move(m));
+            // A part that would be the robot's base (nothing else of it to spin on) can't spin.
+            RobotRig rig;
+            if (buildRig(scene, settings, rig) && rig.linkOf(static_cast<std::size_t>(bi)) <= 0) {
+                scene.motions().pop_back();
+                done.push_back(name + " is the robot's base: a " + (tag == RigTag::Rotor ? "rotor" : "wheel") +
+                               " needs a frame of the robot to spin on, so it doesn't spin");
+                continue;
+            }
             done.push_back(std::string(tag == RigTag::Rotor ? "Rotor " : "Wheel ") + name + ": spins freely about " +
                            (axis.x > 0 ? "X" : axis.y > 0 ? "Y" : "Z") + " through its centre");
         } else if ((tag == RigTag::Knee || tag == RigTag::Hinge) && own >= 0) {

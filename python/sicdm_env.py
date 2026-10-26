@@ -58,7 +58,8 @@ class McpClient:
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     def _send(self, msg):
-        self._proc.stdin.write(json.dumps(msg) + "\n")
+        # numpy scalars and arrays (np.float32, np.int64, ndarray) go as plain numbers and lists.
+        self._proc.stdin.write(json.dumps(msg, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)) + "\n")
         self._proc.stdin.flush()
 
     def _request(self, method, params):
@@ -110,6 +111,13 @@ class VecEnv:
     def __init__(self, project=None, setup=(), robot=None, count=1, task="stand", target=None, control="position", control_dt=0.02,
                  episode_seconds=10.0, noise=0.02, seed=1, threads=0, server=None):
         self.client = McpClient(server, project)
+        try:
+            self._create(setup, robot, count, task, target, control, control_dt, episode_seconds, noise, seed, threads)
+        except BaseException:
+            self.client.close()  # don't leave the server running when the environment can't be made
+            raise
+
+    def _create(self, setup, robot, count, task, target, control, control_dt, episode_seconds, noise, seed, threads):
         for line in setup:
             self.client.command(line)
         args = dict(op="create", count=int(count), task=task, control=control, control_dt=float(control_dt), episode_seconds=float(episode_seconds),

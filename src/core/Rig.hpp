@@ -207,6 +207,10 @@ std::vector<std::string> rigCandidates(const Scene& scene);
 // when it has no parts.
 bool buildRig(const Scene& scene, const RigSettings& settings, RobotRig& out, std::string* error = nullptr);
 
+// The spin motion a ROTOR / WHEEL tag gives a part, and removing it (false: none).
+std::string tagSpinName(const std::string& body);
+bool removeTagSpin(Scene& scene, const std::string& body);
+
 // Gives the tagged parts the joints their tags call for: a ROTOR or WHEEL without its own
 // motion gets a continuous spin about its axis (the thinnest direction of its bounds,
 // through its centre), a KNEE or HINGE without limits gets 0..140 / -90..90 deg.

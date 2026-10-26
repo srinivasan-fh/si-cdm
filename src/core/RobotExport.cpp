@@ -44,6 +44,13 @@ std::string xmlEscape(const std::string& s) {
     return o;
 }
 
+// Text inside an XML comment: escaped, and never "--" (which ends a comment's validity).
+std::string commentText(const std::string& s) {
+    std::string o = xmlEscape(s);
+    for (std::size_t k = o.find("--"); k != std::string::npos; k = o.find("--", k)) o.replace(k, 2, "- -");
+    return o;
+}
+
 // Names, frames and mesh files of a rig, worked out once for every format.
 struct Plan {
     std::string model;
@@ -55,11 +62,17 @@ struct Plan {
 Plan plan(const RobotRig& rig) {
     Plan p;
     p.model = robotIdentifier(rig.name);
+    // Unique ignoring case: the names become mesh files, and "Arm.stl" and "arm.stl" are one
+    // file on Windows and macOS.
     std::set<std::string> used;
+    auto folded = [](std::string n) {
+        for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return n;
+    };
     auto unique = [&](std::string n) {
         std::string q = n;
-        for (int k = 2; used.count(q); ++k) q = n + "_" + std::to_string(k);
-        used.insert(q);
+        for (int k = 2; used.count(folded(q)); ++k) q = n + "_" + std::to_string(k);
+        used.insert(folded(q));
         return q;
     };
     for (const RigLink& l : rig.links) {
@@ -82,7 +95,7 @@ int jointIndex(const RobotRig& rig, const std::string& name) {
 }
 
 std::string urdf(const RobotRig& rig, const Plan& p, const std::string& meshDir) {
-    std::string o = "<?xml version=\"1.0\"?>\n<!-- Written by SI CDM from the robot \"" + xmlEscape(rig.name) + "\" (" +
+    std::string o = "<?xml version=\"1.0\"?>\n<!-- Written by SI CDM from the robot \"" + commentText(rig.name) + "\" (" +
                     morphologyKey(rig.morphology) + "). Lengths in metres, angles in radians. -->\n";
     o += "<robot name=\"" + p.model + "\">\n";
     if (!rig.floatingBase) o += "  <link name=\"world\"/>\n";
@@ -121,7 +134,7 @@ std::string urdf(const RobotRig& rig, const Plan& p, const std::string& meshDir)
 }
 
 std::string sdf(const RobotRig& rig, const Plan& p, const std::string& meshDir) {
-    std::string o = "<?xml version=\"1.0\"?>\n<!-- Written by SI CDM from the robot \"" + xmlEscape(rig.name) +
+    std::string o = "<?xml version=\"1.0\"?>\n<!-- Written by SI CDM from the robot \"" + commentText(rig.name) +
                     "\". Lengths in metres, angles in radians. Poses are in the model frame. -->\n";
     o += "<sdf version=\"1.7\">\n  <model name=\"" + p.model + "\">\n";
     for (std::size_t l = 0; l < rig.links.size(); ++l) {
@@ -158,7 +171,7 @@ std::string sdf(const RobotRig& rig, const Plan& p, const std::string& meshDir) 
 }
 
 std::string mjcf(const RobotRig& rig, const Plan& p, const std::string& meshDir) {
-    std::string o = "<!-- Written by SI CDM from the robot \"" + xmlEscape(rig.name) + "\" (" + morphologyKey(rig.morphology) +
+    std::string o = "<!-- Written by SI CDM from the robot \"" + commentText(rig.name) + "\" (" + morphologyKey(rig.morphology) +
                     "). Lengths in metres, angles in radians. -->\n";
     o += "<mujoco model=\"" + p.model + "\">\n";
     o += "  <compiler angle=\"radian\" meshdir=\"" + meshDir + "\" inertiafromgeom=\"false\" autolimits=\"true\"/>\n";

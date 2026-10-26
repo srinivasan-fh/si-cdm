@@ -144,6 +144,7 @@ std::shared_ptr<const MeshBvh> bvhOf(const MeshData& m) {
 struct RayWorld {
     const Scene& scene;
     const std::vector<Mat4>& tf;
+    int skip = -1; // the sensor's own part: it looks out of it, not at its inside
     std::vector<Mat4> inv;
     std::vector<AABB> boxes;
     std::vector<std::shared_ptr<const MeshBvh>> bvh;
@@ -171,7 +172,7 @@ struct RayWorld {
         double bestT = maxT;
         const auto& bodies = scene.bodies();
         for (std::size_t i = 0; i < bodies.size(); ++i) {
-            if (!bvh[i]) continue;
+            if (!bvh[i] || static_cast<int>(i) == skip) continue;
             const Ray r{inv[i].transformPoint(origin), inv[i].transformDir(dir)};
             float tBox = 0;
             if (!intersectAABB(r, boxes[i], tBox) || tBox > bestT) continue;
@@ -282,7 +283,8 @@ bool readCamera(const Scene& scene, const RigSettings& robot, const SensorSpec& 
     Frame f;
     std::vector<Mat4> tf;
     if (!frameAt(scene, s, t, f, &tf)) return false;
-    const RayWorld world(scene, tf);
+    RayWorld world(scene, tf);
+    world.skip = bodyIndex(scene, s.body);
     // Parts of the robot (for the semantic classes).
     std::vector<char> isRobot(scene.bodies().size(), 0);
     RobotRig rig;
@@ -348,7 +350,8 @@ bool readLidar(const Scene& scene, const SensorSpec& s, double t, SensorReading&
     Frame f;
     std::vector<Mat4> tf;
     if (!frameAt(scene, s, t, f, &tf)) return false;
-    const RayWorld world(scene, tf);
+    RayWorld world(scene, tf);
+    world.skip = bodyIndex(scene, s.body);
     const Vec3 origin{static_cast<float>(f.p[0] * 1e3), static_cast<float>(f.p[1] * 1e3), static_cast<float>(f.p[2] * 1e3)};
     const int rings = std::clamp(s.channels, 1, 256), samples = std::clamp(s.samples, 1, 8192);
     const double maxRange = std::max(0.1f, s.range) * 1e3;

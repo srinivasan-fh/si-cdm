@@ -295,12 +295,18 @@ bool loadDem(const std::string& path, TerrainSettings& t, float cellMm, float he
             ++k;
         }
         if (w < 2 || h < 2) return fail(path + ": the grid needs ncols and nrows of 2 or more");
-        for (double v; static_cast<long>(heights.size()) < static_cast<long>(w) * h && in >> v;) heights.push_back(static_cast<float>(v));
-        if (static_cast<long>(heights.size()) < static_cast<long>(w) * h) return fail(path + ": fewer heights than ncols x nrows");
+        // 64-bit counts (long is 32 bits on Windows), and no more cells than a grid can sensibly have.
+        const std::int64_t cells = static_cast<std::int64_t>(w) * static_cast<std::int64_t>(h);
+        if (cells > 100'000'000) return fail(path + ": ncols x nrows is too large");
+        for (double v; static_cast<std::int64_t>(heights.size()) < cells && in >> v;) heights.push_back(static_cast<float>(v));
+        if (static_cast<std::int64_t>(heights.size()) < cells) return fail(path + ": fewer heights than ncols x nrows");
         float lo = 1e30f;
         for (float& v : heights)
             if (v != static_cast<float>(nodata)) lo = std::min(lo, v);
         for (float& v : heights) v = v == static_cast<float>(nodata) ? 0.0f : (v - lo) * 1000.0f;
+        // Heights the engines can work with: finite, and under 100 km of relief.
+        for (float v : heights)
+            if (!std::isfinite(v) || v > 1e8f) return fail(path + ": heights out of range (more than 100 km of relief, or not numbers)");
         if (cell <= 0) cell = static_cast<float>(cellsize * 1000.0);
     } else {
         int n = 0;

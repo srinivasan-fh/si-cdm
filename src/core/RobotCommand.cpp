@@ -276,6 +276,7 @@ CommandOutput runSensor(Document& doc, RigSettings& settings, const std::vector<
             else if (k == "to") to = *v;
             else return out.fail("LOG name file [FROM t0] [TO t1]");
         }
+        if (to < from) return out.fail("TO comes before FROM");
         if (!logSensor(doc.scene, settings, *s, from, to, path, &err)) return out.fail(err);
         out.say("Wrote " + path);
         return out;
@@ -511,7 +512,17 @@ CommandOutput runArm(Document& doc, const std::vector<std::string>& a, const std
                     t0 = std::max(t0, motions[m].start + motions[m].keys.back().t);
         }
     }
-    const std::vector<double> start = kin.withMimics(motionTargets(doc.scene, rig, t0).value);
+    // A spinning (continuous) joint may have turned many times by t0: plan from its angle
+    // within one turn, and put the whole turns back on the path it is keyed with.
+    std::vector<double> start = motionTargets(doc.scene, rig, t0).value;
+    std::vector<double> turns(start.size(), 0.0);
+    constexpr double kTurn = 2 * 3.14159265358979323846;
+    for (std::size_t j = 0; j < start.size(); ++j)
+        if (rig.joints[j].type == RigJointType::Continuous && rig.joints[j].mimic.empty()) {
+            turns[j] = kTurn * std::round(start[j] / kTurn);
+            start[j] -= turns[j];
+        }
+    start = kin.withMimics(start);
     CollisionModel collisions(doc.scene, rig, t0);
     collisions.onlyMoving(kin, active);
     const int touching = collisions.allowTouching(kin.forward(start));
@@ -560,6 +571,8 @@ CommandOutput runArm(Document& doc, const std::vector<std::string>& a, const std
     TimedPath timed = timePath(kin, plan.path, speed);
     const double before = timed.effort;
     if (optimise) timed = optimisePath(kin, collisions, timed, active);
+    for (std::vector<double>& q : timed.q)
+        for (std::size_t j : active) q[j] += turns[j];
     const std::vector<std::string> keyed = writeJointPath(doc.scene, rig, timed, t0, active);
     doc.dirty = true;
     std::string names;
@@ -682,13 +695,25 @@ CommandOutput runForce(Document& doc, RigSettings& settings, const std::vector<s
     RobotRig rig;
     std::string err;
     if (buildRig(doc.scene, settings, rig, &err)) {
+        const std::string robotName = rig.name.empty() ? std::string("the robot") : rig.name;
         const int bi = bodyIndex(doc, f.body);
-        if (rig.linkOf(static_cast<std::size_t>(bi)) < 0) return out.fail(f.body + " isn't a part of " + (rig.name.empty() ? std::string("the robot") : rig.name));
+        if (rig.linkOf(static_cast<std::size_t>(bi)) < 0) return out.fail(f.body + " isn't a part of " + robotName);
+        // A magnet holds the robot to something that stays put: not to the part's own link,
+        // nor to a moving part of the robot (static parts around a scene-wide robot are in its
+        // base, and fine).
+        if (!f.onto.empty()) {
+            const int ontoLink = rig.linkOf(static_cast<std::size_t>(bodyIndex(doc, f.onto)));
+            if (ontoLink > 0 || ontoLink == rig.linkOf(static_cast<std::size_t>(bi)))
+                return out.fail("ONTO needs a part that stays put, not one that moves with " + robotName + " (" + f.onto + " does)");
+        }
     }
+    if (!f.onto.empty() && f.kind != ForceKind::Magnet) return out.fail("ONTO is for MAGNET forces");
     settings.forces.push_back(f);
     doc.scene.rigs().get(settings.name) = settings;
     doc.dirty = true;
     out.say("Force " + describeForce(f));
+    if (!f.function.empty() && !hasForceScript(f.function))
+        out.say("  note: no C++ force is registered as " + f.function + " yet; it acts once one is (registerForceScript)");
     if (!settings.simulate) out.say("  it acts when the robot is simulated: RIG SIMULATE ON (and in RIG ENV / robot_env)");
     return out;
 }
@@ -829,7 +854,12 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
             if (bi < 0) return out.fail(body.empty() ? "TAG needs a part and a role" : "No body named " + body);
             const auto tag = rigTagFromKey(role);
             if (!tag) return out.fail("Roles: ROTOR, WHEEL, END_EFFECTOR, FOOT, KNEE, HINGE, BASE or NONE");
-            settings.setTag(doc.scene.bodies()[static_cast<std::size_t>(bi)].name, *tag);
+            const std::string part = doc.scene.bodies()[static_cast<std::size_t>(bi)].name;
+            const RigTag before = settings.tagOf(part);
+            // The spin a ROTOR or WHEEL tag gave the part goes with the tag (a new one comes
+            // with a new tag, at its own speed).
+            if ((before == RigTag::Rotor || before == RigTag::Wheel) && *tag != before) removeTagSpin(doc.scene, part);
+            settings.setTag(part, *tag);
             changed = true;
         } else if (k == "morphology" || k == "type") {
             const auto m = morphologyFromKey(next());
@@ -968,7 +998,7 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
                 std::snprintf(buf, sizeof buf, "  %-34s %8.2f %s (target %.2f)", J.name.c_str(), f.q[j] * k, lin ? "mm" : "deg", tg.value[j] * k);
             out.say(buf);
         }
-        if (run->diverged) out.say("  note: " + run->note);
+        if (!run->note.empty()) out.say("  note: " + run->note);
         return out;
     }
     if (!exportPath.empty()) {

@@ -3074,7 +3074,8 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 ImGui::InputFloat3("##armtarget", target, "%.0f");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where the tool (the END_EFFECTOR part) should go, mm");
                 char point[96];
-                std::snprintf(point, sizeof(point), "%g,%g,%g", static_cast<double>(target[0]), static_cast<double>(target[1]), static_cast<double>(target[2]));
+                // Millimetres whatever the document's units (the field says mm).
+                std::snprintf(point, sizeof(point), "%gmm,%gmm,%gmm", static_cast<double>(target[0]), static_cast<double>(target[1]), static_cast<double>(target[2]));
                 if (ImGui::Button("Move tool")) run(arm + " MOVE_TO " + point + (optimise ? " OPTIMIZE" : ""));
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inverse kinematics, a collision-free path, keyed into the joints' motions");
                 ImGui::SameLine();
@@ -3097,10 +3098,10 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                     ImGui::Combo("##sensor", &sensor, kSensors, 5);
                     ImGui::SameLine();
                     if (ImGui::Button("Add sensor")) run(rig + " SENSOR ADD " + kSensors[sensor] + " " + std::string(kSensors[sensor]) + n + on);
-                    if (ImGui::Button("Float in water")) run(rig + " FORCE ADD BUOYANCY water" + n + on + " LEVEL 300 DRAG 20");
+                    if (ImGui::Button("Float in water")) run(rig + " FORCE ADD BUOYANCY water" + n + on + " LEVEL 300mm DRAG 20");
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Water up to 300 mm: buoyancy and drag on the part (RIG FORCE to change)");
                     ImGui::SameLine();
-                    if (ImGui::Button("Magnet")) run(rig + " FORCE ADD MAGNET magnet" + n + on + " STRENGTH 50 RANGE 20");
+                    if (ImGui::Button("Magnet")) run(rig + " FORCE ADD MAGNET magnet" + n + on + " STRENGTH 50 RANGE 20mm");
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Magnetic adhesion to the ground: 50 N flush, gone at 20 mm");
                     ImGui::SameLine();
                     if (ImGui::Button("Push")) run(rig + " FORCE ADD WRENCH push" + n + on + " FORCE 20,0,0 FROM 1 UNTIL 1.2");
