@@ -6,6 +6,7 @@
 #include "core/FileIO.hpp"
 #include "core/HoleWizard.hpp"
 #include "core/Variables.hpp"
+#include "core/SheetMetal.hpp"
 #include "core/Json.hpp"
 #include "core/Brep.hpp"
 #include "core/Scene.hpp"
@@ -662,4 +663,60 @@ TEST_CASE("Reference axes and points, used by planes, patterns and revolves; SPL
     REQUIRE(run(e, "REGEN").ok);
     CHECK(e.state.refAxes.size() == 4);
     CHECK(e.scene.bodies().size() == d.scene.bodies().size());
+}
+
+TEST_CASE("Sheet metal: base, flanges, bend allowance and the flat pattern") {
+    CHECK_NEAR(bendAllowance(90, 1, 0.44f, 2), 3.14159265f / 2 * (1 + 0.88f), 1e-5);
+    Document d;
+    REQUIRE(run(d, "RECT 0,0 100,60").ok);
+    REQUIRE(run(d, "SHEETMETAL BASE \"Rectangle 1\" THICKNESS 2 RADIUS 1 K 0.44").ok);
+    CHECK(last(d).kind == "sheet");
+    CHECK_NEAR(volumeOf(last(d)), 100 * 60 * 2, 1e-2);
+    REQUIRE(run(d, "SHEETMETAL FLANGE \"Sheet 1\" EDGE 1 LENGTH 20").ok); // along y = 0, up
+    const AABB b = boundsOf(last(d));
+    // The bend is added outside the base's edge: the flange's outside face at y = -(r + t).
+    CHECK_NEAR(b.min.y, -3.0f, 1e-3);
+    CHECK_NEAR(b.max.z, 1 + 2 + 20.0f, 1e-3); // r + t over the base, then the flat 20
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    REQUIRE(run(d, "SHEETMETAL FLANGE \"Sheet 1\" NEAR 0,30,0 LENGTH 10 DOWN").ok);
+    SheetPart part;
+    REQUIRE(sheetFromParams(last(d).params, part));
+    REQUIRE(part.flanges.size() == 2);
+    CHECK(part.flanges[1].edge == 3); // the base's left edge
+    CHECK(part.flanges[1].down);
+    CHECK_NEAR(boundsOf(last(d)).min.z, -(1 + 2 + 10.0f) + 2.0f, 1e-3);
+    // A flange on a flange's far edge.
+    const auto edges = sheetFreeEdges(part);
+    int far = -1;
+    for (std::size_t e = 0; e < edges.size(); ++e)
+        if (edges[e].parent == 0) far = static_cast<int>(e);
+    REQUIRE(far >= 0);
+    REQUIRE(run(d, "SHEETMETAL FLANGE \"Sheet 1\" EDGE " + std::to_string(far + 1) + " LENGTH 5 ANGLE 90").ok);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    CHECK(!run(d, "SHEETMETAL FLANGE \"Sheet 1\" EDGE 99 LENGTH 5").ok);
+
+    // The flat pattern: the base plus each bend's allowance and flat.
+    const float ba = bendAllowance(90, 1, 0.44f, 2);
+    REQUIRE(run(d, "SHEETMETAL FLAT \"Sheet 1\" SKETCH").ok);
+    const Body& flat = last(d);
+    const AABB fb = boundsOf(flat);
+    CHECK_NEAR(fb.max.x - fb.min.x, 100 + ba + 10, 1e-3);
+    CHECK_NEAR(fb.max.y - fb.min.y, 60 + ba + 20 + ba + 5, 1e-3);
+    CHECK_NEAR(fb.max.z - fb.min.z, 2.0f, 1e-4);
+    CHECK_NEAR(volumeOf(flat), 2.0 * ((100 * 60) + (ba + 20) * 100 + (ba + 10) * 60 + (ba + 5) * 100), 0.5);
+    // Its outline is one loop, with a bend line for each bend.
+    int loops = 0, bends = 0;
+    for (const SketchCurve& c : d.scene.sketch().curves()) loops += c.kind == CurveKind::Polyline, bends += c.kind == CurveKind::Line && c.construction;
+    CHECK(loops == 1);
+    CHECK(bends == 3);
+    CHECK(run(d, "SHEETMETAL INFO \"Sheet 1\"").ok);
+    CHECK(!run(d, "SHEETMETAL FLANGE \"Sheet 1 flat\" EDGE 1 LENGTH 5").ok); // not a sheet metal body
+
+    // Saved and reopened, it rebuilds the same.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_sheet_test.sicdm").string();
+    REQUIRE(run(d, "SAVE \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
+    std::filesystem::remove(path);
+    CHECK_NEAR(volumeOf(e.scene.bodies()[0]), volumeOf(d.scene.bodies()[0]), 1e-2);
 }

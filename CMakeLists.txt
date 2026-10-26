@@ -73,6 +73,7 @@ add_library(sicdm_core STATIC
     src/core/Features.cpp
     src/core/HoleWizard.cpp
     src/core/Variables.cpp
+    src/core/SheetMetal.cpp
     src/core/Library.cpp
     src/core/Lathe.cpp
     src/core/LatheCommand.cpp

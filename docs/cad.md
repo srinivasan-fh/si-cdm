@@ -12,6 +12,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Holes and threads | `HOLE`: standard sizes, counterbored, countersunk and tapped; `THREAD`: modelled threads |
 | Copies of bodies | `PATTERN` and `MIRROR` |
 | Moulding | `DRAFT`: side faces tilted to come out of a mould |
+| Sheet metal | `SHEETMETAL`: base plate, flanges, flat pattern |
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
 | Analysis | `MASSPROPS` and `MEASURE` |
 | Design intent | `VAR`: global variables and equations; `CONFIG`: configurations and design tables |
@@ -513,6 +514,40 @@ MIRROR [body] [PLANE XY|YZ|XZ] [AT x,y,z] [NORMAL x,y,z] [COPY | MOVE] [UNION]
 - **Plane:** the YZ plane through the origin by default. `AT` gives a point on the plane.
 - **Copy:** a mirrored copy is the default. `MOVE` flips the body itself.
 - **UNION:** joins the copy to the body, which makes a half model whole.
+
+## Sheet metal
+
+```text
+SHEETMETAL BASE curve THICKNESS t [RADIUS r] [K k]     a base plate from a closed profile
+SHEETMETAL EDGES [body]                                the edges a flange can go on
+SHEETMETAL FLANGE [body] EDGE n | NEAR x,y,z LENGTH l [ANGLE deg] [DOWN] [RADIUS r]
+SHEETMETAL FLAT [body] [SKETCH]                        the flat pattern
+SHEETMETAL INFO [body]
+```
+
+A sheet metal part is one sheet, `t` thick, bent along straight lines. It starts as a base
+plate (any closed profile, on its plane) and grows flanges: strips on a free edge of the
+base, or on a flange's far edge, bent through `ANGLE` (90 by default, up to 180; `DOWN`
+bends the other way) with an inside radius (`RADIUS`, the part's by default, which is `t`
+unless given). `LENGTH` is the flat beyond the bend; the bend is added outside the edge.
+
+- **Bends:** the sheet follows the arc in each bend, its neutral layer `K t` from the inside
+  (`K` 0.44 by default) keeping its length, so a bend's flat length is the bend allowance
+  `BA = angle x (r + K t)`. `SHEETMETAL INFO` lists each bend's allowance and the flat size.
+- **Flat pattern:** the part is kept as its flat pattern folded, so the two always agree.
+  `FLAT` makes the flat plate as a body beside the part; with `SKETCH` also its outline
+  (one closed polyline) and the bend lines (construction lines) as sketch curves, ready for
+  `EXPORT flat.dxf`.
+- Edges are numbered as `SHEETMETAL EDGES` lists them (each takes one flange); `NEAR x,y,z`
+  picks the one nearest a point. The part is parametric: saved, undone and rebuilt as such.
+
+```text
+RECT 0,0 100,60
+SHEETMETAL BASE "Rectangle 1" THICKNESS 2 RADIUS 1
+SHEETMETAL FLANGE "Sheet 1" EDGE 1 LENGTH 20
+SHEETMETAL FLANGE "Sheet 1" NEAR 0,30,0 LENGTH 10 DOWN
+SHEETMETAL FLAT "Sheet 1" SKETCH
+```
 
 ## Draft
 

@@ -8,6 +8,7 @@
 #include "core/Brep.hpp"
 #include "core/Features.hpp"
 #include "core/HoleWizard.hpp"
+#include "core/SheetMetal.hpp"
 #include "core/FileIO.hpp"
 #include "core/Sculpt.hpp"
 #include "core/SketchEdit.hpp"
@@ -108,6 +109,8 @@ Vec3 bodyColor(int serial) {
     static const Vec3 kColours[] = {{0.42f, 0.62f, 0.86f}, {0.86f, 0.60f, 0.38f}, {0.55f, 0.78f, 0.52f}, {0.80f, 0.52f, 0.72f}, {0.84f, 0.78f, 0.45f}};
     return kColours[static_cast<std::size_t>(serial) % std::size(kColours)];
 }
+
+std::string pointText(const Vec3& v) { return lengthsText({v.x, v.y, v.z}, ", ", "(", ")"); }
 
 // "x,y" in the sketch plane (lengths in the document's units).
 std::optional<Vec2> point2(const std::string& w) {
@@ -1301,6 +1304,193 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         out.say("Threaded " + body.name + ": " + std::to_string(done) + (done == 1 ? " thread" : " threads") + (left ? " (left hand)" : "") + ", " +
                 closedText(body.mesh) + ", volume " + fmt3("%.2f", before / 1000.0) + " -> " + fmt3("%.2f", meshVolume(worldMesh(body)) / 1000.0) + " cm3");
         return out;
+    }
+
+    if (cmd == "SHEETMETAL") {
+        // SHEETMETAL BASE curve THICKNESS t [RADIUS r] [K k]
+        // SHEETMETAL FLANGE [body] EDGE n | NEAR x,y,z  LENGTH l [ANGLE deg] [DOWN] [RADIUS r]
+        // SHEETMETAL EDGES [body] | SHEETMETAL FLAT [body] [SKETCH] | SHEETMETAL INFO [body]
+        const char* usage = "Usage: SHEETMETAL BASE curve THICKNESS t [RADIUS r] [K k] | SHEETMETAL FLANGE [body] EDGE n|NEAR x,y,z LENGTH l [ANGLE deg] "
+                            "[DOWN] [RADIUS r] | SHEETMETAL EDGES|FLAT|INFO [body] [SKETCH]";
+        if (a.empty()) return out.fail(usage);
+        const std::string sub = lower(a[0]);
+        static const char* const kKeys[] = {"thickness", "t", "radius", "r", "k", "edge", "near", "length", "angle", "down", "sketch"};
+        auto isKey = [](const std::string& w) {
+            for (const char* k : kKeys)
+                if (w == k) return true;
+            return false;
+        };
+        std::size_t i = 1;
+        const std::string name = leadingName(a, quoted, i, isKey);
+        float thickness = 0, radius = -1, k = 0.44f, flangeLen = -1, angle = 90;
+        bool down = false, sketch = false;
+        int edgeNo = -1;
+        std::optional<Vec3> near;
+        for (; i < a.size(); ++i) {
+            const std::string w = lower(a[i]);
+            auto len = [&](float& v, bool positive) {
+                const auto x = i + 1 < a.size() ? parseLength(a[++i]) : std::nullopt;
+                if (!x || (positive ? !(*x > 0) : *x < 0)) return false;
+                v = static_cast<float>(*x);
+                return true;
+            };
+            if (w == "thickness" || w == "t") {
+                if (!len(thickness, true)) return out.fail("THICKNESS needs a length");
+            } else if (w == "radius" || w == "r") {
+                if (!len(radius, false)) return out.fail("RADIUS needs the inside bend radius");
+            } else if (w == "length") {
+                if (!len(flangeLen, false)) return out.fail("LENGTH needs a length");
+            } else if (w == "k") {
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x || *x < 0 || *x > 1) return out.fail("K is 0 to 1 (0.44 is usual for steel)");
+                k = *x;
+            } else if (w == "angle") {
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x || *x <= 0 || *x > 180) return out.fail("ANGLE is more than 0, up to 180 degrees");
+                angle = *x;
+            } else if (w == "edge") {
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x || *x < 1) return out.fail("EDGE takes an edge's number (SHEETMETAL EDGES lists them)");
+                edgeNo = static_cast<int>(*x) - 1;
+            } else if (w == "near") {
+                if (!(near = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt)) return out.fail("NEAR needs x,y,z");
+            } else if (w == "down") down = true;
+            else if (w == "sketch") sketch = true;
+            else return out.fail(usage);
+        }
+        if (sub == "base") {
+            const int ci = name.empty() ? doc.selectedCurve : curveNamed(doc, name);
+            if (ci < 0 || ci >= static_cast<int>(doc.scene.sketch().curves().size())) return out.fail("SHEETMETAL BASE needs a closed sketch curve");
+            if (!(thickness > 0)) return out.fail("SHEETMETAL BASE needs THICKNESS t");
+            std::string why;
+            const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(ci), &why);
+            if (!profile) return out.fail("Cannot make a sheet from it: " + why);
+            const SketchCurve curve = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
+            SheetPart part;
+            part.thickness = thickness, part.radius = radius >= 0 ? radius : thickness, part.k = k;
+            part.frame = curveFrame(curve);
+            part.base = profilePolygon(*profile);
+            const MeshData m = buildSheet(part, false, &why);
+            if (m.indices.empty()) return out.fail("Cannot make the sheet: " + why);
+            const int serial = ++doc.primitiveSerial;
+            Body b = defaultPrimitive("box", serial);
+            b.name = "Sheet " + std::to_string(serial);
+            b.kind = "sheet";
+            b.params = sheetParams(part);
+            b.mesh = m;
+            b.offset = {};
+            b.brep.reset();
+            hideCurve(doc, ci);
+            doc.scene.pushUndo("SHEETMETAL BASE " + curve.name);
+            out.say("Sheet metal base " + b.name + ": " + lengthText(thickness) + " thick, bend radius " + lengthText(part.radius) + ", K " +
+                    fmt3("%g", part.k) + " (SHEETMETAL EDGES lists where flanges go)");
+            addBody(doc, std::move(b));
+            return out;
+        }
+        const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select a sheet metal body, or name it" : "No body named " + name);
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        SheetPart part;
+        if (body.kind != "sheet" || !sheetFromParams(body.params, part)) return out.fail(body.name + " isn't a sheet metal part (SHEETMETAL BASE makes one)");
+        // Bodies move with an offset: the part's own frame is where it was made.
+        auto shift = [&](Vec3 p) { return p + body.offset; };
+        const std::vector<SheetEdge> edges = sheetFreeEdges(part);
+        if (sub == "edges") {
+            if (edges.empty()) out.say(body.name + " has no free edges left");
+            for (std::size_t e = 0; e < edges.size(); ++e)
+                out.say("  " + std::to_string(e + 1) + "  " + (edges[e].parent < 0 ? "base" : "flange " + std::to_string(edges[e].parent + 1)) + "  " +
+                        lengthText(edges[e].length) + " long, middle at " + pointText(shift((edges[e].a3 + edges[e].b3) * 0.5f)));
+            return out;
+        }
+        if (sub == "info") {
+            std::vector<std::vector<Vec2>> outline;
+            std::vector<std::pair<Vec2, Vec2>> bends;
+            sheetFlatOutline(part, outline, bends);
+            Vec2 lo{1e30f, 1e30f}, hi{-1e30f, -1e30f};
+            for (const auto& l : outline)
+                for (const Vec2& q : l) lo = {std::min(lo.x, q.x), std::min(lo.y, q.y)}, hi = {std::max(hi.x, q.x), std::max(hi.y, q.y)};
+            out.say(body.name + ": sheet " + lengthText(part.thickness) + ", bend radius " + lengthText(part.radius) + ", K " + fmt3("%g", part.k) + ", " +
+                    std::to_string(part.flanges.size()) + (part.flanges.size() == 1 ? " flange" : " flanges"));
+            for (std::size_t f = 0; f < part.flanges.size(); ++f) {
+                const SheetFlange& fl = part.flanges[f];
+                const float r = fl.radius >= 0 ? fl.radius : part.radius;
+                out.say("  flange " + std::to_string(f + 1) + ": " + lengthText(fl.length) + ", " + fmt3("%g", fl.angle) + " deg " + (fl.down ? "down" : "up") +
+                        ", radius " + lengthText(r) + ", bend allowance " + lengthText(bendAllowance(fl.angle, r, part.k, part.thickness)));
+            }
+            if (!outline.empty()) out.say("  flat pattern " + lengthText(hi.x - lo.x) + " x " + lengthText(hi.y - lo.y));
+            return out;
+        }
+        if (sub == "flange") {
+            if (!(flangeLen >= 0)) return out.fail("SHEETMETAL FLANGE needs LENGTH l");
+            int pick = edgeNo;
+            if (near) {
+                float best = 1e30f;
+                for (std::size_t e = 0; e < edges.size(); ++e) {
+                    const float dd = length(shift((edges[e].a3 + edges[e].b3) * 0.5f) - *near);
+                    if (dd < best) best = dd, pick = static_cast<int>(e);
+                }
+            }
+            if (pick < 0 || pick >= static_cast<int>(edges.size()))
+                return out.fail(edges.empty() ? body.name + " has no free edges left" : "Give EDGE n (1 to " + std::to_string(edges.size()) + ", SHEETMETAL EDGES) or NEAR x,y,z");
+            const SheetEdge& e = edges[static_cast<std::size_t>(pick)];
+            SheetPart next = part;
+            next.flanges.push_back({e.parent, e.edge, flangeLen, angle, down, radius});
+            std::string why;
+            MeshData m = buildSheet(next, false, &why);
+            if (m.indices.empty()) return out.fail("Cannot add the flange: " + why);
+            doc.scene.pushUndo("SHEETMETAL FLANGE " + body.name);
+            body.params = sheetParams(next);
+            body.mesh = std::move(m);
+            body.brep.reset();
+            doc.scene.touchBodies();
+            doc.dirty = true;
+            out.say("Flange " + std::to_string(next.flanges.size()) + " on " + body.name + ": " + lengthText(flangeLen) + " at " + fmt3("%g", angle) + " deg " +
+                    (down ? "down" : "up") + " (edge " + std::to_string(pick + 1) + ", " + lengthText(e.length) + ")");
+            return out;
+        }
+        if (sub == "flat") {
+            std::string why;
+            MeshData m = buildSheet(part, true, &why);
+            if (m.indices.empty()) return out.fail("Cannot unfold " + body.name + ": " + why);
+            // Beside the folded part, along the base plane's u axis.
+            const AABB fb = worldMesh(body).bounds();
+            const float gap = length(fb.max - fb.min) + 10.0f;
+            m.transform(translate(body.offset + part.frame.u * gap));
+            const int serial = ++doc.primitiveSerial;
+            (void)serial;
+            Body flatBody = featureBody(body.name + " flat", std::move(m), body.color);
+            if (sketch) { // the outline and bend lines as sketch curves on the base's plane (moved alongside)
+                std::vector<std::vector<Vec2>> outline;
+                std::vector<std::pair<Vec2, Vec2>> bends;
+                sheetFlatOutline(part, outline, bends);
+                const Vec2 off = part.frame.toPlane(part.frame.origin + part.frame.u * gap + body.offset);
+                SketchCurve proto;
+                proto.plane = SketchPlane::Custom;
+                proto.frame = part.frame;
+                if (sameFrame(part.frame, planeFrame(SketchPlane::Top))) proto.plane = SketchPlane::Top;
+                else if (sameFrame(part.frame, planeFrame(SketchPlane::Front))) proto.plane = SketchPlane::Front;
+                else if (sameFrame(part.frame, planeFrame(SketchPlane::Right))) proto.plane = SketchPlane::Right;
+                for (const auto& l : outline) {
+                    SketchCurve c = proto;
+                    c.kind = CurveKind::Polyline;
+                    for (const Vec2& q : l) c.pts.push_back({q.x + off.x, q.y + off.y});
+                    c.pts.push_back(c.pts.front());
+                    doc.scene.sketch().add(std::move(c));
+                }
+                for (const auto& [p, q] : bends) {
+                    SketchCurve c = proto;
+                    c.kind = CurveKind::Line;
+                    c.construction = true;
+                    c.pts = {{p.x + off.x, p.y + off.y}, {q.x + off.x, q.y + off.y}};
+                    doc.scene.sketch().add(std::move(c));
+                }
+            }
+            doc.scene.pushUndo("SHEETMETAL FLAT " + body.name);
+            out.say("Flat pattern of " + body.name + " -> " + flatBody.name + (sketch ? " (and its outline and bend lines as sketch curves)" : ""));
+            addBody(doc, std::move(flatBody));
+            return out;
+        }
+        return out.fail(usage);
     }
 
     if (cmd == "MASSPROPS") {
