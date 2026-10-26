@@ -132,12 +132,15 @@ constexpr CommandSpec kCommands[] = {
     // 3D printing
     {"REVOLVE", "REV", "REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [CUT|JOIN [body]] [KEEP]",
      "Turn a closed sketch curve about an axis in its plane into a solid (360: closed; less: capped)"},
-    {"SWEEP", "", "SWEEP [profile] ALONG path [KEEP]", "Carry a closed profile along a path curve, square to it, mitred at corners"},
+    {"SWEEP", "", "SWEEP [profile] ALONG path [KEEP] | SWEEP [profile] HELIX PITCH p TURNS n [AXIS U|V|x,y x,y] [LEFT] [KEEP]",
+     "Carry a closed profile along a path curve, square to it, mitred at corners, or round a helix (springs, coils)"},
     {"LOFT", "", "LOFT \"section\" [AT d] \"section\" [AT d] ... [SMOOTH|RULED] [KEEP]",
      "A solid through closed sections (AT: offset along each section's plane normal)"},
     {"PATTERN", "ARRAY", "PATTERN [body] LINEAR n SPACING d [DIR x,y,z] [ROWS m SPACING2 d DIR2 x,y,z] | CIRCULAR n [ANGLE a] [AXIS X|Y|Z] [AT x,y,z] "
      "[UNION|SUBTRACT \"target\"]", "Linear or circular copies of a body, or joined into / cut from a target"},
     {"MIRROR", "", "MIRROR [body] [PLANE XY|YZ|XZ] [AT x,y,z] [NORMAL x,y,z] [COPY|MOVE] [UNION]", "Mirror a body across a plane"},
+    {"THREAD", "", "THREAD [body] AT x,y,z AXIS x,y,z SIZE M10 | DIAMETER d PITCH p  LENGTH l [INTERNAL] [LEFT] | THREAD [body] HOLES | HOLE n",
+     "Cut a modelled ISO 60 degree thread: on a rod, in a hole, or in the body's tapped wizard holes"},
     {"DRAFT", "TAPER", "DRAFT [body] ANGLE deg [PULL x,y,z | X | Y | Z] [NEUTRAL x,y,z]",
      "Tilt a body's side faces (those along the pull) for moulding, about the neutral plane (default: its bottom)"},
     {"FILLET", "ROUND", "FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v] [EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|TOP|BOTTOM|n...|"

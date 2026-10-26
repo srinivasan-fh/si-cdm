@@ -62,6 +62,17 @@ struct ExtrudeShape {
 std::optional<MeshData> extrudeShape(const std::vector<Vec2>& outline, bool closed, const PlaneFrame& f, const ExtrudeShape& s,
                                      std::string* error = nullptr);
 
+// A closed (r, z) outline (r out from the axis, z along it; no corner on the axis) carried
+// round the axis through `origin` along `axis` while it rises `pitch` a turn, for `turns`
+// turns: a coil, a thread's ridge or groove. Capped at both ends, facing outward.
+MeshData helicalSweep(const std::vector<Vec2>& outlineRZ, Vec3 origin, Vec3 axis, float pitch, float turns, bool leftHand,
+                      int stepsPerTurn = 48);
+// The groove that cuts an ISO metric (60 degree) thread `length` long from `at` along
+// `axis`: outside a rod of diameter `major` (external), or into the wall of a hole whose
+// thread is `major` (internal, the hole at the minor diameter).
+std::optional<MeshData> threadGroove(float major, float pitch, float length, bool internal, bool leftHand, Vec3 at, Vec3 axis,
+                                     std::string* why = nullptr);
+
 // Draft: the faces of a solid running along `pull` (its sides) tilted by `deg` about where
 // they cross the neutral plane (through `neutral`, square to `pull`), leaning in going
 // along `pull` (out when negative), as a part is drafted to come out of a mould. Corners

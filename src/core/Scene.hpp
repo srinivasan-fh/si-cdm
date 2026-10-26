@@ -26,6 +26,9 @@ struct Brep;
 struct HoleNote {
     Vec3 at{}, dir{0, 0, -1};
     std::string callout;
+    float threadDia = 0, pitch = 0; // a tapped hole's thread (0: none)
+    float threadDepth = 0;          // how deep it goes (0: through)
+    bool threadModelled = false;    // THREAD cut it into the wall
 };
 
 struct Body {

@@ -432,6 +432,82 @@ std::optional<MeshData> extrudeShape(const std::vector<Vec2>& outlineIn, bool cl
     return m;
 }
 
+// --- helices and threads -----------------------------------------------------------------
+
+MeshData helicalSweep(const std::vector<Vec2>& outline, Vec3 origin, Vec3 axisIn, float pitch, float turns, bool leftHand, int stepsPerTurn) {
+    MeshData m;
+    const std::size_t n = outline.size();
+    if (n < 3 || !(turns > 0.0f) || stepsPerTurn < 8) return m;
+    const Vec3 ax = normalize(axisIn);
+    Vec3 e1 = normalize(cross(ax, std::fabs(ax.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0}));
+    const Vec3 e2 = cross(ax, e1);
+    const int steps = std::max(1, static_cast<int>(std::ceil(turns * static_cast<float>(stepsPerTurn))));
+    const float hand = leftHand ? -1.0f : 1.0f;
+    auto at = [&](int k, Vec2 rz) {
+        const float f = turns * static_cast<float>(k) / static_cast<float>(steps); // turns so far
+        const float th = hand * 2.0f * kPi * f;
+        return origin + ax * (rz.y + pitch * f) + (e1 * std::cos(th) + e2 * std::sin(th)) * rz.x;
+    };
+    for (int k = 0; k <= steps; ++k)
+        for (const Vec2& q : outline) m.vertices.push_back({at(k, q), {}});
+    auto id = [&](int k, std::size_t j) { return static_cast<std::uint32_t>(static_cast<std::size_t>(k) * n + j % n); };
+    for (int k = 0; k < steps; ++k)
+        for (std::size_t j = 0; j < n; ++j) {
+            const std::uint32_t a = id(k, j), b = id(k, j + 1), c = id(k + 1, j + 1), d = id(k + 1, j);
+            m.indices.insert(m.indices.end(), {a, b, c, a, c, d});
+        }
+    // Caps: the outline is convex enough to fan from its centre.
+    Vec2 c{};
+    for (const Vec2& q : outline) c = {c.x + q.x, c.y + q.y};
+    c = {c.x / static_cast<float>(n), c.y / static_cast<float>(n)};
+    for (int end = 0; end < 2; ++end) {
+        const int k = end ? steps : 0;
+        const auto centre = static_cast<std::uint32_t>(m.vertices.size());
+        m.vertices.push_back({at(k, c), {}});
+        for (std::size_t j = 0; j < n; ++j) {
+            if (end) m.indices.insert(m.indices.end(), {centre, id(k, j), id(k, j + 1)});
+            else m.indices.insert(m.indices.end(), {centre, id(k, j + 1), id(k, j)});
+        }
+    }
+    if (meshVolume(m) < 0.0) // wound inward: turn every face over
+        for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) std::swap(m.indices[t + 1], m.indices[t + 2]);
+    // Flat normals for now; featureBody / the boolean recompute them.
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        Vertex &a = m.vertices[m.indices[t]], &b = m.vertices[m.indices[t + 1]], &cc = m.vertices[m.indices[t + 2]];
+        const Vec3 nr = normalize(cross(b.position - a.position, cc.position - a.position));
+        a.normal = b.normal = cc.normal = nr;
+    }
+    return m;
+}
+
+std::optional<MeshData> threadGroove(float major, float pitch, float span, bool internal, bool leftHand, Vec3 at, Vec3 axis, std::string* why) {
+    auto fail = [&](const char* w) -> std::optional<MeshData> {
+        if (why) *why = w;
+        return std::nullopt;
+    };
+    if (!(major > 0.0f) || !(pitch > 0.0f) || !(span > 0.0f)) return fail("The thread needs a diameter, a pitch and a length");
+    if (pitch > major * 0.5f) return fail("The pitch is too coarse for that diameter");
+    if (span / pitch > 400.0f) return fail("At most 400 turns");
+    if (!(length(axis) > 0.0f)) return fail("The thread needs an axis");
+    // The ISO basic profile: H = 0.866 P. A groove is the space between two teeth.
+    const float P = pitch, R = major * 0.5f;
+    std::vector<Vec2> g; // (r, z), z across one pitch centred on the groove
+    if (!internal) {
+        const float root = R - 0.6134f * P, margin = std::max(0.25f * P, 0.2f);
+        // Root flat P/4 wide; flanks out to the crest line, where the groove is 7P/8 wide;
+        // straight on past the rod so neighbouring turns never meet.
+        g = {{root, -P / 8}, {root, P / 8}, {R, 7 * P / 16}, {R + margin, 7 * P / 16}, {R + margin, -7 * P / 16}, {R, -7 * P / 16}};
+    } else {
+        const float minor = R - 0.5413f * P, margin = std::max(0.25f * P, 0.2f);
+        if (minor - margin <= 0.0f) return fail("The thread is too coarse for that hole");
+        // Into the wall: root flat P/8 at the major radius, 3P/4 wide at the hole's wall.
+        g = {{R, P / 16}, {R, -P / 16}, {minor, -3 * P / 8}, {minor - margin, -3 * P / 8}, {minor - margin, 3 * P / 8}, {minor, 3 * P / 8}};
+    }
+    MeshData m = helicalSweep(g, at, axis, P, span / P, leftHand, 48);
+    if (m.indices.empty()) return fail("The thread could not be made");
+    return m;
+}
+
 // --- draft ---------------------------------------------------------------------------------
 
 std::optional<MeshData> draftMesh(const MeshData& world, Vec3 pullIn, Vec3 neutral, float deg, std::string* why, int* sides) {

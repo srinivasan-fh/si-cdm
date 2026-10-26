@@ -511,7 +511,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
-                                        "DRAFT"};
+                                        "DRAFT",   "THREAD"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -526,7 +526,7 @@ bool historyCommand(const std::string& cmd) {
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
-                                         "SKETCHPATTERN", "PROJECT", "DRAFT"};
+                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -2068,7 +2068,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         cmd == "SKETCHMIRROR" || cmd == "SKETCHPATTERN" || cmd == "PROJECT")
         return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
-        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT")
+        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT" || cmd == "THREAD")
         return runFeatureCommand(doc, cmd, a, pc.quoted);
     if (cmd == "HISTORY" || cmd == "REGEN") return runHistoryCommand(doc, cmd, a, pc.quoted);
     if (cmd == "CONSTRAIN" || cmd == "DIM" || cmd == "CONSTRAINTS" || cmd == "CONSTRAINT") return runSketchCommand(doc, cmd, a, pc.quoted);
@@ -2548,7 +2548,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                         ok = false;
                         break;
                     }
-                    body.holes.push_back({p - body.offset, -normalize(n), holeCallout(h)});
+                    body.holes.push_back({p - body.offset, -normalize(n), holeCallout(h), h.threadDia, h.threadPitch, h.threadDepth});
                 }
                 done = (at.size() > 1 ? std::to_string(at.size()) + " holes " : std::string("hole ")) + holeCallout(h);
             }

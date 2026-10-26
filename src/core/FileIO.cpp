@@ -426,6 +426,10 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             for (const HoleNote& h : b.holes) {
                 Json jh = Json::object();
                 jh.set("at", vec3Json(h.at)).set("dir", vec3Json(h.dir)).set("callout", h.callout);
+                if (h.threadDia > 0) {
+                    jh.set("thread", h.threadDia).set("pitch", h.pitch).set("thread_depth", h.threadDepth);
+                    if (h.threadModelled) jh.set("modelled", true);
+                }
                 hs.push(jh);
             }
             jb.set("holes", hs);
@@ -746,7 +750,8 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         b.attachedTo = jb["attached_to"].asString();
         b.assembly = jb["assembly"].asString();
         for (const Json& jh : jb["holes"].items())
-            b.holes.push_back({jsonVec3(jh["at"]), jsonVec3(jh["dir"], {0, 0, -1}), jh["callout"].asString()});
+            b.holes.push_back({jsonVec3(jh["at"]), jsonVec3(jh["dir"], {0, 0, -1}), jh["callout"].asString(), jh["thread"].asFloat(),
+                               jh["pitch"].asFloat(), jh["thread_depth"].asFloat(), jh["modelled"].asBool(false)});
         b.offset = jsonVec3(jb["offset"]);
         b.color = jsonVec3(jb["color"], b.color);
         b.visible = jb["visible"].asBool(true);

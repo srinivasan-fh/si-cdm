@@ -8,7 +8,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Sketch planes | `PLANE`: Top, Front, Right, and datum planes anywhere or on a face |
 | Sketch constraints | `CONSTRAIN`, `DIM`, `CONSTRAINTS` and `CONSTRAINT EDIT` / `DELETE` |
 | Solids from sketch curves | `EXTRUDE`, `REVOLVE`, `SWEEP` and `LOFT` |
-| Holes | `HOLE`: standard sizes, counterbored, countersunk and tapped |
+| Holes and threads | `HOLE`: standard sizes, counterbored, countersunk and tapped; `THREAD`: modelled threads |
 | Copies of bodies | `PATTERN` and `MIRROR` |
 | Moulding | `DRAFT`: side faces tilted to come out of a mould |
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
@@ -366,6 +366,25 @@ HOLE "Block 1" AT -25,15,20 25,15,20 SIZE M8 TAPPED DEPTH 15
 HOLE "Block 1" AT 0,0,20 SIZE 1/4-20 CSINK THROUGH
 ```
 
+## Threads
+
+```text
+THREAD [body] AT x,y,z AXIS x,y,z SIZE M10 | DIAMETER d PITCH p  LENGTH l [INTERNAL] [LEFT]
+THREAD [body] HOLES | HOLE n
+```
+
+THREAD cuts a modelled ISO metric thread (60 degree flanks, the basic profile) into a body:
+on a rod `LENGTH` long from `AT` along `AXIS` (the rod's diameter is the thread's), or with
+`INTERNAL` into the wall of a hole drilled at the minor diameter. `HOLES` threads the
+body's tapped hole wizard holes (each once; `HOLE n`: just that one, numbered as `HOLE
+LIST` shows them). `LEFT` makes a left-hand thread. A tapped hole is otherwise a cosmetic
+thread: the tap drill and its callout.
+
+```text
+CYLINDER 5 30
+THREAD "Cylinder 1" AT 0,0,30 AXIS 0,0,-1 SIZE M10 LENGTH 20
+```
+
 ## Revolve
 
 ```text
@@ -391,9 +410,14 @@ REVOLVE "Polyline 1" AXIS V
 
 ```text
 SWEEP [profile] ALONG path [KEEP]
+SWEEP [profile] HELIX PITCH p TURNS n [AXIS U | V | x,y x,y] [LEFT] [KEEP]
 ```
 
 SWEEP carries a closed profile along a path curve: a line, polyline, rectangle or circle.
+With `HELIX PITCH p TURNS n` it goes round a helix instead (springs, coils): about the
+profile plane's vertical axis by default (`AXIS U`, `V` or two points `x,y x,y` in that
+plane), from the profile, rising `p` a turn (`LEFT`: left-handed). The profile must stay off
+the axis and the coils clear of each other.
 
 - **Placement:** the profile is centred on its centroid and turned square to the path's start.
 - **Corners:** the profile is carried round each corner by that corner's own rotation (parallel

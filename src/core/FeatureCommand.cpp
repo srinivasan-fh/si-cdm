@@ -7,6 +7,7 @@
 #include "core/Extrude.hpp"
 #include "core/Brep.hpp"
 #include "core/Features.hpp"
+#include "core/HoleWizard.hpp"
 #include "core/Sculpt.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/Step.hpp"
@@ -505,43 +506,104 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
 
     if (cmd == "SWEEP") {
         // SWEEP [profile] ALONG path [KEEP]
-        auto isKey = [](const std::string& w) { return w == "along" || w == "path" || w == "keep"; };
+        // SWEEP [profile] HELIX PITCH p TURNS n [AXIS U | V | x,y x,y] [LEFT] [KEEP]
+        auto isKey = [](const std::string& w) {
+            return w == "along" || w == "path" || w == "keep" || w == "helix" || w == "pitch" || w == "turns" || w == "axis" || w == "left";
+        };
+        const char* usage = "Usage: SWEEP [profile] ALONG path [KEEP]  |  SWEEP [profile] HELIX PITCH p TURNS n [AXIS U|V|x,y x,y] [LEFT] [KEEP]";
         std::size_t i = 0;
         const std::string name = leadingName(a, quoted, i, isKey);
         std::string pathName;
-        bool keep = false;
+        bool keep = false, helix = false, left = false;
+        float pitch = 0, turns = 0;
+        std::optional<std::pair<Vec2, Vec2>> axis; // in the profile's plane: point, direction
         for (; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
             if (k == "keep") keep = true;
-            else if (k == "along" || k == "path") {
+            else if (k == "helix") helix = true;
+            else if (k == "left") left = true;
+            else if (k == "pitch" && i + 1 < a.size()) {
+                const auto v = parseLength(a[++i]);
+                if (!v || !(*v > 0)) return out.fail("PITCH needs a length: how far it rises a turn");
+                pitch = static_cast<float>(*v);
+            } else if (k == "turns" && i + 1 < a.size()) {
+                const auto v = parseNumber(a[++i]);
+                if (!v || !(*v > 0) || *v > 500) return out.fail("TURNS is more than 0, up to 500");
+                turns = *v;
+            } else if (k == "axis" && i + 1 < a.size()) {
+                const std::string w = lower(a[++i]);
+                if (w == "u") axis = {{Vec2{0, 0}, Vec2{1, 0}}};
+                else if (w == "v") axis = {{Vec2{0, 0}, Vec2{0, 1}}};
+                else {
+                    const auto p0 = point2(a[i]);
+                    const auto p1 = i + 1 < a.size() ? point2(a[i + 1]) : std::nullopt;
+                    if (!p0 || !p1) return out.fail("AXIS needs U, V or two points x,y x,y in the profile's plane");
+                    ++i;
+                    axis = {{*p0, Vec2{p1->x - p0->x, p1->y - p0->y}}};
+                }
+            } else if (k == "along" || k == "path") {
                 ++i;
                 pathName = leadingName(a, quoted, i, isKey);
                 --i;
-            } else return out.fail("Usage: SWEEP [profile] ALONG path [KEEP]");
+            } else return out.fail(usage);
         }
         const int ci = name.empty() ? doc.selectedCurve : curveNamed(doc, name);
         if (ci < 0 || ci >= static_cast<int>(doc.scene.sketch().curves().size())) return out.fail("Name the closed profile to sweep (or select it)");
-        const int pi = curveNamed(doc, pathName);
-        if (pathName.empty() || pi < 0) return out.fail("Give the path: SWEEP profile ALONG \"path curve\"");
-        if (pi == ci) return out.fail("The profile and the path must be different curves");
         const SketchCurve profileCurve = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
-        const SketchCurve pathCurve = doc.scene.sketch().curves()[static_cast<std::size_t>(pi)];
         std::string why;
         const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(ci), &why);
         if (!profile) return out.fail("Cannot sweep " + profileCurve.name + ": " + why);
+        const PlaneFrame pf = curveFrame(profileCurve);
         std::vector<Vec3> path;
         bool closed = false;
-        if (!curvePath(pathCurve, path, closed)) return out.fail(pathCurve.name + " can't be a path (a line, polyline, rectangle or circle)");
-        auto mesh = sweepProfile(*profile, curveFrame(profileCurve), path, closed, &why);
+        int pi = -1;
+        std::string along;
+        if (helix) {
+            if (!pathName.empty()) return out.fail("A sweep goes ALONG a path or round a HELIX, not both");
+            if (!(pitch > 0) || !(turns > 0)) return out.fail("HELIX needs PITCH p and TURNS n");
+            // Round the axis in the profile's plane (its vertical axis by default), from the
+            // profile's centre, rising `pitch` a turn.
+            const auto [ap, ad] = axis.value_or(std::pair<Vec2, Vec2>{Vec2{0, 0}, Vec2{0, 1}});
+            const float adl = std::hypot(ad.x, ad.y);
+            if (!(adl > 0)) return out.fail("The helix axis needs a direction");
+            const Vec3 A = pf.toWorld(ap), D = normalize(pf.u * ad.x + pf.v * ad.y);
+            const std::vector<Vec2> poly = profilePolygon(*profile);
+            Vec2 c{};
+            for (const Vec2& q : poly) c = {c.x + q.x, c.y + q.y};
+            c = {c.x / static_cast<float>(poly.size()), c.y / static_cast<float>(poly.size())};
+            const Vec3 C = pf.toWorld(c);
+            const Vec3 radial = (C - A) - D * dot(C - A, D);
+            const float R = length(radial);
+            float reach = 0; // the profile must stay off the axis
+            for (const Vec2& q : poly) reach = std::max(reach, length(pf.toWorld(q) - C));
+            if (!(R > reach)) return out.fail("The profile crosses the helix axis: move it out, or choose another AXIS");
+            if (pitch < 2 * reach * 0.999f) return out.fail("The pitch is less than the profile's width: the coils would run into each other");
+            const Vec3 e1 = radial / R, e2 = cross(D, e1) * (left ? -1.0f : 1.0f);
+            const Vec3 base = C - radial;
+            const int steps = std::max(8, static_cast<int>(std::ceil(turns * 48)));
+            for (int k = 0; k <= steps; ++k) {
+                const float f = turns * static_cast<float>(k) / static_cast<float>(steps), th = 2 * kPi * f;
+                path.push_back(base + D * (pitch * f) + (e1 * std::cos(th) + e2 * std::sin(th)) * R);
+            }
+            along = "a helix (" + lengthText(pitch) + " pitch, " + fmt3("%g", turns) + " turns" + (left ? ", left hand" : "") + ")";
+        } else {
+            pi = curveNamed(doc, pathName);
+            if (pathName.empty() || pi < 0) return out.fail("Give the path: SWEEP profile ALONG \"path curve\", or HELIX PITCH p TURNS n");
+            if (pi == ci) return out.fail("The profile and the path must be different curves");
+            const SketchCurve pathCurve = doc.scene.sketch().curves()[static_cast<std::size_t>(pi)];
+            if (!curvePath(pathCurve, path, closed)) return out.fail(pathCurve.name + " can't be a path (a line, polyline, rectangle or circle)");
+            along = pathCurve.name;
+        }
+        auto mesh = sweepProfile(*profile, pf, path, closed, &why);
         if (!mesh) return out.fail("Cannot sweep: " + why);
         const int serial = ++doc.primitiveSerial;
         Body b = featureBody("Sweep " + std::to_string(serial), std::move(*mesh), bodyColor(serial));
         if (!keep) {
             hideCurve(doc, ci);
-            hideCurve(doc, pi);
+            if (pi >= 0) hideCurve(doc, pi);
         }
         doc.scene.pushUndo("SWEEP " + profileCurve.name);
-        out.say("Swept " + profileCurve.name + " along " + pathCurve.name + " -> " + b.name + ": " + closedText(b.mesh));
+        out.say("Swept " + profileCurve.name + " along " + along + " -> " + b.name + ": " + closedText(b.mesh));
         addBody(doc, std::move(b));
         return out;
     }
@@ -980,6 +1042,106 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         doc.dirty = true;
         out.say("Drafted " + body.name + " " + fmt3("%g", *angle) + " deg (" + std::to_string(sides) + " side triangles): " + closedText(body.mesh) +
                 ", volume " + fmt3("%.1f", before / 1000.0) + " -> " + fmt3("%.1f", meshVolume(worldMesh(body)) / 1000.0) + " cm3");
+        return out;
+    }
+
+    if (cmd == "THREAD") {
+        // THREAD [body] AT x,y,z AXIS x,y,z SIZE M10 | DIAMETER d PITCH p  LENGTH l [INTERNAL] [LEFT]
+        // THREAD [body] HOLES | HOLE n      the threads of its tapped hole wizard holes
+        static const char* const kKeys[] = {"at", "axis", "size", "diameter", "d", "pitch", "length", "internal", "external", "left", "holes", "hole"};
+        auto isKey = [](const std::string& w) {
+            for (const char* k : kKeys)
+                if (w == k) return true;
+            return w.find(',') != std::string::npos;
+        };
+        const char* usage = "Usage: THREAD [body] AT x,y,z AXIS x,y,z SIZE M10 | DIAMETER d PITCH p  LENGTH l [INTERNAL] [LEFT]  |  THREAD [body] HOLES | HOLE n";
+        std::size_t i = 0;
+        const std::string name = leadingName(a, quoted, i, isKey);
+        const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select a body to thread, or name it" : "No body named " + name);
+        std::optional<Vec3> at, axis;
+        float dia = 0, pitch = 0, len = 0;
+        bool internal = false, left = false, holes = false;
+        int holeNo = -1;
+        std::string sizeName;
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
+            if (k == "at") {
+                if (!(at = parseVec3(next()))) return out.fail("AT needs a point x,y,z on the axis");
+            } else if (k == "axis") {
+                if (!(axis = axisWord(next()))) return out.fail("AXIS needs X, Y, Z or x,y,z");
+            } else if (k == "size") {
+                sizeName = next();
+            } else if (k == "diameter" || k == "d" || k == "pitch" || k == "length") {
+                const auto v = parseLength(next());
+                if (!v || !(*v > 0)) return out.fail(toUpper(k) + " needs a length");
+                (k == "pitch" ? pitch : k == "length" ? len : dia) = static_cast<float>(*v);
+            } else if (k == "internal") internal = true;
+            else if (k == "external") internal = false;
+            else if (k == "left") left = true;
+            else if (k == "holes") holes = true;
+            else if (k == "hole") {
+                const auto n = parseNumber(next());
+                if (!n || *n < 1) return out.fail("HOLE takes the hole's number (HOLE LIST)");
+                holeNo = static_cast<int>(*n) - 1;
+            } else return out.fail(usage);
+        }
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        struct Job {
+            float dia, pitch, len;
+            bool internal;
+            Vec3 at, axis;
+            int note;
+        };
+        std::vector<Job> jobs;
+        if (holes || holeNo >= 0) {
+            const MeshData w = worldMesh(body);
+            for (std::size_t k = 0; k < body.holes.size(); ++k) {
+                const HoleNote& h = body.holes[k];
+                if (holeNo >= 0 && static_cast<int>(k) != holeNo) continue;
+                if (!(h.threadDia > 0) || h.threadModelled) {
+                    if (holeNo >= 0) return out.fail("Hole " + std::to_string(holeNo + 1) + (h.threadModelled ? "'s thread is modelled already" : " isn't tapped"));
+                    continue;
+                }
+                float depth = h.threadDepth;
+                const Vec3 start = h.at + body.offset;
+                if (!(depth > 0)) { // through: as far as the body goes along the hole
+                    for (const Vertex& v : w.vertices) depth = std::max(depth, dot(v.position - start, normalize(h.dir)));
+                }
+                // From just above the surface, so the thread runs out of the hole's mouth.
+                const float lead = h.pitch;
+                jobs.push_back({h.threadDia, h.pitch, depth + lead, true, start - normalize(h.dir) * lead, normalize(h.dir), static_cast<int>(k)});
+            }
+            if (holeNo >= static_cast<int>(body.holes.size())) return out.fail(body.name + " has no hole " + std::to_string(holeNo + 1));
+            if (jobs.empty()) return out.fail(body.name + " has no tapped holes left to thread (HOLE ... TAPPED makes them)");
+        } else {
+            if (!sizeName.empty()) {
+                const HoleSize* z = findHoleSize(sizeName);
+                if (!z) return out.fail("No standard size " + sizeName + " (HOLE SIZES lists them)");
+                if (!(dia > 0)) dia = z->nominal;
+                if (!(pitch > 0)) pitch = z->pitch;
+            }
+            if (!at || !axis || !(dia > 0) || !(pitch > 0) || !(len > 0)) return out.fail(usage);
+            jobs.push_back({dia, pitch, len, internal, *at, *axis, -1});
+        }
+        doc.scene.pushUndo("THREAD " + body.name);
+        const double before = meshVolume(worldMesh(body));
+        std::string why;
+        int done = 0;
+        for (const Job& j : jobs) {
+            auto groove = threadGroove(j.dia, j.pitch, j.len, j.internal, left, j.at, j.axis, &why);
+            if (!groove || !bodyBoolean(body, meshBody("thread", std::move(*groove)), BooleanOp::Subtract, &why)) {
+                doc.scene.undo();
+                return out.fail("Cannot thread " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + why + " (nothing changed)");
+            }
+            if (j.note >= 0) body.holes[static_cast<std::size_t>(j.note)].threadModelled = true;
+            ++done;
+        }
+        doc.scene.touchBodies();
+        doc.dirty = true;
+        out.say("Threaded " + body.name + ": " + std::to_string(done) + (done == 1 ? " thread" : " threads") + (left ? " (left hand)" : "") + ", " +
+                closedText(body.mesh) + ", volume " + fmt3("%.2f", before / 1000.0) + " -> " + fmt3("%.2f", meshVolume(worldMesh(body)) / 1000.0) + " cm3");
         return out;
     }
 

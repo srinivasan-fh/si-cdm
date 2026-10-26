@@ -464,3 +464,42 @@ TEST_CASE("DRAFT tilts a body's side faces about the neutral plane") {
     CHECK(!run(d, "DRAFT \"Sphere 5\" ANGLE 3").ok);
     CHECK(!run(d, "DRAFT \"Block 1\" ANGLE 60").ok);
 }
+
+TEST_CASE("Helical sweeps (springs) and modelled threads, outside and in tapped holes") {
+    Document d;
+    REQUIRE(run(d, "PLANE FRONT").ok);
+    REQUIRE(run(d, "CIRCLE 20,0 2").ok);
+    REQUIRE(run(d, "SWEEP \"Circle 1\" HELIX PITCH 8 TURNS 5").ok);
+    // Pappus: the section's area times the helix's length.
+    const double helixLen = 5 * std::sqrt(std::pow(2 * 3.14159265 * 20, 2) + 64);
+    CHECK_NEAR(volumeOf(last(d)), 3.14159265 * 4 * helixLen, 3.14159265 * 4 * helixLen * 0.01);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    const AABB s = boundsOf(last(d));
+    CHECK_NEAR(s.max.z - s.min.z, 5 * 8 + 4.0f, 0.05);
+    REQUIRE(run(d, "CIRCLE 2,0 3").ok);
+    CHECK(!run(d, "SWEEP \"Circle 2\" HELIX PITCH 8 TURNS 2").ok); // crosses the axis
+    REQUIRE(run(d, "CIRCLE 40,0 3").ok);
+    CHECK(!run(d, "SWEEP \"Circle 3\" HELIX PITCH 4 TURNS 2").ok); // coils run into each other
+
+    // An M10 thread 20 long on a rod: about the groove's area round its centre, turn by turn.
+    REQUIRE(run(d, "CYLINDER 5 30 @100,0,0").ok);
+    const double rod = volumeOf(last(d));
+    const std::string cyl = "\"" + last(d).name + "\"";
+    REQUIRE(run(d, "THREAD " + cyl + " AT 100,0,30 AXIS 0,0,-1 SIZE M10 LENGTH 20").ok);
+    const double P = 1.5, groove = (7.0 / 8 + 1.0 / 4) / 2 * 0.6134 * P * P;
+    CHECK_NEAR(rod - volumeOf(last(d)), groove * 2 * 3.14159265 * (5 - 0.6134 * P / 2) * (20 / P), 25.0);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    CHECK(!run(d, "THREAD " + cyl + " AT 100,0,30 AXIS Z DIAMETER 2 PITCH 3 LENGTH 5").ok); // too coarse
+
+    // The wizard's tapped holes, threaded in place; a second time there's nothing left to do.
+    REQUIRE(run(d, "BOX 40 40 20 @200,0,0").ok);
+    const std::string blk = "\"" + last(d).name + "\"";
+    REQUIRE(run(d, "HOLE " + blk + " AT 200,0,20 SIZE M8 TAPPED DEPTH 16").ok);
+    const double drilled = volumeOf(last(d));
+    REQUIRE(run(d, "THREAD " + blk + " HOLES").ok);
+    CHECK(volumeOf(last(d)) < drilled - 50);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    CHECK(last(d).holes[0].threadModelled);
+    CHECK(!run(d, "THREAD " + blk + " HOLES").ok);
+    CHECK(!run(d, "THREAD " + blk + " HOLE 2").ok);
+}
