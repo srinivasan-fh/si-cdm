@@ -4,6 +4,8 @@
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
 #include "core/Kinematics.hpp"
+#include "core/Mcp.hpp"
+#include "core/RobotEnv.hpp"
 #include "core/Motion.hpp"
 #include "core/Multibody.hpp"
 #include "core/Physics.hpp"
@@ -932,4 +934,122 @@ TEST_CASE("Robotics arms: inverse dynamics and the least-effort trajectory") {
     bool said = false;
     for (const std::string& l : o.lines) said = said || l.find("optimised") != std::string::npos;
     CHECK(said);
+}
+
+TEST_CASE("Robotics learning: batched environments step in parallel, the same for the same seed") {
+    Document d;
+    makeArm(d);
+    RigSettings s;
+    EnvOptions o;
+    o.count = 6;
+    o.task = EnvTask::Reach;
+    o.target = {0.3, 0.2, 0.3};
+    o.episodeSeconds = 0.1; // five actions
+    o.seed = 3;
+    std::string err;
+    auto env = RobotEnv::create(d.scene, s, o, &err);
+    REQUIRE(env != nullptr);
+    CHECK(env->count() == 6);
+    CHECK(env->actionSize() == 3);
+    CHECK(env->observationSize() == 2 * 3 + 10 + 3);
+    CHECK(env->observationNames().size() == env->observationSize());
+    const std::vector<double> obs = env->reset();
+    REQUIRE(obs.size() == 6 * env->observationSize());
+    // The tool (the forearm's centre) starts at (0, 0, 610) mm: its offset from the target
+    // is the last three values.
+    const std::size_t no = env->observationSize();
+    CHECK_NEAR(obs[no - 3], -0.3, 0.03);
+    CHECK_NEAR(obs[no - 1], 0.31, 0.03);
+    // Copies with the same actions run the same whatever the threads; episodes restart.
+    std::vector<double> act(6 * 3);
+    for (std::size_t k = 0; k < act.size(); ++k) act[k] = std::sin(0.7 * static_cast<double>(k));
+    EnvOptions single = o;
+    single.threads = 1;
+    auto env1 = RobotEnv::create(d.scene, s, single, &err);
+    REQUIRE(env1 != nullptr);
+    env1->reset();
+    for (int k = 0; k < 4; ++k) {
+        const EnvStep a = env->step(act), b = env1->step(act);
+        for (std::size_t i = 0; i < a.observations.size(); ++i) CHECK(a.observations[i] == b.observations[i]);
+        for (std::size_t i = 0; i < 6; ++i) CHECK(a.rewards[i] == b.rewards[i]);
+        CHECK(a.episodes.empty());
+    }
+    const EnvStep last = env->step(act);
+    CHECK(last.episodes.size() == 6);
+    for (std::size_t i = 0; i < 6; ++i) CHECK(last.truncated[i] && !last.terminated[i]);
+    CHECK_NEAR(last.observations[no - 1], 0.31, 0.03); // started again
+    CHECK(env->simulatedSeconds() > 6 * 0.1 - 1e-9);
+    // Driving the arm toward the target pays: its reward rises above holding still.
+    std::vector<double> hold(6 * 3, 0.0), toward(6 * 3, 0.0);
+    for (int i = 0; i < 6; ++i) {
+        toward[static_cast<std::size_t>(i * 3)] = 0.19;  // turret ~34 deg toward +Y
+        toward[static_cast<std::size_t>(i * 3 + 1)] = 0.4; // shoulder forward
+        toward[static_cast<std::size_t>(i * 3 + 2)] = 0.5; // elbow bent
+    }
+    o.episodeSeconds = 10;
+    auto e2 = RobotEnv::create(d.scene, s, o, &err);
+    REQUIRE(e2 != nullptr);
+    double still = 0, moved = 0;
+    for (int k = 0; k < 40; ++k) still = e2->step(hold).rewards[0];
+    e2->reset();
+    for (int k = 0; k < 40; ++k) moved = e2->step(toward).rewards[0];
+    CHECK(moved > still + 0.1);
+}
+
+TEST_CASE("Robotics learning: a humanoid stands on its motors and falls limp; the MCP tool") {
+    Document d;
+    REQUIRE(run(d, "PART humanoid").ok);
+    RigSettings s;
+    s.name = "Male Humanoid Robot 1";
+    EnvOptions o;
+    o.count = 2;
+    o.noise = 0;
+    std::string err;
+    auto stand = RobotEnv::create(d.scene, s, o, &err);
+    REQUIRE(stand != nullptr);
+    const std::vector<double> zero(2 * stand->actionSize(), 0.0);
+    bool fell = false;
+    for (int k = 0; k < 50; ++k) {
+        const EnvStep st = stand->step(zero);
+        fell = fell || st.terminated[0] || st.terminated[1];
+        CHECK(st.rewards[0] > 0.9);
+    }
+    CHECK(!fell);
+    o.torque = true; // no torque at all: it collapses
+    auto limp = RobotEnv::create(d.scene, s, o, &err);
+    REQUIRE(limp != nullptr);
+    fell = false;
+    for (int k = 0; k < 150 && !fell; ++k) fell = limp->step(zero).terminated[0] != 0;
+    CHECK(fell);
+
+    // The same through MCP, as python/sicdm_env.py drives it.
+    McpServer srv(d, nullptr);
+    auto callTool = [&](const std::string& args) {
+        const auto reply = Json::parse(srv.handle(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"robot_env","arguments":)" + args + "}}"));
+        return reply ? (*reply)["result"] : Json();
+    };
+    const Json created = callTool(R"({"op":"create","count":3,"task":"stand","seed":5})");
+    CHECK(!created["isError"].asBool());
+    const auto info = Json::parse(created["content"][0]["text"].asString());
+    REQUIRE(info.has_value());
+    const int id = (*info)["id"].asInt();
+    const std::size_t na = static_cast<std::size_t>((*info)["action_size"].asInt()), no = static_cast<std::size_t>((*info)["observation_size"].asInt());
+    CHECK(na == stand->actionSize());
+    CHECK((*info)["observations"].size() == 3 * no);
+    std::string acts = "[";
+    for (std::size_t k = 0; k < 3 * na; ++k) acts += (k ? ",0" : "0");
+    acts += "]";
+    const Json stepped = callTool(R"({"op":"step","id":)" + std::to_string(id) + R"(,"actions":)" + acts + "}");
+    const auto st = Json::parse(stepped["content"][0]["text"].asString());
+    REQUIRE(st.has_value());
+    CHECK((*st)["rewards"].size() == 3);
+    CHECK((*st)["observations"].size() == 3 * no);
+    CHECK((*st)["rewards"][0].asNumber() > 0.9);
+    CHECK(!callTool(R"({"op":"close","id":)" + std::to_string(id) + "}")["isError"].asBool());
+    CHECK(callTool(R"({"op":"step","id":)" + std::to_string(id) + R"(,"actions":[]})")["isError"].asBool());
+    CHECK(callTool(R"({"op":"create","task":"fly"})")["isError"].asBool());
+    // And the headless batch from the command line.
+    const CommandOutput bench = run(d, "RIG ENV COUNT 4 TASK STAND SECONDS 0.2");
+    REQUIRE(bench.ok);
+    CHECK(bench.lines[0].find("4 copies") != std::string::npos);
 }

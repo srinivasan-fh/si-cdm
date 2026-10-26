@@ -275,7 +275,9 @@ CollisionModel::CollisionModel(const Scene& scene, const RobotRig& rig, float t)
     // and so does the ground for links on it; the base never moves.
     m_skipEnv.assign(nl, std::vector<char>(m_env.size(), 0));
     m_skipFloor.assign(nl, 0);
-    if (scene.terrain().active()) m_terrain = std::make_shared<const TerrainSettings>(scene.terrain());
+    bool terrainDrawn = false; // as the robot engines see the ground
+    for (const Body& b : bodies) terrainDrawn = terrainDrawn || b.name == kTerrainBody;
+    if (scene.terrain().active() && terrainDrawn) m_terrain = std::make_shared<const TerrainSettings>(scene.terrain());
     for (std::size_t l = 0; l < nl; ++l) {
         for (std::size_t o = 0; o < m_env.size(); ++o) {
             bool skip = l == 0;

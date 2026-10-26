@@ -13,9 +13,11 @@
 #include "core/Scene.hpp"
 #include "core/Terrain.hpp"
 #include "core/Units.hpp"
+#include "core/RobotEnv.hpp"
 #include "core/RobotExport.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -31,7 +33,7 @@ std::string lowerOf(const std::string& s) {
     return o;
 }
 
-const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission", "sensor", "sensors",
+const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission", "sensor", "sensors", "env",
                                   "move_to", "moveto", "ik", "home", "tool", "point", "approach", "at", "speed", "optimize", "optimise"};
 
 bool isRigWord(const std::string& w) {
@@ -579,6 +581,77 @@ CommandOutput runArm(Document& doc, const std::vector<std::string>& a, const std
     return out;
 }
 
+// RIG [robot] ENV [COUNT n] [TASK t] [TARGET x,y,z] [SECONDS s] [TORQUE] [SEED n]: a batch of
+// copies run headless as fast as the machine goes, on random actions; how fast, and how
+// the episodes went (a check before training from Python).
+CommandOutput runEnv(Document& doc, const RigSettings& settings, const std::vector<std::string>& a, std::size_t i) {
+    CommandOutput out;
+    EnvOptions o;
+    o.count = 16;
+    double seconds = 5;
+    for (; i < a.size(); ++i) {
+        const std::string k = lowerOf(a[i]);
+        auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
+        if (k == "count" || k == "envs") {
+            const auto v = parseNumber(next());
+            if (!v || *v < 1 || *v > 4096) return out.fail("COUNT is 1-4096 copies");
+            o.count = static_cast<int>(*v);
+        } else if (k == "task") {
+            if (!envTaskFromKey(next(), o.task)) return out.fail("TASK is STAND, WALK, REACH, HOVER or NONE");
+        } else if (k == "target") {
+            const auto p = parsePointMm(next());
+            if (!p) return out.fail("TARGET needs x,y,z");
+            o.target = {p->x * 1e-3, p->y * 1e-3, p->z * 1e-3};
+        } else if (k == "seconds") {
+            const auto v = parseNumber(next());
+            if (!v || *v <= 0) return out.fail("SECONDS needs a simulated time per copy");
+            seconds = *v;
+        } else if (k == "torque") {
+            o.torque = true;
+        } else if (k == "seed") {
+            const auto v = parseNumber(next());
+            if (!v || *v < 0) return out.fail("SEED needs a number");
+            o.seed = static_cast<std::uint64_t>(*v);
+        } else {
+            return out.fail("Usage: RIG [robot] ENV [COUNT n] [TASK STAND|WALK|REACH|HOVER|NONE] [TARGET x,y,z] [SECONDS s] [TORQUE] [SEED n]");
+        }
+    }
+    o.episodeSeconds = std::min(o.episodeSeconds, seconds);
+    std::string err;
+    auto env = RobotEnv::create(doc.scene, settings, o, &err);
+    if (!env) return out.fail(err);
+    const int steps = std::max(1, static_cast<int>(std::lround(seconds / o.controlDt)));
+    std::uint64_t s = o.seed * 0x9E3779B97F4A7C15ull + 1;
+    std::vector<double> actions(static_cast<std::size_t>(env->count()) * env->actionSize());
+    int episodes = 0, falls = 0;
+    double returns = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int k = 0; k < steps; ++k) {
+        for (double& x : actions) {
+            s ^= s << 13, s ^= s >> 7, s ^= s << 17;
+            x = 0.3 * (static_cast<double>(s >> 11) * (2.0 / 9007199254740992.0) - 1.0);
+        }
+        const EnvStep st = env->step(actions);
+        for (const EnvStep::Episode& e : st.episodes) {
+            ++episodes;
+            returns += e.ret;
+            falls += st.terminated[static_cast<std::size_t>(e.env)] ? 1 : 0;
+        }
+    }
+    const double wall = std::max(1e-6, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    char buf[320];
+    std::snprintf(buf, sizeof buf, "%d copies of %s (%s, %zu motors, %zu observations): %.0f s simulated in %.2f s, %.0fx real time, %.0f actions/s",
+                  env->count(), env->rig().name.empty() ? "the robot" : env->rig().name.c_str(), envTaskKey(o.task), env->actionSize(),
+                  env->observationSize(), env->simulatedSeconds(), wall, env->simulatedSeconds() / wall, steps * env->count() / wall);
+    out.say(buf);
+    if (episodes > 0) {
+        std::snprintf(buf, sizeof buf, "  %d episodes ended (%d fell), mean return %.3g on random actions", episodes, falls, returns / episodes);
+        out.say(buf);
+    }
+    out.say("  train from Python: python/sicdm_env.py (VecEnv) through sicdm-mcp");
+    return out;
+}
+
 } // namespace
 
 CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
@@ -618,6 +691,7 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
         auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
         if (k == "show") continue;
         if (k == "sensor" || k == "sensors") return runSensor(doc, settings, a, quoted, i + 1);
+        if (k == "env") return runEnv(doc, settings, a, i + 1);
         if (k == "export") {
             for (++i; i < a.size(); ++i) exportPath += (exportPath.empty() ? "" : " ") + a[i];
             if (exportPath.empty()) return out.fail("EXPORT needs a file: robot.urdf, robot.sdf or robot.xml (MJCF)");

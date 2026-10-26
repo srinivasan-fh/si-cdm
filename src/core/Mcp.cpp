@@ -5,8 +5,13 @@
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
+#include "core/RobotCommand.hpp"
+#include "core/RobotEnv.hpp"
+#include "core/Rig.hpp"
+#include "core/Scene.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace sicdm {
@@ -694,6 +699,29 @@ Json McpServer::toolDefinitions() {
         Json e = Json::object();
         e.set("path", prop("string", ".step or .igs (visible bodies: exact where they have exact geometry, else planar facets), .stl/.obj/.3mf (visible bodies) or .dxf/.svg (curves on the sketch plane)"));
         tools.push(tool("export_file", "Export the model or the active sketch plane.", e, {"path"}));
+    }
+    {
+        Json p = Json::object();
+        p.set("op", enumProp({"create", "reset", "step", "close", "list"}, "create a batch of robot copies, reset them, step them with actions, close it, or list the open ones"));
+        p.set("robot", prop("string", "create: the robot (default: the scene's only one)"));
+        p.set("count", prop("integer", "create: copies stepped together in parallel (default 1)"));
+        p.set("task", enumProp({"stand", "walk", "reach", "hover", "none"}, "create: what the reward is for (default stand)"));
+        p.set("target", numberArray(3, "create, reach: the point the end effector should get to (mm)"));
+        p.set("control", enumProp({"position", "torque"}, "create: actions are position (speed, for spinning joints) targets or torques (default position)"));
+        p.set("control_dt", prop("number", "create: seconds between actions (default 0.02)"));
+        p.set("episode_seconds", prop("number", "create: episode length (default 10)"));
+        p.set("noise", prop("number", "create: starting joint values spread by up to this, rad (default 0.02)"));
+        p.set("seed", prop("integer", "create / reset: random seed"));
+        p.set("threads", prop("integer", "create: threads to step with (default: all cores)"));
+        p.set("id", prop("integer", "reset / step / close: the environment"));
+        Json acts = prop("array", "step: actions in [-1, 1], count x action_size, flat (row by row) or one array per copy");
+        acts.set("items", Json::object());
+        p.set("actions", acts);
+        tools.push(tool("robot_env",
+                        "Learning environments: a batch of copies of a robot simulated headless and as fast as the machine runs. "
+                        "Observations, rewards and done flags come back as arrays for a policy outside the app (python/sicdm_env.py wraps this for numpy, PyTorch or JAX); "
+                        "finished episodes start again on their own.",
+                        p, {"op"}));
     }
     return tools;
 }
@@ -1674,6 +1702,98 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return runLine(line);
     }
     if (name == "export_file") return runLine("EXPORT " + quote(a["path"].asString()));
+    if (name == "robot_env") {
+        const std::string op = a["op"].asString();
+        auto flat = [](const std::vector<double>& v) {
+            Json arr = Json::array();
+            for (double x : v) arr.push(std::isfinite(x) ? x : 0.0);
+            return arr;
+        };
+        auto flags = [](const std::vector<char>& v) {
+            Json arr = Json::array();
+            for (char x : v) arr.push(x != 0);
+            return arr;
+        };
+        if (op == "list") {
+            Json r = Json::object(), ids = Json::array();
+            for (int id : envIds()) {
+                const RobotEnv* e = findEnv(id);
+                if (!e) continue;
+                Json one = Json::object();
+                one.set("id", id).set("robot", e->rig().name).set("count", e->count()).set("task", envTaskKey(e->options().task));
+                ids.push(one);
+            }
+            r.set("environments", ids);
+            return textResult(r.dump(), false);
+        }
+        if (op == "create") {
+            std::vector<std::string> words;
+            std::vector<bool> quoted;
+            if (a["robot"].isString()) words.push_back(a["robot"].asString()), quoted.push_back(true);
+            std::size_t i = 0;
+            std::string robot, err;
+            if (!pickRobot(m_doc, words, quoted, i, robot, &err)) return textResult(err, true);
+            RigSettings settings;
+            if (const RigSettings* rs = m_doc.scene.rigs().find(robot)) settings = *rs;
+            else settings.name = robot;
+            EnvOptions o;
+            o.count = a["count"].asInt(1);
+            if (a["task"].isString() && !envTaskFromKey(a["task"].asString(), o.task)) return textResult("task is stand, walk, reach, hover or none", true);
+            const Json& t = a["target"];
+            if (t.isArray() && t.size() == 3) o.target = {t[0].asNumber() * 1e-3, t[1].asNumber() * 1e-3, t[2].asNumber() * 1e-3};
+            o.torque = a["control"].asString("position") == "torque";
+            o.controlDt = a["control_dt"].asNumber(0.02);
+            o.episodeSeconds = a["episode_seconds"].asNumber(10);
+            o.noise = a["noise"].asNumber(0.02);
+            o.seed = static_cast<std::uint64_t>(std::max(0.0, a["seed"].asNumber(1)));
+            o.threads = a["threads"].asInt(0);
+            auto env = RobotEnv::create(m_doc.scene, settings, o, &err);
+            if (!env) return textResult(err, true);
+            Json r = Json::object();
+            Json on = Json::array(), an = Json::array();
+            for (const std::string& n : env->observationNames()) on.push(n);
+            for (const std::string& n : env->actionNames()) an.push(n);
+            const int count = env->count();
+            const std::size_t obs = env->observationSize(), act = env->actionSize();
+            const std::string rname = env->rig().name;
+            const std::vector<double> first = env->reset(0);
+            r.set("id", keepEnv(std::move(env))).set("robot", rname).set("count", count).set("observation_size", obs).set("action_size", act);
+            r.set("observation_names", on).set("action_names", an).set("control_dt", o.controlDt).set("observations", flat(first));
+            return textResult(r.dump(), false);
+        }
+        RobotEnv* env = findEnv(a["id"].asInt(-1));
+        if (!env) return textResult("No environment with that id (robot_env op create makes one)", true);
+        if (op == "close") {
+            closeEnv(a["id"].asInt(-1));
+            return textResult("{\"closed\":true}", false);
+        }
+        if (op == "reset") {
+            const std::vector<double> obs = env->reset(static_cast<std::uint64_t>(std::max(0.0, a["seed"].asNumber(0))));
+            Json r = Json::object();
+            r.set("observations", flat(obs));
+            return textResult(r.dump(), false);
+        }
+        if (op == "step") {
+            std::vector<double> actions;
+            for (const Json& x : a["actions"].items()) {
+                if (x.isArray())
+                    for (const Json& y : x.items()) actions.push_back(y.asNumber());
+                else
+                    actions.push_back(x.asNumber());
+            }
+            const EnvStep st = env->step(actions);
+            Json r = Json::object(), eps = Json::array();
+            for (const EnvStep::Episode& e : st.episodes) {
+                Json one = Json::object();
+                one.set("env", e.env).set("return", e.ret).set("length", e.length);
+                eps.push(one);
+            }
+            r.set("observations", flat(st.observations)).set("rewards", flat(st.rewards)).set("terminated", flags(st.terminated));
+            r.set("truncated", flags(st.truncated)).set("episodes", eps);
+            return textResult(r.dump(), false);
+        }
+        return textResult("op is create, reset, step, close or list", true);
+    }
     return Json(); // unknown tool: caller reports a protocol error
 }
 

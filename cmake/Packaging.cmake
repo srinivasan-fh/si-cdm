@@ -29,6 +29,8 @@ install(TARGETS sicdm_mcp RUNTIME DESTINATION "${SICDM_BIN_DIR}" COMPONENT app)
 
 install(FILES README.md resources/THIRD-PARTY-NOTICES.txt DESTINATION "${SICDM_DOC_DIR}" COMPONENT app)
 install(DIRECTORY docs/ DESTINATION "${SICDM_DOC_DIR}/docs" COMPONENT app)
+# The Python client for training robots (sicdm_env.py) and its examples.
+install(DIRECTORY python/ DESTINATION "${SICDM_DOC_DIR}/python" COMPONENT app PATTERN "__pycache__" EXCLUDE)
 install(FILES resources/fonts/OFL-Inter.txt resources/fonts/OFL-JetBrainsMono.txt third_party/stb/README.txt
         DESTINATION "${SICDM_DOC_DIR}/licenses" COMPONENT app)
 if(SICDM_BUILD_APP)
