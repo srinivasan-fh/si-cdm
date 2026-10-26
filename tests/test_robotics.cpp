@@ -1326,3 +1326,34 @@ TEST_CASE("Robotics fixes: an arm moves on from a wrist that has spun many turns
     const V3d tip = kin.forward(motionTargets(d.scene, rig, end).value)[static_cast<std::size_t>(rig.endEffectors().front())].apply({0, 0, 0.770});
     CHECK(std::hypot(tip[0] - 0.3, tip[1] - 0.2, tip[2] - 0.3) < 0.002);
 }
+
+TEST_CASE("Robotics fixes: limits on run lengths, logs and the learning tool's values") {
+    Document d;
+    makeArm(d);
+    CHECK(!run(d, "RIG STATE AT 1e9").ok);
+    CHECK(!run(d, "RIG ENV COUNT 1 SECONDS 1e9").ok);
+    CHECK(!run(d, "ARM MOVE_TO 300,200,300 AT 1e9").ok);
+    REQUIRE(run(d, "RIG SENSOR ADD IMU imu ON \"Block 4\" RATE 100").ok);
+    const std::string path = (fs::temp_directory_path() / "sicdm_imu.csv").string();
+    CHECK(!run(d, "RIG SENSOR LOG imu \"" + path + "\" FROM 0 TO 1e9").ok);
+    REQUIRE(run(d, "RIG SENSOR LOG imu \"" + path + "\" FROM 0 TO 0.1").ok);
+    {
+        std::ifstream in(path);
+        int lines = 0;
+        for (std::string l; std::getline(in, l);) ++lines;
+        CHECK(lines == 1 + 11); // a header and the samples at 0, 0.01, ... 0.1 s
+    }
+    fs::remove(path);
+    McpServer srv(d, nullptr);
+    auto create = [&](const std::string& args) {
+        const auto r = Json::parse(srv.handle(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"robot_env","arguments":{"op":"create",)" + args + "}}}"));
+        return r ? (*r)["result"]["isError"].asBool() : false;
+    };
+    CHECK(create(R"("count":-5)"));
+    CHECK(create(R"("control_dt":-1)"));
+    CHECK(create(R"("episode_seconds":0)"));
+    CHECK(create(R"("noise":-1)"));
+    CHECK(create(R"("target":[1,2])"));
+    CHECK(create(R"("control":"speed")"));
+    CHECK(!create(R"("count":2)"));
+}

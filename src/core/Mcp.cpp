@@ -1739,6 +1739,15 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             RigSettings settings;
             if (const RigSettings* rs = m_doc.scene.rigs().find(robot)) settings = *rs;
             else settings.name = robot;
+            // Values a trainer may get wrong are refused, not quietly clamped.
+            if (a.has("count") && (!a["count"].isNumber() || a["count"].asNumber() < 1 || a["count"].asNumber() > 4096))
+                return textResult("count is 1 to 4096 copies", true);
+            for (const char* k : {"control_dt", "episode_seconds"})
+                if (a.has(k) && (!a[k].isNumber() || !(a[k].asNumber() > 0))) return textResult(std::string(k) + " must be more than 0 seconds", true);
+            if (a.has("noise") && (!a["noise"].isNumber() || a["noise"].asNumber() < 0)) return textResult("noise can't be negative", true);
+            if (a.has("target") && !(a["target"].isArray() && a["target"].size() == 3)) return textResult("target is [x, y, z] in mm", true);
+            if (a.has("control") && a["control"].asString(std::string()) != "position" && a["control"].asString(std::string()) != "torque")
+                return textResult("control is position or torque", true);
             EnvOptions o;
             o.count = a["count"].asInt(1);
             if (a["task"].isString() && !envTaskFromKey(a["task"].asString(), o.task)) return textResult("task is stand, walk, reach, hover or none", true);

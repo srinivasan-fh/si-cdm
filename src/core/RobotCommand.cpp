@@ -464,7 +464,8 @@ CommandOutput runArm(Document& doc, const std::vector<std::string>& a, const std
             approach = *p;
         } else if (k == "at") {
             const auto v = parseNumber(next());
-            if (!v || *v < 0) return out.fail("AT needs seconds");
+            // Keys are kept in float seconds: past an hour they lose their precision.
+            if (!v || *v < 0 || *v > 3600) return out.fail("AT needs 0 to 3600 seconds");
             at = static_cast<float>(*v);
         } else if (k == "speed") {
             const auto v = parseNumber(next());
@@ -741,7 +742,7 @@ CommandOutput runEnv(Document& doc, const RigSettings& settings, const std::vect
             o.target = {p->x * 1e-3, p->y * 1e-3, p->z * 1e-3};
         } else if (k == "seconds") {
             const auto v = parseNumber(next());
-            if (!v || *v <= 0) return out.fail("SECONDS needs a simulated time per copy");
+            if (!v || *v <= 0 || *v > kMaxRobotRun) return out.fail("SECONDS needs a simulated time per copy, up to 600 s");
             seconds = *v;
         } else if (k == "torque") {
             o.torque = true;
@@ -785,6 +786,7 @@ CommandOutput runEnv(Document& doc, const RigSettings& settings, const std::vect
         std::snprintf(buf, sizeof buf, "  %d episodes ended (%d fell), mean return %.3g on random actions", episodes, falls, returns / episodes);
         out.say(buf);
     }
+    for (const std::string& n : env->notes()) out.say("  note: " + n);
     out.say("  train from Python: python/sicdm_env.py (VecEnv) through sicdm-mcp");
     return out;
 }
@@ -956,7 +958,7 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
             if (i + 1 < a.size() && lowerOf(a[i + 1]) == "at") {
                 ++i;
                 const auto v = parseNumber(next());
-                if (!v || *v < 0) return out.fail("STATE AT needs seconds");
+                if (!v || *v < 0 || *v > kMaxRobotRun) return out.fail("STATE AT needs 0 to 600 seconds");
                 t = *v;
             }
             stateAt = t;

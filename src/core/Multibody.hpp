@@ -179,6 +179,9 @@ struct RobotRun {
     RobotRunFrame at(float t) const;
 };
 
+// The longest robot run (s), as for the physics.
+constexpr float kMaxRobotRun = 600.0f;
+
 // The runs of the robots set to SIMULATE (computed once, then cached).
 std::vector<std::shared_ptr<const RobotRun>> robotRuns(const Scene& scene);
 std::shared_ptr<const RobotRun> robotRun(const Scene& scene, const RigSettings& settings, float duration);

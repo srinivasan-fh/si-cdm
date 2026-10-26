@@ -244,6 +244,10 @@ bool readGps(const Scene& scene, const SensorSpec& s, double t, SensorReading& o
 }
 
 bool readForceTorque(const Scene& scene, const RigSettings& robot, const SensorSpec& s, double t, SensorReading& out, std::string* error) {
+    if (t > kMaxRobotRun) {
+        if (error) *error = "A robot is simulated for 600 s at most";
+        return false;
+    }
     const float duration = scene.physics().duration > 0 ? scene.physics().duration : 10.0f;
     const auto run = robot.simulate ? robotRun(scene, robot, std::max(duration, static_cast<float>(t))) : nullptr;
     if (!run || run->frames.empty()) {
@@ -504,10 +508,18 @@ bool logSensor(const Scene& scene, const RigSettings& robot, const SensorSpec& s
         return false;
     }
     const double rate = std::max(0.1f, s.rate);
+    // Samples at from + k / rate (counted, so the times don't drift), at most a million rows.
+    const double span = std::max(0.0, static_cast<double>(to) - from);
+    if (!std::isfinite(span) || span * rate > 1e6) {
+        if (error) *error = "That log would be over a million rows: a shorter time or a lower RATE";
+        return false;
+    }
+    const long samples = static_cast<long>(std::floor(span * rate + 1e-6)) + 1;
     std::string data;
     bool header = false;
     char cell[64];
-    for (double t = from; t <= to + 1e-9; t += 1.0 / rate) {
+    for (long k = 0; k < samples; ++k) {
+        const double t = from + static_cast<double>(k) / rate;
         SensorReading r;
         if (!readSensor(scene, robot, s, static_cast<float>(t), r, error)) return false;
         if (!header) {

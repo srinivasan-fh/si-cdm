@@ -141,6 +141,8 @@ RobotRunFrame RobotRun::at(float t) const {
 }
 
 std::shared_ptr<const RobotRun> robotRun(const Scene& scene, const RigSettings& settings, float duration) {
+    // As long as the physics' longest run (every frame is kept for playback).
+    duration = std::isfinite(duration) ? std::clamp(duration, 0.0f, kMaxRobotRun) : kMaxRobotRun;
     static std::mutex lock;
     static std::vector<std::pair<std::uint64_t, std::shared_ptr<const RobotRun>>> cache;
     const std::uint64_t key = runKey(scene, settings, duration);
