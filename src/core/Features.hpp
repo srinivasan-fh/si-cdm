@@ -43,6 +43,25 @@ std::optional<MeshData> revolveProfile(const Profile& profile, const PlaneFrame&
 std::optional<MeshData> sweepProfile(const Profile& profile, const PlaneFrame& pf, const std::vector<Vec3>& path, bool closedPath,
                                      std::string* error = nullptr);
 
+// A closed counter-clockwise polygon moved in by `inset` (out when negative), each side
+// parallel to the old one and the corners mitred. Empty when it would turn inside out,
+// lose a side or cross itself.
+std::vector<Vec2> offsetPolygon(const std::vector<Vec2>& ccw, float inset);
+// The outline of an open polyline thickened by `half` on each side (mitred corners, square
+// ends), counter-clockwise. Empty when it would cross itself.
+std::vector<Vec2> thickenPolyline(const std::vector<Vec2>& pts, float half);
+
+// An extrusion's depth and side options (EXTRUDE ... TWO / DRAFT / THIN).
+struct ExtrudeShape {
+    float w0 = 0.0f, w1 = 10.0f; // from and to along the plane's normal (w0 < w1)
+    float draftDeg = 0.0f;       // the sides lean in by this much going away from the plane (out when negative)
+    float thin = 0.0f;           // > 0: a wall this thick inside the outline instead of the whole area
+};
+// The solid of `outline` (plane coordinates, counter-clockwise when `closed`) on plane `f`.
+// An open outline needs `thin`: the wall is centred on it.
+std::optional<MeshData> extrudeShape(const std::vector<Vec2>& outline, bool closed, const PlaneFrame& f, const ExtrudeShape& s,
+                                     std::string* error = nullptr);
+
 // A solid through closed planar sections (world points) in order, ruled or smooth.
 std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& sections, bool smooth, std::string* error = nullptr);
 

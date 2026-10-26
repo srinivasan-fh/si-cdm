@@ -8,6 +8,8 @@
 #include "core/Brep.hpp"
 #include "core/Features.hpp"
 #include "core/Sculpt.hpp"
+#include "core/SketchEdit.hpp"
+#include "core/Step.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
@@ -124,15 +126,296 @@ std::optional<Vec3> axisWord(const std::string& w) {
     return std::nullopt;
 }
 
+// Cuts `tool` (a closed world mesh) from the bodies it meets, or joins it with them into the
+// first. `target` names the only body to use ("" for any visible one it meets). The undo
+// snapshot must already be taken: on false (why in `why`) the caller undoes.
+bool combineTool(Document& doc, MeshData tool, BooleanOp op, const std::string& target, std::string& result, std::string& why) {
+    const AABB tb = tool.bounds();
+    std::vector<int> hits;
+    if (!target.empty()) {
+        const int t = bodyNamed(doc, target);
+        if (t < 0) return why = "No body named " + target, false;
+        hits.push_back(t);
+    } else {
+        for (std::size_t i = 0; i < doc.scene.bodies().size(); ++i) {
+            const Body& b = doc.scene.bodies()[i];
+            if (!b.visible || b.mesh.indices.empty()) continue;
+            const AABB bb = worldMesh(b).bounds();
+            if (bb.min.x <= tb.max.x && tb.min.x <= bb.max.x && bb.min.y <= tb.max.y && tb.min.y <= bb.max.y && bb.min.z <= tb.max.z &&
+                tb.min.z <= bb.max.z)
+                hits.push_back(static_cast<int>(i));
+        }
+    }
+    if (hits.empty()) return why = op == BooleanOp::Subtract ? "it meets no body to cut" : "it meets no body to join", false;
+    const Body toolBody = meshBody("tool", std::move(tool));
+    std::vector<std::string> done;
+    if (op == BooleanOp::Subtract) {
+        for (int i : hits) {
+            Body& b = doc.scene.bodies()[static_cast<std::size_t>(i)];
+            const bool wasClosed = openEdgeCount(b.mesh) == 0;
+            Body trial = b;
+            std::string e;
+            if (!bodyBoolean(trial, toolBody, BooleanOp::Subtract, &e)) continue; // only its box overlaps
+            if (wasClosed && openEdgeCount(trial.mesh) > 0) return why = "cutting " + b.name + " left holes in it", false;
+            b = std::move(trial);
+            done.push_back(b.name);
+        }
+        if (done.empty()) return why = "it meets no body to cut (or would cut one away entirely)", false;
+    } else {
+        Body& into = doc.scene.bodies()[static_cast<std::size_t>(hits[0])];
+        const bool wasClosed = openEdgeCount(into.mesh) == 0;
+        std::string e;
+        if (!bodyBoolean(into, toolBody, BooleanOp::Union, &e)) return why = e, false;
+        done.push_back(into.name);
+        // Other bodies it meets join in too.
+        std::vector<int> gone;
+        for (std::size_t k = 1; k < hits.size(); ++k) {
+            const Body other = doc.scene.bodies()[static_cast<std::size_t>(hits[k])];
+            Body& in = doc.scene.bodies()[static_cast<std::size_t>(hits[0])];
+            Body trial = in;
+            if (!bodyBoolean(trial, other, BooleanOp::Union, &e) || openEdgeCount(trial.mesh) > openEdgeCount(in.mesh)) continue;
+            in = std::move(trial);
+            done.push_back(other.name);
+            gone.push_back(hits[k]);
+        }
+        if (wasClosed && openEdgeCount(doc.scene.bodies()[static_cast<std::size_t>(hits[0])].mesh) > 0) return why = "the join left holes", false;
+        std::sort(gone.rbegin(), gone.rend());
+        for (int g : gone) doc.scene.bodies().erase(doc.scene.bodies().begin() + g);
+        const int at = hits[0] - static_cast<int>(std::count_if(gone.begin(), gone.end(), [&](int g) { return g < hits[0]; }));
+        doc.selectedBody = at;
+    }
+    for (const std::string& n : done) result += (result.empty() ? "" : ", ") + n;
+    doc.scene.touchBodies();
+    doc.dirty = true;
+    return true;
+}
+
+// The first distance along `dir` from each of `from` at which a ray meets a body (`only`:
+// just that one), the farthest of them: where a feature starting at those points has met a
+// surface across all of it. Nullopt when a ray meets nothing.
+std::optional<float> upToNext(const Document& doc, const std::vector<Vec3>& from, Vec3 dir, int only) {
+    std::vector<MeshData> meshes;
+    for (std::size_t i = 0; i < doc.scene.bodies().size(); ++i) {
+        const Body& b = doc.scene.bodies()[i];
+        if (only >= 0 ? static_cast<int>(i) == only : b.visible) meshes.push_back(worldMesh(b));
+    }
+    float far = 0.0f;
+    for (const Vec3& p : from) {
+        const Ray ray{p, dir};
+        float best = 1e30f;
+        for (const MeshData& m : meshes)
+            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+                float d;
+                if (intersectTriangle(ray, m.vertices[m.indices[t]].position, m.vertices[m.indices[t + 1]].position, m.vertices[m.indices[t + 2]].position, d) &&
+                    d > 1e-3f && d < best)
+                    best = d;
+            }
+        if (best >= 1e30f) return std::nullopt;
+        far = std::max(far, best);
+    }
+    return far;
+}
+
 } // namespace
 
 CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
     CommandOutput out;
     auto quotedAt = [&](std::size_t k) { return k < quoted.size() && quoted[k]; };
 
+    if (cmd == "EXTRUDE") {
+        // EXTRUDE [curve] [distance] [REVERSE] [SYMMETRIC | TWO d2] [THROUGH] [UPTO NEXT|body|x,y,z]
+        //         [DRAFT deg] [THIN t] [CUT [body] | JOIN [body]] [KEEP]
+        static const char* const kKeys[] = {"reverse", "symmetric", "sym", "both", "two", "through", "upto", "draft", "thin", "cut", "join", "keep"};
+        auto isKey = [](const std::string& w) {
+            for (const char* k : kKeys)
+                if (w == k) return true;
+            return false;
+        };
+        const char* usage = "Usage: EXTRUDE [curve] [distance] [REVERSE] [SYMMETRIC | TWO d2] [THROUGH] [UPTO NEXT|body|x,y,z] [DRAFT deg] "
+                            "[THIN t] [CUT [body] | JOIN [body]] [KEEP]";
+        bool reverse = false, symmetric = false, through = false, keep = false;
+        std::optional<float> second, draft, thin;
+        std::optional<BooleanOp> op;
+        std::string target, upTo;
+        std::vector<std::string> words; // the curve's name and the distance
+        std::vector<bool> wordQuoted;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const std::string k = quotedAt(i) ? std::string() : lower(a[i]);
+            auto value = [&](bool angle) -> std::optional<float> { // the number after the keyword
+                if (i + 1 >= a.size()) return std::nullopt;
+                const auto v = angle ? std::optional<double>(parseNumber(a[i + 1])) : parseLength(a[i + 1]);
+                if (!v || !std::isfinite(*v)) return std::nullopt;
+                ++i;
+                return static_cast<float>(*v);
+            };
+            if (k == "reverse") reverse = true;
+            else if (k == "symmetric" || k == "sym" || k == "both") symmetric = true;
+            else if (k == "through") through = true;
+            else if (k == "keep") keep = true;
+            else if (k == "two") {
+                if (!(second = value(false)) || !(*second >= 0.0f)) return out.fail("TWO needs the second direction's distance");
+            } else if (k == "draft") {
+                if (!(draft = value(true))) return out.fail("DRAFT needs an angle in degrees");
+            } else if (k == "thin") {
+                if (!(thin = value(false)) || !(*thin > 0.0f)) return out.fail("THIN needs the wall's thickness");
+            } else if (k == "upto") {
+                if (i + 1 >= a.size()) return out.fail("UPTO needs NEXT, a body or a point x,y,z");
+                upTo = a[++i];
+            } else if (k == "cut" || k == "join") {
+                op = k == "cut" ? BooleanOp::Subtract : BooleanOp::Union;
+                if (i + 1 < a.size() && (quotedAt(i + 1) || (!isKey(lower(a[i + 1])) && bodyNamed(doc, a[i + 1]) >= 0))) target = a[++i];
+            } else {
+                words.push_back(a[i]);
+                wordQuoted.push_back(quotedAt(i));
+            }
+        }
+        // The distance: the last word when it is a length (needed unless THROUGH or UPTO).
+        std::optional<float> distance;
+        if (!words.empty() && !wordQuoted.back())
+            if (const auto d = parseLength(words.back())) distance = static_cast<float>(*d), words.pop_back(), wordQuoted.pop_back();
+        if (!distance && !through && upTo.empty()) return out.fail(usage);
+        if (distance && *distance == 0.0f) return out.fail("Distance must not be zero");
+        if ((through || !upTo.empty()) && (second || (through && !upTo.empty()))) return out.fail("THROUGH, UPTO and TWO go one at a time");
+        std::string name;
+        for (std::size_t k = 0; k < words.size(); ++k) name += (k ? " " : "") + words[k];
+        const int ci = name.empty() ? doc.selectedCurve : curveNamed(doc, name);
+        if (ci < 0 || ci >= static_cast<int>(doc.scene.sketch().curves().size()))
+            return out.fail(name.empty() ? "Select a sketch curve to extrude, or name it" : "No sketch curve named " + name);
+        const SketchCurve curve = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
+        const PlaneFrame f = curveFrame(curve);
+        std::string why;
+        const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(ci), &why);
+        // An open curve makes a wall (THIN); its points in the plane.
+        std::vector<Vec2> outline;
+        bool closed = true;
+        if (profile) outline = profilePolygon(*profile);
+        else if (thin && !curve.construction && !curve.isClosed() && curve.kind != CurveKind::Point) {
+            outline = curve.planeStrip(0.05f);
+            closed = false;
+        } else return out.fail("Cannot extrude: " + why);
+
+        // The depths along the plane's normal.
+        const float sign = reverse ? -1.0f : 1.0f;
+        float w0 = 0.0f, w1 = 0.0f;
+        std::string how;
+        if (through || !upTo.empty()) {
+            const int only = !target.empty() ? bodyNamed(doc, target) : -1;
+            if (!target.empty() && only < 0) return out.fail("No body named " + target);
+            if (through) { // past every body (or the target) along the normal
+                bool any = false;
+                float lo = 1e30f, hi = -1e30f;
+                for (std::size_t i = 0; i < doc.scene.bodies().size(); ++i) {
+                    const Body& b = doc.scene.bodies()[i];
+                    if (only >= 0 ? static_cast<int>(i) != only : !b.visible) continue;
+                    for (const Vertex& v : worldMesh(b).vertices) {
+                        const float d = dot(v.position - f.origin, f.normal);
+                        lo = std::min(lo, d), hi = std::max(hi, d), any = true;
+                    }
+                }
+                if (!any) return out.fail("THROUGH: no body to go through");
+                const float margin = 0.01f * (hi - lo) + 0.5f;
+                if (symmetric) w0 = lo - margin, w1 = hi + margin;
+                else if (sign > 0) w0 = 0.0f, w1 = hi + margin;
+                else w0 = lo - margin, w1 = 0.0f;
+                if (!(w1 - w0 > 1e-4f)) return out.fail("THROUGH: no body lies that way (REVERSE goes the other way)");
+                how = "through all";
+            } else if (const auto p = parseVec3(upTo); p && upTo.find(',') != std::string::npos) {
+                const float d = dot(*p - f.origin, f.normal);
+                if (std::fabs(d) < 1e-4f) return out.fail("UPTO: that point is on the sketch plane");
+                w0 = std::min(0.0f, d), w1 = std::max(0.0f, d);
+                how = "up to " + lengthText(d);
+            } else {
+                const bool next = lower(upTo) == "next";
+                const int body = next ? only : bodyNamed(doc, upTo);
+                if (!next && body < 0) return out.fail("UPTO needs NEXT, a body or a point x,y,z");
+                std::vector<Vec3> starts;
+                const std::vector<Vec2> probe = closed ? outline : thickenPolyline(outline, *thin * 0.5f);
+                Vec2 c{};
+                for (const Vec2& q : probe) starts.push_back(f.toWorld(q)), c = {c.x + q.x, c.y + q.y};
+                if (!probe.empty()) starts.push_back(f.toWorld({c.x / static_cast<float>(probe.size()), c.y / static_cast<float>(probe.size())}));
+                const auto d = upToNext(doc, starts, f.normal * sign, body);
+                if (!d) return out.fail(std::string("UPTO: ") + (next ? "no face" : upTo + " is not") + " ahead across the whole profile (REVERSE looks the other way)");
+                if (sign > 0) w0 = 0.0f, w1 = *d;
+                else w0 = -*d, w1 = 0.0f;
+                how = next ? "up to the next face" : "up to " + upTo;
+            }
+        } else {
+            const float d = *distance * sign;
+            if (symmetric) w0 = -std::fabs(d) * 0.5f, w1 = std::fabs(d) * 0.5f, how = lengthText(std::fabs(d)) + " symmetric";
+            else if (second) {
+                const float s2 = *second * (d > 0 ? -1.0f : 1.0f);
+                w0 = std::min(d, s2), w1 = std::max(d, s2);
+                how = lengthText(std::fabs(d)) + " and " + lengthText(*second) + " back";
+            } else w0 = std::min(0.0f, d), w1 = std::max(0.0f, d), how = lengthText(std::fabs(d));
+        }
+        if (!(w1 - w0 > 1e-5f)) return out.fail("The extrusion has no depth");
+
+        // The solid: a plain extrusion stays parametric (exact circles); drafts and walls are
+        // built flat-sided, exact where the profile is.
+        const int serial = ++doc.primitiveSerial;
+        Body b;
+        const bool plain = closed && !thin && (!draft || *draft == 0.0f);
+        if (plain) {
+            b = defaultPrimitive("box", serial);
+            b.name = "Extrude " + std::to_string(serial);
+            b.kind = "extrude";
+            b.params = extrudeParams(*profile, curve.plane, 1.0f, false, curve.frame);
+            b.params[1] = w0, b.params[2] = w1;
+            b.mesh = buildExtrusion(b.params);
+            if (b.mesh.indices.empty()) return out.fail("Extrusion failed for " + curve.name);
+            b.offset = {};
+            attachPrimitiveBrep(b);
+        } else {
+            ExtrudeShape sh;
+            sh.w0 = w0, sh.w1 = w1;
+            sh.draftDeg = draft.value_or(0.0f);
+            sh.thin = thin.value_or(0.0f);
+            auto mesh = extrudeShape(outline, closed, f, sh, &why);
+            if (!mesh) return out.fail("Cannot extrude " + curve.name + ": " + why);
+            b = featureBody("Extrude " + std::to_string(serial), std::move(*mesh), bodyColor(serial));
+            const bool flat = curve.kind == CurveKind::Rectangle || curve.kind == CurveKind::Polyline || curve.kind == CurveKind::Line;
+            if (flat) { // flat faces: the facets are exact
+                if (auto br = meshToBrep(b.mesh)) {
+                    br->name = b.name;
+                    b.brep = std::move(br);
+                    b.brepKey = meshKey(b.mesh);
+                }
+            }
+            if (sh.draftDeg != 0.0f) how += ", draft " + fmt3("%g", sh.draftDeg) + " deg";
+            if (sh.thin > 0.0f) how += ", wall " + lengthText(sh.thin);
+        }
+        auto hideProfile = [&] {
+            if (keep) return;
+            std::vector<std::size_t> chain; // a loop of curves end to end: all of them
+            if (closed && !curve.isClosed()) chainLoop(doc.scene.sketch(), static_cast<std::size_t>(ci), &chain);
+            for (std::size_t k : chain) doc.scene.sketch().curves()[k].visible = false;
+            hideCurve(doc, ci);
+        };
+        if (op) {
+            doc.scene.pushUndo("EXTRUDE " + curve.name);
+            std::string into;
+            if (!combineTool(doc, worldMesh(b), *op, target, into, why)) {
+                doc.scene.undo();
+                return out.fail("Cannot " + std::string(*op == BooleanOp::Subtract ? "cut" : "join") + " with " + curve.name + ": " + why +
+                                " (nothing changed)");
+            }
+            hideProfile();
+            if (*op == BooleanOp::Subtract) doc.selectedBody = bodyNamed(doc, into.substr(0, into.find(", ")));
+            doc.selectedCurve = doc.selectedImage = -1;
+            out.say(std::string(*op == BooleanOp::Subtract ? "Cut " : "Joined ") + curve.name + " " + how + (*op == BooleanOp::Subtract ? " from " : " into ") +
+                    into);
+            return out;
+        }
+        hideProfile();
+        doc.scene.pushUndo("EXTRUDE " + curve.name);
+        out.say("Extruded " + curve.name + " " + how + " -> " + b.name + ": " + closedText(b.mesh));
+        addBody(doc, std::move(b));
+        return out;
+    }
+
     if (cmd == "REVOLVE") {
         // REVOLVE [curve] [ANGLE deg] [AXIS U|V|"line"|x,y x,y] [KEEP]
-        auto isKey = [](const std::string& w) { return w == "angle" || w == "axis" || w == "keep"; };
+        auto isKey = [](const std::string& w) { return w == "angle" || w == "axis" || w == "keep" || w == "cut" || w == "join"; };
         std::size_t i = 0;
         const std::string name = leadingName(a, quoted, i, isKey);
         const int ci = name.empty() ? doc.selectedCurve : curveNamed(doc, name);
@@ -140,13 +423,18 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             return out.fail(name.empty() ? "Select a closed sketch curve to revolve, or name it" : "No sketch curve named " + name);
         float angle = 360.0f;
         bool keep = false;
+        std::optional<BooleanOp> op; // CUT / JOIN [body]
+        std::string target;
         std::optional<std::pair<Vec2, Vec2>> axis; // point, direction
         std::string axisName = "the plane's vertical axis";
         const SketchCurve curve = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
         for (; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
             if (k == "keep") keep = true;
-            else if (k == "angle") {
+            else if (k == "cut" || k == "join") {
+                op = k == "cut" ? BooleanOp::Subtract : BooleanOp::Union;
+                if (i + 1 < a.size() && (quotedAt(i + 1) || (!isKey(lower(a[i + 1])) && bodyNamed(doc, a[i + 1]) >= 0))) target = a[++i];
+            } else if (k == "angle") {
                 const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
                 if (!v || std::fabs(*v) < 0.01f || std::fabs(*v) > 360.0f) return out.fail("ANGLE is up to 360 degrees");
                 angle = *v;
@@ -170,7 +458,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                     axis = {{*p0, Vec2{p1->x - p0->x, p1->y - p0->y}}};
                     axisName = "the axis given";
                 }
-            } else return out.fail("Usage: REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [KEEP]");
+            } else return out.fail("Usage: REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [CUT|JOIN [body]] [KEEP]");
         }
         std::string why;
         const auto profile = profileFromSketch(doc.scene.sketch(), static_cast<std::size_t>(ci), &why);
@@ -186,6 +474,21 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             }
         }
         if (!mesh) return out.fail("Cannot revolve " + curve.name + ": " + why);
+        if (op) { // a revolved cut (a groove) or boss
+            doc.scene.pushUndo("REVOLVE " + curve.name);
+            std::string into;
+            if (!combineTool(doc, std::move(*mesh), *op, target, into, why)) {
+                doc.scene.undo();
+                return out.fail("Cannot " + std::string(*op == BooleanOp::Subtract ? "cut" : "join") + " with " + curve.name + ": " + why +
+                                " (nothing changed)");
+            }
+            if (!keep) hideCurve(doc, ci);
+            if (*op == BooleanOp::Subtract) doc.selectedBody = bodyNamed(doc, into.substr(0, into.find(", ")));
+            doc.selectedCurve = doc.selectedImage = -1;
+            out.say(std::string(*op == BooleanOp::Subtract ? "Cut " : "Joined ") + curve.name + " revolved " + fmt3("%g", angle) + " deg about " + axisName +
+                    (*op == BooleanOp::Subtract ? " from " : " into ") + into);
+            return out;
+        }
         const int serial = ++doc.primitiveSerial;
         Body b = featureBody("Revolve " + std::to_string(serial), std::move(*mesh), bodyColor(serial));
         if (exact) { // the exact solid goes with this mesh

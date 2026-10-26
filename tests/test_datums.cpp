@@ -197,3 +197,90 @@ TEST_CASE("Extrusion parameters on a custom plane carry its frame") {
     bad.resize(12); // the frame cut short
     CHECK(buildExtrusion(bad).indices.empty());
 }
+
+TEST_CASE("EXTRUDE cuts, joins, goes both ways, through all and up to the next face") {
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 20 @0,0,0").ok);
+    const AABB box = boundsOf(last(d));
+    const double boxVol = volumeOf(last(d));
+    const float cx = (box.min.x + box.max.x) * 0.5f, cy = (box.min.y + box.max.y) * 0.5f;
+    // A hole through all from a plane on the top face, downwards.
+    REQUIRE(run(d, "PLANE FACE " + std::to_string(cx) + "," + std::to_string(cy) + "," + std::to_string(box.max.z + 1) + " NAME \"Top face\"").ok);
+    REQUIRE(run(d, "CIRCLE 0,0 5").ok);
+    REQUIRE(run(d, "EXTRUDE THROUGH REVERSE CUT").ok);
+    REQUIRE(d.scene.bodies().size() == 1);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    CHECK_NEAR(volumeOf(last(d)), boxVol - 3.14159265 * 25 * (box.max.z - box.min.z), 6.0);
+    // A boss joined on the top: one body, more volume.
+    REQUIRE(run(d, "RECT -25,-15 -15,-5").ok);
+    const double before = volumeOf(last(d));
+    REQUIRE(run(d, "EXTRUDE 8 JOIN").ok);
+    REQUIRE(d.scene.bodies().size() == 1);
+    CHECK_NEAR(volumeOf(last(d)), before + 10 * 10 * 8, 0.5);
+    CHECK_NEAR(boundsOf(last(d)).max.z, box.max.z + 8, 1e-3);
+    // Nothing to cut: refused, nothing changed.
+    REQUIRE(run(d, "RECT 200,200 210,210").ok);
+    CHECK(!run(d, "EXTRUDE 5 CUT").ok);
+    CHECK(d.scene.bodies().size() == 1);
+
+    // Two directions, and up to a point.
+    Document e;
+    REQUIRE(run(e, "RECT 0,0 10,10").ok);
+    REQUIRE(run(e, "EXTRUDE 6 TWO 4").ok);
+    CHECK_NEAR(boundsOf(last(e)).min.z, -4.0f, 1e-4);
+    CHECK_NEAR(boundsOf(last(e)).max.z, 6.0f, 1e-4);
+    REQUIRE(run(e, "PLANE OFFSET 50 FROM TOP").ok);
+    REQUIRE(run(e, "RECT 0,0 10,10").ok);
+    REQUIRE(run(e, "EXTRUDE UPTO 0,0,20").ok); // down to z = 20
+    CHECK_NEAR(boundsOf(last(e)).min.z, 20.0f, 1e-4);
+    CHECK_NEAR(boundsOf(last(e)).max.z, 50.0f, 1e-4);
+    // Up to the next face: from z = 50 down onto the first block's top at z = 6.
+    REQUIRE(run(e, "PLANE OFFSET 80 FROM TOP").ok);
+    REQUIRE(run(e, "RECT 2,2 8,8").ok);
+    REQUIRE(run(e, "EXTRUDE UPTO NEXT REVERSE").ok);
+    CHECK_NEAR(boundsOf(last(e)).min.z, 50.0f, 1e-3);
+    REQUIRE(run(e, "RECT 100,100 110,110").ok);
+    CHECK(!run(e, "EXTRUDE UPTO NEXT REVERSE").ok); // nothing below it
+}
+
+TEST_CASE("EXTRUDE with a draft, as a thin wall, and from an open curve; REVOLVE cuts a groove") {
+    Document d;
+    REQUIRE(run(d, "RECT -10,-10 10,10").ok);
+    REQUIRE(run(d, "EXTRUDE 10 DRAFT 10").ok);
+    const AABB b = boundsOf(last(d));
+    const float top = 10 - 10 * std::tan(10 * 3.14159265f / 180);
+    CHECK_NEAR(b.max.z, 10.0f, 1e-4);
+    CHECK_NEAR(b.max.x, 10.0f, 1e-4);
+    // A frustum: (h/3)(A1 + A2 + sqrt(A1 A2)).
+    const double a1 = 400, a2 = 4.0 * top * top;
+    CHECK_NEAR(volumeOf(last(d)), 10.0 / 3 * (a1 + a2 + std::sqrt(a1 * a2)), 0.05);
+    CHECK(last(d).brep != nullptr); // flat faces: exact
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    // A draft too steep for the depth.
+    REQUIRE(run(d, "RECT 50,0 52,2").ok);
+    CHECK(!run(d, "EXTRUDE 20 DRAFT 30").ok);
+
+    // A wall 2 thick inside a 20 x 20 outline, 10 high: (400 - 256) x 10.
+    REQUIRE(run(d, "RECT 100,0 120,20").ok);
+    REQUIRE(run(d, "EXTRUDE 10 THIN 2").ok);
+    CHECK_NEAR(volumeOf(last(d)), 1440.0, 0.05);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    // An open polyline thickened into a rib.
+    REQUIRE(run(d, "PLINE 200,0 230,0 230,20").ok);
+    REQUIRE(run(d, "EXTRUDE 5 THIN 2").ok);
+    CHECK_NEAR(volumeOf(last(d)), (30 * 2 + 20 * 2) * 5.0, 0.1);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    REQUIRE(run(d, "LINE 300,0 310,0").ok);
+    CHECK(!run(d, "EXTRUDE 5").ok); // open without THIN
+
+    // A groove turned into a cylinder (revolved cut on the Front plane, about its V axis = Z).
+    Document g;
+    REQUIRE(run(g, "CYLINDER 20 40").ok);
+    const double cyl = volumeOf(last(g));
+    REQUIRE(run(g, "PLANE FRONT").ok);
+    REQUIRE(run(g, "RECT 17,15 21,20").ok);
+    REQUIRE(run(g, "REVOLVE CUT").ok);
+    REQUIRE(g.scene.bodies().size() == 1);
+    CHECK(openEdgeCount(last(g).mesh) == 0);
+    CHECK_NEAR(volumeOf(last(g)), cyl - 3.14159265 * (400 - 289) * 5, 25.0);
+}

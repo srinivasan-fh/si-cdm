@@ -278,6 +278,160 @@ std::optional<MeshData> sweepProfile(const Profile& profile, const PlaneFrame& p
     return mesh.data();
 }
 
+// --- drafted and thin extrusions --------------------------------------------------------
+
+std::vector<Vec2> offsetPolygon(const std::vector<Vec2>& p, float inset) {
+    const std::size_t n = p.size();
+    if (n < 3) return {};
+    if (inset == 0.0f) return p;
+    std::vector<Vec2> nrm(n); // inward (left) unit normal of side i -> i+1
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec2 a = p[i], b = p[(i + 1) % n];
+        const float l = std::hypot(b.x - a.x, b.y - a.y);
+        if (!(l > 1e-9f)) return {};
+        nrm[i] = {-(b.y - a.y) / l, (b.x - a.x) / l};
+    }
+    std::vector<Vec2> out(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec2 n1 = nrm[(i + n - 1) % n], n2 = nrm[i];
+        const float c = 1.0f + n1.x * n2.x + n1.y * n2.y;
+        if (c < 1e-3f) return {}; // a needle point: no mitre
+        out[i] = {p[i].x + (n1.x + n2.x) * inset / c, p[i].y + (n1.y + n2.y) * inset / c};
+    }
+    // Every side keeps its direction (none flipped over or shrunk away), and no crossings.
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec2 a = p[i], b = p[(i + 1) % n], c = out[i], d = out[(i + 1) % n];
+        if ((b.x - a.x) * (d.x - c.x) + (b.y - a.y) * (d.y - c.y) <= 0.0f) return {};
+    }
+    if (signedArea(out) <= 0.0f || !isSimplePolygon(out)) return {};
+    return out;
+}
+
+std::vector<Vec2> thickenPolyline(const std::vector<Vec2>& pts, float half) {
+    std::vector<Vec2> q;
+    for (const Vec2& v : pts)
+        if (q.empty() || std::hypot(v.x - q.back().x, v.y - q.back().y) > 1e-6f) q.push_back(v);
+    const std::size_t n = q.size();
+    if (n < 2 || !(half > 0.0f)) return {};
+    std::vector<Vec2> nrm(n - 1); // left normals of the segments
+    for (std::size_t i = 0; i + 1 < n; ++i) {
+        const float l = std::hypot(q[i + 1].x - q[i].x, q[i + 1].y - q[i].y);
+        nrm[i] = {-(q[i + 1].y - q[i].y) / l, (q[i + 1].x - q[i].x) / l};
+    }
+    std::vector<Vec2> left(n), right(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        Vec2 m;
+        if (i == 0) m = nrm[0];
+        else if (i + 1 == n) m = nrm[n - 2];
+        else {
+            const Vec2 a = nrm[i - 1], b = nrm[i];
+            const float c = 1.0f + a.x * b.x + a.y * b.y;
+            if (c < 1e-3f) return {}; // doubles straight back
+            m = {(a.x + b.x) / c, (a.y + b.y) / c};
+        }
+        left[i] = {q[i].x + m.x * half, q[i].y + m.y * half};
+        right[i] = {q[i].x - m.x * half, q[i].y - m.y * half};
+    }
+    std::vector<Vec2> out(right.begin(), right.end()); // right side forward, left side back
+    for (std::size_t i = n; i-- > 0;) out.push_back(left[i]);
+    if (signedArea(out) < 0.0f) std::reverse(out.begin(), out.end());
+    if (!isSimplePolygon(out)) return {};
+    return out;
+}
+
+std::optional<MeshData> extrudeShape(const std::vector<Vec2>& outlineIn, bool closed, const PlaneFrame& f, const ExtrudeShape& s,
+                                     std::string* error) {
+    auto fail = [&](const char* why) -> std::optional<MeshData> {
+        if (error) *error = why;
+        return std::nullopt;
+    };
+    if (!(s.w1 - s.w0 > 1e-6f)) return fail("The extrusion has no depth");
+    if (!(std::fabs(s.draftDeg) < 89.0f)) return fail("DRAFT is less than 89 degrees");
+    if (s.thin < 0.0f) return fail("THIN needs a wall thickness");
+    std::vector<Vec2> outer = outlineIn, inner;
+    if (closed) {
+        if (signedArea(outer) < 0.0f) std::reverse(outer.begin(), outer.end());
+        if (s.thin > 0.0f) {
+            inner = offsetPolygon(outer, s.thin);
+            if (inner.empty()) return fail("The wall is too thick for this profile");
+        }
+    } else {
+        if (!(s.thin > 0.0f)) return fail("An open curve needs THIN: the wall's thickness");
+        outer = thickenPolyline(outer, s.thin * 0.5f);
+        if (outer.empty()) return fail("The thickened curve crosses itself");
+    }
+    if (outer.size() < 3 || !isSimplePolygon(outer)) return fail("The profile crosses itself");
+
+    // Sections: the ends, and the sketch plane between them when a draft leans both ways.
+    std::vector<float> ws{s.w0, s.w1};
+    if (s.draftDeg != 0.0f && s.w0 < 0.0f && s.w1 > 0.0f) ws = {s.w0, 0.0f, s.w1};
+    const float tanD = std::tan(radians(s.draftDeg));
+    std::vector<std::vector<Vec2>> outers, inners;
+    for (float w : ws) {
+        const float inset = std::fabs(w) * tanD;
+        outers.push_back(offsetPolygon(outer, inset));
+        if (outers.back().empty()) return fail("The draft closes the profile up before the end: less depth or a smaller angle");
+        if (!inner.empty()) {
+            inners.push_back(offsetPolygon(inner, inset));
+            if (inners.back().empty()) return fail("The draft closes the wall's inside up before the end");
+        }
+    }
+    MeshData m;
+    auto world = [&](Vec2 q, float w) { return f.toWorld(q) + f.normal * w; };
+    auto quad = [&](Vec3 a, Vec3 b, Vec3 c, Vec3 d) { // a b c d counter-clockwise seen from outside
+        const Vec3 nr = normalize(cross(b - a, c - a));
+        const auto base = static_cast<std::uint32_t>(m.vertices.size());
+        for (const Vec3& p : {a, b, c, d}) m.vertices.push_back({p, nr});
+        m.indices.insert(m.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    };
+    const std::size_t n = outer.size();
+    // Caps.
+    for (int end = 0; end < 2; ++end) {
+        const bool top = end == 1;
+        const std::size_t k = top ? ws.size() - 1 : 0;
+        const float w = ws[k];
+        const Vec3 nr = top ? f.normal : -f.normal;
+        if (inner.empty()) {
+            const std::vector<std::uint32_t> tri = triangulatePolygon(outers[k]);
+            if (tri.empty()) return fail("The profile could not be filled");
+            const auto base = static_cast<std::uint32_t>(m.vertices.size());
+            for (const Vec2& q : outers[k]) m.vertices.push_back({world(q, w), nr});
+            for (std::size_t t = 0; t + 2 < tri.size(); t += 3) {
+                if (top) m.indices.insert(m.indices.end(), {base + tri[t], base + tri[t + 1], base + tri[t + 2]});
+                else m.indices.insert(m.indices.end(), {base + tri[t], base + tri[t + 2], base + tri[t + 1]});
+            }
+        } else { // a ring: outer and inner corners pair up one to one
+            const std::vector<Vec2>& o = outers[k];
+            const std::vector<Vec2>& in = inners[k];
+            for (std::size_t i = 0; i < n; ++i) {
+                const std::size_t j = (i + 1) % n;
+                if (top) quad(world(o[i], w), world(o[j], w), world(in[j], w), world(in[i], w));
+                else quad(world(o[j], w), world(o[i], w), world(in[i], w), world(in[j], w));
+            }
+        }
+        for (std::size_t i = 0; i < n; ++i) { // outline edges
+            m.edgeVertices.push_back(world(outers[k][i], w));
+            m.edgeVertices.push_back(world(outers[k][(i + 1) % n], w));
+            if (!inner.empty()) {
+                m.edgeVertices.push_back(world(inners[k][i], w));
+                m.edgeVertices.push_back(world(inners[k][(i + 1) % n], w));
+            }
+        }
+    }
+    // Sides, between each section and the next: outward on the outline, inward inside.
+    for (std::size_t k = 0; k + 1 < ws.size(); ++k)
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t j = (i + 1) % n;
+            const std::vector<Vec2>&o0 = outers[k], &o1 = outers[k + 1];
+            quad(world(o0[i], ws[k]), world(o0[j], ws[k]), world(o1[j], ws[k + 1]), world(o1[i], ws[k + 1]));
+            if (!inner.empty()) {
+                const std::vector<Vec2>&i0 = inners[k], &i1 = inners[k + 1];
+                quad(world(i0[j], ws[k]), world(i0[i], ws[k]), world(i1[i], ws[k + 1]), world(i1[j], ws[k + 1]));
+            }
+        }
+    return m;
+}
+
 std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& sectionsIn, bool smooth, std::string* error) {
     auto fail = [&](const char* why) -> std::optional<MeshData> {
         if (error) *error = why;

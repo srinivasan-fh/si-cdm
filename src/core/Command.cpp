@@ -40,7 +40,7 @@ constexpr CommandSpec kCommands[] = {
     {"PYRAMID", "PYR", "PYRAMID r h [sides] [@x,y,z]", "Regular pyramid"},
     {"PRISM", "", "PRISM r h [sides] [@x,y,z]", "Regular prism (default hexagon)"},
     // Features
-    {"EXTRUDE", "EXT", "EXTRUDE [curve] distance [SYMMETRIC] [KEEP]",
+    {"EXTRUDE", "EXT", "EXTRUDE [curve] distance [SYMMETRIC | TWO d2] [REVERSE] [THROUGH] [UPTO NEXT|body|x,y,z] [DRAFT deg] [THIN t] [CUT|JOIN [body]] [KEEP]",
      "Extrude a closed sketch curve (selected or named) into a solid along its plane normal"},
     // Sculpting & booleans
     {"SCULPT", "SCULPTING BRUSH",
@@ -119,7 +119,7 @@ constexpr CommandSpec kCommands[] = {
      "STEP or IGES (exact B-reps)/STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane; URDF/SDF/MJCF (.xml) of the robot"},
     {"RUN", "SCRIPT", "RUN path.txt", "Run the commands in a text file, one a line (# starts a comment)"},
     // 3D printing
-    {"REVOLVE", "REV", "REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [KEEP]",
+    {"REVOLVE", "REV", "REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [CUT|JOIN [body]] [KEEP]",
      "Turn a closed sketch curve about an axis in its plane into a solid (360: closed; less: capped)"},
     {"SWEEP", "", "SWEEP [profile] ALONG path [KEEP]", "Carry a closed profile along a path curve, square to it, mitred at corners"},
     {"LOFT", "", "LOFT \"section\" [AT d] \"section\" [AT d] ... [SMOOTH|RULED] [KEEP]",

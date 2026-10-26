@@ -879,6 +879,13 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
 
     // ---- Features ---------------------------------------------------------
     if (cmd == "EXTRUDE") {
+        // Cuts, joins, other depths, drafts and walls: see runFeatureCommand.
+        for (std::size_t k = 0; k < a.size(); ++k) {
+            if (quotedArg(k)) continue;
+            const std::string l = lower(a[k]);
+            if (l == "reverse" || l == "two" || l == "through" || l == "upto" || l == "draft" || l == "thin" || l == "cut" || l == "join")
+                return runFeatureCommand(doc, cmd, a, pc.quoted);
+        }
         bool symmetric = false, keep = false;
         std::optional<float> distance;
         std::vector<std::string> nameWords;
@@ -951,6 +958,9 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         doc.state.historyRedo.clear();
         doc.state.historyComplete = true;
         doc.state.simDuration = 0.0f;
+        doc.state.datums.clear();
+        doc.state.customPlane.clear();
+        if (doc.state.plane == SketchPlane::Custom) doc.state.plane = SketchPlane::Top;
         if (const auto u = parseUnitName(preferences().units)) doc.state.units.unit = *u; // Preferences: units for new projects
         out.documentReplaced = true;
         out.say("New empty project");

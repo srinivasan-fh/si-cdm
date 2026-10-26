@@ -259,10 +259,49 @@ CONSTRAINT EDIT D5 80           (the block is rebuilt 80 long)
 
 The constraints are saved with the project.
 
+## Extrude
+
+```text
+EXTRUDE [curve] distance [SYMMETRIC | TWO d2] [REVERSE] [DRAFT deg] [THIN t] [CUT | JOIN [body]] [KEEP]
+EXTRUDE [curve] THROUGH [SYMMETRIC] [REVERSE] ...          through every body (or the CUT body)
+EXTRUDE [curve] UPTO NEXT | body | x,y,z [REVERSE] ...     up to the next face, a body, a point's level
+```
+
+EXTRUDE pushes a closed sketch curve (or a loop of curves end to end) along its plane's
+normal into a solid.
+
+- **Depth:** `distance` along the normal (negative or `REVERSE`: the other way), `SYMMETRIC`
+  half each way, or `TWO d2`: `distance` one way and `d2` back the other.
+- **THROUGH:** past every visible body along the normal (both ways with `SYMMETRIC`), the
+  usual end for a hole.
+- **UPTO:** `NEXT` stops where the whole profile has met a face ahead of it; a body's name
+  stops at that body; a point stops at the plane through it, square to the normal.
+- **DRAFT deg:** the sides lean in by that angle going away from the sketch plane (out when
+  negative); both ways from the plane with `SYMMETRIC` or `TWO`. Too steep for the depth and
+  it is refused.
+- **THIN t:** a wall `t` thick inside the outline instead of the whole area. An open curve
+  (a line, polyline, arc or spline) makes a rib `t` thick, centred on it.
+- **CUT / JOIN:** cuts the solid from the bodies it meets, or joins them into one (`CUT body`,
+  `JOIN body`: just that one). A cut that meets nothing is refused and nothing changes.
+
+A plain extrusion stays parametric, with exact circles; drafts and walls from straight-sided
+profiles are exact too (flat faces).
+
+```text
+BOX 60 40 20 @0,0,0
+PLANE FACE 0,0,30 NAME Lid
+CIRCLE 0,0 5
+EXTRUDE THROUGH REVERSE CUT        a hole through the block
+RECT -25,-15 -15,-5
+EXTRUDE 8 DRAFT 5 JOIN             a tapered boss on the lid
+PLINE -20,10 20,10
+EXTRUDE 6 THIN 2 JOIN              a rib
+```
+
 ## Revolve
 
 ```text
-REVOLVE [curve] [ANGLE deg] [AXIS U | V | "sketch line" | x,y x,y] [KEEP]
+REVOLVE [curve] [ANGLE deg] [AXIS U | V | "sketch line" | x,y x,y] [CUT | JOIN [body]] [KEEP]
 ```
 
 REVOLVE turns a closed sketch curve (rectangle, circle, closed polyline) about an axis in its
@@ -272,6 +311,7 @@ plane.
   can also name a sketch line, or give two points.
 - **Angle:** 360° gives a closed solid of revolution. Less gives a solid capped at both ends.
 - **Profile:** it may touch the axis, as a vase's does, but not cross it.
+- **CUT / JOIN:** cuts the revolved solid from the bodies it meets (a groove), or joins it on.
 
 ```text
 PLANE FRONT
