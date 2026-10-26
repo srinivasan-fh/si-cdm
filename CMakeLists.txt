@@ -84,6 +84,7 @@ add_library(sicdm_core STATIC
     src/core/Terrain.cpp
     src/core/Vehicle.cpp
     src/core/Sensors.cpp
+    src/core/Kinematics.cpp
     src/core/ImageWrite.cpp
     src/core/RobotCommand.cpp
     src/core/UpdateCheck.cpp

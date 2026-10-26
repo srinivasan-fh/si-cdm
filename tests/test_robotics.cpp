@@ -3,6 +3,8 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
+#include "core/Kinematics.hpp"
+#include "core/Motion.hpp"
 #include "core/Multibody.hpp"
 #include "core/Physics.hpp"
 #include "core/Rig.hpp"
@@ -750,4 +752,184 @@ TEST_CASE("Robotics sensors: a force-torque sensor feels the arm it holds") {
     CHECK_NEAR(std::fabs(r.values[3]), m * 9.80665 * arm, 0.03 * m * 9.80665 * arm); // and its moment about X
     REQUIRE(run(d, "RIG SIMULATE OFF").ok);
     CHECK(!readSensor(d.scene, d.scene.rigs().robots[0], *d.scene.rigs().robots[0].sensor("ft"), 3.0f, r));
+}
+
+namespace {
+
+// A three-joint arm standing at the origin: a turret (yaw about Z), a shoulder and an elbow
+// (both about Y), 300 mm links; the forearm is the tool, its tip at (0, 0, 760) at rest.
+// The joints hold still at rest until something keys them.
+void makeArm(Document& d) {
+    REQUIRE(run(d, "BOX 100 100 100 @0,0,0").ok);   // Block 1: base (a box stands on its point)
+    REQUIRE(run(d, "BOX 80 80 60 @0,0,100").ok);    // Block 2: turret
+    REQUIRE(run(d, "BOX 40 40 300 @0,0,160").ok);   // Block 3: upper arm
+    REQUIRE(run(d, "BOX 40 40 300 @0,0,460").ok);   // Block 4: forearm
+    REQUIRE(run(d, "JOINT \"Block 2\" TO \"Block 1\" AT 0,0,100 AXIS Z RANGE -180 180").ok);
+    REQUIRE(run(d, "JOINT \"Block 3\" TO \"Block 2\" AT 0,0,160 AXIS Y RANGE -120 120").ok);
+    REQUIRE(run(d, "JOINT \"Block 4\" TO \"Block 3\" AT 0,0,460 AXIS Y RANGE -150 150").ok);
+    REQUIRE(run(d, "RIG TAG \"Block 4\" END_EFFECTOR").ok);
+    for (Motion& m : d.scene.motions()) m.keys = {{0.0f, 0.0f}};
+}
+
+V3d armTip(const RobotKinematics& kin, const std::vector<double>& q) {
+    const RobotRig& rig = kin.rig();
+    const int ee = rig.endEffectors().front();
+    return kin.forward(q)[static_cast<std::size_t>(ee)].apply({0, 0, 0.760});
+}
+
+} // namespace
+
+TEST_CASE("Robotics arms: inverse kinematics reaches points and refuses what's out of reach") {
+    Document d;
+    makeArm(d);
+    RobotRig rig;
+    REQUIRE(rigOf(d, "", rig));
+    REQUIRE(rig.joints.size() == 3);
+    const RobotKinematics kin(rig);
+    const int ee = rig.endEffectors().front();
+    CHECK(kin.chain(ee).size() == 3);
+    const V3d rest = armTip(kin, std::vector<double>(3, 0.0));
+    CHECK_NEAR(rest[2], 0.760, 1e-9);
+    const V3d goals[] = {{0.3, 0.2, 0.3}, {-0.25, -0.35, 0.5}, {0.45, 0.0, 0.3}, {0.0, 0.1, 0.72}};
+    for (const V3d& g : goals) {
+        IkTarget t;
+        t.link = ee;
+        t.point = {0, 0, 0.760};
+        t.target = g;
+        const IkResult r = solveIk(kin, std::vector<double>(3, 0.0), t);
+        CHECK(r.ok);
+        const V3d p = armTip(kin, r.q);
+        CHECK(std::hypot(p[0] - g[0], p[1] - g[1], p[2] - g[2]) < 0.0011);
+        for (std::size_t j = 0; j < 3; ++j) CHECK(r.q[j] >= kin.lower(j) - 1e-9 && r.q[j] <= kin.upper(j) + 1e-9);
+    }
+    // Pointing the tool: straight down onto a point in front (with the shoulder at 30 deg; a
+    // 3-joint arm has just that one way to do it).
+    IkTarget down;
+    down.link = ee;
+    down.point = {0, 0, 0.760};
+    down.target = {0.15, 0, 0.16 + 0.3 * std::cos(3.14159265358979 / 6) - 0.3};
+    down.approach = V3d{0, 0, -1};
+    down.approachAt = {0, 0, 1};
+    const IkResult dr = solveIk(kin, std::vector<double>(3, 0.0), down);
+    REQUIRE(dr.ok);
+    const LinkPose fp = kin.forward(dr.q)[static_cast<std::size_t>(ee)];
+    CHECK_NEAR(fp.R[8], -1.0, 0.01); // its rest Z axis now points down
+    // Out of reach: 600 mm of arm can't get 900 mm from the shoulder.
+    IkTarget far = down;
+    far.approach.reset();
+    far.target = {0.9, 0, 0.16};
+    const IkResult fr = solveIk(kin, std::vector<double>(3, 0.0), far);
+    CHECK(!fr.ok);
+    CHECK(fr.why.find("out of reach") != std::string::npos);
+    CHECK(run(d, "ARM IK 300,200,300").ok);
+    CHECK(!run(d, "ARM IK 900,0,160").ok);
+}
+
+TEST_CASE("Robotics arms: a planned move goes around an obstacle and is keyed into the motions") {
+    Document d;
+    makeArm(d);
+    REQUIRE(run(d, "BOX 100 200 180 @300,0,580").ok); // in the way of the straight swing
+    RobotRig rig;
+    REQUIRE(rigOf(d, "", rig));
+    const RobotKinematics kin(rig);
+    const CollisionModel col(d.scene, rig, 0.0f);
+    CHECK(!col.collides(kin.forward(std::vector<double>(3, 0.0))));
+    const int ee = rig.endEffectors().front();
+    IkTarget t;
+    t.link = ee;
+    t.point = {0, 0, 0.760};
+    t.target = {0.45, 0, 0.3};
+    const IkResult ik = solveIk(kin, std::vector<double>(3, 0.0), t, &col);
+    REQUIRE(ik.ok);
+    // The straight line in joint space hits the block...
+    bool straightHits = false;
+    for (int k = 1; k < 100; ++k) {
+        std::vector<double> q(3);
+        for (std::size_t j = 0; j < 3; ++j) q[j] = ik.q[j] * k / 100.0;
+        straightHits = straightHits || col.collides(kin.forward(q));
+    }
+    CHECK(straightHits);
+    // ...the plan doesn't.
+    const PlanResult plan = planPath(kin, col, std::vector<double>(3, 0.0), ik.q, kin.chain(ee));
+    REQUIRE(plan.ok);
+    CHECK(plan.path.size() >= 3);
+    for (std::size_t s = 0; s + 1 < plan.path.size(); ++s)
+        for (int k = 0; k <= 50; ++k) {
+            std::vector<double> q(3);
+            for (std::size_t j = 0; j < 3; ++j) q[j] = plan.path[s][j] + (plan.path[s + 1][j] - plan.path[s][j]) * k / 50.0;
+            CHECK(!col.collides(kin.forward(q)));
+        }
+
+    // The command does the same and keys the joints' motions: the tool gets there, clear all the way.
+    const CommandOutput o = run(d, "ARM MOVE_TO 450,0,300 POINT 0,0,150");
+    REQUIRE(o.ok);
+    const Motion* shoulder = nullptr;
+    for (const Motion& m : d.scene.motions())
+        if (m.name == rig.joints[1].name) shoulder = &m;
+    REQUIRE(shoulder != nullptr);
+    REQUIRE(shoulder->keys.size() >= 2);
+    const float end = shoulder->keys.back().t;
+    CHECK(end > 0.2f);
+    for (float tt = 0; tt <= end + 1e-3f; tt += 0.01f) CHECK(!col.collides(kin.forward(motionTargets(d.scene, rig, tt).value)));
+    const V3d tip = armTip(kin, motionTargets(d.scene, rig, end).value);
+    CHECK(std::hypot(tip[0] - 0.45, tip[1], tip[2] - 0.3) < 0.002);
+    // A second move follows on from the first, and HOME brings it back.
+    REQUIRE(run(d, "ARM MOVE_TO 0,-400,400 POINT 0,0,150").ok);
+    CHECK(shoulder->keys.back().t > end);
+    const float end2 = shoulder->keys.back().t;
+    const V3d tip2 = armTip(kin, motionTargets(d.scene, rig, end2).value);
+    CHECK(std::hypot(tip2[0], tip2[1] + 0.4, tip2[2] - 0.4) < 0.002);
+    REQUIRE(run(d, "ARM HOME").ok);
+    const std::vector<double> home = motionTargets(d.scene, rig, shoulder->keys.back().t + 0.1f).value;
+    for (double v : home) CHECK_NEAR(v, 0.0, 1e-4);
+    // UNDO takes a move back.
+    const std::size_t keys = shoulder->keys.size();
+    REQUIRE(run(d, "UNDO").ok);
+    for (const Motion& m : d.scene.motions())
+        if (m.name == rig.joints[1].name) CHECK(m.keys.size() < keys);
+    // Something it can't get to without hitting the block.
+    CHECK(!run(d, "ARM MOVE_TO 300,0,670 POINT 0,0,150").ok);
+}
+
+TEST_CASE("Robotics arms: inverse dynamics and the least-effort trajectory") {
+    Document d;
+    makeArm(d);
+    RobotRig rig;
+    REQUIRE(rigOf(d, "", rig));
+    const RobotKinematics kin(rig);
+    // Holding the arm out level: the shoulder carries both links' weight about its axis.
+    std::vector<double> q{0, 3.14159265358979 / 2, 0}, zero(3, 0.0);
+    const std::vector<double> tau = inverseDynamics(kin, q, zero, zero);
+    const RigLink &upper = rig.links[2], &fore = rig.links[3];
+    CHECK_NEAR(std::fabs(tau[1]), 9.80665 * (upper.mass * (upper.com[2] - 0.16) + fore.mass * (fore.com[2] - 0.16)), 1e-6 * (1 + std::fabs(tau[1])));
+    CHECK_NEAR(tau[0], 0.0, 1e-9);
+    // Accelerating the turret from rest: I * alpha about Z.
+    std::vector<double> acc{1.0, 0, 0};
+    const double spin = inverseDynamics(kin, zero, zero, acc, {0, 0, 0})[0];
+    double Izz = 0;
+    for (std::size_t l = 1; l < rig.links.size(); ++l) {
+        const RigLink& L = rig.links[l];
+        Izz += L.inertia[8] + L.mass * (L.com[0] * L.com[0] + L.com[1] * L.com[1]);
+    }
+    CHECK_NEAR(spin, Izz, 1e-6 * Izz);
+    // A move through a high pose: optimising lowers the effort, keeps the ends and the time.
+    const std::vector<std::vector<double>> path{zero, {1.5, 0.3, 1.2}, {2.5, 1.4, 0.4}};
+    const TimedPath plain = timePath(kin, path, 0.4);
+    CHECK(plain.effort > 0);
+    const CollisionModel col(d.scene, rig, 0.0f);
+    const TimedPath best = optimisePath(kin, col, plain, kin.chain(rig.endEffectors().front()), 20);
+    CHECK(best.effort < plain.effort * 0.97);
+    CHECK_NEAR(best.times.back(), plain.times.back(), 1e-9);
+    for (std::size_t j = 0; j < 3; ++j) {
+        CHECK_NEAR(best.q.front()[j], 0.0, 1e-12);
+        CHECK_NEAR(best.q.back()[j], path.back()[j], 1e-12);
+    }
+    CHECK_NEAR(pathEffort(kin, best), best.effort, 1e-9 * best.effort);
+    // RIG ENGINE OPTIMIZE (or OPTIMIZE) plans that way from the command.
+    REQUIRE(run(d, "RIG ENGINE OPTIMIZE").ok);
+    const CommandOutput o = run(d, "ARM MOVE_TO 300,300,300 POINT 0,0,150");
+    REQUIRE(o.ok);
+    bool said = false;
+    for (const std::string& l : o.lines) said = said || l.find("optimised") != std::string::npos;
+    CHECK(said);
 }

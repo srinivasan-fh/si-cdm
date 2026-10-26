@@ -250,6 +250,7 @@ private:
         std::uint64_t id = 0, revision = 0;
         std::vector<BodyState> bodies;
         std::string motions;
+        std::vector<Motion> programs; // the motions as they were (their keys too)
         std::vector<Redo> redo;
     };
     std::vector<PendingEdit> m_pending;

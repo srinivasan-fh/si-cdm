@@ -110,6 +110,21 @@ std::string motionsKey(const std::vector<Motion>& motions) {
     return k;
 }
 
+// What the motions do (programs, speeds, ranges), beyond what motionsKey() names: an edit
+// that only rekeys them (ARM, POSE) is still an edit of the motions to undo.
+bool sameMotionPrograms(const std::vector<Motion>& a, const std::vector<Motion>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const Motion &x = a[i], &y = b[i];
+        if (x.speed != y.speed || x.range != y.range || x.mode != y.mode || x.start != y.start || x.enabled != y.enabled || x.keySpline != y.keySpline ||
+            x.keys.size() != y.keys.size())
+            return false;
+        for (std::size_t k = 0; k < x.keys.size(); ++k)
+            if (x.keys[k].t != y.keys[k].t || x.keys[k].value != y.keys[k].value) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 void Scene::pushUndo(std::string label) {
@@ -140,6 +155,7 @@ void Scene::beginBodyEdit(std::string label) {
     p.revision = m_revision;
     for (const Body& b : m_bodies) p.bodies.push_back({b.name, b.offset, b.color, b.visible});
     p.motions = motionsKey(m_motions);
+    p.programs = m_motions;
     p.redo = m_redo; // pushUndo drops it; put back if nothing comes of this
     pushUndo(std::move(label));
     p.id = m_undoPushes;
@@ -155,7 +171,8 @@ void Scene::endBodyEdit() {
     bool innerKept = false;
     for (const Snapshot& u : m_undo) innerKept = innerKept || u.id > p.id;
     const bool innerUndone = m_undoPushes != p.id && !innerKept;
-    bool changed = (m_revision != p.revision && !innerUndone) || m_bodies.size() != p.bodies.size() || motionsKey(m_motions) != p.motions;
+    bool changed = (m_revision != p.revision && !innerUndone) || m_bodies.size() != p.bodies.size() || motionsKey(m_motions) != p.motions ||
+                   !sameMotionPrograms(m_motions, p.programs);
     for (std::size_t i = 0; !changed && i < m_bodies.size(); ++i) {
         const Body& b = m_bodies[i];
         const BodyState& w = p.bodies[i];
@@ -199,7 +216,7 @@ void Scene::sealUndo() {
     s.afterBodies.clear();
     for (const Body& b : m_bodies) s.afterBodies.push_back({b.name, b.offset, b.color, b.visible});
     s.afterMotions = motionsKey(m_motions);
-    s.motionsChanged = s.afterMotions != motionsKey(s.motions);
+    s.motionsChanged = s.afterMotions != motionsKey(s.motions) || !sameMotionPrograms(s.motions, m_motions);
     // At most 16 steps and about 2 million vertices of history (trimmed only once an
     // edit has succeeded, so a failed one costs no history).
     std::size_t vertices = 0;

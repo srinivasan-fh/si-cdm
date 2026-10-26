@@ -5,6 +5,8 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
+#include "core/Kinematics.hpp"
+#include "core/Motion.hpp"
 #include "core/Multibody.hpp"
 #include "core/Rig.hpp"
 #include "core/Sensors.hpp"
@@ -29,7 +31,8 @@ std::string lowerOf(const std::string& s) {
     return o;
 }
 
-const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission", "sensor", "sensors"};
+const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission", "sensor", "sensors",
+                                  "move_to", "moveto", "ik", "home", "tool", "point", "approach", "at", "speed", "optimize", "optimise"};
 
 bool isRigWord(const std::string& w) {
     const std::string k = lowerOf(w);
@@ -397,11 +400,191 @@ CommandOutput runTerrain(Document& doc, const std::vector<std::string>& a) {
     return out;
 }
 
+// A point typed in the document's units ("x,y,z", each a length), in mm.
+std::optional<Vec3> parsePointMm(const std::string& text) {
+    std::vector<float> comps;
+    std::size_t start = 0;
+    const std::string body = !text.empty() && text[0] == '@' ? text.substr(1) : text;
+    for (std::size_t c = 0; c <= body.size(); ++c)
+        if (c == body.size() || body[c] == ',') {
+            const auto l = parseLength(body.substr(start, c - start));
+            if (!l) return std::nullopt;
+            comps.push_back(static_cast<float>(*l));
+            start = c + 1;
+        }
+    if (comps.size() != 3) return std::nullopt;
+    return Vec3{comps[0], comps[1], comps[2]};
+}
+
+// ARM [robot] MOVE_TO x,y,z | IK x,y,z | HOME, with [TOOL part] [POINT dx,dy,dz]
+// [APPROACH dx,dy,dz] [AT t] [SPEED s] [OPTIMIZE].
+CommandOutput runArm(Document& doc, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
+    CommandOutput out;
+    const char* usage = "Usage: ARM [robot] MOVE_TO x,y,z | IK x,y,z | HOME, with [TOOL part] [POINT dx,dy,dz] [APPROACH dx,dy,dz] [AT t] [SPEED 0-1] [OPTIMIZE]";
+    std::size_t i = 0;
+    std::string robot, err;
+    if (!pickRobot(doc, a, quoted, i, robot, &err)) return out.fail(err);
+    RigSettings settings;
+    if (const RigSettings* r = doc.scene.rigs().find(robot)) settings = *r;
+    else settings.name = robot;
+    enum class Verb { None, MoveTo, Ik, Home } verb = Verb::None;
+    Vec3 goalMm{};
+    std::string toolPart;
+    Vec3 pointMm{};
+    std::optional<Vec3> approach;
+    std::optional<float> at;
+    double speed = 0.5;
+    // The optimize engine plans every move for the least effort.
+    bool optimise = settings.engine == simEngineKey(SimEngine::Optimize);
+    for (; i < a.size(); ++i) {
+        const std::string k = lowerOf(a[i]);
+        auto next = [&]() -> std::string { return i + 1 < a.size() ? a[++i] : std::string(); };
+        if (k == "move_to" || k == "moveto" || k == "move" || k == "ik") {
+            if (k == "move" && i + 1 < a.size() && lowerOf(a[i + 1]) == "to") ++i;
+            const auto p = parsePointMm(next());
+            if (!p) return out.fail(std::string(k == "ik" ? "IK" : "MOVE_TO") + " needs x,y,z");
+            goalMm = *p;
+            verb = k == "ik" ? Verb::Ik : Verb::MoveTo;
+        } else if (k == "home") {
+            verb = Verb::Home;
+        } else if (k == "tool") {
+            toolPart = next();
+            if (toolPart.empty()) return out.fail("TOOL needs a part");
+        } else if (k == "point") {
+            const auto p = parsePointMm(next());
+            if (!p) return out.fail("POINT needs dx,dy,dz (from the tool part's centre)");
+            pointMm = *p;
+        } else if (k == "approach") {
+            const auto p = parseVec3(next());
+            if (!p || length(*p) < 1e-6f) return out.fail("APPROACH needs a direction dx,dy,dz");
+            approach = *p;
+        } else if (k == "at") {
+            const auto v = parseNumber(next());
+            if (!v || *v < 0) return out.fail("AT needs seconds");
+            at = static_cast<float>(*v);
+        } else if (k == "speed") {
+            const auto v = parseNumber(next());
+            if (!v || *v <= 0 || *v > 1) return out.fail("SPEED is a share of the joints' top speeds, 0-1");
+            speed = *v;
+        } else if (k == "optimize" || k == "optimise") {
+            optimise = true;
+        } else {
+            return out.fail(usage);
+        }
+    }
+    if (verb == Verb::None) return out.fail(usage);
+    RobotRig rig;
+    if (!buildRig(doc.scene, settings, rig, &err)) return out.fail(err);
+    if (rig.joints.empty()) return out.fail("The robot has no joints to move");
+    const RobotKinematics kin(rig);
+
+    // The tool: the part named, else the end effector; its point, the part's centre (+ POINT).
+    int link = -1;
+    if (!toolPart.empty()) {
+        const int b = bodyIndex(doc, toolPart);
+        if (b < 0) return out.fail("No body named " + toolPart);
+        link = rig.linkOf(static_cast<std::size_t>(b));
+        if (link <= 0) return out.fail(toolPart + " isn't on a moving part of " + (rig.name.empty() ? std::string("the robot") : rig.name));
+    } else {
+        const std::vector<int> ee = rig.endEffectors();
+        if (ee.empty() || ee.front() <= 0) return out.fail("Tag the tool: RIG TAG part END_EFFECTOR (or give TOOL part)");
+        link = ee.front();
+    }
+    const RigLink& L = rig.links[static_cast<std::size_t>(link)];
+    const V3d point{0.5 * (L.boxMin[0] + L.boxMax[0]) + pointMm.x * 1e-3, 0.5 * (L.boxMin[1] + L.boxMax[1]) + pointMm.y * 1e-3,
+                    0.5 * (L.boxMin[2] + L.boxMax[2]) + pointMm.z * 1e-3};
+    const std::vector<std::size_t> active = kin.chain(link);
+
+    // Start where the program has the arm: after its last key unless AT says when.
+    float t0 = 0;
+    if (at) {
+        t0 = *at;
+    } else {
+        const auto& motions = doc.scene.motions();
+        for (std::size_t j : active) {
+            const RigJoint& J = rig.joints[j];
+            for (std::size_t m = 0; m < motions.size(); ++m)
+                if ((static_cast<int>(m) == J.motion || (!J.drive.empty() && motions[m].name == J.drive)) && !motions[m].keys.empty())
+                    t0 = std::max(t0, motions[m].start + motions[m].keys.back().t);
+        }
+    }
+    const std::vector<double> start = kin.withMimics(motionTargets(doc.scene, rig, t0).value);
+    CollisionModel collisions(doc.scene, rig, t0);
+    collisions.onlyMoving(kin, active);
+    const int touching = collisions.allowTouching(kin.forward(start));
+
+    std::vector<double> goal;
+    char buf[320];
+    if (verb == Verb::Home) {
+        goal = start;
+        for (std::size_t j : active) goal[j] = 0;
+        goal = kin.withMimics(goal);
+    } else {
+        IkTarget tg;
+        tg.link = link;
+        tg.point = point;
+        tg.target = {goalMm.x * 1e-3, goalMm.y * 1e-3, goalMm.z * 1e-3};
+        if (approach) {
+            const Vec3 d = normalize(*approach);
+            tg.approach = V3d{d.x, d.y, d.z};
+            // The tool's own approach axis: from its joint's axis out to the tool point.
+            const RigJoint& J = rig.joints[static_cast<std::size_t>(L.parentJoint)];
+            V3d ax{point[0] - J.origin[0], point[1] - J.origin[1], point[2] - J.origin[2]};
+            const double along = ax[0] * J.axis[0] + ax[1] * J.axis[1] + ax[2] * J.axis[2];
+            if (J.type != RigJointType::Prismatic)
+                for (std::size_t c = 0; c < 3; ++c) ax[c] -= along * J.axis[c];
+            const double n = std::sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+            tg.approachAt = n > 1e-6 ? V3d{ax[0] / n, ax[1] / n, ax[2] / n} : J.axis;
+        }
+        const IkResult ik = solveIk(kin, start, tg, &collisions);
+        if (!ik.ok) return out.fail("Can't reach (" + fmtMm(goalMm.x) + ", " + fmtMm(goalMm.y) + ", " + fmtMm(goalMm.z) + ") mm: " + ik.why);
+        goal = ik.q;
+        if (verb == Verb::Ik) {
+            std::snprintf(buf, sizeof buf, "Reaches (%s, %s, %s) mm within %.2f mm:", fmtMm(goalMm.x).c_str(), fmtMm(goalMm.y).c_str(), fmtMm(goalMm.z).c_str(),
+                          ik.error * 1e3);
+            out.say(buf);
+            for (std::size_t j : active) {
+                const RigJoint& J = rig.joints[j];
+                const bool lin = J.type == RigJointType::Prismatic;
+                std::snprintf(buf, sizeof buf, "  %-34s %8.2f %s", J.name.c_str(), goal[j] * (lin ? 1e3 : 180.0 / 3.14159265358979), lin ? "mm" : "deg");
+                out.say(buf);
+            }
+            return out;
+        }
+    }
+    const PlanResult plan = planPath(kin, collisions, start, goal, active);
+    if (!plan.ok) return out.fail("No way there: " + plan.why);
+    TimedPath timed = timePath(kin, plan.path, speed);
+    const double before = timed.effort;
+    if (optimise) timed = optimisePath(kin, collisions, timed, active);
+    const std::vector<std::string> keyed = writeJointPath(doc.scene, rig, timed, t0, active);
+    doc.dirty = true;
+    std::string names;
+    for (const std::string& k : keyed) names += (names.empty() ? "" : ", ") + k;
+    const double dur = timed.times.empty() ? 0.0 : timed.times.back();
+    if (verb == Verb::Home)
+        std::snprintf(buf, sizeof buf, "Arm goes home from %.2f s to %.2f s", t0, t0 + dur);
+    else
+        std::snprintf(buf, sizeof buf, "Arm moves the tool to (%s, %s, %s) mm from %.2f s to %.2f s", fmtMm(goalMm.x).c_str(), fmtMm(goalMm.y).c_str(),
+                      fmtMm(goalMm.z).c_str(), t0, t0 + dur);
+    out.say(std::string(buf) + (timed.smooth ? std::string(" on a smooth")
+                                       : timed.q.size() == 2 ? std::string(" in one straight move on a")
+                                                             : " in " + std::to_string(timed.q.size() - 1) + " straight moves on a") +
+            " collision-free path; keys on " + (names.empty() ? std::string("nothing (its joints have no motions)") : names));
+    if (touching > 0) out.say("  note: " + std::to_string(touching) + " pair(s) of parts touching where it starts were left out of the collision checks");
+    if (optimise && before > 0) {
+        std::snprintf(buf, sizeof buf, "  optimised: effort %.3g -> %.3g N^2 m^2 s (%+.0f%%)", before, timed.effort, 100.0 * (timed.effort - before) / before);
+        out.say(buf);
+    }
+    return out;
+}
+
 } // namespace
 
 CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
     CommandOutput out;
     if (cmd == "TERRAIN") return runTerrain(doc, a);
+    if (cmd == "ARM") return runArm(doc, a, quoted);
     if (cmd != "RIG") return out.fail("Unknown robot command " + cmd);
     if (!a.empty() && lowerOf(a[0]) == "engines") {
         for (const SimEngineInfo& e : simEngines()) out.say(std::string(e.key) + ": " + e.title + ". " + e.summary);

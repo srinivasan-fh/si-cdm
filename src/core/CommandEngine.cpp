@@ -319,7 +319,7 @@ bool bodyCommand(const std::string& cmd) {
     static const char* const kBody[] = {"BOX",     "CYLINDER", "CONE",   "SPHERE", "TORUS",   "WEDGE",      "PYRAMID",  "PRISM",
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
-                                        "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN"};
+                                        "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -1850,7 +1850,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
     if (cmd == "LATHE") return runLatheCommand(doc, a, pc.quoted);
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
-    if (cmd == "RIG" || cmd == "TERRAIN") return runRobotCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "RIG" || cmd == "TERRAIN" || cmd == "ARM") return runRobotCommand(doc, cmd, a, pc.quoted);
     if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET" || cmd == "DRAG") return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
         cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES")

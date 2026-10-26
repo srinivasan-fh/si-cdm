@@ -89,6 +89,9 @@ constexpr CommandSpec kCommands[] = {
      "RIG [robot] SENSOR ADD IMU|GPS|FORCE|CAMERA|LIDAR name ON part [AT x,y,z] [LOOK x,y,z] [RATE hz] [NOISE k] [SIZE w h] [FOV deg] [RANGE m] ... | "
      "SENSOR READ name [AT t] | CAPTURE name file [AT t] | LOG name file.csv [FROM t0] [TO t1] | LIST | REMOVE name",
      "A robot read from the parts and their motions: links with mass and inertia, joints, limits and couplings. Tags make wheels and rotors spin, limit knees, mark end effectors and feet"},
+    {"ARM", "", "ARM [robot] MOVE_TO x,y,z | IK x,y,z | HOME [TOOL part] [POINT dx,dy,dz] [APPROACH dx,dy,dz] [AT t] [SPEED 0-1] [OPTIMIZE]",
+     "Moves a robot arm's tool to a point: inverse kinematics within the joint limits, a collision-free path (the arm, the parts around it and the ground), "
+     "timed for the joints' speeds and keyed into their motions. OPTIMIZE (or RIG ENGINE OPTIMIZE) reshapes it for the least effort"},
     {"TERRAIN", "GROUND", "TERRAIN [OFF | SLOPE | STAIRS | ROUGH | BLOCKS | DEM file.asc|image] [ANGLE deg] [DIRECTION deg] [RISE mm] [RUN mm] [STEPS n] "
      "[AMPLITUDE mm] [WAVELENGTH mm] [HEIGHT mm] [BLOCK mm] [CELL mm] [SIZE x [y]] [AT x,y] [SEED n] [FRICTION mu]",
      "Ground for robots to walk and drive on: a slope, stairs, rough ground, blocks or a digital elevation model (the body \"Terrain\")"},
