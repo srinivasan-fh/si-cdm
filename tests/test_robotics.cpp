@@ -1257,7 +1257,8 @@ TEST_CASE("Robotics fixes: exports with awkward names, DEM files out of range") 
     rig.links[2].name = "arm";
     rig.name = "Mk--2";
     const fs::path dir = fs::temp_directory_path() / "sicdm_export_names";
-    fs::remove_all(dir);
+    std::error_code cleared;
+    fs::remove_all(dir, cleared);
     fs::create_directories(dir);
     const RobotExportResult r = exportRobot(d.scene, rig, (dir / "r.urdf").string());
     REQUIRE(r.ok);
@@ -1268,12 +1269,16 @@ TEST_CASE("Robotics fixes: exports with awkward names, DEM files out of range") 
         for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         CHECK(lower.insert(l).second);
     }
-    std::ifstream in(dir / "r.urdf");
-    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string text;
+    {
+        std::ifstream in(dir / "r.urdf"); // closed before the folder is removed (Windows won't delete open files)
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
     const std::size_t open = text.find("<!--"), close = text.find("-->", open);
     REQUIRE(open != std::string::npos && close != std::string::npos);
     CHECK(text.substr(open + 4, close - open - 4).find("--") == std::string::npos);
-    fs::remove_all(dir);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
 
     // DEM grids too big to hold, or with heights no engine can use.
     const fs::path big = fs::temp_directory_path() / "sicdm_big.asc";
