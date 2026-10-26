@@ -55,8 +55,10 @@ constexpr CommandSpec kCommands[] = {
     {"SUBDIVIDE", "SUBD", "SUBDIVIDE [body] [LEVELS n]", "Loop subdivision: four triangles for each, smoothed"},
     {"SYMMETRIZE", "SYMM", "SYMMETRIZE [body] [X|Y|Z] [-]", "Mirror one side of the body's origin onto the other (+ side by default)"},
     {"DECIMATE", "", "DECIMATE [body] TO n | RATIO r", "Reduce to about n triangles (or the ratio), keeping it closed"},
-    {"HOLE", "DRILL", "HOLE [body] [AT] x,y,z [DIR x,y,z] DIAMETER d [DEPTH h | THROUGH]",
-     "Drill a hole into the surface at a point (along the surface normal unless DIR); blind holes get a 118 deg tip"},
+    {"HOLE", "DRILL",
+     "HOLE [body] [AT] x,y,z... [DIR x,y,z] DIAMETER d | SIZE M6 [FIT CLOSE|NORMAL|LOOSE] [DEPTH h | THROUGH] [CBORE [d depth] | CSINK [d [deg]]] "
+     "[TAPPED [THREAD depth]] [FLAT]  |  HOLE SIZES  |  HOLE LIST [body]",
+     "Drill holes into the surface at points (along the surface normal unless DIR): plain, standard sizes, counterbored, countersunk, tapped"},
     {"POCKET", "", "POCKET [body] [AT] x,y,z [DIR x,y,z] [BOX|ROUND|BALL] WIDTH w [LENGTH l] DEPTH d [ANGLE deg]",
      "Cut a rectangular, round or ball-end pocket into the surface"},
     {"CHANNEL", "GROOVE SLOT", "CHANNEL [body] [PATH] x,y,z x,y,z ... WIDTH w [DEPTH d]",

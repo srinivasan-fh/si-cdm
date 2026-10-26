@@ -1,4 +1,5 @@
 #include "core/Sculpt.hpp"
+#include "core/HoleWizard.hpp"
 
 #include "core/Scene.hpp"
 
@@ -3136,6 +3137,15 @@ bool drillHole(Body& body, const Vec3& at, const Vec3& normal, float diameter, f
         prof = {{0, -through}, {r, -through}, {r, margin}, {0, margin}};
     }
     return applyCut(body, revolve(at, n, prof, 48), BooleanOp::Subtract, "hole", error);
+}
+
+bool drillHole(Body& body, const Vec3& at, const Vec3& normal, const HoleSpec& hole, std::string* error) {
+    const float widest = std::max({hole.diameter, hole.cboreDia, hole.csinkDia});
+    const float margin = std::max(0.5f, widest * 0.25f);
+    const float through = bodySize(body) * 2.0f + length(at - body.bounds().center());
+    std::vector<std::pair<float, float>> prof;
+    if (!holeProfile(hole, through, margin, prof, error)) return false;
+    return applyCut(body, revolve(at, normalize(normal), prof, 48), BooleanOp::Subtract, "hole", error);
 }
 
 bool cutPocket(Body& body, const Vec3& at, const Vec3& normal, PocketShape shape, float width, float length_,

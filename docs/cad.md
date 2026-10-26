@@ -8,6 +8,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Sketch planes | `PLANE`: Top, Front, Right, and datum planes anywhere or on a face |
 | Sketch constraints | `CONSTRAIN`, `DIM`, `CONSTRAINTS` and `CONSTRAINT EDIT` / `DELETE` |
 | Solids from sketch curves | `EXTRUDE`, `REVOLVE`, `SWEEP` and `LOFT` |
+| Holes | `HOLE`: standard sizes, counterbored, countersunk and tapped |
 | Copies of bodies | `PATTERN` and `MIRROR` |
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
 | Analysis | `MASSPROPS` and `MEASURE` |
@@ -296,6 +297,40 @@ RECT -25,-15 -15,-5
 EXTRUDE 8 DRAFT 5 JOIN             a tapered boss on the lid
 PLINE -20,10 20,10
 EXTRUDE 6 THIN 2 JOIN              a rib
+```
+
+## Holes
+
+```text
+HOLE [body] [AT] x,y,z [x,y,z...] [DIR x,y,z] SIZE size [FIT CLOSE | NORMAL | LOOSE]
+     [DEPTH h | THROUGH] [CBORE [d depth] | CSINK [d [deg]]] [TAPPED [THREAD depth]] [FLAT]
+HOLE [body] [AT] x,y,z [DIR x,y,z] DIAMETER d [DEPTH h | THROUGH]
+HOLE SIZES                      the standard sizes and what goes with them
+HOLE LIST [body]                the holes made, with their callouts
+```
+
+The hole wizard drills holes at points on a body's surface, square to it (or along `DIR`),
+one or many at once.
+
+- **SIZE:** ISO metric coarse, M1.6 to M24, or UNC, #2-56 to 1-8 (`M6`, `M6x1`, `1/4-20`,
+  `10-24`). A plain hole is that size's clearance hole (ISO 273): `FIT CLOSE`, `NORMAL` (the
+  default) or `LOOSE`. `DIAMETER` overrides the drill.
+- **CBORE:** a counterbore for a socket head cap screw of that size (ISO 4762), or the
+  diameter and depth given. **CSINK:** a countersink for a flat head screw (90 degrees
+  metric, 82 inch), or the diameter and angle given.
+- **TAPPED:** the tap drill, with the thread as a cosmetic thread in the hole's callout.
+  A blind tapped hole's thread stops two pitches short of the drill depth unless `THREAD`
+  says how deep.
+- **DEPTH** is the drilled depth from the surface; blind holes end in a 118 degree drill
+  point (`FLAT`: a flat bottom).
+- Each hole keeps its callout on the body, saved with the project: `M8 tapped 12.5 deep
+  (drill 6.8 x 15)`, `dia 6.6 thru (M6 clearance), counterbore 11 x 6.4`.
+
+```text
+BOX 80 60 20 @0,0,0
+HOLE "Block 1" AT -25,-15,20 25,-15,20 SIZE M6 CBORE THROUGH
+HOLE "Block 1" AT -25,15,20 25,15,20 SIZE M8 TAPPED DEPTH 15
+HOLE "Block 1" AT 0,0,20 SIZE 1/4-20 CSINK THROUGH
 ```
 
 ## Revolve

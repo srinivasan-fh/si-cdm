@@ -29,6 +29,8 @@
 
 namespace sicdm {
 
+struct HoleSpec;
+
 struct Body;
 class Scene;
 
@@ -241,6 +243,8 @@ enum class BossShape { Cylinder, Box, Ball };
 //   `normal` is the outward surface normal at `at` (the tool goes in against it).
 bool drillHole(Body& body, const Vec3& at, const Vec3& normal, float diameter, float depth /*0 = through*/,
                std::string* error = nullptr);
+// A hole wizard hole (counterbored, countersunk, tapped...; see HoleWizard.hpp).
+bool drillHole(Body& body, const Vec3& at, const Vec3& normal, const HoleSpec& hole, std::string* error = nullptr);
 bool cutPocket(Body& body, const Vec3& at, const Vec3& normal, PocketShape shape, float width, float length,
                float depth, float angleDeg = 0.0f, std::string* error = nullptr);
 // A groove of the given width following `path` (points on the surface, normals outward).

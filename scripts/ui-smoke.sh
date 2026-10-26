@@ -65,6 +65,7 @@ shot sculpt-sample --command "RUN docs/examples/head-bust.txt"
 shot datum-planes --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 60 40 15 @0,0,0" --command "PLANE FACE 10,10,40 NAME Lid" --command "CIRCLE 0,0 6" --command "EXTRUDE 12" --command "PLANE THROUGH 0,0,15 30,0,40 0,20,15" --command "RECT 5,5 20,15" --command "EXTRUDE 4"
 shot datum-2d --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 60 40 15 @0,0,0" --command "PLANE ANGLE 30 ABOUT U FROM TOP NAME Tilt" --command "RECT 0,0 30,20" --command "CIRCLE 15,10 5" --command "2D Tilt"
 shot extrude-options --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 60 40 20 @0,0,0" --command "PLANE FACE 0,0,30 NAME Lid" --command "CIRCLE 0,0 5" --command "EXTRUDE THROUGH REVERSE CUT" --command "RECT -25,-15 -15,-5" --command "EXTRUDE 8 DRAFT 5 JOIN" --command "PLINE -20,10 20,10" --command "EXTRUDE 6 THIN 2 JOIN" --command "FIT"
+shot hole-wizard --command "NEW" --command "PREFERENCES SET units mm" --command "BOX 80 60 20 @0,0,0" --command "HOLE \"Block 1\" AT -25,-15,20 25,-15,20 SIZE M6 CBORE THROUGH" --command "HOLE \"Block 1\" AT -25,15,20 25,15,20 SIZE M8 TAPPED DEPTH 15" --command "HOLE \"Block 1\" AT 0,0,20 SIZE 1/4-20 CSINK THROUGH" --command "FIT"
 shot save-reopen --command "BOX 20 20 20" --command "SAVE \"$state/smoke.sicdm\"" --command "NEW" --command "RECENT 1" --command "BOX 5 5 5" --command "UNDO"
 
 if [ "$failed" -gt 0 ]; then

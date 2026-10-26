@@ -4,6 +4,7 @@
 #include "core/Document.hpp"
 #include "core/Extrude.hpp"
 #include "core/FileIO.hpp"
+#include "core/HoleWizard.hpp"
 #include "core/Json.hpp"
 #include "core/Brep.hpp"
 #include "core/Scene.hpp"
@@ -283,4 +284,63 @@ TEST_CASE("EXTRUDE with a draft, as a thin wall, and from an open curve; REVOLVE
     REQUIRE(g.scene.bodies().size() == 1);
     CHECK(openEdgeCount(last(g).mesh) == 0);
     CHECK_NEAR(volumeOf(last(g)), cyl - 3.14159265 * (400 - 289) * 5, 25.0);
+}
+
+TEST_CASE("Hole wizard: standard sizes, counterbores, countersinks, tapped holes and their callouts") {
+    // The tables.
+    const HoleSize* m6 = findHoleSize("m6");
+    REQUIRE(m6 != nullptr);
+    CHECK_NEAR(m6->tapDrill, 5.0f, 1e-6);
+    CHECK_NEAR(m6->clearance[1], 6.6f, 1e-6);
+    CHECK(findHoleSize("M6x1") == m6);
+    CHECK(findHoleSize("M6x0.75") == nullptr); // fine threads aren't in the table
+    const HoleSize* q = findHoleSize("1/4-20");
+    REQUIRE(q != nullptr);
+    CHECK(q->inch);
+    CHECK_NEAR(q->pitch, 1.27f, 1e-5);
+    CHECK(findHoleSize("10-24") == findHoleSize("#10-24"));
+    CHECK(findHoleSize("M7") == nullptr);
+
+    // The shape: a counterbore's step, a countersink's cone, a drill point.
+    std::vector<std::pair<float, float>> prof;
+    HoleSpec h;
+    h.diameter = 6.6f, h.cboreDia = 11, h.cboreDepth = 6.4f;
+    REQUIRE(holeProfile(h, 100, 1, prof));
+    CHECK(prof.size() == 6);
+    CHECK_NEAR(prof[2].second, -6.4f, 1e-6);
+    CHECK_NEAR(prof[3].first, 5.5f, 1e-6);
+    h.csinkDia = 13;
+    CHECK(!holeProfile(h, 100, 1, prof)); // not both
+    h.cboreDia = 0, h.cboreDepth = 0, h.depth = 2;
+    CHECK(!holeProfile(h, 100, 1, prof)); // shallower than its countersink
+
+    Document d;
+    REQUIRE(run(d, "BOX 80 60 20 @0,0,0").ok);
+    const double v0 = volumeOf(last(d));
+    REQUIRE(run(d, "HOLE \"Block 1\" AT -25,-15,20 SIZE M6 CBORE THROUGH").ok);
+    const double cb = 3.14159265 * (3.3 * 3.3 * 20 + (5.5 * 5.5 - 3.3 * 3.3) * 6.4);
+    CHECK_NEAR(v0 - volumeOf(last(d)), cb, cb * 0.01);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT -25,15,20 25,15,20 SIZE M8 TAPPED DEPTH 15").ok);
+    REQUIRE(last(d).holes.size() == 3);
+    CHECK(last(d).holes[1].callout == "M8 tapped 12.5 deep (drill 6.8 x 15)");
+    CHECK_NEAR(last(d).holes[2].at.x, 25.0f, 1e-3);
+    CHECK_NEAR(last(d).holes[2].dir.z, -1.0f, 1e-4);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    const CommandOutput list = run(d, "HOLE LIST");
+    REQUIRE(list.ok);
+    CHECK(list.lines.size() == 3);
+    // Refused: unknown sizes, tapping without a size, a thread deeper than the hole.
+    CHECK(!run(d, "HOLE \"Block 1\" AT 0,0,20 SIZE M7").ok);
+    CHECK(!run(d, "HOLE \"Block 1\" AT 0,0,20 DIAMETER 5 TAPPED").ok);
+    CHECK(!run(d, "HOLE \"Block 1\" AT 0,0,20 SIZE M5 TAPPED DEPTH 8 THREAD 10").ok);
+    CHECK(last(d).holes.size() == 3);
+    // The callouts are saved with the body.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_holes_test.sicdm").string();
+    REQUIRE(run(d, "SAVE \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
+    REQUIRE(e.scene.bodies().size() == 1);
+    REQUIRE(e.scene.bodies()[0].holes.size() == 3);
+    CHECK(e.scene.bodies()[0].holes[0].callout == "dia 6.6 thru (M6 clearance), counterbore 11 x 6.4");
+    std::filesystem::remove(path);
 }

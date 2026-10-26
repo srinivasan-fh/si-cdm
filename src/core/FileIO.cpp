@@ -421,6 +421,15 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (!b.component.empty()) jb.set("component", b.component);
         if (!b.attachedTo.empty()) jb.set("attached_to", b.attachedTo);
         if (!b.assembly.empty()) jb.set("assembly", b.assembly);
+        if (!b.holes.empty()) {
+            Json hs = Json::array();
+            for (const HoleNote& h : b.holes) {
+                Json jh = Json::object();
+                jh.set("at", vec3Json(h.at)).set("dir", vec3Json(h.dir)).set("callout", h.callout);
+                hs.push(jh);
+            }
+            jb.set("holes", hs);
+        }
         if (b.physics.enabled) {
             const PhysicsProps& p = b.physics;
             Json ph = Json::object();
@@ -736,6 +745,8 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         b.component = jb["component"].asString();
         b.attachedTo = jb["attached_to"].asString();
         b.assembly = jb["assembly"].asString();
+        for (const Json& jh : jb["holes"].items())
+            b.holes.push_back({jsonVec3(jh["at"]), jsonVec3(jh["dir"], {0, 0, -1}), jh["callout"].asString()});
         b.offset = jsonVec3(jb["offset"]);
         b.color = jsonVec3(jb["color"], b.color);
         b.visible = jb["visible"].asBool(true);

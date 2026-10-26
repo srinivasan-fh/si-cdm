@@ -29,6 +29,7 @@
 #include "core/Wearable.hpp"
 #include "core/Units.hpp"
 #include "core/Features.hpp"
+#include "core/HoleWizard.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -2269,6 +2270,29 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         }
         if (curveFirst) return runSketchCommand(doc, "TRIMCURVE", a, pc.quoted);
     }
+    if (cmd == "HOLE" && !a.empty() && !quotedArg(0) && (iequal(a[0], "sizes") || iequal(a[0], "list"))) {
+        if (iequal(a[0], "sizes")) {
+            out.say("Hole sizes (mm): thread pitch, tap drill, clearance close / normal / loose, counterbore, countersink");
+            for (const HoleSize& z : holeSizes())
+                out.say(std::string("  ") + z.name + (z.inch ? "  (UNC)" : "") +
+                        fmt("  pitch %.4g", z.pitch) + fmt("  tap %.4g", z.tapDrill) +
+                        fmt("  clear %.4g", z.clearance[0]) + fmt(" / %.4g", z.clearance[1]) + fmt(" / %.4g", z.clearance[2]) +
+                        fmt("  cbore %.4g", z.cboreDia) + fmt(" x %.4g", z.cboreDepth) + fmt("  csink %.4g", z.csinkDia) + fmt(" x %g deg", z.csinkAngle));
+            return out;
+        }
+        const std::string name = joinArgs(std::vector<std::string>(a.begin() + 1, a.end()));
+        int count = 0;
+        for (const Body& b : doc.scene.bodies()) {
+            if (!name.empty() && !iequal(b.name, name)) continue;
+            for (const HoleNote& h : b.holes) {
+                out.say(b.name + "  at " + vecText(h.at + b.offset) + "  " + h.callout);
+                ++count;
+            }
+        }
+        if (!name.empty() && findBody(doc, name) < 0) return out.fail("No body named " + name);
+        if (count == 0) out.say("No hole wizard holes" + (name.empty() ? std::string() : " in " + name));
+        return out;
+    }
     if (cmd == "SCULPT" || cmd == "HOLE" || cmd == "POCKET" || cmd == "CHANNEL" || cmd == "TRIM" || cmd == "BOSS") {
         if (cmd == "SCULPT" && a.size() == 1 && iequal(a[0], "list")) {
             out.say("Brushes:");
@@ -2279,7 +2303,8 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         static const char* const kKeys[] = {"at", "dir", "radius", "strength", "invert", "symmetry", "sym", "detail", "falloff", "radial",
                                             "norefine", "move", "refine", "diameter", "d", "depth", "through", "box",
                                             "round", "ball", "width", "length", "angle", "path", "plane", "normal",
-                                            "smaller", "cylinder", "height"};
+                                            "smaller", "cylinder", "height", "size", "fit", "cbore", "counterbore", "csink",
+                                            "countersink", "tapped", "tap", "thread", "flat"};
         auto isKey = [&](const std::string& w) {
             const std::string k = lower(w);
             if (cmd == "SCULPT" && sculptBrushFromKey(k)) return true;
@@ -2303,6 +2328,19 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         std::optional<Vec3> dir, normal, move;
         std::vector<Vec3> points;
         std::string shape;
+        // Hole wizard: a standard size, its fit, counterbore / countersink, tapping.
+        std::string sizeName;
+        HoleFit fit = HoleFit::Normal;
+        bool cbore = false, csink = false, tapped = false, flat = false;
+        float cboreDia = 0, cboreDepth = 0, csinkDia = 0, csinkAngle = 0, threadDepth = 0;
+        auto optLength = [&](float& v) { // an optional length after a keyword
+            if (i + 1 >= a.size() || quotedArg(i + 1)) return false;
+            const auto l = parseLength(a[i + 1]);
+            if (!l || !(*l > 0) || a[i + 1].find(',') != std::string::npos) return false;
+            v = static_cast<float>(*l);
+            ++i;
+            return true;
+        };
         auto lengthArg = [&](float& v, const char* what) -> bool {
             if (i + 1 >= a.size()) return false;
             const auto l = parseLength(a[++i]);
@@ -2387,6 +2425,30 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                 shape = k;
             } else if (k == "smaller") {
                 smaller = true;
+            } else if (cmd == "HOLE" && k == "size") {
+                if (i + 1 >= a.size()) return out.fail("SIZE needs a standard size: M6, 1/4-20... (HOLE SIZES lists them)");
+                sizeName = a[++i];
+            } else if (cmd == "HOLE" && k == "fit") {
+                const std::string f = i + 1 < a.size() ? lower(a[++i]) : "";
+                if (f == "close") fit = HoleFit::Close;
+                else if (f == "normal" || f == "medium") fit = HoleFit::Normal;
+                else if (f == "loose" || f == "free") fit = HoleFit::Loose;
+                else return out.fail("FIT is CLOSE, NORMAL or LOOSE");
+            } else if (cmd == "HOLE" && (k == "cbore" || k == "counterbore")) {
+                cbore = true;
+                if (optLength(cboreDia) && !optLength(cboreDepth)) return out.fail("CBORE takes a diameter and a depth (or neither, with SIZE)");
+            } else if (cmd == "HOLE" && (k == "csink" || k == "countersink")) {
+                csink = true;
+                if (optLength(csinkDia) && i + 1 < a.size()) {
+                    if (const auto ang = parseNumber(a[i + 1]); ang && a[i + 1].find(',') == std::string::npos) csinkAngle = *ang, ++i;
+                }
+            } else if (cmd == "HOLE" && (k == "tapped" || k == "tap")) {
+                tapped = true;
+            } else if (cmd == "HOLE" && k == "thread") {
+                if (!lengthArg(threadDepth, "THREAD") || threadDepth <= 0) return out.fail("THREAD needs the thread's depth");
+                tapped = true;
+            } else if (cmd == "HOLE" && k == "flat") {
+                flat = true;
             } else {
                 return usage();
             }
@@ -2432,12 +2494,59 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
                        fmt(" stroke, radius %g", ss.radius);
             }
         } else if (cmd == "HOLE") {
-            if (points.size() != 1 || diameter <= 0) return doc.scene.undo(), usage();
-            Vec3 n;
-            const Vec3 p = onSurface(points[0], &n);
-            if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
-            ok = drillHole(body, p, n, diameter, through ? 0.0f : depth, &error);
-            done = fmt("hole %g mm", diameter) + (through || depth <= 0 ? " through" : fmt(", %g deep", depth));
+            const bool wizard = !sizeName.empty() || cbore || csink || tapped || flat;
+            if (points.empty() || (!wizard && (points.size() != 1 || diameter <= 0))) return doc.scene.undo(), usage();
+            if (!wizard) {
+                Vec3 n;
+                const Vec3 p = onSurface(points[0], &n);
+                if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
+                ok = drillHole(body, p, n, diameter, through ? 0.0f : depth, &error);
+                done = fmt("hole %g mm", diameter) + (through || depth <= 0 ? " through" : fmt(", %g deep", depth));
+            } else {
+                // The hole's shape from the standard size (or the sizes given).
+                HoleSpec h;
+                h.depth = through ? 0.0f : depth;
+                h.tipped = !flat;
+                const HoleSize* z = nullptr;
+                if (!sizeName.empty() && !(z = findHoleSize(sizeName)))
+                    return doc.scene.undo(), out.fail("No standard size " + sizeName + " (HOLE SIZES lists them)");
+                if (z) {
+                    h.size = z->name;
+                    h.diameter = tapped ? z->tapDrill : z->clearance[static_cast<int>(fit)];
+                    if (cbore) h.cboreDia = cboreDia > 0 ? cboreDia : z->cboreDia, h.cboreDepth = cboreDepth > 0 ? cboreDepth : z->cboreDepth;
+                    if (csink) h.csinkDia = csinkDia > 0 ? csinkDia : z->csinkDia, h.csinkAngle = csinkAngle > 0 ? csinkAngle : z->csinkAngle;
+                    if (tapped) {
+                        h.threadDia = z->nominal, h.threadPitch = z->pitch;
+                        // A blind tapped hole: the thread stops short of the drill's full depth.
+                        h.threadDepth = threadDepth > 0 ? threadDepth : (h.depth > 0 ? std::max(h.depth - 2.0f * z->pitch, h.depth * 0.5f) : 0.0f);
+                    }
+                } else {
+                    if (tapped) return doc.scene.undo(), out.fail("A tapped hole needs a SIZE (M6, 1/4-20...)");
+                    if (cbore && !(cboreDia > 0)) return doc.scene.undo(), out.fail("CBORE needs a diameter and depth, or a SIZE");
+                    if (csink && !(csinkDia > 0)) return doc.scene.undo(), out.fail("CSINK needs a diameter, or a SIZE");
+                    h.cboreDia = cboreDia, h.cboreDepth = cboreDepth, h.csinkDia = csinkDia, h.csinkAngle = csinkAngle > 0 ? csinkAngle : 90.0f;
+                }
+                if (diameter > 0) h.diameter = diameter; // a drill size given outright
+                if (!(h.diameter > 0)) return doc.scene.undo(), out.fail("The hole needs a SIZE or a DIAMETER");
+                if (h.threadDepth > 0 && h.depth > 0 && h.threadDepth > h.depth) return doc.scene.undo(), out.fail("The thread can't go deeper than the hole");
+                // Every point onto the surface first, then drill them one by one.
+                std::vector<std::pair<Vec3, Vec3>> at;
+                for (const Vec3& q : points) {
+                    Vec3 n;
+                    const Vec3 p = onSurface(q, &n);
+                    at.push_back({p, n});
+                }
+                if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
+                ok = true;
+                for (const auto& [p, n] : at) {
+                    if (!drillHole(body, p, n, h, &error)) {
+                        ok = false;
+                        break;
+                    }
+                    body.holes.push_back({p - body.offset, -normalize(n), holeCallout(h)});
+                }
+                done = (at.size() > 1 ? std::to_string(at.size()) + " holes " : std::string("hole ")) + holeCallout(h);
+            }
         } else if (cmd == "POCKET") {
             if (points.size() != 1 || width <= 0 || (shape != "ball" && depth <= 0)) return doc.scene.undo(), usage();
             Vec3 n;

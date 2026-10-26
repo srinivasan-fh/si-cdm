@@ -21,6 +21,13 @@ namespace sicdm {
 
 struct Brep;
 
+// A hole the hole wizard made: where, which way it goes in, and its callout ("M6 tapped
+// 12 deep (drill 5 x 15)"), relative to the body's offset.
+struct HoleNote {
+    Vec3 at{}, dir{0, 0, -1};
+    std::string callout;
+};
+
 struct Body {
     std::string name;
     MeshData mesh;
@@ -35,6 +42,7 @@ struct Body {
     std::string attachedTo; // moves rigidly with this body (armour on its part, a hinge pin on its parent)
     std::string assembly;   // the sub-assembly it sits in ("Gearbox/Input shaft"; "" = the top level)
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
+    std::vector<HoleNote> holes; // hole wizard callouts (tapped holes carry a cosmetic thread)
     // Exact geometry (STEP imports and the primitives), in the mesh's own frame: good
     // while the mesh is still the one made with it (a sculpt, boolean or remesh leaves it
     // behind, and exports fall back to the mesh's facets).

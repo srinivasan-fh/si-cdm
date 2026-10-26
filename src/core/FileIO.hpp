@@ -78,7 +78,8 @@ std::string activePlaneName(const ProjectState& st);
 //   9  adds robot rigs ("robots": morphology, base, tags) and the terrain ("terrain")
 //   10 adds datum planes ("datums", "custom_plane") and sketches on them: curves on a
 //      "custom" plane carry its "frame" (origin, u, v), and so do extrusions from them (in
-//      their params); a file with either has reader_version 10
+//      their params); a file with either has reader_version 10. Bodies keep their hole
+//      wizard callouts ("holes")
 constexpr int kProjectVersion = 10;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
