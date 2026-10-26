@@ -60,6 +60,7 @@ shot lathe-sample --command "NEW" --command "RUN docs/examples/lathe-demo.txt" -
 shot drawing-sheet --command "RUN docs/examples/cad-demo.txt" --command "SHEET NEW SIZE A3" --command "SHEET SHOW"
 shot physics --command "PHYSICS DEMO" --command "SIM PLAY"
 shot simulation --command "SIM"
+shot robots --command "RUN docs/examples/robot-arm-sim.txt" --command "SIM"
 shot sculpt-sample --command "RUN docs/examples/head-bust.txt"
 shot save-reopen --command "BOX 20 20 20" --command "SAVE \"$state/smoke.sicdm\"" --command "NEW" --command "RECENT 1" --command "BOX 5 5 5" --command "UNDO"
 

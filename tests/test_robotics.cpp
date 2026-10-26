@@ -1160,3 +1160,14 @@ TEST_CASE("Robotics sandbox: magnetic adhesion, timed wrenches and C++ forces") 
     for (int k = 0; k < 25; ++k) obs = env->step({0.0}, {up}).observations;
     CHECK(obs[hIndex] > 0.3);
 }
+
+TEST_CASE("Robotics: the robot arm sample runs headless") {
+    Document d;
+    const CommandOutput o = run(d, std::string("RUN ") + SICDM_SOURCE_DIR + "/docs/examples/robot-arm-sim.txt");
+    REQUIRE(o.ok);
+    REQUIRE(d.scene.rigs().robots.size() == 1);
+    CHECK(d.scene.rigs().robots[0].simulate);
+    const auto run1 = robotRun(d.scene, d.scene.rigs().robots[0], 7.0f);
+    REQUIRE(run1 != nullptr);
+    CHECK(!run1->diverged);
+}

@@ -215,6 +215,36 @@ In the app: *Motion Study → Physics environment*. The 3D view shows velocity a
 temperature halos, trails, field arrows, wavefronts and an energy-balance panel. Details:
 [docs/physics.md](docs/physics.md).
 
+## Robot simulation
+
+Robots are read straight from the model: motions are joints, the parts they move are links, and
+masses come from the meshes. On SI CDM's own engines (no third-party physics or planning code):
+
+- **Rig and export**: `RIG` shows the links, joints, limits and couplings; tags (`ROTOR`, `WHEEL`,
+  `END_EFFECTOR`, `FOOT`, `KNEE`) auto-rig plain parts. `EXPORT robot.urdf | .sdf | .xml` writes
+  URDF, SDF or MJCF with meshes.
+- **Engines** by morphology: articulated dynamics (arms, humanoids, quadrupeds), vehicles with
+  rotor thrust, wind and a flight controller (drones) or a drive controller (rovers), trajectory
+  optimisation (arms). `RIG SIMULATE ON` plays the robot on the timeline.
+- **Ground and sensors**: `TERRAIN` slopes, stairs, rough ground, blocks or DEM files; IMU, GPS,
+  force-torque, camera (RGB, depth, segmentation) and LiDAR with noise models (`RIG SENSOR`).
+- **Arms**: `ARM MOVE_TO x,y,z` runs inverse kinematics and plans a collision-free path, optionally
+  the least-effort one (`OPTIMIZE`), and keys it into the joints.
+- **Learning**: batches of robots headless and fast-forward (`RIG ENV`, the MCP tool `robot_env`),
+  trained from Python with `python/sicdm_env.py` (numpy, so PyTorch or JAX).
+- **Sandbox**: `RIG FORCE` adds wrenches, buoyancy, magnetic adhesion and scripted forces to any part.
+
+![Robots: an arm planned around a block](docs/robotics.png)
+
+```text
+ARM MOVE_TO 450,0,300 POINT 0,0,150 OPTIMIZE      RIG SENSOR ADD CAMERA cam ON "Head"      TERRAIN STAIRS
+RIG MISSION VELOCITY 1,0,0.5 AT 2                 RIG FORCE ADD BUOYANCY water ON "Hull" LEVEL 300
+RIG ENV COUNT 16 TASK STAND                       python3 python/examples/train_reach.py
+```
+
+In the app: *Motion Study → Robots*. Details: [docs/robotics.md](docs/robotics.md); sample:
+`RUN docs/examples/robot-arm-sim.txt`.
+
 ## Digital sculpting and cuts
 
 Two sections at the bottom of the tool rail turn any body into digital clay and cut it like a CAD solid.
@@ -692,7 +722,7 @@ SI CDM includes a [Model Context Protocol](https://modelcontextprotocol.io) serv
 and edit the 2D and 3D model and its motion. Tools: `get_scene`, `create_sketch`, `create_solid`, `extrude`, `modify`, `delete`,
 `create_motion`, `delete_motion`, `simulate` (play / pause / seek, or body poses at a time — headless too),
 `insert_part`, `list_parts` (library motors, gears and gear trains; `modify` takes a `scale`),
-`set_pose`, `play_gesture` (robot postures and gestures), `set_physics`, `physics_report` (physics environment),
+`set_pose`, `play_gesture` (robot postures and gestures), `set_physics`, `physics_report` (physics environment), `robot_env` (batched robot learning environments),
 `sculpt` (brushes, cuts, booleans), `armor` (shell, armour, joints, lattice, interference),
 `print` (printability check, repair, orient, slice to G-code, 3MF),
 `cam` (CNC milling: setup, tools, operations, simulation, G-code post),

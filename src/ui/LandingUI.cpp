@@ -14,6 +14,11 @@
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
+#include "core/Json.hpp"
+#include "core/Multibody.hpp"
+#include "core/Rig.hpp"
+#include "core/Scene.hpp"
+#include "core/Terrain.hpp"
 #include "core/Units.hpp"
 #include "ui/Theme.hpp"
 #include "ui/ToolIcons.hpp"
@@ -2965,6 +2970,155 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                                                  hasSel ? std::optional<std::size_t>(static_cast<std::size_t>(st.selectedBody)) : std::nullopt);
                 for (std::size_t i = 2; i < lines.size() && i < (hasSel ? lines.size() : 5); ++i)
                     ImGui::TextWrapped("%s", lines[i].c_str() + std::min<std::size_t>(lines[i].find_first_not_of(' '), lines[i].size()));
+            }
+            ImGui::PopID();
+        }
+    }
+
+    // Robots: the rig the engines read from the scene, its engine, tags, ground, arm moves,
+    // sensors, forces and training. Every control runs a RIG / TERRAIN / ARM command.
+    {
+        // Reading the robots costs a little: done again only when the scene changes.
+        static std::uint64_t seenRevision = ~0ull;
+        static std::size_t seenMotions = ~std::size_t(0), seenRigs = ~std::size_t(0);
+        static std::vector<std::string> robots;
+        static std::vector<std::string> summaries;
+        static std::string rigsJson;
+        const std::string rigsNow = rigStateToJson(scene.rigs()).dump();
+        if (seenRevision != scene.revision() || seenMotions != scene.motions().size() || rigsNow != rigsJson || seenRigs != scene.rigs().robots.size()) {
+            seenRevision = scene.revision(), seenMotions = scene.motions().size(), seenRigs = scene.rigs().robots.size(), rigsJson = rigsNow;
+            robots = rigCandidates(scene);
+            summaries.clear();
+            for (const std::string& r : robots) {
+                RigSettings s;
+                if (const RigSettings* f = scene.rigs().find(r)) s = *f;
+                else s.name = r;
+                RobotRig rig;
+                std::string why;
+                summaries.push_back(buildRig(scene, s, rig, &why) ? describeRig(rig).front() : why);
+            }
+        }
+        if (ImGui::CollapsingHeader("Robots", robots.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::PushID("robots");
+            auto run = [&](const std::string& line) { cmd.commands.push_back(line); };
+            static int which = 0;
+            if (robots.empty()) {
+                ImGui::TextWrapped("No robots yet: give parts joints (JOINT, motions) or tag them ROTOR / WHEEL, or insert one from the library (arm, humanoid).");
+            } else {
+                which = std::clamp(which, 0, static_cast<int>(robots.size()) - 1);
+                const std::string& name = robots[static_cast<std::size_t>(which)];
+                const std::string rig = name.empty() ? "RIG" : "RIG \"" + name + "\"";
+                const std::string arm = name.empty() ? "ARM" : "ARM \"" + name + "\"";
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                if (ImGui::BeginCombo("##robot", name.empty() ? "Jointed parts" : name.c_str())) {
+                    for (std::size_t i = 0; i < robots.size(); ++i)
+                        if (ImGui::Selectable(robots[i].empty() ? "Jointed parts" : robots[i].c_str(), static_cast<int>(i) == which)) which = static_cast<int>(i);
+                    ImGui::EndCombo();
+                }
+                {
+                    theme::ScopedFont small(theme::Font::Small);
+                    ImGui::TextWrapped("%s", summaries[static_cast<std::size_t>(which)].c_str());
+                }
+                RigSettings settings;
+                if (const RigSettings* f = scene.rigs().find(name)) settings = *f;
+                // Engine and simulation.
+                bool simulate = settings.simulate;
+                if (ImGui::Checkbox("Simulate", &simulate)) run(rig + (simulate ? " SIMULATE ON" : " SIMULATE OFF"));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play the robot with its engine: gravity, contacts, motors following its motions");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                const std::string engineNow = settings.engine.empty() ? "Engine: auto" : "Engine: " + settings.engine;
+                if (ImGui::BeginCombo("##engine", engineNow.c_str())) {
+                    if (ImGui::Selectable("auto (by morphology)")) run(rig + " ENGINE AUTO");
+                    for (const SimEngineInfo& e : simEngines()) {
+                        if (ImGui::Selectable(e.key)) run(rig + " ENGINE " + e.key);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %s", e.title, e.summary);
+                    }
+                    ImGui::EndCombo();
+                }
+                // Tags on the selected part.
+                if (hasSel) {
+                    const Body& b = bodies[static_cast<std::size_t>(st.selectedBody)];
+                    static int tag = 0;
+                    static const char* kTags[] = {"ROTOR", "WHEEL", "END_EFFECTOR", "FOOT", "KNEE", "HINGE", "BASE", "NONE"};
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("Tag part");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(130);
+                    ImGui::Combo("##tag", &tag, kTags, 8);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Apply##tag")) run(rig + " TAG \"" + b.name + "\" " + kTags[tag]);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mark %s: rotors and wheels spin, knees get limits, end effectors are what ARM moves", b.name.c_str());
+                }
+                // Ground.
+                {
+                    static const char* kGround[] = {"Floor", "Slope", "Stairs", "Rough", "Blocks"};
+                    static const char* kGroundCmd[] = {"TERRAIN OFF", "TERRAIN SLOPE", "TERRAIN STAIRS", "TERRAIN ROUGH", "TERRAIN BLOCKS"};
+                    int g = scene.terrain().kind == TerrainKind::Slope    ? 1
+                            : scene.terrain().kind == TerrainKind::Stairs ? 2
+                            : scene.terrain().kind == TerrainKind::Rough  ? 3
+                            : scene.terrain().kind == TerrainKind::Blocks ? 4
+                                                                          : 0;
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("Ground");
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                    if (scene.terrain().kind == TerrainKind::Dem) ImGui::TextUnformatted("DEM file (TERRAIN DEM)");
+                    else if (ImGui::Combo("##ground", &g, kGround, 5)) run(kGroundCmd[g]);
+                }
+                // Arm: move the tool to a point, collision-free.
+                theme::caption("Arm");
+                static float target[3] = {300, 200, 300};
+                static bool optimise = false;
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                ImGui::InputFloat3("##armtarget", target, "%.0f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where the tool (the END_EFFECTOR part) should go, mm");
+                char point[96];
+                std::snprintf(point, sizeof(point), "%g,%g,%g", static_cast<double>(target[0]), static_cast<double>(target[1]), static_cast<double>(target[2]));
+                if (ImGui::Button("Move tool")) run(arm + " MOVE_TO " + point + (optimise ? " OPTIMIZE" : ""));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inverse kinematics, a collision-free path, keyed into the joints' motions");
+                ImGui::SameLine();
+                if (ImGui::Button("Home")) run(arm + " HOME");
+                ImGui::SameLine();
+                if (ImGui::Button("Reach?")) run(arm + " IK " + point);
+                ImGui::SameLine();
+                ImGui::Checkbox("Least effort", &optimise);
+                // Sensors and forces on the selected part.
+                theme::caption("Sensors and forces");
+                for (const SensorSpec& s : settings.sensors) ImGui::BulletText("%s: %s on %s", s.name.c_str(), sensorKindKey(s.kind), s.body.c_str());
+                for (const ForceSpec& f : settings.forces) ImGui::BulletText("%s: %s on %s", f.name.c_str(), forceKindKey(f.kind), f.body.c_str());
+                if (hasSel) {
+                    const Body& b = bodies[static_cast<std::size_t>(st.selectedBody)];
+                    const std::string on = " ON \"" + b.name + "\"";
+                    const std::string n = std::to_string(settings.sensors.size() + settings.forces.size() + 1);
+                    static int sensor = 0;
+                    static const char* kSensors[] = {"IMU", "GPS", "FORCE", "CAMERA", "LIDAR"};
+                    ImGui::SetNextItemWidth(110);
+                    ImGui::Combo("##sensor", &sensor, kSensors, 5);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Add sensor")) run(rig + " SENSOR ADD " + kSensors[sensor] + " " + std::string(kSensors[sensor]) + n + on);
+                    if (ImGui::Button("Float in water")) run(rig + " FORCE ADD BUOYANCY water" + n + on + " LEVEL 300 DRAG 20");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Water up to 300 mm: buoyancy and drag on the part (RIG FORCE to change)");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Magnet")) run(rig + " FORCE ADD MAGNET magnet" + n + on + " STRENGTH 50 RANGE 20");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Magnetic adhesion to the ground: 50 N flush, gone at 20 mm");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Push")) run(rig + " FORCE ADD WRENCH push" + n + on + " FORCE 20,0,0 FROM 1 UNTIL 1.2");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("20 N along +X from 1 s to 1.2 s");
+                } else {
+                    ImGui::TextDisabled("Select a part to put a sensor or a force on it");
+                }
+                // Training and export.
+                theme::caption("Training and export");
+                if (ImGui::Button("Run 16 copies")) run(rig + " ENV COUNT 16 SECONDS 5");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Headless, fast-forward batch on random actions: how fast training will go.\nTrain from Python with python/sicdm_env.py (PyTorch, JAX).");
+                ImGui::SameLine();
+                if (ImGui::Button("State")) run(rig + " STATE AT " + std::to_string(st.simTime));
+                {
+                    theme::ScopedFont small(theme::Font::Small);
+                    ImGui::TextColored(theme::vec(theme::kTextDim), "EXPORT robot.urdf / .sdf / .xml (MJCF) writes it for other simulators");
+                }
             }
             ImGui::PopID();
         }

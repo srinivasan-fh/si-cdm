@@ -1,0 +1,22 @@
+# A three-joint arm on a table, picking its way around a block: inverse kinematics,
+# collision-free planning and a sensor. Run it with RUN docs/examples/robot-arm-sim.txt, then SIM
+# (or the Simulation tab) and press Play.
+NEW
+UNITS mm
+BOX 600 400 40 @0,0,0
+BOX 100 100 100 @0,0,40
+BOX 80 80 60 @0,0,140
+BOX 40 40 300 @0,0,200
+BOX 40 40 300 @0,0,500
+JOINT "Block 3" TO "Block 2" AT 0,0,140 AXIS Z RANGE -180 180
+JOINT "Block 4" TO "Block 3" AT 0,0,200 AXIS Y RANGE -120 120
+JOINT "Block 5" TO "Block 4" AT 0,0,500 AXIS Y RANGE -150 150
+RIG TAG "Block 5" END_EFFECTOR
+BOX 100 200 180 @300,0,620
+# The joints oscillate until keyed: start the program at 0 s with the arm upright.
+ARM MOVE_TO 0,0,800 POINT 0,0,150 AT 0
+ARM MOVE_TO 450,0,340 POINT 0,0,150
+ARM MOVE_TO 0,-400,440 POINT 0,0,150 OPTIMIZE
+ARM HOME
+RIG SENSOR ADD IMU wrist ON "Block 5" AT 0,0,780
+RIG SIMULATE ON

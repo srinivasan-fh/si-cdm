@@ -38,6 +38,11 @@ work without typing a command; the command bar is there if you prefer it.
 10. **Recovery.** With unsaved work open, end SI CDM from the task manager (or `kill`), start it
     again and restore the work.
 11. **Licence.** Install the test licence file you were given (*Help → Licence*); remove it.
+12. **Robots.** Insert the robot arm or a humanoid from the library, or run
+    `RUN docs/examples/robot-arm-sim.txt`. In *Motion Study → Robots*: simulate it, move the arm's
+    tool to a point (with and without *Least effort*), add a sensor and a force to a part, change the
+    ground, and export it to URDF and load it in your usual robot tools. To train from Python, see
+    [robotics.md](robotics.md#learning).
 
 > **G-code is not yet proven on real machines.** Never run a posted program on a machine
 > without your shop's usual checks: simulate it in the control, run it in the air above the
@@ -51,7 +56,11 @@ These are known; there is no need to report them.
 - **English only.** The interface and the guide have no translations yet.
 - **Undo** covers bodies, features, sculpting, sketches and the CAM and lathe jobs, but not
   mates and assembly changes, feature parameter edits (`PARAM`, `REGEN`), motions and poses, or
-  drawing sheets.
+  drawing sheets. `ARM` moves can be undone; robot settings (`RIG`, sensors, forces) and the terrain
+  cannot.
+- **Robot collisions** in arm planning use each part's box, so a curved part keeps a little more
+  clearance than it needs. The engines' contacts are with the ground and terrain only (robots don't
+  collide with other parts while simulated).
 - **Unsigned installers** unless the build was made with signing keys (see the warnings above).
 - **File names** with characters outside your system's code page (for example Cyrillic or CJK
   names on a Western Windows) have not been tested on Windows.
