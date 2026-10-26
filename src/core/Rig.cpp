@@ -103,6 +103,25 @@ std::optional<SensorKind> sensorKindFromKey(const std::string& key) noexcept {
     return std::nullopt;
 }
 
+const char* forceKindKey(ForceKind k) noexcept {
+    switch (k) {
+    case ForceKind::Wrench: return "wrench";
+    case ForceKind::Buoyancy: return "buoyancy";
+    case ForceKind::Magnet: return "magnet";
+    case ForceKind::Script: return "script";
+    }
+    return "wrench";
+}
+
+std::optional<ForceKind> forceKindFromKey(const std::string& key) noexcept {
+    const std::string k = lower(key);
+    if (k == "wrench" || k == "force" || k == "constant") return ForceKind::Wrench;
+    if (k == "buoyancy" || k == "float" || k == "fluid" || k == "water") return ForceKind::Buoyancy;
+    if (k == "magnet" || k == "magnetic" || k == "adhesion") return ForceKind::Magnet;
+    if (k == "script" || k == "expression") return ForceKind::Script;
+    return std::nullopt;
+}
+
 const SensorSpec* RigSettings::sensor(const std::string& n) const {
     for (const SensorSpec& s : sensors)
         if (lower(s.name) == lower(n)) return &s;
@@ -195,6 +214,22 @@ Json rigStateToJson(const RigState& s) {
             }
             j.set("sensors", list);
         }
+        if (!r.forces.empty()) {
+            Json list = Json::array();
+            auto v3 = [](const Vec3& v) { return Json(Json::Array{Json(v.x), Json(v.y), Json(v.z)}); };
+            for (const ForceSpec& f : r.forces) {
+                Json o = Json::object();
+                o.set("name", f.name), o.set("kind", forceKindKey(f.kind)), o.set("body", f.body), o.set("at", v3(f.at)), o.set("local", f.local);
+                o.set("force", v3(f.force)), o.set("torque", v3(f.torque)), o.set("from", f.from), o.set("until", f.until);
+                o.set("density", f.density), o.set("level", f.level), o.set("drag", f.drag);
+                o.set("strength", f.strength), o.set("range", f.range), o.set("onto", f.onto);
+                Json sc = Json::array();
+                for (const std::string& e : f.script) sc.push(e);
+                o.set("script", sc), o.set("function", f.function);
+                list.push(o);
+            }
+            j.set("forces", list);
+        }
         Json tags = Json::object();
         for (const auto& [b, t] : r.tags) tags.set(b, rigTagKey(t));
         j.set("tags", tags);
@@ -241,6 +276,21 @@ void rigStateFromJson(const Json& j, RigState& s) {
             sn.channels = o["channels"].asInt(sn.channels), sn.samples = o["samples"].asInt(sn.samples), sn.vfov = o["vfov"].asFloat(sn.vfov);
             sn.lat = o["lat"].asNumber(0), sn.lon = o["lon"].asNumber(0), sn.alt = o["alt"].asNumber(0);
             if (!sn.name.empty()) rs.sensors.push_back(sn);
+        }
+        const Json& fl = r["forces"];
+        for (std::size_t k = 0; k < fl.size(); ++k) {
+            const Json& o = fl[k];
+            ForceSpec f;
+            f.name = o["name"].asString(std::string());
+            f.kind = forceKindFromKey(o["kind"].asString(std::string("wrench"))).value_or(ForceKind::Wrench);
+            f.body = o["body"].asString(std::string());
+            f.at = v3(o["at"], f.at), f.local = o["local"].asBool(false), f.force = v3(o["force"], f.force), f.torque = v3(o["torque"], f.torque);
+            f.from = o["from"].asFloat(0), f.until = o["until"].asFloat(-1);
+            f.density = o["density"].asFloat(f.density), f.level = o["level"].asFloat(0), f.drag = o["drag"].asFloat(0);
+            f.strength = o["strength"].asFloat(f.strength), f.range = o["range"].asFloat(f.range), f.onto = o["onto"].asString(std::string());
+            for (std::size_t e = 0; e < 6; ++e) f.script[e] = o["script"][e].asString(std::string());
+            f.function = o["function"].asString(std::string());
+            if (!f.name.empty()) rs.forces.push_back(f);
         }
         if (const Json& tags = r["tags"]; tags.isObject())
             for (const auto& [b, v] : tags.members())

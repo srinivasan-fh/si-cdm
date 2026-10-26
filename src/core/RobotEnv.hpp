@@ -62,6 +62,15 @@ struct EnvStep {
     std::vector<Episode> episodes;    // episodes that ended (those copies have started again)
 };
 
+// A force and torque on a link for one step (from a script outside: Python through MCP).
+struct EnvWrench {
+    int env = -1;              // the copy; -1 all of them
+    int link = 0;
+    V3d force{}, torque{};     // N, N m: world axes, or the link's (local)
+    V3d point{};               // where on the link, at rest (m)
+    bool local = false;
+};
+
 class RobotEnv {
 public:
     // False (and why) when the robot can't be built or has no motors.
@@ -79,8 +88,11 @@ public:
 
     // Every copy back to the start (spread by the noise), with a new seed if given.
     std::vector<double> reset(std::uint64_t seed = 0);
-    // Actions for every copy (count x actionSize, row by row; missing ones are 0).
-    EnvStep step(const std::vector<double>& actions);
+    // Actions for every copy (count x actionSize, row by row; missing ones are 0), and any
+    // wrenches to apply until the next step.
+    EnvStep step(const std::vector<double>& actions, const std::vector<EnvWrench>& wrenches = {});
+    // Forces of the robot's settings that couldn't be added.
+    const std::vector<std::string>& notes() const;
 
 private:
     RobotEnv();

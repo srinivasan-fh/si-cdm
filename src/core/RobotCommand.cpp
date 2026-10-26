@@ -5,6 +5,7 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
+#include "core/ForceField.hpp"
 #include "core/Kinematics.hpp"
 #include "core/Motion.hpp"
 #include "core/Multibody.hpp"
@@ -33,7 +34,7 @@ std::string lowerOf(const std::string& s) {
     return o;
 }
 
-const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission", "sensor", "sensors", "env",
+const char* const kRigWords[] = {"list", "tag", "untag", "morphology", "type", "base", "density", "engine", "apply", "show", "export", "simulate", "sim", "state", "engines", "mission", "sensor", "sensors", "env", "force", "forces",
                                   "move_to", "moveto", "ik", "home", "tool", "point", "approach", "at", "speed", "optimize", "optimise"};
 
 bool isRigWord(const std::string& w) {
@@ -581,6 +582,117 @@ CommandOutput runArm(Document& doc, const std::vector<std::string>& a, const std
     return out;
 }
 
+// RIG [robot] FORCE ADD kind name ON part [options] | LIST | REMOVE name: `i` is at the word
+// after FORCE.
+CommandOutput runForce(Document& doc, RigSettings& settings, const std::vector<std::string>& a, const std::vector<bool>& quoted, std::size_t i) {
+    CommandOutput out;
+    auto word = [&]() -> std::string { return i < a.size() ? a[i++] : std::string(); };
+    auto isQuoted = [&](std::size_t k) { return k < quoted.size() && quoted[k]; };
+    const std::string sub = lowerOf(word());
+    auto findForce = [&](const std::string& n) -> ForceSpec* {
+        for (ForceSpec& f : settings.forces)
+            if (lowerOf(f.name) == lowerOf(n)) return &f;
+        return nullptr;
+    };
+    if (sub.empty() || sub == "list") {
+        if (settings.forces.empty()) out.say("No forces (RIG FORCE ADD WRENCH|BUOYANCY|MAGNET|SCRIPT name ON part ...)");
+        for (const ForceSpec& f : settings.forces) out.say(describeForce(f));
+        return out;
+    }
+    if (sub == "remove" || sub == "delete") {
+        const std::string name = word();
+        ForceSpec* f = findForce(name);
+        if (!f) return out.fail(name.empty() ? "Name the force" : "No force named " + name);
+        const std::string n = f->name;
+        settings.forces.erase(settings.forces.begin() + (f - settings.forces.data()));
+        doc.scene.rigs().get(settings.name) = settings;
+        doc.dirty = true;
+        out.say("Removed the force " + n);
+        return out;
+    }
+    if (sub != "add") return out.fail("FORCE ADD kind name ON part ... | FORCE LIST | FORCE REMOVE name");
+    ForceSpec f;
+    const auto kind = forceKindFromKey(word());
+    if (!kind) return out.fail("FORCE ADD WRENCH|BUOYANCY|MAGNET|SCRIPT name ON part [options]");
+    f.kind = *kind;
+    f.name = word();
+    if (f.name.empty() || lowerOf(f.name) == "on") return out.fail("FORCE ADD needs a name");
+    if (findForce(f.name)) return out.fail("There is a force named " + f.name + " already");
+    static const char* const keys[] = {"at", "force", "torque", "local", "from", "until", "density", "level", "drag", "strength", "range", "onto",
+                                       "fx", "fy", "fz", "tx", "ty", "tz", "function"};
+    auto isKey = [&](const std::string& w) {
+        for (const char* q : keys)
+            if (lowerOf(w) == q) return true;
+        return false;
+    };
+    // A part's name: quoted, or the words up to the next option.
+    auto partName = [&]() {
+        std::string body;
+        if (isQuoted(i)) return word();
+        while (i < a.size() && !isQuoted(i) && !isKey(a[i])) body += (body.empty() ? "" : " ") + word();
+        return body;
+    };
+    bool atGiven = false;
+    while (i < a.size()) {
+        const std::string k = lowerOf(word());
+        if (k == "on" || k == "onto") {
+            const std::string body = partName();
+            const int bi = bodyIndex(doc, body);
+            if (bi < 0) return out.fail("No part named " + body);
+            (k == "on" ? f.body : f.onto) = doc.scene.bodies()[static_cast<std::size_t>(bi)].name;
+        } else if (k == "at") {
+            const auto p = parsePointMm(word());
+            if (!p) return out.fail("AT needs x,y,z");
+            f.at = *p, atGiven = true;
+        } else if (k == "force" || k == "torque") {
+            const auto v = parseVec3(word());
+            if (!v) return out.fail(toUpper(k) + " needs x,y,z (" + (k == "force" ? "N" : "N m") + ")");
+            (k == "force" ? f.force : f.torque) = *v;
+        } else if (k == "local") {
+            f.local = true;
+        } else if (k == "fx" || k == "fy" || k == "fz" || k == "tx" || k == "ty" || k == "tz") {
+            const std::size_t e = (k[0] == 'f' ? 0 : 3) + static_cast<std::size_t>(k[1] - 'x');
+            const std::string expr = word();
+            ForceExpression x;
+            std::string err;
+            if (!x.compile(expr, &err)) return out.fail(toUpper(k) + ": " + err);
+            f.script[e] = expr;
+        } else if (k == "function") {
+            f.function = word();
+            if (f.function.empty()) return out.fail("FUNCTION needs the name a C++ force was registered under");
+        } else if (k == "level" || k == "range") {
+            const auto v = parseLength(word());
+            if (!v || (k == "range" && *v <= 0)) return out.fail(toUpper(k) + " needs a length");
+            (k == "level" ? f.level : f.range) = static_cast<float>(*v);
+        } else {
+            const auto v = parseNumber(word());
+            if (!v) return out.fail(isKey(k) ? toUpper(k) + " needs a number" : "Unknown force option " + k);
+            if (k == "from" && *v >= 0) f.from = static_cast<float>(*v);
+            else if (k == "until" && *v >= 0) f.until = static_cast<float>(*v);
+            else if (k == "density" && *v > 0) f.density = static_cast<float>(*v);
+            else if (k == "drag" && *v >= 0) f.drag = static_cast<float>(*v);
+            else if (k == "strength" && *v >= 0) f.strength = static_cast<float>(*v);
+            else return out.fail("Bad or unknown force option " + k);
+        }
+    }
+    if (f.body.empty()) return out.fail("FORCE ADD needs ON part (the part it acts on)");
+    if (f.kind == ForceKind::Script && f.function.empty() && std::all_of(f.script.begin(), f.script.end(), [](const std::string& e) { return e.empty(); }))
+        return out.fail("A SCRIPT force needs FX \"...\" (and FY, FZ, TX, TY, TZ) or FUNCTION name");
+    if (!atGiven) f.at = doc.scene.bodies()[static_cast<std::size_t>(bodyIndex(doc, f.body))].bounds().center();
+    RobotRig rig;
+    std::string err;
+    if (buildRig(doc.scene, settings, rig, &err)) {
+        const int bi = bodyIndex(doc, f.body);
+        if (rig.linkOf(static_cast<std::size_t>(bi)) < 0) return out.fail(f.body + " isn't a part of " + (rig.name.empty() ? std::string("the robot") : rig.name));
+    }
+    settings.forces.push_back(f);
+    doc.scene.rigs().get(settings.name) = settings;
+    doc.dirty = true;
+    out.say("Force " + describeForce(f));
+    if (!settings.simulate) out.say("  it acts when the robot is simulated: RIG SIMULATE ON (and in RIG ENV / robot_env)");
+    return out;
+}
+
 // RIG [robot] ENV [COUNT n] [TASK t] [TARGET x,y,z] [SECONDS s] [TORQUE] [SEED n]: a batch of
 // copies run headless as fast as the machine goes, on random actions; how fast, and how
 // the episodes went (a check before training from Python).
@@ -692,6 +804,7 @@ CommandOutput runRobotCommand(Document& doc, const std::string& cmd, const std::
         if (k == "show") continue;
         if (k == "sensor" || k == "sensors") return runSensor(doc, settings, a, quoted, i + 1);
         if (k == "env") return runEnv(doc, settings, a, i + 1);
+        if (k == "force" || k == "forces") return runForce(doc, settings, a, quoted, i + 1);
         if (k == "export") {
             for (++i; i < a.size(); ++i) exportPath += (exportPath.empty() ? "" : " ") + a[i];
             if (exportPath.empty()) return out.fail("EXPORT needs a file: robot.urdf, robot.sdf or robot.xml (MJCF)");

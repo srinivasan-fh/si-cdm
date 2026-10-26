@@ -3,6 +3,7 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
+#include "core/ForceField.hpp"
 #include "core/Kinematics.hpp"
 #include "core/Mcp.hpp"
 #include "core/RobotEnv.hpp"
@@ -1052,4 +1053,110 @@ TEST_CASE("Robotics learning: a humanoid stands on its motors and falls limp; th
     const CommandOutput bench = run(d, "RIG ENV COUNT 4 TASK STAND SECONDS 0.2");
     REQUIRE(bench.ok);
     CHECK(bench.lines[0].find("4 copies") != std::string::npos);
+}
+
+namespace {
+
+// A 200 x 200 x 100 mm block (4 kg) on the floor with a small knob jointed on top, free to
+// move (a floating base).
+void makeFloater(Document& d) {
+    REQUIRE(run(d, "BOX 200 200 100 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 20 20 20 @0,0,100").ok);
+    REQUIRE(run(d, "JOINT \"Block 2\" TO \"Block 1\" AT 0,0,100 AXIS Z RANGE -10 10").ok);
+    for (Motion& m : d.scene.motions()) m.keys = {{0.0f, 0.0f}};
+    REQUIRE(run(d, "RIG BASE FLOATING").ok);
+}
+
+double comHeightAt(const Document& d, float t) {
+    const auto r = robotRun(d.scene, d.scene.rigs().robots[0], t);
+    return r ? r->at(t).com[2] : -1.0;
+}
+
+} // namespace
+
+TEST_CASE("Robotics sandbox: force expressions") {
+    ForceExpression e;
+    REQUIRE(e.compile("2*sin(pi/2) + 3^2 - -1"));
+    const double none[12] = {};
+    CHECK_NEAR(e.eval(none), 12.0, 1e-12);
+    REQUIRE(e.compile("mass*g + clamp(z, 0, 1)*max(vx, 2) / 4 + step(t - 1) * atan2(1, 1)"));
+    double v[12] = {};
+    v[0] = 2, v[3] = 0.5, v[4] = 1, v[10] = 3, v[11] = 9.8; // t, z, vx, mass, g
+    CHECK_NEAR(e.eval(v), 3 * 9.8 + 0.5 * 2 / 4 + 3.14159265358979 / 4, 1e-9);
+    CHECK_NEAR((e.compile("2^3^2") ? e.eval(none) : 0), 512.0, 1e-9); // right-associative
+    std::string err;
+    CHECK(!e.compile("foo(1)", &err));
+    CHECK(err.find("foo") != std::string::npos);
+    CHECK(!e.compile("1 +", &err));
+    CHECK(!e.compile("(1", &err));
+    CHECK(!e.compile("speed * 2", &err));
+    CHECK(!e.compile("min(1)", &err));
+    CHECK(e.compile("1/0") && e.eval(none) == 0.0); // no infinities into the engine
+}
+
+TEST_CASE("Robotics sandbox: a block floats at its waterline and a script holds it up") {
+    Document d;
+    makeFloater(d);
+    // In a fluid twice its density it floats half under: its centre at the surface.
+    REQUIRE(run(d, "RIG FORCE ADD BUOYANCY water ON \"Block 1\" DENSITY 2000 LEVEL 300 DRAG 60").ok);
+    CHECK_NEAR(comHeightAt(d, 8.0f), 0.300, 0.004);
+    REQUIRE(run(d, "RIG FORCE REMOVE water").ok);
+    // Lighter than the block, it stays on the floor.
+    REQUIRE(run(d, "RIG FORCE ADD BUOYANCY oil ON \"Block 1\" DENSITY 800 LEVEL 300").ok);
+    CHECK_NEAR(comHeightAt(d, 2.0f), 0.050, 0.004);
+    REQUIRE(run(d, "RIG FORCE REMOVE oil").ok);
+    // A scripted lift: a PD hold at 0.5 m on top of its weight.
+    REQUIRE(run(d, "RIG FORCE ADD SCRIPT lift ON \"Block 1\" FZ \"(mass + 0.008)*g + (0.5 - z)*400 - vz*60\"").ok);
+    CHECK_NEAR(comHeightAt(d, 5.0f), 0.5, 0.01);
+    CHECK(!run(d, "RIG FORCE ADD SCRIPT bad ON \"Block 1\" FZ \"2*\"").ok);
+    CHECK(!run(d, "RIG FORCE ADD WRENCH w ON \"Nothing\" FORCE 0,0,1").ok);
+    // Saved with the project.
+    const std::string path = (fs::temp_directory_path() / "sicdm_forces.sicdm").string();
+    REQUIRE(run(d, "SAVE \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
+    REQUIRE(!e.scene.rigs().robots.empty());
+    REQUIRE(e.scene.rigs().robots[0].forces.size() == 1);
+    CHECK(e.scene.rigs().robots[0].forces[0].script[2] == "(mass + 0.008)*g + (0.5 - z)*400 - vz*60");
+    fs::remove(path);
+}
+
+TEST_CASE("Robotics sandbox: magnetic adhesion, timed wrenches and C++ forces") {
+    Document d;
+    makeFloater(d);
+    // 60 N up lifts the 4 kg block off the floor...
+    REQUIRE(run(d, "RIG FORCE ADD WRENCH pull ON \"Block 1\" FORCE 0,0,60").ok);
+    CHECK(comHeightAt(d, 1.0f) > 0.5);
+    // ...unless a 50 N magnet holds it there.
+    REQUIRE(run(d, "RIG FORCE ADD MAGNET grip ON \"Block 1\" STRENGTH 50 RANGE 20").ok);
+    CHECK_NEAR(comHeightAt(d, 1.0f), 0.050, 0.003);
+    REQUIRE(run(d, "RIG FORCE REMOVE grip").ok);
+    REQUIRE(run(d, "RIG FORCE REMOVE pull").ok);
+    // A wrench for a time only: up for half a second, then it falls back.
+    REQUIRE(run(d, "RIG FORCE ADD WRENCH kick ON \"Block 1\" FORCE 0,0,80 UNTIL 0.5").ok);
+    CHECK(comHeightAt(d, 0.5f) > 0.2);
+    CHECK_NEAR(comHeightAt(d, 4.0f), 0.050, 0.003);
+    REQUIRE(run(d, "RIG FORCE REMOVE kick").ok);
+    // A force written in C++: its weight and a bit more, registered under a name.
+    registerForceScript("test lift", [](const ForceContext& c, V3d& f, V3d&) { f = {0, 0, (c.mass + 0.008) * 9.80665 + 2.0}; });
+    REQUIRE(run(d, "RIG FORCE ADD SCRIPT cpp ON \"Block 1\" FUNCTION \"test lift\"").ok);
+    CHECK(comHeightAt(d, 2.0f) > 0.5);
+    unregisterForceScript("test lift");
+    CHECK(run(d, "RIG FORCE LIST").lines.size() == 1);
+
+    // The learning environments get the forces too, and wrenches from the client per step.
+    REQUIRE(run(d, "RIG FORCE REMOVE cpp").ok);
+    EnvOptions o;
+    o.task = EnvTask::None;
+    std::string err;
+    auto env = RobotEnv::create(d.scene, d.scene.rigs().robots[0], o, &err);
+    REQUIRE(env != nullptr);
+    const std::size_t hIndex = 2 * env->actionSize();
+    EnvWrench up;
+    up.link = 0;
+    up.force = {0, 0, 80};
+    up.point = {0, 0, 0.05};
+    std::vector<double> obs;
+    for (int k = 0; k < 25; ++k) obs = env->step({0.0}, {up}).observations;
+    CHECK(obs[hIndex] > 0.3);
 }

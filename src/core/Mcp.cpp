@@ -717,6 +717,9 @@ Json McpServer::toolDefinitions() {
         Json acts = prop("array", "step: actions in [-1, 1], count x action_size, flat (row by row) or one array per copy");
         acts.set("items", Json::object());
         p.set("actions", acts);
+        Json wr = prop("array", "step: forces from your script for this step: objects {part, force [N], torque [N m], at [mm, on the part at rest], local, env (default all)}");
+        wr.set("items", Json::object());
+        p.set("wrenches", wr);
         tools.push(tool("robot_env",
                         "Learning environments: a batch of copies of a robot simulated headless and as fast as the machine runs. "
                         "Observations, rewards and done flags come back as arrays for a policy outside the app (python/sicdm_env.py wraps this for numpy, PyTorch or JAX); "
@@ -1759,6 +1762,9 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             const std::vector<double> first = env->reset(0);
             r.set("id", keepEnv(std::move(env))).set("robot", rname).set("count", count).set("observation_size", obs).set("action_size", act);
             r.set("observation_names", on).set("action_names", an).set("control_dt", o.controlDt).set("observations", flat(first));
+            Json notes = Json::array();
+            for (const std::string& n : findEnv(r["id"].asInt())->notes()) notes.push(n);
+            r.set("notes", notes);
             return textResult(r.dump(), false);
         }
         RobotEnv* env = findEnv(a["id"].asInt(-1));
@@ -1781,7 +1787,31 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                 else
                     actions.push_back(x.asNumber());
             }
-            const EnvStep st = env->step(actions);
+            std::vector<EnvWrench> wrenches;
+            for (const Json& w : a["wrenches"].items()) {
+                const std::string part = w["part"].asString(std::string());
+                int link = -1;
+                const auto& bodies = m_doc.scene.bodies();
+                for (std::size_t b = 0; b < bodies.size() && link < 0; ++b)
+                    if (bodies[b].name == part) link = env->rig().linkOf(b);
+                if (link < 0) return textResult("wrenches: " + part + " isn't a part of the robot", true);
+                EnvWrench ew;
+                ew.env = w["env"].asInt(-1);
+                ew.link = link;
+                ew.local = w["local"].asBool(false);
+                for (std::size_t c = 0; c < 3; ++c) {
+                    ew.force[c] = w["force"][c].asNumber(0);
+                    ew.torque[c] = w["torque"][c].asNumber(0);
+                }
+                if (w["at"].isArray()) {
+                    for (std::size_t c = 0; c < 3; ++c) ew.point[c] = w["at"][c].asNumber(0) * 1e-3;
+                } else {
+                    const RigLink& L = env->rig().links[static_cast<std::size_t>(link)];
+                    for (std::size_t c = 0; c < 3; ++c) ew.point[c] = 0.5 * (L.boxMin[c] + L.boxMax[c]);
+                }
+                wrenches.push_back(ew);
+            }
+            const EnvStep st = env->step(actions, wrenches);
             Json r = Json::object(), eps = Json::array();
             for (const EnvStep::Episode& e : st.episodes) {
                 Json one = Json::object();

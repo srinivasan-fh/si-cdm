@@ -81,6 +81,36 @@ struct SensorSpec {
     double lat = 0, lon = 0, alt = 0; // GPS: where the scene's origin is on the Earth
 };
 
+// A force of the sandbox (RIG FORCE) on one of the robot's parts, every simulation step:
+//   WRENCH    a fixed force (N) and torque (N m) at a point, in the world's axes or (LOCAL)
+//             the part's, between FROM and UNTIL seconds
+//   BUOYANCY  a fluid below LEVEL (mm): the weight of the fluid each submerged bit of the part
+//             pushes aside, upward at that bit (so it rights itself or rolls), and DRAG
+//   MAGNET    magnetic adhesion: every bit of the part within RANGE (mm) of the ground (or of
+//             the part ONTO) is pulled to it, STRENGTH (N, all of it touching) x (1 - d/range)^2
+//   SCRIPT    six expressions (FX FY FZ TX TY TZ) of t, x, y, z, vx, vy, vz, wx, wy, wz, mass
+//             and g, or a C++ function registered under FUNCTION (ForceField.hpp)
+enum class ForceKind { Wrench, Buoyancy, Magnet, Script };
+const char* forceKindKey(ForceKind k) noexcept;
+std::optional<ForceKind> forceKindFromKey(const std::string& key) noexcept;
+struct ForceSpec {
+    std::string name;
+    ForceKind kind = ForceKind::Wrench;
+    std::string body;               // the part it acts on
+    Vec3 at{};                      // mm, at rest (WRENCH, SCRIPT)
+    bool local = false;             // force and torque in the part's axes
+    Vec3 force{}, torque{};         // N, N m
+    float from = 0, until = -1;     // s; until < 0: to the end
+    float density = 1000;           // kg/m^3 (BUOYANCY)
+    float level = 0;                // mm, the fluid's surface
+    float drag = 0;                 // N s/m on the whole part submerged
+    float strength = 50;            // N (MAGNET)
+    float range = 20;               // mm
+    std::string onto;               // "" the ground, else a part
+    std::array<std::string, 6> script; // fx fy fz tx ty tz ("" = 0)
+    std::string function;           // a registered C++ force instead
+};
+
 // A robot's settings, saved with the project (the tree itself is read from the scene).
 struct RigSettings {
     std::string name;                  // the robot: a component, an assembly path, or "" (every jointed part)
@@ -93,6 +123,7 @@ struct RigSettings {
     std::vector<MissionStep> mission;  // drones and rovers: what the flight / drive controller is told, in time order
     std::vector<SensorSpec> sensors;
     const SensorSpec* sensor(const std::string& name) const;
+    std::vector<ForceSpec> forces;
 
     RigTag tagOf(const std::string& body) const;
     void setTag(const std::string& body, RigTag tag); // None removes it

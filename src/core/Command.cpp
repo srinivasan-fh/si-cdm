@@ -88,9 +88,12 @@ constexpr CommandSpec kCommands[] = {
     {"RIG", "ROBOTRIG", "RIG [robot] [LIST] [TAG part ROTOR|WHEEL|END_EFFECTOR|FOOT|KNEE|HINGE|BASE|NONE] [MORPHOLOGY m] [BASE FIXED|FLOATING|AUTO] [DENSITY kg/m3] [ENGINE AUTO|ARTICULATED|VEHICLE|OPTIMIZE|PARTICLE] [MISSION CLEAR|HOVER|VELOCITY vx,vy,vz|GOTO x,y,z|DRIVE speed [YAW|TURN deg/s] [AT t]] [SIMULATE ON|OFF] [STATE [AT t]] [EXPORT robot.urdf|.sdf|.xml] | RIG ENGINES | "
      "RIG [robot] SENSOR ADD IMU|GPS|FORCE|CAMERA|LIDAR name ON part [AT x,y,z] [LOOK x,y,z] [RATE hz] [NOISE k] [SIZE w h] [FOV deg] [RANGE m] ... | "
      "SENSOR READ name [AT t] | CAPTURE name file [AT t] | LOG name file.csv [FROM t0] [TO t1] | LIST | REMOVE name | "
-     "RIG [robot] ENV [COUNT n] [TASK STAND|WALK|REACH|HOVER|NONE] [TARGET x,y,z] [SECONDS s] [TORQUE] [SEED n]",
+     "RIG [robot] ENV [COUNT n] [TASK STAND|WALK|REACH|HOVER|NONE] [TARGET x,y,z] [SECONDS s] [TORQUE] [SEED n] | "
+     "RIG [robot] FORCE ADD WRENCH|BUOYANCY|MAGNET|SCRIPT name ON part [AT x,y,z] [FORCE fx,fy,fz] [TORQUE tx,ty,tz] [LOCAL] [FROM t] [UNTIL t] "
+     "[DENSITY kg/m3] [LEVEL z] [DRAG c] [STRENGTH N] [RANGE d] [ONTO part] [FX \"expr\" ... TZ \"expr\"] [FUNCTION name] | FORCE LIST | FORCE REMOVE name",
      "A robot read from the parts and their motions: links with mass and inertia, joints, limits and couplings. Tags make wheels and rotors spin, limit knees, mark end effectors and feet. "
-     "ENV runs a batch of copies headless, fast-forward, for training (python/sicdm_env.py over sicdm-mcp)"},
+     "ENV runs a batch of copies headless, fast-forward, for training (python/sicdm_env.py over sicdm-mcp). "
+     "FORCE adds forces of any kind to a part: wrenches, buoyancy, magnetic adhesion, scripted expressions"},
     {"ARM", "", "ARM [robot] MOVE_TO x,y,z | IK x,y,z | HOME [TOOL part] [POINT dx,dy,dz] [APPROACH dx,dy,dz] [AT t] [SPEED 0-1] [OPTIMIZE]",
      "Moves a robot arm's tool to a point: inverse kinematics within the joint limits, a collision-free path (the arm, the parts around it and the ground), "
      "timed for the joints' speeds and keyed into their motions. OPTIMIZE (or RIG ENGINE OPTIMIZE) reshapes it for the least effort"},

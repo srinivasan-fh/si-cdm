@@ -136,10 +136,18 @@ class VecEnv:
         r = self.client.call("robot_env", op="reset", id=self.id, seed=int(seed or 0))
         return self._obs(r["observations"])
 
-    def step(self, actions):
-        """Actions (num_envs, action_size) in [-1, 1] -> obs, reward, terminated, truncated, info."""
+    def step(self, actions, wrenches=None):
+        """Actions (num_envs, action_size) in [-1, 1] -> obs, reward, terminated, truncated, info.
+
+        wrenches: forces your script applies until the next step, a list of dicts
+        {"part": name, "force": (fx, fy, fz) N, "torque": (tx, ty, tz) N m,
+         "at": (x, y, z) mm on the part at rest, "local": False, "env": copy or -1 for all}.
+        """
         a = np.asarray(actions, dtype=np.float64).reshape(self.num_envs, self.action_size)
-        r = self.client.call("robot_env", op="step", id=self.id, actions=a.ravel().tolist())
+        args = dict(op="step", id=self.id, actions=a.ravel().tolist())
+        if wrenches:
+            args["wrenches"] = [{k: (list(map(float, v)) if isinstance(v, (tuple, list, np.ndarray)) else v) for k, v in w.items()} for w in wrenches]
+        r = self.client.call("robot_env", **args)
         obs = self._obs(r["observations"])
         reward = np.asarray(r["rewards"], dtype=np.float32)
         terminated = np.asarray(r["terminated"], dtype=bool)

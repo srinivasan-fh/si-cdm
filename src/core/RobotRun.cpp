@@ -4,6 +4,7 @@
 #include "core/Json.hpp"
 #include "core/Motion.hpp"
 #include "core/Multibody.hpp"
+#include "core/ForceField.hpp"
 #include "core/Scene.hpp"
 #include "core/Vehicle.hpp"
 
@@ -231,6 +232,8 @@ std::shared_ptr<const RobotRun> robotRun(const Scene& scene, const RigSettings& 
             }
         }
     }
+    // The sandbox's forces: wrenches, buoyancy, magnets, scripts.
+    for (const std::string& n : addRobotForces(mb, scene, settings)) run->note += (run->note.empty() ? "" : "; ") + n;
     const double dt = opt.dt;
     const long steps = std::lround(duration / dt);
     const long perFrame = std::max(1L, std::lround(run->frameStep / dt));

@@ -2,6 +2,7 @@
 
 #include "core/RobotEnv.hpp"
 
+#include "core/ForceField.hpp"
 #include "core/Physics.hpp"
 #include "core/Rig.hpp"
 #include "core/Scene.hpp"
@@ -81,6 +82,7 @@ struct RobotEnv::Impl {
     std::vector<std::uint64_t> episodes;     // episodes each copy has started
     std::uint64_t seed = 1;
     double simulated = 0;
+    std::vector<std::string> notes;
 
     void startEpisode(std::size_t i);
     void observe(std::size_t i, double* out) const;
@@ -231,6 +233,8 @@ std::unique_ptr<RobotEnv> RobotEnv::create(const Scene& scene, const RigSettings
         const Vec3 w = scene.physics().wind;
         addVehicleForces(mb, vehicleModel(I.rig, {w.x, w.y, w.z}));
     }
+    // The sandbox's forces act on every copy.
+    for (const std::string& n : addRobotForces(mb, scene, robot)) I.notes.push_back(n);
     // Motors hold the start until the first action.
     for (std::size_t j = 0; j < I.rig.joints.size(); ++j) {
         JointControl c;
@@ -286,7 +290,9 @@ std::vector<double> RobotEnv::reset(std::uint64_t seed) {
     return obs;
 }
 
-EnvStep RobotEnv::step(const std::vector<double>& actions) {
+const std::vector<std::string>& RobotEnv::notes() const { return m->notes; }
+
+EnvStep RobotEnv::step(const std::vector<double>& actions, const std::vector<EnvWrench>& wrenches) {
     Impl& I = *m;
     const std::size_t n = I.envs.size(), na = I.motors.size(), no = I.obsSize();
     EnvStep out;
@@ -319,7 +325,25 @@ EnvStep RobotEnv::step(const std::vector<double>& actions) {
                 }
                 mb.setControl(j, c);
             }
-            for (long s = 0; s < substeps && !mb.diverged(); ++s) mb.step();
+            // Wrenches sent with this step act until the next action.
+            std::vector<const EnvWrench*> mine;
+            for (const EnvWrench& w : wrenches)
+                if ((w.env < 0 || w.env == static_cast<int>(i)) && w.link >= 0 && static_cast<std::size_t>(w.link) < I.rig.links.size()) mine.push_back(&w);
+            for (long s = 0; s < substeps && !mb.diverged(); ++s) {
+                for (const EnvWrench* wp : mine) {
+                    const EnvWrench& w = *wp;
+                    const LinkPose p = mb.linkPose(w.link);
+                    V3d F = w.force, T = w.torque;
+                    if (w.local) {
+                        F = {p.R[0] * w.force[0] + p.R[1] * w.force[1] + p.R[2] * w.force[2], p.R[3] * w.force[0] + p.R[4] * w.force[1] + p.R[5] * w.force[2],
+                             p.R[6] * w.force[0] + p.R[7] * w.force[1] + p.R[8] * w.force[2]};
+                        T = {p.R[0] * w.torque[0] + p.R[1] * w.torque[1] + p.R[2] * w.torque[2], p.R[3] * w.torque[0] + p.R[4] * w.torque[1] + p.R[5] * w.torque[2],
+                             p.R[6] * w.torque[0] + p.R[7] * w.torque[1] + p.R[8] * w.torque[2]};
+                    }
+                    mb.applyWrench(w.link, F, T, p.apply(w.point));
+                }
+                mb.step();
+            }
             out.rewards[i] = mb.diverged() ? -1.0 : I.reward(i, a.data());
             I.ret[i] += out.rewards[i];
             ++I.length[i];

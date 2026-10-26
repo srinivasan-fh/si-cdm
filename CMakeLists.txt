@@ -86,6 +86,7 @@ add_library(sicdm_core STATIC
     src/core/Sensors.cpp
     src/core/Kinematics.cpp
     src/core/RobotEnv.cpp
+    src/core/ForceField.cpp
     src/core/ImageWrite.cpp
     src/core/RobotCommand.cpp
     src/core/UpdateCheck.cpp
