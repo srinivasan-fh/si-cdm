@@ -14,6 +14,7 @@
 #include "core/Drawing.hpp"
 #include "core/Scene.hpp"
 #include "core/Units.hpp"
+#include "core/Variables.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -44,6 +45,9 @@ struct ProjectState {
     PlaneFrame customFrame = planeFrame(SketchPlane::Top); // the plane when `plane` is Custom
     std::string customPlane;          // its datum's name ("" for an unnamed one)
     std::vector<DatumPlane> datums;   // named datum planes (PLANE OFFSET, THROUGH...)
+    std::vector<Variable> variables;  // global variables and equations (VAR), used as {expr}
+    std::vector<Configuration> configs; // named sets of their values (CONFIG)
+    std::string config;               // the configuration last applied
     UnitSettings units{};     // display / input units (geometry is always stored in mm)
     float simDuration = 0.0f; // Simulation timeline length (s); 0 = suggested from the motions
     CamJob cam;               // CAM: setup, tools and operations (toolpaths are remade)
@@ -79,7 +83,8 @@ std::string activePlaneName(const ProjectState& st);
 //   10 adds datum planes ("datums", "custom_plane") and sketches on them: curves on a
 //      "custom" plane carry its "frame" (origin, u, v), and so do extrusions from them (in
 //      their params); a file with either has reader_version 10. Bodies keep their hole
-//      wizard callouts ("holes")
+//      wizard callouts ("holes"), and the project its variables ("variables") and
+//      configurations ("configs", "config")
 constexpr int kProjectVersion = 10;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then

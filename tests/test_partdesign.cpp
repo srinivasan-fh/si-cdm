@@ -5,6 +5,7 @@
 #include "core/Extrude.hpp"
 #include "core/FileIO.hpp"
 #include "core/HoleWizard.hpp"
+#include "core/Variables.hpp"
 #include "core/Json.hpp"
 #include "core/Brep.hpp"
 #include "core/Scene.hpp"
@@ -502,4 +503,72 @@ TEST_CASE("Helical sweeps (springs) and modelled threads, outside and in tapped 
     CHECK(last(d).holes[0].threadModelled);
     CHECK(!run(d, "THREAD " + blk + " HOLES").ok);
     CHECK(!run(d, "THREAD " + blk + " HOLE 2").ok);
+}
+
+TEST_CASE("Variables and equations drive the model; configurations and design tables switch it") {
+    // The expressions.
+    std::vector<Variable> vars = {{"w", "60"}, {"d", "w / 2"}, {"h", "max(10, d / 3)"}, {"a", "2 ^ 3 ^ 2"}};
+    CHECK_NEAR(*evalExpression("d + 1", vars), 31.0, 1e-12);
+    CHECK_NEAR(*evalExpression("h", vars), 10.0, 1e-12);
+    CHECK_NEAR(*evalExpression("a", vars), 512.0, 1e-9); // right to left
+    CHECK_NEAR(*evalExpression("sin(30) + -(-2) * pi", vars), 0.5 + 2 * 3.14159265358979, 1e-9);
+    CHECK(!evalExpression("1 / (w - 60)", vars));
+    CHECK(!evalExpression("w +", vars));
+    CHECK(!evalExpression("nosuch * 2", vars));
+    vars.push_back({"p", "q"}), vars.push_back({"q", "p + 1"});
+    CHECK(!evalExpression("p", vars)); // a circle
+    CHECK(!validVariableName("sin"));
+    CHECK(!validVariableName("2x"));
+    std::string ex;
+    REQUIRE(expandVariables("BOX {w} {d} 10 NAME \"{not this}\"", vars, ex));
+    CHECK(ex == "BOX 60 30 10 NAME \"{not this}\"");
+    CHECK(!expandVariables("BOX {w 1 1", vars, ex));
+
+    Document doc;
+    REQUIRE(run(doc, "VAR w = 60").ok);
+    REQUIRE(run(doc, "VAR d = w / 2").ok);
+    REQUIRE(run(doc, "VAR r = 4").ok);
+    REQUIRE(run(doc, "BOX {w} {d} 10 @0,0,0").ok);
+    REQUIRE(run(doc, "HOLE \"Block 1\" AT 0,0,10 DIAMETER {r*2} THROUGH").ok);
+    CHECK(doc.state.history[0].line == "BOX {w} {d} 10 @0,0,0"); // the history keeps the braces
+    CHECK_NEAR(volumeOf(last(doc)), 60 * 30 * 10 - 3.14159265 * 16 * 10, 5.0);
+    // Changing one rebuilds the model.
+    REQUIRE(run(doc, "VAR w = 100").ok);
+    REQUIRE(doc.scene.bodies().size() == 1);
+    CHECK_NEAR(volumeOf(last(doc)), 100 * 50 * 10 - 3.14159265 * 16 * 10, 5.0);
+    // A change that would break the model is refused, the model and variables kept.
+    CHECK(!run(doc, "VAR r = 80").ok); // a hole wider than the block
+    CHECK(findVariable(doc.state.variables, "r")->expr == "4");
+    CHECK_NEAR(volumeOf(last(doc)), 100 * 50 * 10 - 3.14159265 * 16 * 10, 5.0);
+    CHECK(!run(doc, "VAR w = d").ok); // a circle
+    CHECK(!run(doc, "VAR DELETE r").ok); // the history uses it
+
+    // Configurations and a design table.
+    REQUIRE(run(doc, "CONFIG SAVE base").ok);
+    const std::string csv = (std::filesystem::temp_directory_path() / "sicdm_design_table.csv").string();
+    {
+        std::ofstream f(csv);
+        f << "name,w,d,r\nsmall,40,20,3\nlarge,80,40,6\n";
+    }
+    REQUIRE(run(doc, "CONFIG TABLE \"" + csv + "\"").ok);
+    std::filesystem::remove(csv);
+    REQUIRE(doc.state.configs.size() == 3);
+    REQUIRE(run(doc, "CONFIG small").ok);
+    CHECK_NEAR(volumeOf(last(doc)), 40 * 20 * 10 - 3.14159265 * 9 * 10, 5.0);
+    CHECK(doc.state.config == "small");
+    REQUIRE(run(doc, "CONFIG base").ok);
+    CHECK_NEAR(volumeOf(last(doc)), 100 * 50 * 10 - 3.14159265 * 16 * 10, 5.0);
+    CHECK(!run(doc, "CONFIG nosuch").ok);
+
+    // Saved with the project.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_vars_test.sicdm").string();
+    REQUIRE(run(doc, "SAVE \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
+    std::filesystem::remove(path);
+    CHECK(e.state.variables.size() == 3);
+    CHECK(e.state.configs.size() == 3);
+    CHECK(e.state.config == "base");
+    REQUIRE(run(e, "CONFIG large").ok);
+    CHECK_NEAR(volumeOf(last(e)), 80 * 40 * 10 - 3.14159265 * 36 * 10, 8.0);
 }

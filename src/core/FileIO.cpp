@@ -395,6 +395,26 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         cp.set("name", state.customPlane).set("frame", frameToJson(state.customFrame));
         doc.set("custom_plane", cp);
     }
+    if (!state.variables.empty()) {
+        Json vs = Json::array();
+        for (const Variable& v : state.variables) {
+            Json jv = Json::object();
+            jv.set("name", v.name).set("expr", v.expr);
+            vs.push(jv);
+        }
+        doc.set("variables", vs);
+    }
+    if (!state.configs.empty()) {
+        Json cs = Json::array();
+        for (const Configuration& c : state.configs) {
+            Json jc = Json::object(), vals = Json::object();
+            for (const auto& [k, e] : c.values) vals.set(k, e);
+            jc.set("name", c.name).set("values", vals);
+            cs.push(jc);
+        }
+        doc.set("configs", cs);
+        if (!state.config.empty()) doc.set("config", state.config);
+    }
     if (!state.datums.empty()) {
         Json ds = Json::array();
         for (const DatumPlane& d : state.datums) {
@@ -648,6 +668,17 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         st.customPlane = cp["name"].asString();
         if (!frameFromJson(cp["frame"], st.customFrame)) st.plane = SketchPlane::Top, st.customPlane.clear();
     }
+    for (const Json& jv : (*doc)["variables"].items())
+        if (validVariableName(jv["name"].asString()) && !findVariable(st.variables, jv["name"].asString()))
+            st.variables.push_back({jv["name"].asString(), jv["expr"].asString()});
+    for (const Json& jc : (*doc)["configs"].items()) {
+        Configuration c;
+        c.name = jc["name"].asString();
+        if (c.name.empty()) continue;
+        for (const auto& [k, e] : jc["values"].members()) c.values.push_back({k, e.asString()});
+        st.configs.push_back(std::move(c));
+    }
+    st.config = (*doc)["config"].asString();
     for (const Json& jd : (*doc)["datums"].items()) {
         DatumPlane d;
         d.name = jd["name"].asString();

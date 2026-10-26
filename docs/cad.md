@@ -13,6 +13,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Moulding | `DRAFT`: side faces tilted to come out of a mould |
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
 | Analysis | `MASSPROPS` and `MEASURE` |
+| Design intent | `VAR`: global variables and equations; `CONFIG`: configurations and design tables |
 
 Every model command goes into a **feature history** that can be edited and regenerated.
 
@@ -578,6 +579,40 @@ MEASURE "body" "body"
 - **Two points:** the distance between them and its components.
 - **Two bodies:** the closest distance between them, and the two closest points. It checks each
   body's corners against the other's triangles, both ways.
+
+## Variables, equations and configurations
+
+```text
+VAR name = expression            a variable, or an equation of others
+VAR [LIST] | VAR DELETE name
+CONFIG SAVE name                 the variables' values, kept as a configuration
+CONFIG name                      back to one
+CONFIG TABLE file.csv            a design table: one configuration a row
+CONFIG [LIST] | CONFIG DELETE name
+```
+
+Any command takes `{expression}` wherever it takes a number: `BOX {w} {d} 10`, `RECT 0,0
+{w},{w/2}`, `HOLE AT 0,0,{h} DIAMETER {r*2} THROUGH`. The feature history keeps the
+braces, so changing a variable rebuilds the model from its history with the new values
+(refused, with everything kept as it was, when the rebuild fails).
+
+- **Expressions:** numbers, variables, `+ - * / ^` and parentheses, `sin cos tan` (degrees),
+  `asin acos atan`, `sqrt abs floor ceil round min max pow` and `pi`. Values are in the
+  document's units, as typed numbers are.
+- Variables may use each other (`VAR d = w / 2`), but not round in a circle. One the history
+  still uses can't be deleted.
+- **Design table:** a CSV file; its first row is a heading for the configurations' names,
+  then the variables' names; each further row is a configuration.
+- Variables and configurations are saved with the project.
+
+```text
+VAR w = 60
+VAR d = w / 2
+BOX {w} {d} 10
+CONFIG SAVE standard
+VAR w = 100                      the block grows to 100 x 50
+CONFIG standard                  and back
+```
 
 ## Feature history
 

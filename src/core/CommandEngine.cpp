@@ -30,6 +30,7 @@
 #include "core/Units.hpp"
 #include "core/Features.hpp"
 #include "core/HoleWizard.hpp"
+#include "core/Variables.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -652,8 +653,179 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
 
 namespace {
 
-CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
+// After the variables change: the model rebuilt from its history when the history uses them.
+// False (with why in `out`) when the rebuild fails; the model is then as it was.
+bool regenForVariables(Document& doc, CommandOutput& out) {
+    const bool uses = std::any_of(doc.state.history.begin(), doc.state.history.end(), [](const HistoryStep& h) { return h.line.find('{') != std::string::npos; });
+    if (!uses) return true;
+    if (!doc.state.historyComplete) {
+        out.say("The model was also changed outside commands: REGEN FORCE rebuilds it with the new values");
+        return true;
+    }
+    CommandOutput r;
+    if (!regenerateHistory(doc, doc.state.history, r)) {
+        for (const std::string& l : r.lines) out.say(l);
+        return false;
+    }
+    out.say("Rebuilt the model from its history (" + std::to_string(doc.state.history.size()) + " steps)");
+    return true;
+}
+
+// VAR | VAR name = expression | VAR DELETE name;  CONFIG | CONFIG SAVE / DELETE name |
+// CONFIG name | CONFIG TABLE file.csv
+CommandOutput runVariableCommand(Document& doc, const std::string& cmd, const std::vector<std::string>& a) {
     CommandOutput out;
+    ProjectState& st = doc.state;
+    auto value = [&](const std::string& e) {
+        std::string why;
+        const auto v = evalExpression(e, st.variables, &why);
+        return v ? fmt("%.10g", *v) : "(" + why + ")";
+    };
+    if (cmd == "VAR") {
+        if (a.empty() || (a.size() == 1 && iequal(a[0], "list"))) {
+            if (st.variables.empty()) out.say("No variables (VAR name = value makes one; commands use it as {name})");
+            for (const Variable& v : st.variables) out.say("  " + v.name + " = " + v.expr + (parseNumber(v.expr) ? "" : "   = " + value(v.expr)));
+            return out;
+        }
+        if (iequal(a[0], "delete")) {
+            if (a.size() != 2) return out.fail("Usage: VAR DELETE name");
+            const auto it = std::find_if(st.variables.begin(), st.variables.end(), [&](const Variable& v) { return iequal(v.name, a[1]); });
+            if (it == st.variables.end()) return out.fail("No variable named " + a[1]);
+            const std::vector<Variable> before = st.variables;
+            const std::string gone = it->name;
+            st.variables.erase(it);
+            for (const HistoryStep& h : st.history) { // still needed by the history: keep it
+                std::string ex, why;
+                if (h.line.find('{') != std::string::npos && !expandVariables(h.line, st.variables, ex, &why)) {
+                    st.variables = before;
+                    return out.fail("The history still uses " + gone + ": " + h.line);
+                }
+            }
+            for (const Variable& v : st.variables) { // and other variables
+                std::string why;
+                if (!evalExpression(v.expr, st.variables, &why)) {
+                    st.variables = before;
+                    return out.fail(v.name + " uses " + gone);
+                }
+            }
+            doc.dirty = true;
+            out.say("Deleted variable " + gone);
+            return out;
+        }
+        // VAR name = expression (the = is optional)
+        const std::string name = a[0];
+        std::string expr;
+        for (std::size_t k = 1; k < a.size(); ++k) {
+            if (k == 1 && a[k] == "=") continue;
+            expr += (expr.empty() ? "" : " ") + a[k];
+        }
+        if (!expr.empty() && expr[0] == '=') expr.erase(0, 1);
+        if (!validVariableName(name)) return out.fail(name + " isn't a variable name: a letter, then letters, digits or _");
+        if (expr.empty()) return out.fail("Usage: VAR name = expression");
+        std::vector<Variable> trial = st.variables;
+        auto it = std::find_if(trial.begin(), trial.end(), [&](const Variable& v) { return iequal(v.name, name); });
+        const bool existed = it != trial.end();
+        if (existed) it->expr = expr;
+        else trial.push_back({name, expr});
+        std::string why;
+        // Every variable must still work out (no circles, no unknown names).
+        for (const Variable& v : trial)
+            if (!evalExpression(v.expr, trial, &why)) return out.fail(why);
+        const std::vector<Variable> before = st.variables;
+        st.variables = std::move(trial);
+        doc.dirty = true;
+        out.say(name + " = " + expr + (parseNumber(expr) ? "" : "   = " + value(expr)));
+        if (existed && !regenForVariables(doc, out)) {
+            st.variables = before;
+            out.fail(name + " is as it was");
+        }
+        return out;
+    }
+    // CONFIG
+    auto find = [&](const std::string& n) {
+        return std::find_if(st.configs.begin(), st.configs.end(), [&](const Configuration& c) { return iequal(c.name, n); });
+    };
+    if (a.empty() || (a.size() == 1 && iequal(a[0], "list"))) {
+        if (st.configs.empty()) out.say("No configurations (CONFIG SAVE name keeps the variables' values as one)");
+        for (const Configuration& c : st.configs) {
+            std::string vals;
+            for (const auto& [k, e] : c.values) vals += (vals.empty() ? "" : ", ") + k + " = " + e;
+            out.say(std::string(iequal(c.name, st.config) ? "* " : "  ") + c.name + ": " + vals);
+        }
+        return out;
+    }
+    const std::string sub = lower(a[0]);
+    if (sub == "save" || sub == "delete") {
+        if (a.size() != 2) return out.fail("Usage: CONFIG " + toUpper(sub) + " name");
+        auto it = find(a[1]);
+        if (sub == "delete") {
+            if (it == st.configs.end()) return out.fail("No configuration named " + a[1]);
+            out.say("Deleted configuration " + it->name);
+            st.configs.erase(it);
+            doc.dirty = true;
+            return out;
+        }
+        if (st.variables.empty()) return out.fail("No variables to keep (VAR name = value)");
+        Configuration c;
+        c.name = a[1];
+        for (const Variable& v : st.variables) c.values.push_back({v.name, v.expr});
+        if (it != st.configs.end()) *it = c;
+        else st.configs.push_back(c);
+        st.config = c.name;
+        doc.dirty = true;
+        out.say("Configuration " + c.name + ": " + std::to_string(c.values.size()) + " values");
+        return out;
+    }
+    if (sub == "table") {
+        if (a.size() != 2) return out.fail("Usage: CONFIG TABLE file.csv  (first row: the configurations' column, then variable names)");
+        std::vector<Configuration> rows;
+        std::string why;
+        if (!readDesignTable(a[1], rows, &why)) return out.fail(why);
+        for (Configuration& r : rows) {
+            auto it = find(r.name);
+            if (it != st.configs.end()) *it = std::move(r);
+            else st.configs.push_back(std::move(r));
+        }
+        doc.dirty = true;
+        out.say("Design table: " + std::to_string(rows.size()) + " configurations (CONFIG name applies one)");
+        return out;
+    }
+    if (a.size() != 1) return out.fail("Usage: CONFIG [LIST] | CONFIG name | CONFIG SAVE name | CONFIG DELETE name | CONFIG TABLE file.csv");
+    auto it = find(a[0]);
+    if (it == st.configs.end()) return out.fail("No configuration named " + a[0] + " (CONFIG LIST)");
+    std::vector<Variable> trial = st.variables;
+    for (const auto& [k, e] : it->values) {
+        auto v = std::find_if(trial.begin(), trial.end(), [&](const Variable& x) { return iequal(x.name, k); });
+        if (v != trial.end()) v->expr = e;
+        else trial.push_back({k, e});
+    }
+    std::string why;
+    for (const Variable& v : trial)
+        if (!evalExpression(v.expr, trial, &why)) return out.fail("Configuration " + it->name + ": " + why);
+    const std::vector<Variable> before = st.variables;
+    const std::string beforeConfig = st.config;
+    st.variables = std::move(trial);
+    st.config = it->name;
+    doc.dirty = true;
+    out.say("Configuration " + it->name);
+    if (!regenForVariables(doc, out)) {
+        st.variables = before;
+        st.config = beforeConfig;
+        out.fail("The variables are as they were");
+    }
+    return out;
+}
+
+CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) {
+    CommandOutput out;
+    // {expressions} of the project's variables become their values (VAR).
+    std::string expanded;
+    std::string_view line = input;
+    if (input.find('{') != std::string_view::npos) {
+        std::string why;
+        if (!expandVariables(std::string(input), doc.state.variables, expanded, &why)) return out.fail(why);
+        line = expanded;
+    }
     const ParsedCommand pc = tokenizeCommand(line);
     if (pc.name.empty()) return out;
     const CommandSpec* spec = findCommand(pc.name);
@@ -2071,6 +2243,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
         cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT" || cmd == "THREAD")
         return runFeatureCommand(doc, cmd, a, pc.quoted);
     if (cmd == "HISTORY" || cmd == "REGEN") return runHistoryCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "VAR" || cmd == "CONFIG") return runVariableCommand(doc, cmd, a);
     if (cmd == "CONSTRAIN" || cmd == "DIM" || cmd == "CONSTRAINTS" || cmd == "CONSTRAINT") return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "PRINTCHECK" || cmd == "REPAIR" || cmd == "ORIENT" || cmd == "SLICE") {
         // PRINTCHECK [body] [OVERHANG deg] [WALL mm] [BUILD x,y,z]      REPAIR [body]      ORIENT [body] [OVERHANG deg]
