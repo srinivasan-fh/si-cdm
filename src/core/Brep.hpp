@@ -104,12 +104,14 @@ struct BSplineSurface {
     mutable signed char m_cu = -1, m_cv = -1; // cached closedness (-1: not known yet)
 };
 
-enum class BCurveKind { Line, Circle, Ellipse, BSpline, Polyline };
+enum class BCurveKind { Line, Circle, Ellipse, BSpline, Polyline, Parabola, Hyperbola };
 
 struct BCurve {
     BCurveKind kind = BCurveKind::Line;
-    Frame f;                 // line: o + t x; circle / ellipse: centre and plane (z: normal)
-    double r1 = 0, r2 = 0;   // circle radius; ellipse semi-axes along x and y
+    Frame f;                 // line: o + t x; circle / ellipse: centre and plane (z: normal);
+                             // parabola: vertex, opening along x; hyperbola: centre, real axis x
+    double r1 = 0, r2 = 0;   // circle radius; ellipse semi-axes along x and y; parabola focal
+                             // distance (r1); hyperbola semi-axis (r1) and imaginary semi-axis (r2)
     BSplineCurve bs;
     std::vector<DVec3> pts;  // polyline
     DVec3 eval(double t) const;

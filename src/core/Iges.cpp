@@ -321,8 +321,51 @@ public:
         case 104: {
             const double A = num(*e, 1), B = num(*e, 2), C = num(*e, 3), D = num(*e, 4), E = num(*e, 5), F = num(*e, 6), z = num(*e, 7);
             if (e->form != 1 && !(A * C > 0 && F * A < 0)) {
-                warn("Hyperbolic and parabolic arcs (IGES 104) aren't read");
-                return false;
+                // A parabola or hyperbola in standard position: turned in its plane so it opens
+                // along the frame's x (counter-clockwise from start to end), then placed.
+                const DVec3 s0{num(*e, 8), num(*e, 9), z}, s1{num(*e, 10), num(*e, 11), z};
+                const double scale = std::max({std::fabs(A), std::fabs(C), std::fabs(D), std::fabs(E), std::fabs(F), 1e-300});
+                const bool noB = std::fabs(B) <= 1e-9 * scale;
+                Piece p;
+                double ux = 1, uy = 0; // the curve's x axis, in the conic's plane
+                if (noB && std::fabs(A) <= 1e-12 * scale && std::fabs(E) <= 1e-12 * scale && std::fabs(F) <= 1e-12 * scale && C != 0 && D != 0) {
+                    // C y^2 + D x = 0: y^2 = 4 a x with a = -D / 4C (negative: it opens along -x).
+                    const double a = -D / (4 * C);
+                    p.c.kind = BCurveKind::Parabola;
+                    p.c.r1 = std::fabs(a);
+                    if (a < 0) ux = -1;
+                } else if (noB && std::fabs(C) <= 1e-12 * scale && std::fabs(D) <= 1e-12 * scale && std::fabs(F) <= 1e-12 * scale && A != 0 && E != 0) {
+                    // A x^2 + E y = 0: opening along y.
+                    const double a = -E / (4 * A);
+                    p.c.kind = BCurveKind::Parabola;
+                    p.c.r1 = std::fabs(a);
+                    ux = 0, uy = a < 0 ? -1 : 1;
+                } else if (noB && std::fabs(D) + std::fabs(E) <= 1e-9 * scale && A * C < 0 && F != 0) {
+                    // A x^2 + C y^2 + F = 0: the real axis along x (A, -F the same sign) or y.
+                    p.c.kind = BCurveKind::Hyperbola;
+                    const bool alongX = A * -F > 0;
+                    p.c.r1 = std::sqrt(alongX ? -F / A : -F / C);
+                    p.c.r2 = std::sqrt(alongX ? F / C : F / A);
+                    const double sx = alongX ? s0.x : s0.y; // the branch the arc is on
+                    if (alongX) ux = sx < 0 ? -1 : 1;
+                    else ux = 0, uy = sx < 0 ? -1 : 1;
+                } else {
+                    warn("Conic arcs (IGES 104) not in their standard position aren't read");
+                    return false;
+                }
+                const DVec3 X = dnormalize(T.dir({ux, uy, 0})), Z = dnormalize(T.dir({0, 0, 1}));
+                p.c.f.o = T.point({0, 0, z});
+                p.c.f.x = X;
+                p.c.f.z = Z;
+                p.c.f.y = dcross(Z, X);
+                p.c.r1 *= T.scale();
+                p.c.r2 *= T.scale();
+                p.a = T.point(s0);
+                p.b = T.point(s1);
+                p.t0 = p.c.param(p.a);
+                p.t1 = p.c.param(p.b);
+                out.push_back(p);
+                return true;
             }
             if (std::fabs(B) + std::fabs(D) + std::fabs(E) > 1e-9 * (std::fabs(A) + std::fabs(C))) {
                 warn("Ellipses not centred on their own axes (IGES 104) aren't read");
@@ -1064,7 +1107,36 @@ std::vector<StepPart> readIges(const std::string& text, StepReadReport* report, 
             int surface = -1;
             std::vector<std::vector<Piece>> loops; // the outer first
             bool outerGiven = false;
+            int group = -1; // the part (402 group) it belongs to; -1: none
         };
+        // Parts written as groups (402) of trimmed surfaces: each sewn on its own, so parts that
+        // touch don't merge; named by the group's name property (406 form 15) or label.
+        std::map<int, int> groupOf;        // 144 entity -> group number
+        std::vector<std::string> groupNames;
+        for (std::size_t i = 0; i < file.e.size(); ++i) {
+            const Entity& g = file.e[i];
+            if (g.type != 402 || (g.form != 1 && g.form != 7 && g.form != 14 && g.form != 15)) continue;
+            const int n = static_cast<int>(Reader::num(g, 1));
+            if (n <= 0 || static_cast<std::size_t>(n) + 1 >= g.p.size() + 1) continue;
+            const int id = static_cast<int>(groupNames.size());
+            bool any = false;
+            for (int k = 0; k < n; ++k) {
+                const int m = Reader::ptr(g, static_cast<std::size_t>(2 + k));
+                if (const Entity* me = rd.entity(m); me && me->type == 144 && !groupOf.count(m)) groupOf[m] = id, any = true;
+            }
+            if (!any) continue;
+            // After the members: back pointers (count, pointers), then properties (count, pointers).
+            std::string name = g.label.empty() ? std::string() : g.label + (g.subscript ? " " + std::to_string(g.subscript) : std::string());
+            std::size_t k = static_cast<std::size_t>(2 + n);
+            const std::size_t assoc = static_cast<std::size_t>(std::max(0.0, Reader::num(g, k)));
+            k += 1 + assoc;
+            const int props = static_cast<int>(Reader::num(g, k));
+            for (int q = 0; q < props; ++q) {
+                const Entity* pe = rd.entity(Reader::ptr(g, k + 1 + static_cast<std::size_t>(q)));
+                if (pe && pe->type == 406 && pe->form == 15 && pe->p.size() > 2 && pe->p[2].isString && !pe->p[2].s.empty()) name = pe->p[2].s;
+            }
+            groupNames.push_back(name);
+        }
         auto all = std::make_shared<Brep>();
         std::vector<FaceSpec> specs;
         std::set<int> trimmedSurfaces;
@@ -1082,6 +1154,7 @@ std::vector<StepPart> readIges(const std::string& text, StepReadReport* report, 
                 FaceSpec fs;
                 fs.surface = rd.surface(Reader::ptr(e, 1), T, *all);
                 if (fs.surface < 0) continue;
+                if (const auto g = groupOf.find(static_cast<int>(i)); g != groupOf.end()) fs.group = g->second;
                 const bool n1 = Reader::num(e, 2) != 0;
                 const int n2 = static_cast<int>(Reader::num(e, 3));
                 std::vector<int> bounds;
@@ -1114,13 +1187,23 @@ std::vector<StepPart> readIges(const std::string& text, StepReadReport* report, 
                 if (fs.surface >= 0 && e.type == 128) specs.push_back(std::move(fs));
             }
         }
-        if (!specs.empty()) {
+        // Sewn group by group (ungrouped faces together, as one set).
+        std::set<int> groupIds;
+        for (const FaceSpec& fs : specs) groupIds.insert(fs.group);
+        std::size_t bodies = 0;
+        const std::shared_ptr<Brep> source = all;
+        for (const int gid : groupIds) {
+            std::vector<FaceSpec> mine;
+            for (const FaceSpec& fs : specs)
+                if (fs.group == gid) mine.push_back(fs);
+            auto work = std::make_shared<Brep>(*source); // its surfaces and curves; the sewing adds the rest
+            const std::string groupName = gid >= 0 ? groupNames[static_cast<std::size_t>(gid)] : std::string();
             const double diag = lo.x <= hi.x ? dlength(hi - lo) : 1.0;
             double tol = file.resolution > 0 ? file.resolution : 1e-5 * diag;
             tol = std::clamp(tol, 1e-7 * diag, 1e-3 * diag);
-            Sewer sew(*all, tol);
+            Sewer sew(*work, tol);
             BShell sh;
-            for (const FaceSpec& fs : specs) {
+            for (const FaceSpec& fs : mine) {
                 BFace f;
                 f.surface = fs.surface;
                 for (std::size_t li = 0; li < fs.loops.size(); ++li) {
@@ -1132,44 +1215,48 @@ std::vector<StepPart> readIges(const std::string& text, StepReadReport* report, 
                     }
                     if (!l.edges.empty() && !cancelsOut(l)) f.loops.push_back(std::move(l));
                 }
-                wholeSurfaceFace(*all, f);
+                wholeSurfaceFace(*work, f);
                 sh.faces.push_back(std::move(f));
             }
-            all->shells.push_back(std::move(sh));
+            work->shells.push_back(std::move(sh));
             std::vector<std::vector<int>> groups;
             std::vector<bool> closed;
-            components(*all, groups, closed);
+            components(*work, groups, closed);
             // Each closed group a solid; the open ones together, a surface model.
             std::vector<std::vector<int>> openGroups;
             std::vector<bool> openFlags;
-            std::size_t bodies = 0;
+            std::size_t inGroup = 0;
+            auto partName = [&](const std::string& fallback) {
+                if (groupName.empty()) return fallback;
+                return ++inGroup == 1 ? groupName : groupName + " " + std::to_string(inGroup);
+            };
             for (std::size_t g = 0; g < groups.size(); ++g) {
                 if (!closed[g]) {
                     openGroups.push_back(groups[g]);
                     openFlags.push_back(false);
                     continue;
                 }
-                auto b = extract(*all, {groups[g]}, {true});
+                auto b = extract(*work, {groups[g]}, {true});
                 orientShells(*b);
                 orientLoops(*b);
                 Placement p;
                 p.s = file.unitToMm;
                 b->transform(p);
                 StepPart part;
-                part.name = "Body " + std::to_string(++bodies);
+                part.name = partName("Body " + std::to_string(++bodies));
                 b->name = part.name;
                 part.brep = std::move(b);
                 parts.push_back(std::move(part));
             }
             if (!openGroups.empty()) {
-                auto b = extract(*all, openGroups, openFlags);
+                auto b = extract(*work, openGroups, openFlags);
                 orientShells(*b);
                 orientLoops(*b);
                 Placement p;
                 p.s = file.unitToMm;
                 b->transform(p);
                 StepPart part;
-                part.name = "Surfaces";
+                part.name = partName("Surfaces");
                 b->name = part.name;
                 part.brep = std::move(b);
                 parts.push_back(std::move(part));
@@ -1381,6 +1468,21 @@ int writeEdge(IgesOut& w, const Brep& b, const OrientedEdge& oe, bool split = tr
         if (!full || !split) return arc(a0, full ? a0 : a1);
         const int h1 = arc(a0, a0 + kPiI), h2 = arc(a0 + kPiI, a0);
         return w.add(102, {"2", std::to_string(h1), std::to_string(h2)});
+    }
+    if (c.kind == BCurveKind::Parabola || c.kind == BCurveKind::Hyperbola) {
+        // A conic arc (104) in the curve's plane, run with increasing parameter (which is
+        // counter-clockwise about its own origin): turned over when the loop runs against it.
+        const double sg = up ? 1.0 : -1.0;
+        const int m = w.matrix(c.f.o, c.f.x, c.f.y * sg, c.f.z * sg);
+        auto local = [&](double t) { // the point in that frame
+            const DVec3 q = c.eval(t) - c.f.o;
+            return std::pair<double, double>{ddot(q, c.f.x), sg * ddot(q, c.f.y)};
+        };
+        const auto [x0, y0] = local(ta);
+        const auto [x1, y1] = local(tb);
+        if (c.kind == BCurveKind::Parabola) // y^2 = 4 a x
+            return w.add(104, {"0.", "0.", "1.", real(-4 * c.r1), "0.", "0.", "0.", real(x0), real(y0), real(x1), real(y1)}, 3, m);
+        return w.add(104, {real(1 / (c.r1 * c.r1)), "0.", real(-1 / (c.r2 * c.r2)), "0.", "0.", "-1.", "0.", real(x0), real(y0), real(x1), real(y1)}, 2, m); // x^2/a^2 - y^2/b^2 = 1
     }
     if (c.kind == BCurveKind::BSpline) {
         const BSplineCurve& bs = c.bs;
@@ -1666,6 +1768,7 @@ std::string writeIges(const std::vector<StepPart>& parts, const std::string& fil
     for (const StepPart& part : parts) {
         if (!part.brep) continue;
         const Brep& b = *part.brep;
+        std::vector<int> faces; // this part's trimmed surfaces, grouped below
         for (const BrepVertex& v : b.vertices) maxCoord = std::max({maxCoord, std::fabs(v.p.x), std::fabs(v.p.y), std::fabs(v.p.z)});
         for (const BShell& sh : b.shells)
             for (const BFace& f : sh.faces) {
@@ -1721,8 +1824,17 @@ std::string writeIges(const std::vector<StepPart>& parts, const std::string& fil
                                               outer >= 0 ? std::to_string(bounds[static_cast<std::size_t>(outer)]) : "0"};
                 for (std::size_t i = 0; i < bounds.size(); ++i)
                     if (static_cast<int>(i) != outer) p.push_back(std::to_string(bounds[i]));
-                w.add(144, p, 0, 0, false);
+                faces.push_back(w.add(144, p, 0, 0, false));
             }
+        // The part as a group (402 form 7) with its name (406 form 15), so readers keep parts
+        // apart (touching parts would otherwise be sewn into one) and know what they are.
+        if (!faces.empty()) {
+            const int name = w.add(406, {"1", hollerith(part.name.empty() ? std::string("Part") : part.name)}, 15);
+            std::vector<std::string> g = {std::to_string(faces.size())};
+            for (int f : faces) g.push_back(std::to_string(f));
+            g.insert(g.end(), {"0", "1", std::to_string(name)});
+            w.add(402, g, 7, 0, false);
+        }
     }
     return w.text(fileName, maxCoord);
 }

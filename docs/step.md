@@ -167,6 +167,21 @@ solids, 40 files in `tests/data/iges`:
 - **Round trips:** OpenCascade's IGES, imported and written again as IGES or as STEP, gives
   valid solids with exact volumes.
 
+**Real-world files** from other systems (CATIA 3DEXPERIENCE, Rhino, OpenCascade-based
+tools), including the CAx-IF interoperability assembly AS1 (plate, brackets, rod, bolts and
+nuts):
+
+- **Every part:** comes in closed, in place, under its product's name (or the file's, when
+  the writer left only its own name); AS1 is its 18 parts.
+- **Curves:** parabolas and hyperbolas (a countersink's edges) are read and written exactly,
+  in STEP and as IGES conic arcs.
+- **Round trips:** written again as STEP, each reads back identical; as IGES, with every part
+  kept apart and named (a group per part), within 0.1% of its volume.
+- **Machined:** a NEMA-17 motor bracket from one of them, faced, roughed, finished and
+  profiled, and posted for Fanuc, Haas, LinuxCNC and GRBL. Each program was read back by
+  the independent G-code checker with no errors or warnings, within 0.034 mm of the
+  toolpath, with no gouges, rapids through stock or holder collisions.
+
 ## Not yet
 
 - **Exact operations:** booleans, fillets and shells on the exact geometry. These work on the

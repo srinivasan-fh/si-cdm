@@ -254,6 +254,8 @@ DVec3 BCurve::eval(double t) const {
     case BCurveKind::Circle: return f.o + (f.x * std::cos(t) + f.y * std::sin(t)) * r1;
     case BCurveKind::Ellipse: return f.o + f.x * (r1 * std::cos(t)) + f.y * (r2 * std::sin(t));
     case BCurveKind::BSpline: return bs.eval(t);
+    case BCurveKind::Parabola: return f.o + f.x * (r1 * t * t) + f.y * (2 * r1 * t);           // y^2 = 4 a x
+    case BCurveKind::Hyperbola: return f.o + f.x * (r1 * std::cosh(t)) + f.y * (r2 * std::sinh(t)); // one branch
     case BCurveKind::Polyline: {
         if (pts.empty()) return {};
         const double c = std::clamp(t, 0.0, static_cast<double>(pts.size() - 1));
@@ -282,6 +284,25 @@ double BCurve::param(const DVec3& p) const {
             const double h = r1 * r1 * s * s + r2 * r2 * c * c - ex * r1 * c - ey * r2 * s; // half the second
             if (std::fabs(h) < 1e-15) break;
             const double step = g / h;
+            t -= step;
+            if (std::fabs(step) < 1e-14) break;
+        }
+        return t;
+    }
+    case BCurveKind::Parabola:
+    case BCurveKind::Hyperbola: {
+        // A start from the y coordinate, then Newton on the squared distance (in the plane).
+        const double px = ddot(d, f.x), py = ddot(d, f.y);
+        const bool para = kind == BCurveKind::Parabola;
+        double t = para ? py / std::max(2 * r1, 1e-12) : std::asinh(py / std::max(r2, 1e-12));
+        for (int i = 0; i < 30; ++i) {
+            double x, y, dx, dy, ddx, ddy;
+            if (para) x = r1 * t * t, y = 2 * r1 * t, dx = 2 * r1 * t, dy = 2 * r1, ddx = 2 * r1, ddy = 0;
+            else x = r1 * std::cosh(t), y = r2 * std::sinh(t), dx = r1 * std::sinh(t), dy = r2 * std::cosh(t), ddx = x, ddy = y;
+            const double ex = x - px, ey = y - py;
+            const double g = ex * dx + ey * dy, h = dx * dx + dy * dy + ex * ddx + ey * ddy;
+            if (std::fabs(h) < 1e-15) break;
+            const double step = std::clamp(g / h, -1.0, 1.0);
             t -= step;
             if (std::fabs(step) < 1e-14) break;
         }

@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <sstream>
@@ -247,11 +248,29 @@ public:
         // Solids no representation names (loose in the file) still come in.
         for (const auto& [id, ent] : m_e)
             if (isSolid(id) && !inRep.count(id) && !usedByOther(id)) items.push_back({-1, id});
-        std::sort(items.begin(), items.end());
         buildPlacements();
+        // A solid listed by several representations (a part's own shape and the one its
+        // product or an assembly refers to) is one part: read it once, placed wherever any of
+        // them is used.
+        std::map<long long, std::vector<long long>> repsOf; // item -> its representations
+        for (const auto& [rep, item] : items) repsOf[item].push_back(rep);
+        std::vector<std::pair<long long, long long>> unique;
+        for (auto& [item, reps] : repsOf) {
+            std::sort(reps.begin(), reps.end());
+            unique.push_back({reps.front(), item});
+        }
+        std::sort(unique.begin(), unique.end());
         std::vector<StepPart> parts;
         bool firstUnit = true;
-        for (const auto& [rep, item] : items) {
+        for (const auto& [firstRep, item] : unique) {
+            const std::vector<long long>& reps = repsOf[item];
+            // The representation that says most: one placed in an assembly, else one with a product.
+            long long rep = firstRep;
+            for (long long r : reps)
+                if (r >= 0 && m_parents.count(classOf(r))) {
+                    rep = r;
+                    break;
+                }
             m_scale = rep >= 0 ? repScale(rep) : m_rep.unitToMm;
             if (firstUnit) m_rep.unitToMm = m_scale, firstUnit = false; // what the parts are in
             m_angle = rep >= 0 ? repAngle(rep) : m_angleDefault;
@@ -263,11 +282,21 @@ public:
                 continue;
             }
             std::string name = itemName(item);
-            if (rep >= 0) {
-                const std::string pn = productName(rep);
-                if (!pn.empty()) name = pn;
+            for (long long r : reps) {
+                const std::string pn = r >= 0 ? productName(r) : std::string();
+                if (!pn.empty()) {
+                    name = pn;
+                    break;
+                }
             }
-            const std::vector<Instance> where = rep >= 0 ? instances(rep) : std::vector<Instance>{Instance{}};
+            // Every placement of every representation holding it (each class of the same
+            // coordinates once); unplaced representations only when none is placed.
+            std::vector<Instance> where;
+            std::set<long long> classes;
+            for (long long r : reps)
+                if (r >= 0 && m_parents.count(classOf(r)) && classes.insert(classOf(r)).second)
+                    for (const Instance& in : instances(r)) where.push_back(in);
+            if (where.empty()) where = rep >= 0 ? instances(rep) : std::vector<Instance>{Instance{}};
             for (std::size_t k = 0; k < where.size(); ++k) {
                 StepPart p;
                 p.name = name.empty() ? "STEP part" : name;
@@ -574,6 +603,19 @@ private:
         } else if (t == "ELLIPSE") {
             const Record& r = e->parts[0];
             c.kind = BCurveKind::Ellipse;
+            c.f = placement(r.args[1]);
+            c.r1 = num(r.args[2]) * m_scale;
+            c.r2 = num(r.args[3]) * m_scale;
+        } else if (t == "PARABOLA") { // (name, position, focal_dist)
+            const Record& r = e->parts[0];
+            if (r.args.size() < 3) return -1;
+            c.kind = BCurveKind::Parabola;
+            c.f = placement(r.args[1]);
+            c.r1 = num(r.args[2]) * m_scale;
+        } else if (t == "HYPERBOLA") { // (name, position, semi_axis, semi_imag_axis)
+            const Record& r = e->parts[0];
+            if (r.args.size() < 4) return -1;
+            c.kind = BCurveKind::Hyperbola;
             c.f = placement(r.args[1]);
             c.r1 = num(r.args[2]) * m_scale;
             c.r2 = num(r.args[3]) * m_scale;
@@ -894,6 +936,8 @@ public:
         case BCurveKind::Line: return line(c.f.o, c.f.x);
         case BCurveKind::Circle: return add("CIRCLE(''," + ref(axis(c.f)) + "," + real(c.r1) + ")");
         case BCurveKind::Ellipse: return add("ELLIPSE(''," + ref(axis(c.f)) + "," + real(c.r1) + "," + real(c.r2) + ")");
+        case BCurveKind::Parabola: return add("PARABOLA(''," + ref(axis(c.f)) + "," + real(c.r1) + ")");
+        case BCurveKind::Hyperbola: return add("HYPERBOLA(''," + ref(axis(c.f)) + "," + real(c.r1) + "," + real(c.r2) + ")");
         case BCurveKind::Polyline: {
             std::vector<int> ids;
             for (const DVec3& p : c.pts) ids.push_back(point(p));
@@ -1058,7 +1102,18 @@ std::vector<StepPart> readStepFile(const std::string& path, StepReadReport* repo
     }
     std::stringstream ss;
     ss << f.rdbuf();
-    return readStep(ss.str(), report, error);
+    std::vector<StepPart> parts = readStep(ss.str(), report, error);
+    // Parts named after the translator that wrote the file ("Open CASCADE STEP translator
+    // 7.5 1"), or not named at all, take the file's name instead.
+    const std::string stem = std::filesystem::path(path).stem().string();
+    for (StepPart& p : parts) {
+        const bool placeholder = p.name.empty() || p.name == "STEP part" || p.name.find("STEP translator") != std::string::npos;
+        if (placeholder && !stem.empty()) {
+            p.name = stem;
+            if (p.brep) p.brep->name = stem;
+        }
+    }
+    return parts;
 }
 
 std::string writeStep(const std::vector<StepPart>& parts, const std::string& fileName) {

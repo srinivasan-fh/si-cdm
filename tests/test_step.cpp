@@ -5,6 +5,7 @@
 #include "core/Document.hpp"
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
+#include "core/Iges.hpp"
 #include "core/Step.hpp"
 
 #include <algorithm>
@@ -295,4 +296,120 @@ TEST_CASE("STEP reader refuses what isn't STEP, or is cut short, without crashin
     for (const StepPart& p : half) (void)tessellate(*p.brep);
     Document d;
     CHECK(!run(d, "IMPORT /no/such/file.step").ok);
+}
+
+namespace {
+
+// A flat face in z = 0 bounded by a conic arc from (x0, -y0) to (x0, y0) and the straight line back.
+std::string conicFace(const std::string& conic, double x0, double y0) {
+    char pts[160];
+    std::snprintf(pts, sizeof pts, "#7=CARTESIAN_POINT('',(%.15g,%.15g,0.));\n#8=CARTESIAN_POINT('',(%.15g,%.15g,0.));\n", x0, -y0, x0, y0);
+    return std::string("ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\nFILE_NAME('conic','',(''),(''),'','','');\n"
+                       "FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n"
+                       "#1=CARTESIAN_POINT('',(0.,0.,0.));\n#2=DIRECTION('',(0.,0.,1.));\n#3=DIRECTION('',(1.,0.,0.));\n"
+                       "#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);\n#5=PLANE('',#4);\n#6=") +
+           conic + ";\n" + pts +
+           "#9=VERTEX_POINT('',#7);\n#10=VERTEX_POINT('',#8);\n#11=EDGE_CURVE('',#9,#10,#6,.T.);\n"
+           "#12=DIRECTION('',(0.,-1.,0.));\n#13=VECTOR('',#12,1.);\n#14=LINE('',#8,#13);\n#15=EDGE_CURVE('',#10,#9,#14,.T.);\n"
+           "#16=ORIENTED_EDGE('',*,*,#11,.T.);\n#17=ORIENTED_EDGE('',*,*,#15,.T.);\n#18=EDGE_LOOP('',(#16,#17));\n"
+           "#19=FACE_OUTER_BOUND('',#18,.T.);\n#20=ADVANCED_FACE('',(#19),#5,.T.);\n#21=OPEN_SHELL('',(#20));\n"
+           "#22=SHELL_BASED_SURFACE_MODEL('',(#21));\nENDSEC;\nEND-ISO-10303-21;\n";
+}
+
+double meshArea(const MeshData& m) {
+    double a = 0;
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        const Vec3 p = m.vertices[m.indices[t]].position, q = m.vertices[m.indices[t + 1]].position, r = m.vertices[m.indices[t + 2]].position;
+        a += 0.5 * static_cast<double>(length(cross(q - p, r - p)));
+    }
+    return a;
+}
+
+} // namespace
+
+TEST_CASE("STEP and IGES: parabolas and hyperbolas are read and written exactly") {
+    const double c = std::cosh(1.0), s = std::sinh(1.0);
+    // Between the hyperbola x^2 - y^2 = 1 and x = cosh 1: 2 s c - (s c + asinh(s)) = s c - 1.
+    // Between the parabola y^2 = 4x and x = 1: 4 - 16/12.
+    const struct {
+        std::string entity;
+        double x0, y0, area;
+    } cases[] = {{"HYPERBOLA('',#4,1.,1.)", c, s, s * c - 1.0}, {"PARABOLA('',#4,1.)", 1.0, 2.0, 4.0 - 16.0 / 12.0}};
+    for (const auto& k : cases) {
+        StepReadReport rep;
+        std::string err;
+        const std::vector<StepPart> parts = readStep(conicFace(k.entity, k.x0, k.y0), &rep, &err);
+        REQUIRE(parts.size() == 1);
+        CHECK(rep.warnings.empty());
+        const TessellateOptions fine{0.0005, 0.05, 0};
+        CHECK_NEAR(meshArea(tessellate(*parts[0].brep, fine)), k.area, 1e-3 * k.area);
+        // Out and back in, both ways, still exact.
+        const std::vector<StepPart> again = readStep(writeStep(parts, "conic.step"));
+        REQUIRE(again.size() == 1);
+        CHECK_NEAR(meshArea(tessellate(*again[0].brep, fine)), k.area, 1e-3 * k.area);
+        StepReadReport irep;
+        const std::vector<StepPart> viaIges = readIges(writeIges(parts, "conic.igs"), &irep);
+        REQUIRE(viaIges.size() == 1);
+        CHECK(irep.warnings.empty());
+        CHECK_NEAR(meshArea(tessellate(*viaIges[0].brep, fine)), k.area, 1e-3 * k.area);
+    }
+}
+
+TEST_CASE("STEP import: a solid two representations list is one part; translator names give way to the file's") {
+    std::FILE* f = std::fopen(dataPath("box").c_str(), "rb");
+    REQUIRE(f != nullptr);
+    std::string text;
+    for (int ch; (ch = std::fgetc(f)) != EOF;) text += static_cast<char>(ch);
+    std::fclose(f);
+    // A second representation of the same solid (as some writers add for the part's product).
+    const std::size_t brep = text.find("MANIFOLD_SOLID_BREP");
+    REQUIRE(brep != std::string::npos);
+    const std::size_t hash = text.rfind('#', brep);
+    const std::string id = text.substr(hash, text.find('=', hash) - hash);
+    const std::size_t rep = text.find("ADVANCED_BREP_SHAPE_REPRESENTATION");
+    REQUIRE(rep != std::string::npos);
+    const std::size_t close = text.find(";", rep);
+    const std::size_t ctx = text.rfind('#', close);
+    const std::string context = text.substr(ctx, text.find(')', ctx) - ctx);
+    const std::size_t end = text.rfind("ENDSEC;");
+    text.insert(end, "#999999=SHAPE_REPRESENTATION(''," + std::string("(") + id + ")," + context + ");\n");
+    const std::vector<StepPart> parts = readStep(text);
+    CHECK(parts.size() == 1);
+
+    // A part named by its translator takes the file's name.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_translator_named.step").string();
+    std::string renamed = readStep(text).empty() ? std::string() : text;
+    std::size_t prod = renamed.find("PRODUCT(");
+    REQUIRE(prod != std::string::npos);
+    const std::size_t q1 = renamed.find('\'', prod), q2 = renamed.find('\'', q1 + 1);
+    renamed.replace(q1 + 1, q2 - q1 - 1, "Open CASCADE STEP translator 7.5 1");
+    const std::size_t q3 = renamed.find('\'', q2 + 1), q4 = renamed.find('\'', q3 + 1);
+    renamed.replace(q3 + 1, q4 - q3 - 1, "Open CASCADE STEP translator 7.5 1");
+    {
+        std::FILE* o = std::fopen(path.c_str(), "wb");
+        REQUIRE(o != nullptr);
+        std::fwrite(renamed.data(), 1, renamed.size(), o);
+        std::fclose(o);
+    }
+    const std::vector<StepPart> named = readStepFile(path);
+    REQUIRE(named.size() == 1);
+    CHECK(named[0].name == "sicdm_translator_named");
+    std::remove(path.c_str());
+}
+
+TEST_CASE("IGES: touching parts stay separate parts, by name") {
+    Document d;
+    REQUIRE(run(d, "BOX 20 20 20 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 20 20 20 @20,0,0").ok);  // face to face with the first
+    REQUIRE(run(d, "BOX 10 10 10 @0,0,20").ok);  // standing on it
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_touching.igs").string();
+    REQUIRE(run(d, "EXPORT \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "IMPORT \"" + path + "\"").ok);
+    REQUIRE(e.scene.bodies().size() == 3);
+    std::vector<std::string> names;
+    for (const Body& b : e.scene.bodies()) names.push_back(b.name);
+    std::sort(names.begin(), names.end());
+    CHECK(names == (std::vector<std::string>{"Block 1", "Block 2", "Block 3"}));
+    std::remove(path.c_str());
 }

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -147,8 +148,11 @@ TEST_CASE("IGES from the model: primitives, revolves and extrusions exact, other
         got += meshVolume(tessellate(*b.brep, TessellateOptions{0.002, 0.26, 0}));
     }
     CHECK_NEAR(got, want, 1e-3 * want);
-    // The import names bodies after the file.
-    CHECK(e.scene.bodies()[0].name.rfind("sicdm_model", 0) == 0);
+    // Each part comes back as itself, by name (the export groups and names them).
+    std::set<std::string> before, after;
+    for (const Body& b : d.scene.bodies()) before.insert(b.name);
+    for (const Body& b : e.scene.bodies()) after.insert(b.name);
+    CHECK(before == after);
     std::filesystem::remove(path);
 }
 

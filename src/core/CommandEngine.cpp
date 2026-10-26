@@ -2972,7 +2972,7 @@ CommandOutput runCommand(Document& doc, std::string_view line, ViewHost* view) {
             const bool iges = fileKindOf(path) == FileKind::Iges;
             std::vector<StepPart> parts = iges ? readIgesFile(path, &rep, &err) : readStepFile(path, &rep, &err);
             if (parts.empty()) return out.fail(err.empty() ? "Nothing imported" : err);
-            if (iges) { // IGES has no part names: the file's, numbered
+            if (iges) { // unnamed IGES parts (no group naming them): the file's name, numbered
                 const std::string stem = fs::path(path).stem().string();
                 for (std::size_t k = 0; k < parts.size(); ++k)
                     if (parts[k].name.rfind("Body ", 0) == 0 || parts[k].name.rfind("Solid ", 0) == 0 || parts[k].name == "Surfaces")
