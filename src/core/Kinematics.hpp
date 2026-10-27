@@ -22,6 +22,7 @@
 //
 // The base stays where it is at rest (a floating base is held for the arm's sake).
 
+#include "core/Collide.hpp"
 #include "core/Multibody.hpp"
 #include "core/Terrain.hpp"
 
@@ -67,12 +68,17 @@ public:
     std::size_t obstacles() const { return m_env.size(); }
 
 private:
+    // Each part's box finds what may touch; its exact shape (Collide.hpp) then says
+    // whether it does.
     struct Box {
         V3d centre{}, half{};      // at rest, world axes (m)
+        std::shared_ptr<const CollisionShape> shape; // at rest, world (mm)
     };
     struct Obstacle {
         V3d lo{}, hi{};            // world, m
         std::string name;
+        std::shared_ptr<const CollisionShape> shape;
+        Rigid at;                  // where it is (mm)
     };
     std::vector<std::string> m_names;          // per link
     std::vector<std::vector<Box>> m_links;     // per link: its parts' boxes

@@ -17,6 +17,7 @@
 #include "core/Plugin.hpp"
 #include "core/AssemblyCommand.hpp"
 #include "core/SketchEdit.hpp"
+#include "core/Collide.hpp"
 #include "core/DrawingCommand.hpp"
 #include "core/PdmCommand.hpp"
 #include "core/FeatureCommand.hpp"
@@ -2379,6 +2380,47 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             markChanged(doc);
             out.say(*d > 0.0f ? fmt("Simulation length %.2f s", *d)
                               : fmt("Simulation length automatic (%.2f s)", suggestedDuration(doc.scene)));
+            return out;
+        }
+        if (sub == "check" || sub == "collisions" || sub == "clash") {
+            // SIM CHECK [FROM t0] [TO t1] [STEP dt] [ALL] [body...]: parts that run into each other.
+            float t0 = 0, t1 = doc.state.simDuration > 0 ? doc.state.simDuration : suggestedDuration(doc.scene), dt = 0;
+            bool all = false;
+            std::vector<std::size_t> only;
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                const std::string w = lower(a[i]);
+                const auto num = [&](float& v) {
+                    const auto n = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                    if (!n || *n < 0) return false;
+                    v = static_cast<float>(*n);
+                    return true;
+                };
+                if (w == "from" && !pc.quoted[i]) {
+                    if (!num(t0)) return out.fail("FROM needs a time (s)");
+                } else if (w == "to" && !pc.quoted[i]) {
+                    if (!num(t1)) return out.fail("TO needs a time (s)");
+                } else if (w == "step" && !pc.quoted[i]) {
+                    if (!num(dt) || dt <= 0) return out.fail("STEP needs a time (s) above 0");
+                } else if (w == "all" && !pc.quoted[i]) {
+                    all = true;
+                } else {
+                    const int bi = findBody(doc, a[i]);
+                    if (bi < 0) return out.fail("No body named " + a[i]);
+                    only.push_back(static_cast<std::size_t>(bi));
+                }
+            }
+            if (t1 <= t0) return out.fail("Nothing moves: SIM CHECK FROM t0 TO t1 (or program a motion first)");
+            const MotionCheck r = checkMotion(doc.scene, t0, t1, dt, all, only);
+            out.say(fmt("Checked %.2f", t0) + fmt(" to %.2f s", t1) + " in " + std::to_string(r.steps) + " steps" +
+                    (r.pairsLeftOut ? ", " + std::to_string(r.pairsLeftOut) + " pairs touching at the start left out (ALL keeps them)" : std::string()));
+            if (r.clashes.empty()) {
+                out.say("No parts run into each other");
+                return out;
+            }
+            out.say(std::to_string(r.clashes.size()) + (r.clashes.size() == 1 ? " collision:" : " collisions:"));
+            for (const MotionClash& c : r.clashes)
+                out.say("  " + c.a + " hits " + c.b + fmt(" at %.2f s", c.from) + (c.to > c.from ? fmt(" (until %.2f s)", c.to) : std::string()) +
+                        fmt(", near (%.1f,", c.at[0]) + fmt(" %.1f,", c.at[1]) + fmt(" %.1f) mm", c.at[2]));
             return out;
         }
         static const char* kActions[] = {"open", "play", "pause", "toggle", "stop", "reset", "time", "seek",

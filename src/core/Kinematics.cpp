@@ -109,36 +109,8 @@ bool solveDense(std::vector<double> A, std::vector<double>& b, std::size_t n) {
     return true;
 }
 
-// Separating-axis test of two oriented boxes (centres, axes as the columns of R, half sizes).
-bool boxesOverlap(const V3d& ca, const M3& Ra, const V3d& ha, const V3d& cb, const M3& Rb, const V3d& hb) {
-    V3d A[3], B[3];
-    for (std::size_t i = 0; i < 3; ++i) {
-        A[i] = {Ra[i], Ra[3 + i], Ra[6 + i]};
-        B[i] = {Rb[i], Rb[3 + i], Rb[6 + i]};
-    }
-    double R[3][3], AR[3][3];
-    for (std::size_t i = 0; i < 3; ++i)
-        for (std::size_t j = 0; j < 3; ++j) {
-            R[i][j] = dot(A[i], B[j]);
-            AR[i][j] = std::fabs(R[i][j]) + 1e-9;
-        }
-    const V3d d = sub(cb, ca);
-    const double t[3] = {dot(d, A[0]), dot(d, A[1]), dot(d, A[2])};
-    for (std::size_t i = 0; i < 3; ++i)
-        if (std::fabs(t[i]) > ha[i] + hb[0] * AR[i][0] + hb[1] * AR[i][1] + hb[2] * AR[i][2]) return false;
-    for (std::size_t j = 0; j < 3; ++j)
-        if (std::fabs(t[0] * R[0][j] + t[1] * R[1][j] + t[2] * R[2][j]) > ha[0] * AR[0][j] + ha[1] * AR[1][j] + ha[2] * AR[2][j] + hb[j]) return false;
-    for (std::size_t i = 0; i < 3; ++i) {
-        const std::size_t i1 = (i + 1) % 3, i2 = (i + 2) % 3;
-        for (std::size_t j = 0; j < 3; ++j) {
-            const std::size_t j1 = (j + 1) % 3, j2 = (j + 2) % 3;
-            const double ra = ha[i1] * AR[i2][j] + ha[i2] * AR[i1][j];
-            const double rb = hb[j1] * AR[i][j2] + hb[j2] * AR[i][j1];
-            if (std::fabs(t[i2] * R[i1][j] - t[i1] * R[i2][j]) > ra + rb) return false;
-        }
-    }
-    return true;
-}
+// Separating-axis test of two oriented boxes (Collide.hpp).
+bool boxesOverlap(const V3d& ca, const M3& Ra, const V3d& ha, const V3d& cb, const M3& Rb, const V3d& hb) { return obbOverlap(ca, Ra, ha, cb, Rb, hb); }
 
 const M3 kIdentity = identity3();
 
@@ -227,10 +199,17 @@ CollisionModel::CollisionModel(const Scene& scene, const RobotRig& rig, float t)
             inRobot[b] = 1;
             if (!bodies[b].visible || bodies[b].mesh.indices.empty()) continue;
             const AABB bb = bodies[b].bounds();
-            if (bb.valid()) m_links[l].push_back(boxOf(bb));
+            if (!bb.valid()) continue;
+            Box x = boxOf(bb);
+            x.shape = std::make_shared<const CollisionShape>(bodies[b].mesh, bodies[b].offset);
+            m_links[l].push_back(std::move(x));
         }
     }
-    auto overlapAtRest = [&](const Box& a, const Box& b) { return boxesOverlap(a.centre, kIdentity, a.half, b.centre, kIdentity, b.half); };
+    // Touching at rest: the boxes overlap and so do the parts (an L-shaped link's box may
+    // reach over a part it never touches; that pair stays checked).
+    auto overlapAtRest = [&](const Box& a, const Box& b, const Rigid& bAt = Rigid{}) {
+        return boxesOverlap(a.centre, kIdentity, a.half, b.centre, kIdentity, b.half) && (!a.shape || !b.shape || shapesCollide(*a.shape, Rigid{}, *b.shape, bAt));
+    };
     // Self collisions: not between a link and the next one with parts up or down the tree,
     // nor between links that already touch at rest (they meet at a joint).
     auto partParent = [&](std::size_t l) -> int {
@@ -269,6 +248,8 @@ CollisionModel::CollisionModel(const Scene& scene, const RobotRig& rig, float t)
         for (std::size_t k = 0; k < 3; ++k)
             if (o.hi[k] < o.lo[k]) o.lo[k] = o.hi[k] = 0.5 * (o.lo[k] + o.hi[k]);
         o.name = body.name;
+        o.shape = std::make_shared<const CollisionShape>(body.mesh, body.offset);
+        if (i < tf.size()) o.at = rigidOf(tf[i]);
         m_env.push_back(std::move(o));
     }
     // Obstacles a link already touches at rest (the table under the arm) stay out of its checks,
@@ -283,7 +264,8 @@ CollisionModel::CollisionModel(const Scene& scene, const RobotRig& rig, float t)
             bool skip = l == 0;
             Box ob;
             for (std::size_t k = 0; k < 3; ++k) ob.centre[k] = 0.5 * (m_env[o].lo[k] + m_env[o].hi[k]), ob.half[k] = 0.5 * (m_env[o].hi[k] - m_env[o].lo[k]);
-            for (const Box& x : m_links[l]) skip = skip || overlapAtRest(x, ob);
+            ob.shape = m_env[o].shape;
+            for (const Box& x : m_links[l]) skip = skip || overlapAtRest(x, ob, m_env[o].at);
             m_skipEnv[l][o] = skip ? 1 : 0;
         }
         bool onGround = l == 0;
@@ -356,13 +338,24 @@ bool CollisionModel::collides(const std::vector<LinkPose>& poses, std::string* w
     // Every part's box where the link has taken it.
     std::vector<std::vector<Box>> placed(nl);
     for (std::size_t l = 0; l < nl; ++l)
-        for (const Box& b : m_links[l]) placed[l].push_back({poses[l].apply(b.centre), b.half});
+        for (const Box& b : m_links[l]) placed[l].push_back({poses[l].apply(b.centre), b.half, b.shape});
+    // Where a link has taken its parts' exact shapes (mm).
+    auto rigid = [&](std::size_t l) {
+        Rigid r;
+        r.R = poses[l].R;
+        for (std::size_t k = 0; k < 3; ++k) r.t[k] = poses[l].t[k] * 1e3;
+        return r;
+    };
+    // The boxes overlap: do the parts themselves?
+    auto parts = [&](const Box& x, std::size_t la, const Box& y, std::size_t lb) {
+        return !x.shape || !y.shape || shapesCollide(*x.shape, rigid(la), *y.shape, rigid(lb));
+    };
     for (std::size_t a = 0; a < nl; ++a)
         for (std::size_t b = a + 1; b < nl; ++b) {
             if (m_skip[a][b]) continue;
             for (const Box& x : placed[a])
                 for (const Box& y : placed[b])
-                    if (boxesOverlap(x.centre, poses[a].R, x.half, y.centre, poses[b].R, y.half)) {
+                    if (boxesOverlap(x.centre, poses[a].R, x.half, y.centre, poses[b].R, y.half) && parts(x, a, y, b)) {
                         if (what) *what = m_names[a] + " hits " + m_names[b];
                         return true;
                     }
@@ -374,24 +367,30 @@ bool CollisionModel::collides(const std::vector<LinkPose>& poses, std::string* w
             const V3d c{0.5 * (ob.lo[0] + ob.hi[0]), 0.5 * (ob.lo[1] + ob.hi[1]), 0.5 * (ob.lo[2] + ob.hi[2])};
             const V3d h{0.5 * (ob.hi[0] - ob.lo[0]), 0.5 * (ob.hi[1] - ob.lo[1]), 0.5 * (ob.hi[2] - ob.lo[2])};
             for (const Box& x : placed[l])
-                if (boxesOverlap(x.centre, poses[l].R, x.half, c, kIdentity, h)) {
+                if (boxesOverlap(x.centre, poses[l].R, x.half, c, kIdentity, h) && (!x.shape || !ob.shape || shapesCollide(*x.shape, rigid(l), *ob.shape, ob.at))) {
                     if (what) *what = m_names[l] + " hits " + ob.name;
                     return true;
                 }
         }
         if (m_skipFloor[l]) continue;
         const M3& R = poses[l].R;
-        for (const Box& x : placed[l])
-            for (int c = 0; c < 8; ++c) {
+        for (const Box& x : placed[l]) {
+            bool boxBelow = false;
+            for (int c = 0; c < 8 && !boxBelow; ++c) {
                 const double sx = (c & 1) ? 1 : -1, sy = (c & 2) ? 1 : -1, sz = (c & 4) ? 1 : -1;
                 const V3d local{sx * x.half[0], sy * x.half[1], sz * x.half[2]};
                 const V3d p = add(x.centre, mv(R, local));
                 const double ground = m_terrain ? terrainHeight(*m_terrain, p[0] * 1e3, p[1] * 1e3) * 1e-3 : 0.0;
-                if (p[2] < ground) {
-                    if (what) *what = m_names[l] + " hits the ground";
-                    return true;
-                }
+                boxBelow = p[2] < ground;
             }
+            if (!boxBelow) continue;
+            // The part itself: some point more than a millimetre into the ground.
+            const auto ground = [&](double gx, double gy) { return m_terrain ? static_cast<double>(terrainHeight(*m_terrain, gx, gy)) : 0.0; };
+            if (!x.shape || x.shape->below(rigid(l), ground, 1.0)) {
+                if (what) *what = m_names[l] + " hits the ground";
+                return true;
+            }
+        }
     }
     return false;
 }

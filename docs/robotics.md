@@ -128,10 +128,16 @@ ARM HOME
 - **Inverse kinematics**: damped least squares within the joint limits, coupled joints moving with
   their leader, restarted from spread-out guesses; the collision-free solution nearest to where the
   arm is wins.
-- **Collisions**: each link's parts as boxes turning with it, against the other links, the parts
-  around the robot, the floor and the terrain. Parts that touch at rest (at the joints), parts that
-  stay rigid to each other during the move (fingers on a hand the arm carries), and parts already
-  touching where the arm starts are left out.
+- **Collisions**: each link's parts turn with it and are tested against the other links, the parts
+  around the robot, the floor and the terrain. Each part's box finds what might touch, and the parts'
+  exact shapes decide (triangle trees walked together, plus a test for one part wholly inside another).
+  So an L-shaped link, a gripper around a shaft, or a tool reaching down into a bin is not stopped by
+  a box that covers empty space. Three kinds of pair are left out: parts that touch at rest (at the
+  joints), parts that stay rigid to each other during the move (fingers on a hand the arm carries),
+  and parts already touching where the arm starts.
+- **Checking a program**: `SIM CHECK` plays the whole timeline, including keyed motions, poses,
+  gestures, arm moves and physics. It reports every pair of parts that run into each other, with the
+  time and the place.
 - **Planning**: RRT-Connect in joint space, each edge checked about every degree, then shortcut.
 - **Timing**: each straight move at `SPEED` × the slowest joint's top speed, on a minimum-jerk
   profile.

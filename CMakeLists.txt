@@ -81,6 +81,7 @@ add_library(sicdm_core STATIC
     src/core/UvMap.cpp
     src/core/Translate.cpp
     src/core/Render.cpp
+    src/core/Collide.cpp
     src/core/Pdm.cpp
     src/core/PdmCommand.cpp
     src/core/lang/German.cpp

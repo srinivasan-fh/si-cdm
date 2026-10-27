@@ -195,6 +195,11 @@ SIM PLAY   SIM PAUSE   SIM STOP   SIM TIME 2.5   SIM SPEED 2   SIM DURATION 12  
 
 `SIM AT t` (also headless) reports every motion value and moving body position at time t.
 
+`SIM CHECK` plays the timeline and lists every pair of parts that run into each other: when they first
+touch, until when, and where. It tests the parts' exact shapes, not their boxes. Pairs already
+touching at the start (assembled parts, parts on a joint) are left out; `ALL` keeps them. Naming
+bodies (`SIM CHECK "Gripper"`) checks only those against everything else.
+
 ## Physics environment
 
 The Simulation can also move bodies by **forces**. Give bodies mass, velocity, charge and temperature,

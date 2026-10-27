@@ -265,8 +265,8 @@ constexpr CommandSpec kCommands[] = {
      "Physical environment of the Simulation: gravity (uniform or Newton's between all masses), forces and "
      "collisions, momentum, energy and heat, charges and E / B fields, waves and Doppler, special relativity; "
      "PHYSICS AT t reports kinematics, forces, momentum, energy conservation, temperature, relativity and quantum values"},
-    {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t]",
-     "Open the Simulation window and control playback; SIM AT t reports body poses at time t"},
+    {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t] | SIM CHECK [FROM t0] [TO t1] [STEP dt] [ALL] [body...]",
+     "Open the Simulation window and control playback; SIM AT t reports body poses at time t; SIM CHECK finds parts that run into each other as it plays"},
     // Library
     {"PART", "INSERT LIBRARY PARTS", "PART name [NAME n] [@x,y,z] [parameter value]...",
      "Insert a library component: motors, gears, racks, gear trains (PART alone lists them)"},
