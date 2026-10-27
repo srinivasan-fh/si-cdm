@@ -145,7 +145,7 @@ constexpr CommandSpec kCommands[] = {
      "SHEETMETAL BASE curve THICKNESS t [RADIUS r] [K k] | SHEETMETAL FLANGE [body] EDGE n | NEAR x,y,z LENGTH l [ANGLE deg] [DOWN] [RADIUS r] | "
      "SHEETMETAL EDGES | FLAT [SKETCH] | INFO [body]",
      "Sheet metal: a base plate, flanges bent on its edges, and the flat pattern (bend allowance from the K factor)"},
-    {"FEA", "STRESS ANALYSE ANALYZE",
+    {"FEA", "STRESS",
      "FEA [body] FIX FACE x,y,z | NEAR x,y,z r ... LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ... [MATERIAL m] [E MPa] [NU v] [YIELD MPa] [CELL size] "
      "[PLOT] [DEFORM scale] | FEA MATERIALS",
      "Linear static stress analysis: von Mises stress, displacement and factor of safety; PLOT colours the body by stress"},
@@ -154,6 +154,12 @@ constexpr CommandSpec kCommands[] = {
      "Raised lettering on a face, flat or curved (\\n starts a new line)"},
     {"ENGRAVE", "", "ENGRAVE [body] TEXT \"words\" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]",
      "Lettering cut into a face, flat or curved"},
+    {"SURFACE", "SURF", "SURFACE LOFT curve curve ... | BOUNDARY c1 c2 c3 c4 | EXTRUDE curve DISTANCE d [DIR x,y,z] | REVOLVE curve AXIS x,y,z [AT x,y,z] [ANGLE deg] | "
+                        "PLANAR curve | OFFSET body DISTANCE d | BLEND bodyA bodyB [WEIGHT w]",
+     "Surfaces (open B-spline bodies): lofted, filled from four curves, extruded, revolved, flat, offset, blended"},
+    {"THICKEN", "", "THICKEN body THICKNESS t [BOTH]", "A solid from a surface: offset along its normals, the edges walled"},
+    {"KNIT", "SEW STITCH", "KNIT body body ... [TOLERANCE t]", "Stitch surfaces along their shared edges into one; a closed set becomes a solid"},
+    {"ANALYZE", "ANALYSE", "ANALYZE ZEBRA [body] | ANALYZE CURVATURE [body] [MEAN|GAUSS] | ANALYZE OFF", "Zebra stripes and curvature colours on a surface"},
     {"DOME", "", "DOME [body] FACE x,y,z HEIGHT h [CONCAVE]", "Raise a dome on a flat face (a quarter ellipse up from its outline), or dish it in with CONCAVE"},
     {"DRAFT", "TAPER", "DRAFT [body] ANGLE deg [PULL x,y,z | X | Y | Z] [NEUTRAL x,y,z]",
      "Tilt a body's side faces (those along the pull) for moulding, about the neutral plane (default: its bottom)"},

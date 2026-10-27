@@ -15,10 +15,13 @@
 #include "core/Sculpt.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/Step.hpp"
+#include "core/Surfacing.hpp"
 #include "core/TextOutline.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
+#include <map>
+#include <tuple>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -1725,6 +1728,453 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             addBody(doc, std::move(res));
         }
         return out;
+    }
+
+    if (cmd == "SURFACE" || cmd == "THICKEN" || cmd == "KNIT" || cmd == "ANALYZE") {
+        // Names in a list: "quoted", or a word and its number (Line 3), or one word.
+        auto nameList = [&](std::size_t from, std::size_t to) {
+            std::vector<std::string> names;
+            for (std::size_t k = from; k < to; ++k) {
+                if (quotedAt(k)) names.push_back(a[k]);
+                else if (k + 1 < to && !quotedAt(k + 1) && !a[k + 1].empty() && std::all_of(a[k + 1].begin(), a[k + 1].end(), ::isdigit))
+                    names.push_back(a[k] + " " + a[k + 1]), ++k;
+                else names.push_back(a[k]);
+            }
+            return names;
+        };
+        auto uniqueName = [&](const std::string& base) {
+            for (int k = 1;; ++k) {
+                const std::string n = base + " " + std::to_string(k);
+                if (bodyNamed(doc, n) < 0) return n;
+            }
+        };
+        // A curve as world points (closed ones repeat the first).
+        auto curvePoints = [&](const std::string& nm, std::vector<DVec3>& pts, bool& closed, std::string& why) {
+            const int ci = curveNamed(doc, nm);
+            if (ci < 0) return why = "No sketch curve named " + nm, false;
+            const SketchCurve& c = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
+            pts.clear();
+            for (const Vec3& p : c.worldStrip(128)) pts.push_back(DVec3(p));
+            closed = c.isClosed();
+            if (pts.size() < 2) return why = nm + " has no length", false;
+            return true;
+        };
+        auto addSurface = [&](const BSplineSurface& s, const std::string& what, std::vector<int> hideCurves) {
+            Body b;
+            b.name = uniqueName("Surface");
+            b.color = {0.55f, 0.75f, 0.85f};
+            std::string why;
+            if (!makeSurfaceBody(b, surfaceBrep(s), &why)) return out.fail("The surface could not be made: " + why), false;
+            doc.scene.pushUndo("SURFACE " + what);
+            for (int ci : hideCurves) hideCurve(doc, ci);
+            const std::string nm = b.name;
+            const std::size_t tris = b.mesh.indices.size() / 3;
+            addBody(doc, std::move(b));
+            out.say("Made " + nm + " (" + what + "): a B-spline surface, " + std::to_string(s.nu) + " x " + std::to_string(s.nv) + " control points, degree " +
+                    std::to_string(s.du) + " x " + std::to_string(s.dv) + ", " + std::to_string(tris) + " display triangles");
+            return true;
+        };
+        constexpr int kSamples = 33;
+        const std::string sub = cmd == "SURFACE" && !a.empty() ? lower(a[0]) : "";
+
+        if (cmd == "SURFACE" && sub == "loft") {
+            // SURFACE LOFT curve curve ... : through sections in order (closed or open alike)
+            const std::vector<std::string> names = nameList(1, a.size());
+            if (names.size() < 2) return out.fail("Usage: SURFACE LOFT curve curve [curve ...]");
+            std::vector<std::vector<DVec3>> rows;
+            std::vector<int> used;
+            bool firstClosed = false;
+            for (std::size_t k = 0; k < names.size(); ++k) {
+                std::vector<DVec3> pts;
+                bool closed = false;
+                std::string why;
+                if (!curvePoints(names[k], pts, closed, why)) return out.fail(why);
+                if (k == 0) firstClosed = closed;
+                else if (closed != firstClosed) return out.fail("The sections must be all closed or all open");
+                std::vector<DVec3> r = resample(pts, kSamples, closed);
+                if (!rows.empty()) { // lined up with the section before: same start, same way round
+                    const std::vector<DVec3>& prev = rows.back();
+                    if (closed) {
+                        r.pop_back();
+                        std::size_t best = 0;
+                        for (std::size_t j = 0; j < r.size(); ++j)
+                            if (dlength(r[j] - prev[0]) < dlength(r[best] - prev[0])) best = j;
+                        std::rotate(r.begin(), r.begin() + static_cast<std::ptrdiff_t>(best), r.end());
+                        if (dlength(r[1] - prev[1]) > dlength(r.back() - prev[1])) std::reverse(r.begin() + 1, r.end());
+                        r.push_back(r.front());
+                    } else if (dlength(r.front() - prev.front()) + dlength(r.back() - prev.back()) >
+                               dlength(r.back() - prev.front()) + dlength(r.front() - prev.back()))
+                        std::reverse(r.begin(), r.end());
+                }
+                rows.push_back(std::move(r));
+                used.push_back(curveNamed(doc, names[k]));
+            }
+            BSplineSurface s;
+            std::string why;
+            if (!interpolateSurface(rows, s, &why)) return out.fail("Cannot loft: " + why);
+            if (!addSurface(s, "loft through " + std::to_string(names.size()) + " sections", used)) return out;
+            return out;
+        }
+        if (cmd == "SURFACE" && sub == "boundary") {
+            // SURFACE BOUNDARY c1 c2 c3 c4: the four sides of a patch, meeting end to end
+            const std::vector<std::string> names = nameList(1, a.size());
+            if (names.size() != 4) return out.fail("Usage: SURFACE BOUNDARY curve curve curve curve (meeting end to end)");
+            std::vector<std::vector<DVec3>> sides;
+            std::vector<int> used;
+            for (const std::string& nm : names) {
+                std::vector<DVec3> pts;
+                bool closed = false;
+                std::string why;
+                if (!curvePoints(nm, pts, closed, why)) return out.fail(why);
+                if (closed) return out.fail(nm + " is closed: a boundary side is an open curve");
+                sides.push_back(pts);
+                used.push_back(curveNamed(doc, nm));
+            }
+            std::vector<std::vector<DVec3>> grid;
+            std::string why;
+            if (!coonsGrid(sides, 21, grid, &why)) return out.fail("Cannot fill: " + why);
+            BSplineSurface s;
+            if (!interpolateSurface(grid, s, &why)) return out.fail("Cannot fill: " + why);
+            addSurface(s, "boundary of four curves", used);
+            return out;
+        }
+        if (cmd == "SURFACE" && (sub == "extrude" || sub == "revolve")) {
+            // SURFACE EXTRUDE curve DISTANCE d [DIR x,y,z] | SURFACE REVOLVE curve AXIS x,y,z [AT x,y,z] [ANGLE deg]
+            auto isKey = [](const std::string& w) { return w == "distance" || w == "dir" || w == "axis" || w == "at" || w == "angle"; };
+            std::size_t i = 1;
+            const std::string nm = leadingName(a, quoted, i, isKey);
+            std::vector<DVec3> pts;
+            bool closed = false;
+            std::string why;
+            if (!curvePoints(nm, pts, closed, why)) return out.fail(why);
+            float dist = 0, angle = 360;
+            std::optional<Vec3> dir, axis;
+            Vec3 at{};
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if (k == "distance" && i + 1 < a.size()) {
+                    const auto v = parseLength(a[++i]);
+                    if (!v) return out.fail("DISTANCE needs a length");
+                    dist = static_cast<float>(*v);
+                } else if ((k == "dir" || k == "axis") && i + 1 < a.size()) {
+                    const auto v = axisWord(a[++i]);
+                    if (!v) return out.fail(toUpper(k) + " needs X, Y, Z or x,y,z");
+                    (k == "dir" ? dir : axis) = normalize(*v);
+                } else if (k == "at" && i + 1 < a.size()) {
+                    const auto v = parseVec3(a[++i]);
+                    if (!v) return out.fail("AT needs x,y,z");
+                    at = *v;
+                } else if (k == "angle" && i + 1 < a.size()) {
+                    const auto v = parseNumber(a[++i]);
+                    if (!v || std::fabs(*v) < 0.1f || std::fabs(*v) > 360) return out.fail("ANGLE is up to 360 degrees");
+                    angle = *v;
+                } else return out.fail("Usage: SURFACE EXTRUDE curve DISTANCE d [DIR x,y,z] | SURFACE REVOLVE curve AXIS x,y,z [AT x,y,z] [ANGLE deg]");
+            }
+            const std::vector<DVec3> base = resample(pts, kSamples, closed);
+            std::vector<std::vector<DVec3>> rows;
+            std::string what;
+            if (sub == "extrude") {
+                if (dist == 0) return out.fail("SURFACE EXTRUDE needs a DISTANCE");
+                const SketchCurve& c = doc.scene.sketch().curves()[static_cast<std::size_t>(curveNamed(doc, nm))];
+                const DVec3 d(dir ? *dir : curveFrame(c).normal);
+                std::vector<DVec3> top;
+                for (const DVec3& p : base) top.push_back(p + d * dist);
+                rows = {base, top};
+                what = "extruded " + lengthText(dist);
+            } else {
+                if (!axis) return out.fail("SURFACE REVOLVE needs an AXIS");
+                const int steps = std::max(2, static_cast<int>(std::ceil(std::fabs(angle) / 15.0f)));
+                const bool full = std::fabs(angle) > 359.999f;
+                for (int k = 0; k <= steps; ++k) {
+                    const float t = angle * static_cast<float>(k) / static_cast<float>(steps) * kPi / 180.0f;
+                    std::vector<DVec3> row;
+                    for (const DVec3& p : base) {
+                        const Vec3 q = p.f() - at;
+                        const Vec3 r = q * std::cos(t) + cross(*axis, q) * std::sin(t) + *axis * (dot(*axis, q) * (1 - std::cos(t)));
+                        row.push_back(DVec3(r + at));
+                    }
+                    rows.push_back(full && k == steps ? rows.front() : row);
+                }
+                what = "revolved " + fmt3("%g", angle) + " deg";
+            }
+            BSplineSurface s;
+            if (!interpolateSurface(rows, s, &why)) return out.fail("Cannot make the surface: " + why);
+            addSurface(s, what + " from " + nm, {curveNamed(doc, nm)});
+            return out;
+        }
+        if (cmd == "SURFACE" && sub == "planar") {
+            // SURFACE PLANAR curve: a flat surface filling a closed curve
+            std::size_t i = 1;
+            const std::string nm = leadingName(a, quoted, i, [](const std::string&) { return false; });
+            const int ci = curveNamed(doc, nm);
+            if (ci < 0) return out.fail("No sketch curve named " + nm);
+            const SketchCurve& c = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
+            std::string why;
+            const auto prof = profileFromCurve(c, &why);
+            if (!prof) return out.fail("Cannot fill " + nm + ": " + why);
+            const PlaneFrame f = curveFrame(c);
+            std::vector<Vec2> poly = profilePolygon(*prof);
+            if (signedArea(poly) < 0) std::reverse(poly.begin(), poly.end());
+            const std::vector<std::uint32_t> ids = triangulatePolygon(poly);
+            if (ids.empty()) return out.fail("Cannot fill " + nm + ": its outline could not be triangulated");
+            MeshData m;
+            for (const Vec2& p : poly) m.vertices.push_back({f.toWorld(p), f.normal});
+            m.indices = ids;
+            m.computeFeatureEdges(30.0f);
+            Body b = meshBody(uniqueName("Surface"), std::move(m), {0.55f, 0.75f, 0.85f});
+            if (auto br = meshToBrep(b.mesh)) b.brep = br, b.brepKey = meshKey(b.mesh);
+            doc.scene.pushUndo("SURFACE PLANAR");
+            hideCurve(doc, ci);
+            out.say("Made " + b.name + " (flat, filling " + nm + ")");
+            addBody(doc, std::move(b));
+            return out;
+        }
+        if (cmd == "SURFACE" && (sub == "offset" || sub == "blend")) {
+            // SURFACE OFFSET body DISTANCE d | SURFACE BLEND bodyA bodyB [WEIGHT w]
+            auto isKey = [](const std::string& w) { return w == "distance" || w == "weight"; };
+            std::size_t i = 1;
+            while (i < a.size() && (quotedAt(i) || !isKey(lower(a[i])))) ++i;
+            const std::vector<std::string> names = nameList(1, i);
+            float dist = 0, weight = 1;
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                const auto v = i + 1 < a.size() ? parseLength(a[i + 1]) : std::nullopt;
+                if (!v) return out.fail(toUpper(k) + " needs a number");
+                (k == "distance" ? dist : weight) = static_cast<float>(*v);
+                ++i;
+            }
+            std::vector<BSplineSurface> ss;
+            for (const std::string& nm : names) {
+                const int bi = bodyNamed(doc, nm);
+                if (bi < 0) return out.fail("No body named " + nm);
+                BSplineSurface s;
+                if (!bodySurface(doc.scene.bodies()[static_cast<std::size_t>(bi)], s)) return out.fail(nm + " is not a B-spline surface (SURFACE makes them)");
+                ss.push_back(s);
+            }
+            constexpr int n = 25;
+            std::vector<std::vector<DVec3>> rows;
+            std::string what;
+            if (sub == "offset") {
+                if (ss.size() != 1 || dist == 0) return out.fail("Usage: SURFACE OFFSET body DISTANCE d");
+                const BSplineSurface& s = ss[0];
+                for (int k = 0; k < n; ++k) {
+                    std::vector<DVec3> row;
+                    const double u = s.u0() + (s.u1() - s.u0()) * k / (n - 1);
+                    for (int j = 0; j < n; ++j) {
+                        const double v = s.v0() + (s.v1() - s.v0()) * j / (n - 1);
+                        row.push_back(s.eval(u, v) + surfaceNormal(s, u, v) * dist);
+                    }
+                    rows.push_back(row);
+                }
+                what = "offset " + lengthText(dist) + " from " + names[0];
+            } else {
+                if (ss.size() != 2) return out.fail("Usage: SURFACE BLEND bodyA bodyB [WEIGHT w]");
+                // Each surface's four edges, with the slope leading off it there.
+                struct Edge {
+                    std::vector<DVec3> p, t;
+                };
+                auto edges = [&](const BSplineSurface& s) {
+                    std::vector<Edge> es(4);
+                    const double h = 1e-4;
+                    for (int j = 0; j < n; ++j) {
+                        const double fu = s.u0() + (s.u1() - s.u0()) * j / (n - 1), fv = s.v0() + (s.v1() - s.v0()) * j / (n - 1);
+                        const double du = (s.u1() - s.u0()) * h, dv = (s.v1() - s.v0()) * h;
+                        es[0].p.push_back(s.eval(s.u0(), fv)), es[0].t.push_back(dnormalize(s.eval(s.u0(), fv) - s.eval(s.u0() + du, fv)));
+                        es[1].p.push_back(s.eval(s.u1(), fv)), es[1].t.push_back(dnormalize(s.eval(s.u1(), fv) - s.eval(s.u1() - du, fv)));
+                        es[2].p.push_back(s.eval(fu, s.v0())), es[2].t.push_back(dnormalize(s.eval(fu, s.v0()) - s.eval(fu, s.v0() + dv)));
+                        es[3].p.push_back(s.eval(fu, s.v1())), es[3].t.push_back(dnormalize(s.eval(fu, s.v1()) - s.eval(fu, s.v1() - dv)));
+                    }
+                    return es;
+                };
+                const std::vector<Edge> ea = edges(ss[0]), eb = edges(ss[1]);
+                // The two edges facing each other (either way along).
+                double best = 1e300;
+                Edge A, B;
+                for (const Edge& x : ea)
+                    for (Edge y : eb)
+                        for (int flip = 0; flip < 2; ++flip) {
+                            if (flip) std::reverse(y.p.begin(), y.p.end()), std::reverse(y.t.begin(), y.t.end());
+                            double d = 0;
+                            for (int j = 0; j < n; ++j) d += dlength(x.p[static_cast<std::size_t>(j)] - y.p[static_cast<std::size_t>(j)]);
+                            if (d < best) best = d, A = x, B = y;
+                        }
+                if (!(best / n > 1e-6)) return out.fail("The surfaces already meet there: nothing to blend");
+                // Cubic Hermite across the gap: leaving A along its slope, arriving at B against B's.
+                constexpr int across = 9;
+                for (int k = 0; k < across; ++k) {
+                    const double s = static_cast<double>(k) / (across - 1), s2 = s * s, s3 = s2 * s;
+                    const double h00 = 2 * s3 - 3 * s2 + 1, h10 = s3 - 2 * s2 + s, h01 = -2 * s3 + 3 * s2, h11 = s3 - s2;
+                    std::vector<DVec3> row;
+                    for (std::size_t j = 0; j < static_cast<std::size_t>(n); ++j) {
+                        const double L = dlength(B.p[j] - A.p[j]) * weight;
+                        row.push_back(A.p[j] * h00 + A.t[j] * (L * h10) + B.p[j] * h01 - B.t[j] * (L * h11));
+                    }
+                    rows.push_back(row);
+                }
+                what = "blend from " + names[0] + " to " + names[1];
+            }
+            BSplineSurface s;
+            std::string why;
+            if (!interpolateSurface(rows, s, &why)) return out.fail("Cannot make the surface: " + why);
+            addSurface(s, what, {});
+            return out;
+        }
+        if (cmd == "THICKEN") {
+            // THICKEN body THICKNESS t [BOTH]
+            auto isKey = [](const std::string& w) { return w == "thickness" || w == "both"; };
+            std::size_t i = 0;
+            const std::string nm = leadingName(a, quoted, i, isKey);
+            const int bi = nm.empty() ? doc.selectedBody : bodyNamed(doc, nm);
+            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(nm.empty() ? "Select a surface, or name it" : "No body named " + nm);
+            float t = 0;
+            bool both = false;
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if (k == "thickness" && i + 1 < a.size()) {
+                    const auto v = parseLength(a[++i]);
+                    if (!v || *v == 0) return out.fail("THICKNESS needs a length (negative: the other side)");
+                    t = static_cast<float>(*v);
+                } else if (k == "both") both = true;
+                else return out.fail("Usage: THICKEN body THICKNESS t [BOTH]");
+            }
+            if (t == 0) return out.fail("Usage: THICKEN body THICKNESS t [BOTH]");
+            const Body& src = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            const MeshData world = worldMesh(src);
+            if (openEdgeCount(world) == 0) return out.fail(src.name + " is already a closed solid: THICKEN makes solids from surfaces (SHELL hollows solids)");
+            MeshData solid;
+            std::string why;
+            if (!thickenMesh(world, t, both, solid, &why)) return out.fail("Cannot thicken " + src.name + ": " + why);
+            doc.scene.pushUndo("THICKEN " + src.name);
+            Body b = featureBody(uniqueName(src.name + " solid"), std::move(solid), src.color);
+            doc.scene.bodies()[static_cast<std::size_t>(bi)].visible = false;
+            out.say("Thickened " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + " " + lengthText(std::fabs(t)) + (both ? " (both ways)" : "") + " into " +
+                    b.name + ": " + closedText(b.mesh) + ", volume " + fmt3("%.3f", meshVolume(b.mesh) / 1000.0) + " cm3");
+            addBody(doc, std::move(b));
+            return out;
+        }
+        if (cmd == "KNIT") {
+            // KNIT body body ... [TOLERANCE t]
+            std::size_t end = a.size();
+            float tol = -1;
+            for (std::size_t k = 0; k + 1 < a.size(); ++k)
+                if (!quotedAt(k) && lower(a[k]) == "tolerance") {
+                    const auto v = parseLength(a[k + 1]);
+                    if (!v || !(*v > 0)) return out.fail("TOLERANCE needs a length");
+                    tol = static_cast<float>(*v);
+                    end = k;
+                }
+            const std::vector<std::string> names = nameList(0, end);
+            if (names.size() < 2) return out.fail("Usage: KNIT body body [body ...] [TOLERANCE t]");
+            std::vector<MeshData> parts;
+            std::vector<int> idx;
+            for (const std::string& nm : names) {
+                const int bi = bodyNamed(doc, nm);
+                if (bi < 0) return out.fail("No body named " + nm);
+                parts.push_back(worldMesh(doc.scene.bodies()[static_cast<std::size_t>(bi)]));
+                idx.push_back(bi);
+            }
+            if (tol < 0) { // by default: a fiftieth of a millimetre, more on large parts
+                AABB all = parts[0].bounds();
+                for (const MeshData& pm : parts) all.expand(pm.bounds().min), all.expand(pm.bounds().max);
+                tol = std::max(0.02f, 2e-4f * length(all.max - all.min));
+            }
+            bool closed = false;
+            std::size_t open = 0;
+            MeshData m = knitMeshes(parts, tol, closed, open);
+            doc.scene.pushUndo("KNIT");
+            const Vec3 colour = doc.scene.bodies()[static_cast<std::size_t>(idx[0])].color;
+            std::sort(idx.rbegin(), idx.rend());
+            for (int bi : idx) doc.scene.bodies().erase(doc.scene.bodies().begin() + bi);
+            m.computeFeatureEdges(30.0f);
+            Body b = meshBody(uniqueName(closed ? "Knit solid" : "Knit surface"), std::move(m), colour);
+            out.say("Knit " + std::to_string(names.size()) + " surfaces into " + b.name + ": " +
+                    (closed ? "closed, a solid of " + fmt3("%.3f", meshVolume(b.mesh) / 1000.0) + " cm3"
+                            : std::to_string(open) + " open edges left (gaps wider than " + lengthText(tol) + "?)"));
+            addBody(doc, std::move(b));
+            return out;
+        }
+        if (cmd == "ANALYZE") {
+            // ANALYZE ZEBRA [body] | ANALYZE CURVATURE [body] [MEAN|GAUSS] | ANALYZE OFF
+            const std::string what = a.empty() ? "" : lower(a[0]);
+            if (what == "off") {
+                int removed = 0;
+                auto& bodies = doc.scene.bodies();
+                for (std::size_t k = bodies.size(); k-- > 0;) {
+                    const std::string f = bodies[k].field;
+                    if (f.rfind("zebra", 0) != 0 && f.find("curvature") == std::string::npos) continue;
+                    const std::string src = bodies[k].attachedTo;
+                    bodies.erase(bodies.begin() + static_cast<std::ptrdiff_t>(k));
+                    if (const int s = bodyNamed(doc, src); s >= 0) bodies[static_cast<std::size_t>(s)].visible = true;
+                    ++removed;
+                }
+                doc.scene.touchBodies();
+                out.say(removed ? "Analysis off (" + std::to_string(removed) + " shown as before)" : "No analysis shown");
+                return out;
+            }
+            if (what != "zebra" && what != "curvature") return out.fail("Usage: ANALYZE ZEBRA [body] | ANALYZE CURVATURE [body] [MEAN|GAUSS] | ANALYZE OFF");
+            auto isKey = [](const std::string& w) { return w == "mean" || w == "gauss" || w == "gaussian"; };
+            std::size_t i = 1;
+            const std::string nm = leadingName(a, quoted, i, isKey);
+            const int bi = nm.empty() ? doc.selectedBody : bodyNamed(doc, nm);
+            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(nm.empty() ? "Select a body, or name it" : "No body named " + nm);
+            const bool gauss = i < a.size() && lower(a[i]).rfind("gauss", 0) == 0;
+            Body& src = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            MeshData m = worldMesh(src);
+            // A finer mesh shows the stripes and colours smoothly: from the exact surface where
+            // there is one (its points and normals on it), else the mesh refined.
+            if (src.exact()) {
+                const AABB bb = m.bounds();
+                TessellateOptions o;
+                o.chord = std::max(1e-3, 5e-4 * static_cast<double>(length(bb.max - bb.min)));
+                o.angle = 0.06;
+                TessellateReport tr;
+                MeshData fine = tessellate(*src.brep, o, &tr);
+                if (tr.failedFaces == 0 && !fine.indices.empty()) {
+                    fine.transform(translate(src.offset));
+                    m = std::move(fine);
+                }
+            } else {
+                Body probe = meshBody("probe", m);
+                for (int pass = 0; pass < 3 && probe.mesh.indices.size() < 60000; ++pass) {
+                    const AABB bb = probe.mesh.bounds();
+                    sculptRefine(probe, 0.01f * length(bb.max - bb.min));
+                }
+                m = probe.mesh;
+            }
+            { // smooth normals (area-weighted over the welded vertices): stripes follow the surface, not its facets
+                std::map<std::tuple<float, float, float>, Vec3> acc;
+                for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) {
+                    const Vec3 a3 = m.vertices[m.indices[k]].position, b3 = m.vertices[m.indices[k + 1]].position, c3 = m.vertices[m.indices[k + 2]].position;
+                    const Vec3 n = cross(b3 - a3, c3 - a3);
+                    for (const Vec3& p : {a3, b3, c3}) acc[{p.x, p.y, p.z}] += n;
+                }
+                for (Vertex& v : m.vertices) v.normal = normalize(acc[{v.position.x, v.position.y, v.position.z}]);
+            }
+            std::string field;
+            if (what == "zebra") {
+                for (Vertex& v : m.vertices) v.mask = 0;
+                field = "zebra stripes (reflections: smooth stripes, smooth surface)";
+            } else {
+                std::vector<float> H, K;
+                meshCurvature(m, H, K);
+                const std::vector<float>& c = gauss ? K : H;
+                std::vector<float> mag;
+                for (float x : c) mag.push_back(std::fabs(x));
+                std::sort(mag.begin(), mag.end());
+                const float top = std::max(mag.empty() ? 0.0f : mag[mag.size() * 95 / 100], 1e-6f);
+                for (std::size_t v = 0; v < m.vertices.size(); ++v) m.vertices[v].mask = std::clamp(0.5f + 0.5f * c[v] / top, 0.0f, 1.0f);
+                field = std::string(gauss ? "Gaussian curvature, 1/mm2: " : "mean curvature, 1/mm: ") + fmt3("%.3g", -top) + " (blue) to " + fmt3("%.3g", top) + " (red)";
+            }
+            doc.scene.pushUndo("ANALYZE " + src.name);
+            Body res = meshBody(uniqueName(src.name + " " + what), std::move(m), src.color);
+            res.field = field;
+            res.attachedTo = src.name;
+            src.visible = false;
+            out.say("Showing " + field + " on " + res.name + " (ANALYZE OFF puts " + src.name + " back)");
+            addBody(doc, std::move(res));
+            return out;
+        }
+        return out.fail("Usage: SURFACE LOFT|BOUNDARY|EXTRUDE|REVOLVE|PLANAR|OFFSET|BLEND ...  (HELP SURFACE)");
     }
 
     if (cmd == "DOME") {

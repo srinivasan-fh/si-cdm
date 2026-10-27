@@ -687,6 +687,67 @@ LINE -25,25 15,5
 RIB THICKNESS 4                                            a 40 x 20 gusset in the corner
 ```
 
+## Surfaces
+
+Surfaces are open bodies with no thickness. Each one lies on an exact B-spline surface,
+which is kept with the body, exported to STEP as a surface model and saved in the project.
+
+```text
+SURFACE LOFT curve curve [curve ...]                     through sections, in order
+SURFACE BOUNDARY c1 c2 c3 c4                             filling four curves that meet end to end
+SURFACE EXTRUDE curve DISTANCE d [DIR x,y,z]             an open (or closed) curve pulled straight
+SURFACE REVOLVE curve AXIS x,y,z [AT x,y,z] [ANGLE deg]  a curve turned about an axis
+SURFACE PLANAR curve                                     a flat surface filling a closed curve
+SURFACE OFFSET body DISTANCE d                           a surface d away along its normals
+SURFACE BLEND bodyA bodyB [WEIGHT w]                     a bridge between two surfaces' facing edges
+THICKEN body THICKNESS t [BOTH]                          a solid from a surface
+KNIT body body ... [TOLERANCE t]                         surfaces stitched into one (a solid when closed)
+ANALYZE ZEBRA [body]                                     reflection stripes
+ANALYZE CURVATURE [body] [MEAN|GAUSS]                    curvature in colour
+ANALYZE OFF                                              back to normal
+```
+
+**How they are built:**
+
+- Each surface interpolates its curves with cubic B-splines (degree 1 across two sections). The
+  parameters follow chord length and the knots are averaged, so the surface passes through
+  every section and point it is given.
+- **LOFT** lines up closed sections at their nearest points and runs them the same way round.
+  Sections must be all closed or all open.
+- **BOUNDARY** takes the four curves in any order and either direction, and fills them with a
+  bilinearly blended (Coons) patch. The patch has their exact edges.
+- **BLEND** finds the edges of the two surfaces that face each other. It leaves each surface
+  along that surface's own slope (a cubic Hermite bridge), so it meets both smoothly.
+  **WEIGHT** sets how far the slope carries (default 1).
+
+**Solids from surfaces:**
+
+- **THICKEN** offsets the surface along its normals: one way, the other with a negative `t`,
+  or both ways with **BOTH**. It walls the open edges.
+- **KNIT** joins surfaces along edges they share. Points within the tolerance become one, and
+  an edge with points the other side lacks is split there. The default tolerance is
+  0.02 mm, or more on large parts. A tube and its two caps knit into a closed solid.
+
+**Analysis:**
+
+- **ZEBRA** paints stripes of the reflected view that move as you turn the model, like a
+  striped light box. On a smooth surface the stripes run on smoothly. A kink or a jump in
+  them shows a crease, or a change of curvature, where two surfaces meet.
+- **CURVATURE** colours the surface blue to red by mean curvature (1/mm, signed), or by
+  Gaussian curvature with **GAUSS**.
+- Both draw on a copy finely tessellated from the exact surface and hide the original.
+  **ANALYZE OFF** puts it back.
+
+```text
+CIRCLE 0,0 20
+PLANE OFFSET 30
+CIRCLE 0,0 10
+PLANE OFFSET 30
+CIRCLE 5,0 15
+SURFACE LOFT "Circle 1" "Circle 2" "Circle 3"
+ANALYZE ZEBRA "Surface 1"
+```
+
 ## Mass properties
 
 ```text

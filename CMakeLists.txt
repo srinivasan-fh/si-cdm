@@ -104,6 +104,7 @@ add_library(sicdm_core STATIC
     src/core/Sketch.cpp
     src/core/TextOutline.cpp
     src/core/ExactMesh.cpp
+    src/core/Surfacing.cpp
     src/ui/Tools.cpp
 )
 target_include_directories(sicdm_core PUBLIC src)

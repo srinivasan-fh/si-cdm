@@ -106,6 +106,14 @@ void main() {
     vec3 ambient = mix(vec3(0.16, 0.15, 0.14), vec3(0.24, 0.26, 0.30), hemi);
 
     vec3 base = mix(uColor, vec3(0.30, 0.65, 1.00), uHighlight * 0.55);
+    if (uField > 1.5) { // zebra: stripes of the reflected view, smooth where the surface is
+        vec3 R = reflect(-V, N);
+        float f = fract(R.z * 5.0);
+        float w = max(fwidth(R.z * 5.0), 1e-3);
+        float stripe = smoothstep(0.5 - w, 0.5 + w, f) - smoothstep(1.0 - w, 1.0, f);
+        fragColor = vec4(mix(vec3(0.04), vec3(0.96), stripe), 1.0);
+        return;
+    }
     if (uField > 0.5) base = mix(fieldColour(vMask), vec3(0.30, 0.65, 1.00), uHighlight * 0.3);
     else base *= 1.0 - 0.6 * clamp(vMask, 0.0, 1.0); // masked: darker
     vec3 c = base * (ambient + diff) + vec3(spec);
@@ -728,7 +736,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         for (std::size_t i = 0; i < count; ++i) {
             if (!bodies[i].visible) continue;
             m_mesh.set("uColor", bodies[i].color);
-            m_mesh.set("uField", bodies[i].field.empty() ? 0.0f : 1.0f);
+            m_mesh.set("uField", bodies[i].field.empty() ? 0.0f : bodies[i].field.rfind("zebra", 0) == 0 ? 2.0f : 1.0f);
             m_mesh.set("uModel", model(i));
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
             glBindVertexArray(gpu(i).vao);
