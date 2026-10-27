@@ -10,12 +10,14 @@
 // the flat length of a bend is the bend allowance BA = angle (r + K t).
 //
 // Body kind "sheet"; its params: [t, r, K, ox, oy, oz, ux, uy, uz, vx, vy, vz (the base's
-// plane), n, x0, y0 ... (the base outline), m, then per flange: parent (-1: the base),
-// edge, length, angle (deg), down (0/1), radius (-1: the part's)].
+// plane), n, x0, y0 ... (the base outline), -m, then per flange: parent (-1: the base),
+// edge, length, angle (deg), down (0/1), radius (-1: the part's), inset0, inset1, slope0,
+// slope1, flare0, flare1]. (A positive m: the older layout, the first six of those.)
 
 #include "core/Geometry.hpp"
 #include "core/Sketch.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -29,6 +31,16 @@ struct SheetFlange {
     float angle = 90;    // degrees, 0 to 180
     bool down = false;   // bent the other way (towards -normal)
     float radius = -1;   // inside bend radius (-1: the part's)
+    // Its ends (0 at the edge's start, 1 at its end), in the flat: held back from the edge's
+    // end by `inset` (a corner relief, a gap; negative: reaching past it), plus `slope` per
+    // unit out across the bend zone, plus `flare` per unit out along the flat beyond it. A
+    // mitered corner cuts across the bend zone and, for a wall leaning out, along the flat.
+    float inset0 = 0, inset1 = 0, slope0 = 0, slope1 = 0, flare0 = 0, flare1 = 0;
+    // How far the end is held back at distance s out from the bend line, for a bend zone ba wide.
+    float endAt(int end, float s, float ba) const {
+        const float in = end ? inset1 : inset0, sl = end ? slope1 : slope0, fl = end ? flare1 : flare0;
+        return in + sl * std::min(s, ba) + fl * std::max(0.0f, s - ba);
+    }
 };
 
 struct SheetPart {
@@ -58,6 +70,15 @@ struct SheetEdge {
     float length = 0;
 };
 std::vector<SheetEdge> sheetFreeEdges(const SheetPart& part);
+
+// Where a point of the flat (plane coordinates, at height z through the sheet) of a region
+// (-1: the base, else a flange) is on the folded part, in world space.
+Vec3 sheetFolded(const SheetPart& part, int region, Vec2 q, float z);
+
+// The flange length a jog needs: two bends of `angleDeg` (the second the other way) on an
+// edge whose second flat runs `offset` (mid-sheet to mid-sheet) from the base's plane.
+// Negative when the bends alone rise further than that.
+float jogFirstLength(const SheetPart& part, int parent, int edge, float offset, float angleDeg, bool down = false);
 
 // The flat pattern's outline (closed loops, plane coordinates) and its bend lines (the
 // middle of each bend zone), for drawings and DXF.

@@ -56,9 +56,12 @@ std::vector<Layout> layout(const SheetPart& part, std::string* why) {
                 return {};
             }
             const Layout& p = out[static_cast<std::size_t>(f.parent)];
-            const float reach = p.ba + part.flanges[static_cast<std::size_t>(f.parent)].length;
-            // The parent's far edge, run the same way as its bend line (the outline's way round).
-            a = add(p.a, mul(p.n, reach)), b = add(p.b, mul(p.n, reach));
+            const SheetFlange& pf = part.flanges[static_cast<std::size_t>(f.parent)];
+            const float reach = p.ba + pf.length;
+            // The parent's far edge (its ends held back and leaning in as the parent's are),
+            // run the same way as its bend line (the outline's way round).
+            a = add(add(p.a, mul(p.n, reach)), mul(p.e, pf.endAt(0, reach, p.ba)));
+            b = add(add(p.b, mul(p.n, reach)), mul(p.e, -pf.endAt(1, reach, p.ba)));
             nrm = p.n;
         }
         L.a = a, L.b = b;
@@ -116,9 +119,10 @@ std::vector<float> sheetParams(const SheetPart& part) {
     for (const Vec3& v : {part.frame.origin, part.frame.u, part.frame.v}) p.insert(p.end(), {v.x, v.y, v.z});
     p.push_back(static_cast<float>(part.base.size()));
     for (const Vec2& q : part.base) p.insert(p.end(), {q.x, q.y});
-    p.push_back(static_cast<float>(part.flanges.size()));
+    p.push_back(-static_cast<float>(part.flanges.size())); // negative: twelve numbers a flange
     for (const SheetFlange& f : part.flanges)
-        p.insert(p.end(), {static_cast<float>(f.parent), static_cast<float>(f.edge), f.length, f.angle, f.down ? 1.0f : 0.0f, f.radius});
+        p.insert(p.end(), {static_cast<float>(f.parent), static_cast<float>(f.edge), f.length, f.angle, f.down ? 1.0f : 0.0f, f.radius, f.inset0, f.inset1,
+                           f.slope0, f.slope1, f.flare0, f.flare1});
     return p;
 }
 
@@ -132,10 +136,15 @@ bool sheetFromParams(const std::vector<float>& p, SheetPart& out) {
     const auto nb = static_cast<std::size_t>(p[i++]);
     if (nb < 3 || nb > 100000 || p.size() < i + 2 * nb + 1) return false;
     for (std::size_t k = 0; k < nb; ++k, i += 2) s.base.push_back({p[i], p[i + 1]});
-    const auto nf = static_cast<std::size_t>(p[i++]);
-    if (nf > 1000 || p.size() < i + 6 * nf) return false;
-    for (std::size_t k = 0; k < nf; ++k, i += 6)
-        s.flanges.push_back({static_cast<int>(p[i]), static_cast<int>(p[i + 1]), p[i + 2], p[i + 3], p[i + 4] != 0.0f, p[i + 5]});
+    const bool wide = p[i] < 0; // the newer layout: flange ends too
+    const auto nf = static_cast<std::size_t>(std::fabs(p[i++]));
+    const std::size_t per = wide ? 12 : 6;
+    if (nf > 1000 || p.size() < i + per * nf) return false;
+    for (std::size_t k = 0; k < nf; ++k, i += per) {
+        SheetFlange f{static_cast<int>(p[i]), static_cast<int>(p[i + 1]), p[i + 2], p[i + 3], p[i + 4] != 0.0f, p[i + 5]};
+        if (wide) f.inset0 = p[i + 6], f.inset1 = p[i + 7], f.slope0 = p[i + 8], f.slope1 = p[i + 9], f.flare0 = p[i + 10], f.flare1 = p[i + 11];
+        s.flanges.push_back(f);
+    }
     out = std::move(s);
     return true;
 }
@@ -163,19 +172,42 @@ MeshData buildSheet(const SheetPart& part, bool flat, std::string* why) {
         int region;
     };
     std::vector<Piece> pieces;
-    pieces.push_back({part.base, -1});
+    // The base, with its edges split where held-back flanges start and end (so the bend
+    // lines are shared edges, not walls).
+    {
+        std::vector<Vec2> outline;
+        const std::size_t nb = part.base.size();
+        for (std::size_t k = 0; k < nb; ++k) {
+            outline.push_back(part.base[k]);
+            for (const SheetFlange& fl : part.flanges) {
+                if (fl.parent >= 0 || fl.edge != static_cast<int>(k)) continue;
+                const Vec2 a = part.base[k], b = part.base[(k + 1) % nb];
+                const float l = std::hypot(b.x - a.x, b.y - a.y);
+                const Vec2 e{(b.x - a.x) / l, (b.y - a.y) / l};
+                if (fl.inset0 > 1e-6f) outline.push_back(add(a, mul(e, fl.inset0)));
+                if (fl.inset1 > 1e-6f) outline.push_back(add(b, mul(e, -fl.inset1)));
+            }
+        }
+        pieces.push_back({outline, -1});
+    }
     for (std::size_t i = 0; i < lay.size(); ++i) {
         const Layout& L = lay[i];
+        const SheetFlange& fl = part.flanges[i];
         const int strips = L.theta > 0 ? std::max(2, static_cast<int>(std::ceil(L.theta / (7.5f * kPiF / 180.0f)))) : 0;
+        for (float sCheck : {0.0f, L.ba, L.ba + fl.length})
+            if (fl.endAt(0, sCheck, L.ba) + fl.endAt(1, sCheck, L.ba) >= L.len - 1e-4f) return fail("A flange's ends meet: less inset or miter");
+        // The strip's two sides at distance s out from the bend line.
+        auto endA = [&](float s) { return add(add(L.a, mul(L.n, s)), mul(L.e, fl.endAt(0, s, L.ba))); };
+        auto endB = [&](float s) { return add(add(L.b, mul(L.n, s)), mul(L.e, -fl.endAt(1, s, L.ba))); };
         float s0 = 0;
         // The bend zone in strips (smooth arcs), then the straight flat.
         for (int k = 0; k < strips; ++k) {
             const float s1 = L.ba * static_cast<float>(k + 1) / static_cast<float>(strips);
-            pieces.push_back({{add(L.a, mul(L.n, s0)), add(L.a, mul(L.n, s1)), add(L.b, mul(L.n, s1)), add(L.b, mul(L.n, s0))}, static_cast<int>(i)});
+            pieces.push_back({{endA(s0), endA(s1), endB(s1), endB(s0)}, static_cast<int>(i)});
             s0 = s1;
         }
-        const float s1 = L.ba + part.flanges[i].length;
-        if (s1 > s0 + 1e-6f) pieces.push_back({{add(L.a, mul(L.n, s0)), add(L.a, mul(L.n, s1)), add(L.b, mul(L.n, s1)), add(L.b, mul(L.n, s0))}, static_cast<int>(i)});
+        const float s1 = L.ba + fl.length;
+        if (s1 > s0 + 1e-6f) pieces.push_back({{endA(s0), endA(s1), endB(s1), endB(s0)}, static_cast<int>(i)});
     }
     // Those quads are counter-clockwise when the edge runs b -> a... make sure.
     for (Piece& pc : pieces)
@@ -251,12 +283,43 @@ std::vector<SheetEdge> sheetFreeEdges(const SheetPart& part) {
     for (std::size_t i = 0; i < lay.size(); ++i) {
         if (taken(static_cast<int>(i), 0)) continue;
         const Layout& L = lay[i];
-        const float reach = L.ba + part.flanges[i].length;
-        SheetEdge e{static_cast<int>(i), 0, add(L.a, mul(L.n, reach)), add(L.b, mul(L.n, reach)), {}, {}, L.len};
+        const SheetFlange& fl = part.flanges[i];
+        const float reach = L.ba + fl.length;
+        const Vec2 ea = add(add(L.a, mul(L.n, reach)), mul(L.e, fl.endAt(0, reach, L.ba)));
+        const Vec2 eb = add(add(L.b, mul(L.n, reach)), mul(L.e, -fl.endAt(1, reach, L.ba)));
+        SheetEdge e{static_cast<int>(i), 0, ea, eb, {}, {}, std::hypot(eb.x - ea.x, eb.y - ea.y)};
         e.a3 = lift(static_cast<int>(i), e.a), e.b3 = lift(static_cast<int>(i), e.b);
         out.push_back(e);
     }
     return out;
+}
+
+Vec3 sheetFolded(const SheetPart& part, int region, Vec2 q, float z) {
+    const std::vector<Layout> lay = layout(part, nullptr);
+    const Vec3 p = lay.size() == part.flanges.size() ? foldAll(part, lay, region, {q.x, q.y, z}) : Vec3{q.x, q.y, z};
+    return part.frame.toWorld({p.x, p.y}) + part.frame.normal * p.z;
+}
+
+float jogFirstLength(const SheetPart& part, int parent, int edge, float offset, float angleDeg, bool down) {
+    // The second flat's height (mid-sheet, off the base's mid-plane) grows straight with the
+    // first flat's length: two trials give the line, and the length for `offset`.
+    auto rise = [&](float first) {
+        SheetPart p = part;
+        SheetFlange a;
+        a.parent = parent, a.edge = edge, a.length = first, a.angle = angleDeg, a.down = down;
+        p.flanges.push_back(a);
+        SheetFlange b;
+        b.parent = static_cast<int>(p.flanges.size()) - 1, b.length = 1, b.angle = angleDeg, b.down = !down;
+        p.flanges.push_back(b);
+        const std::vector<SheetEdge> free = sheetFreeEdges(p);
+        for (const SheetEdge& e : free)
+            if (e.parent == b.parent + 1) return dot(e.a3 - part.frame.origin, part.frame.normal) - 0.5f * part.thickness;
+        return 0.0f;
+    };
+    const float r0 = rise(0), r1 = rise(10);
+    const float per = (r1 - r0) / 10;
+    if (std::fabs(per) < 1e-6f) return -1;
+    return (offset - r0) / per;
 }
 
 void sheetFlatOutline(const SheetPart& part, std::vector<std::vector<Vec2>>& outline, std::vector<std::pair<Vec2, Vec2>>& bendLines) {
@@ -264,14 +327,33 @@ void sheetFlatOutline(const SheetPart& part, std::vector<std::vector<Vec2>>& out
     const std::vector<Layout> lay = layout(part, nullptr);
     if (lay.size() != part.flanges.size()) return;
     // The base and each flange's whole strip, counter-clockwise; edges used once are outline.
-    std::vector<std::vector<Vec2>> pieces{part.base};
+    std::vector<std::vector<Vec2>> pieces;
+    { // the base, split where held-back flanges start and end
+        std::vector<Vec2> outlineB;
+        const std::size_t nb = part.base.size();
+        for (std::size_t k = 0; k < nb; ++k) {
+            outlineB.push_back(part.base[k]);
+            for (const SheetFlange& fl : part.flanges) {
+                if (fl.parent >= 0 || fl.edge != static_cast<int>(k)) continue;
+                const Vec2 a = part.base[k], b = part.base[(k + 1) % nb];
+                const float l = std::hypot(b.x - a.x, b.y - a.y);
+                const Vec2 e{(b.x - a.x) / l, (b.y - a.y) / l};
+                if (fl.inset0 > 1e-6f) outlineB.push_back(add(a, mul(e, fl.inset0)));
+                if (fl.inset1 > 1e-6f) outlineB.push_back(add(b, mul(e, -fl.inset1)));
+            }
+        }
+        pieces.push_back(std::move(outlineB));
+    }
     for (std::size_t i = 0; i < lay.size(); ++i) {
         const Layout& L = lay[i];
-        const float reach = L.ba + part.flanges[i].length;
-        std::vector<Vec2> q{L.a, add(L.a, mul(L.n, reach)), add(L.b, mul(L.n, reach)), L.b};
+        const SheetFlange& fl = part.flanges[i];
+        const float reach = L.ba + fl.length;
+        auto endA = [&](float s) { return add(add(L.a, mul(L.n, s)), mul(L.e, fl.endAt(0, s, L.ba))); };
+        auto endB = [&](float s) { return add(add(L.b, mul(L.n, s)), mul(L.e, -fl.endAt(1, s, L.ba))); };
+        std::vector<Vec2> q{endA(0), endA(L.ba), endA(reach), endB(reach), endB(L.ba), endB(0)};
         if (signedArea(q) < 0) std::reverse(q.begin(), q.end());
         pieces.push_back(std::move(q));
-        if (L.theta > 0) bendLines.push_back({add(L.a, mul(L.n, L.ba * 0.5f)), add(L.b, mul(L.n, L.ba * 0.5f))});
+        if (L.theta > 0) bendLines.push_back({endA(L.ba * 0.5f), endB(L.ba * 0.5f)});
     }
     using Key = std::pair<long long, long long>;
     auto key = [](Vec2 q) { return Key{std::llround(q.x * 1e4), std::llround(q.y * 1e4)}; };

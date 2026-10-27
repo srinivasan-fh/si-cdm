@@ -520,7 +520,12 @@ MIRROR [body] [PLANE XY|YZ|XZ] [AT x,y,z] [NORMAL x,y,z] [COPY | MOVE] [UNION]
 ```text
 SHEETMETAL BASE curve THICKNESS t [RADIUS r] [K k]     a base plate from a closed profile
 SHEETMETAL EDGES [body]                                the edges a flange can go on
-SHEETMETAL FLANGE [body] EDGE n | NEAR x,y,z LENGTH l [ANGLE deg] [DOWN] [RADIUS r]
+SHEETMETAL FLANGE [body] EDGE n | NEAR x,y,z LENGTH l [ANGLE deg] [DOWN] [RADIUS r] [INSET a b]
+SHEETMETAL MITER [body] EDGES n,m,... LENGTH l [ANGLE deg] [GAP g] [DOWN]   flanges round corners
+SHEETMETAL HEM [body] EDGE n | NEAR x,y,z LENGTH l [OPEN gap | CLOSED] [DOWN]
+SHEETMETAL JOG [body] EDGE n | NEAR x,y,z OFFSET h LENGTH l [ANGLE deg] [DOWN]
+SHEETMETAL RELIEF [body] [SIZE s]                      corner reliefs where flanges meet
+SHEETMETAL CONVERT body FACE x,y,z [RADIUS r] [K k]    a plate or shelled box as sheet metal
 SHEETMETAL FLAT [body] [SKETCH]                        the flat pattern
 SHEETMETAL INFO [body]
 ```
@@ -540,6 +545,42 @@ unless given). `LENGTH` is the flat beyond the bend; the bend is added outside t
   `EXPORT flat.dxf`.
 - Edges are numbered as `SHEETMETAL EDGES` lists them (each takes one flange); `NEAR x,y,z`
   picks the one nearest a point. The part is parametric: saved, undone and rebuilt as such.
+
+**More flanges:**
+
+- **INSET a b** holds a flange back from its edge's ends, by `a` at the edge's start and `b`
+  at its end.
+- **MITER** puts flanges on several base edges at once. Where two of them meet at a corner,
+  each is cut on the corner's bisector: across the bend zone (so the bends don't run into
+  each other) and, for walls that lean out (`ANGLE` under 90), along the wall too. The
+  corners then close, `GAP` apart (a tenth of the sheet by default).
+- **HEM** folds an edge back flat on itself (180 degrees). **OPEN gap** leaves that gap
+  between the sheets (the inside radius is half of it). **CLOSED**, the default, leaves
+  none.
+- **JOG** makes two bends the opposite way, so the next flat steps `OFFSET` away (mid-sheet
+  to mid-sheet) and runs on `LENGTH`. The flat between the bends is worked out exactly.
+  A jog smaller than its two bends' rise is refused.
+- **RELIEF** holds back the flanges at each corner where two of them meet (the bend radius
+  plus the thickness by default, or `SIZE`). This is a rectangular relief, so the bends
+  clear each other.
+- **CONVERT** turns a thin-walled solid into sheet metal: a plate, or a box hollowed by
+  `SHELL ... FACE`. Pick the outside of the base with `FACE`:
+  - The thickness is measured under it.
+  - Walls standing on its edges become 90-degree flanges, `r + t` shorter, so the part
+    keeps its outside size.
+  - Where two walls meet, the corner is mitered shut.
+  - The body becomes a parametric sheet metal part with a flat pattern.
+
+```text
+RECT 0,0 80,50
+SHEETMETAL BASE "Rectangle 1" THICKNESS 1.5 RADIUS 1.5
+SHEETMETAL MITER "Sheet 1" EDGES 1,2,3 LENGTH 20     a tray: three walls, mitered corners
+SHEETMETAL HEM "Sheet 1" EDGE 1 LENGTH 8 OPEN 1      a rolled front edge
+
+BOX 60 40 20
+SHELL "Block 2" THICKNESS 1.5 FACE 0,0,20
+SHEETMETAL CONVERT "Block 2" FACE 0,0,0 RADIUS 1.5   a box that can be bent from a flat blank
+```
 
 ```text
 RECT 0,0 100,60

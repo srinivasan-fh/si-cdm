@@ -1425,10 +1425,14 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         // SHEETMETAL FLANGE [body] EDGE n | NEAR x,y,z  LENGTH l [ANGLE deg] [DOWN] [RADIUS r]
         // SHEETMETAL EDGES [body] | SHEETMETAL FLAT [body] [SKETCH] | SHEETMETAL INFO [body]
         const char* usage = "Usage: SHEETMETAL BASE curve THICKNESS t [RADIUS r] [K k] | SHEETMETAL FLANGE [body] EDGE n|NEAR x,y,z LENGTH l [ANGLE deg] "
-                            "[DOWN] [RADIUS r] | SHEETMETAL EDGES|FLAT|INFO [body] [SKETCH]";
+                            "[DOWN] [RADIUS r] [INSET a b] | SHEETMETAL HEM [body] EDGE n|NEAR x,y,z LENGTH l [OPEN gap|CLOSED] [DOWN] | "
+                            "SHEETMETAL JOG [body] EDGE n|NEAR x,y,z OFFSET h LENGTH l [ANGLE deg] [DOWN] | SHEETMETAL MITER [body] EDGES n,m,... "
+                            "LENGTH l [ANGLE deg] [GAP g] [DOWN] | SHEETMETAL RELIEF [body] [SIZE s] | SHEETMETAL CONVERT body FACE x,y,z [RADIUS r] [K k] | "
+                            "SHEETMETAL EDGES|FLAT|INFO [body] [SKETCH]";
         if (a.empty()) return out.fail(usage);
         const std::string sub = lower(a[0]);
-        static const char* const kKeys[] = {"thickness", "t", "radius", "r", "k", "edge", "near", "length", "angle", "down", "sketch"};
+        static const char* const kKeys[] = {"thickness", "t", "radius", "r", "k", "edge", "edges", "near", "length", "angle", "down", "sketch",
+                                            "inset", "open", "closed", "offset", "gap", "size", "face"};
         auto isKey = [](const std::string& w) {
             for (const char* k : kKeys)
                 if (w == k) return true;
@@ -1437,9 +1441,11 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         std::size_t i = 1;
         const std::string name = leadingName(a, quoted, i, isKey);
         float thickness = 0, radius = -1, k = 0.44f, flangeLen = -1, angle = 90;
-        bool down = false, sketch = false;
+        bool down = false, sketch = false, closedHem = false;
         int edgeNo = -1;
-        std::optional<Vec3> near;
+        std::optional<Vec3> near, facePoint;
+        float inset0 = 0, inset1 = 0, hemGap = -1, jogOffset = 0, miterGap = -1, relief = -1;
+        std::vector<int> edgeList;
         for (; i < a.size(); ++i) {
             const std::string w = lower(a[i]);
             auto len = [&](float& v, bool positive) {
@@ -1468,6 +1474,32 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 edgeNo = static_cast<int>(*x) - 1;
             } else if (w == "near") {
                 if (!(near = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt)) return out.fail("NEAR needs x,y,z");
+            } else if (w == "edges") {
+                const std::string list = i + 1 < a.size() ? a[++i] : std::string();
+                std::size_t at = 0;
+                while (at <= list.size()) {
+                    const std::size_t comma = list.find(',', at);
+                    const auto x = parseNumber(list.substr(at, comma == std::string::npos ? std::string::npos : comma - at));
+                    if (!x || *x < 1) return out.fail("EDGES takes edge numbers: EDGES 1,2,3 (SHEETMETAL EDGES lists them)");
+                    edgeList.push_back(static_cast<int>(*x) - 1);
+                    if (comma == std::string::npos) break;
+                    at = comma + 1;
+                }
+            } else if (w == "inset") {
+                if (!len(inset0, false) || !len(inset1, false)) return out.fail("INSET needs two lengths: held back at the edge's start and end");
+            } else if (w == "open") {
+                if (!len(hemGap, true)) return out.fail("OPEN needs the hem's gap");
+            } else if (w == "closed") closedHem = true;
+            else if (w == "offset") {
+                const auto x = i + 1 < a.size() ? parseLength(a[++i]) : std::nullopt;
+                if (!x || *x == 0) return out.fail("OFFSET needs the jog's height");
+                jogOffset = static_cast<float>(*x);
+            } else if (w == "gap") {
+                if (!len(miterGap, false)) return out.fail("GAP needs a length");
+            } else if (w == "size") {
+                if (!len(relief, true)) return out.fail("SIZE needs the relief's size");
+            } else if (w == "face") {
+                if (!(facePoint = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt)) return out.fail("FACE needs a point x,y,z on the face");
             } else if (w == "down") down = true;
             else if (w == "sketch") sketch = true;
             else return out.fail(usage);
@@ -1504,6 +1536,119 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
         if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select a sheet metal body, or name it" : "No body named " + name);
         Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (sub == "convert") {
+            // A thin-walled solid (a plate, a shelled box) as sheet metal: the face picked is the
+            // base's outside; walls standing on its edges become flanges.
+            if (!facePoint) return out.fail("SHEETMETAL CONVERT needs FACE x,y,z: a point on the base's outside face");
+            const MeshData world = worldMesh(body);
+            if (openEdgeCount(world) != 0) return out.fail(body.name + " is not a closed solid");
+            Vec3 q{}, n{0, 0, 1};
+            if (!nearestFace(world, *facePoint, q, n)) return out.fail(body.name + " has no faces");
+            auto hitAlong = [&](Vec3 from, Vec3 dir) { // the nearest crossing of the body's surface
+                return upToNext(doc, {from}, dir, bi);
+            };
+            const AABB wb = world.bounds();
+            const float tiny = 1e-4f * length(wb.max - wb.min);
+            const auto tHit = hitAlong(q - n * tiny, n * -1.0f);
+            if (!tHit) return out.fail("No material under that face");
+            const float t = *tHit + tiny;
+            const float r0 = radius >= 0 ? radius : t;
+            // The footprint: the section half way through the plate.
+            PlaneFrame f;
+            makePlaneFrame(q, n * -1.0f, std::fabs(n.z) > 0.9f ? Vec3{1, 0, 0} : cross(Vec3{0, 0, 1}, n), f);
+            PlaneFrame mid = f;
+            mid.origin = q - n * (0.5f * t);
+            std::vector<Vec2> outline;
+            for (std::vector<Vec2>& l : planeSection(world, mid)) {
+                if (signedArea(l) <= 0) continue;
+                bool in = false; // around the point
+                const Vec2 pq = mid.toPlane(*facePoint);
+                for (std::size_t k2 = 0, j = l.size() - 1; k2 < l.size(); j = k2++)
+                    if ((l[k2].y > pq.y) != (l[j].y > pq.y) && pq.x < (l[j].x - l[k2].x) * (pq.y - l[k2].y) / (l[j].y - l[k2].y) + l[k2].x) in = !in;
+                if (in) outline = std::move(l);
+            }
+            for (bool changed = true; changed && outline.size() > 3;) { // straight runs as one edge
+                changed = false;
+                for (std::size_t k2 = 0; k2 < outline.size(); ++k2) {
+                    const Vec2 p0 = outline[(k2 + outline.size() - 1) % outline.size()], p1 = outline[k2], p2 = outline[(k2 + 1) % outline.size()];
+                    if (std::fabs((p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x)) <= 1e-4f * std::max(1.0f, std::hypot(p2.x - p0.x, p2.y - p0.y))) {
+                        outline.erase(outline.begin() + static_cast<std::ptrdiff_t>(k2));
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (outline.size() < 3) return out.fail("No flat plate at that face");
+            // Walls: material standing on an edge, inside its outline; their height from the outside face.
+            const std::size_t nb = outline.size();
+            std::vector<float> wall(nb, 0.0f);
+            for (std::size_t e = 0; e < nb; ++e) {
+                const Vec2 a2 = outline[e], b2 = outline[(e + 1) % nb];
+                const float l = std::hypot(b2.x - a2.x, b2.y - a2.y);
+                const Vec2 inward{-(b2.y - a2.y) / l, (b2.x - a2.x) / l}; // left of a counter-clockwise outline
+                const Vec2 m2{(a2.x + b2.x) * 0.5f + inward.x * 0.5f * t, (a2.y + b2.y) * 0.5f + inward.y * 0.5f * t};
+                const Vec3 start = f.toWorld(m2) + f.normal * (t + tiny);
+                // Inside a wall: the way up leaves the solid further on, and the way in leaves it within a wall's thickness.
+                const auto up = hitAlong(start, f.normal);
+                const Vec3 inDir = normalize(f.toWorld(inward) - f.origin);
+                const auto across = hitAlong(start, inDir);
+                if (up && across && *across < 1.5f * t && *up > t) wall[e] = t + tiny + *up;
+            }
+            SheetPart part;
+            part.thickness = t, part.radius = r0, part.k = k;
+            part.frame = f;
+            // The base: walled edges moved in by the bend (r + t), the others where they are.
+            std::vector<Vec2> base(nb);
+            for (std::size_t v = 0; v < nb; ++v) {
+                const std::size_t ep = (v + nb - 1) % nb, en = v; // the edges before and after corner v
+                auto lineOf = [&](std::size_t e, Vec2& p0, Vec2& d) {
+                    const Vec2 a2 = outline[e], b2 = outline[(e + 1) % nb];
+                    const float l = std::hypot(b2.x - a2.x, b2.y - a2.y);
+                    d = {(b2.x - a2.x) / l, (b2.y - a2.y) / l};
+                    const float in = wall[e] > 0 ? r0 + t : 0.0f;
+                    p0 = {a2.x - d.y * in, a2.y + d.x * in};
+                };
+                Vec2 p1, d1, p2, d2;
+                lineOf(ep, p1, d1), lineOf(en, p2, d2);
+                const float den = d1.x * d2.y - d1.y * d2.x;
+                if (std::fabs(den) < 1e-6f) return out.fail("The base's outline has a corner that is not a corner");
+                const float tt = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / den;
+                base[v] = {p1.x + d1.x * tt, p1.y + d1.y * tt};
+            }
+            part.base = base;
+            const float ba = bendAllowance(90, r0, k, t);
+            int walls = 0;
+            for (std::size_t e = 0; e < nb; ++e) {
+                if (!(wall[e] > 0)) continue;
+                const float fl = wall[e] - (r0 + t);
+                if (fl < 0) return out.fail("A wall is lower than the bend (" + lengthText(r0 + t) + "): a smaller RADIUS");
+                SheetFlange sf{-1, static_cast<int>(e), fl, 90.0f, false, -1};
+                for (int end = 0; end < 2; ++end) { // a wall beside it: the corner mitered shut (rather than ripped open)
+                    const std::size_t other = end ? (e + 1) % nb : (e + nb - 1) % nb;
+                    if (!(wall[other] > 0)) continue;
+                    (end ? sf.inset1 : sf.inset0) = 0.05f * t;
+                    (end ? sf.slope1 : sf.slope0) = ba > 0 ? -(r0 + 0.5f * t) / ba : 0.0f;
+                }
+                part.flanges.push_back(sf);
+                ++walls;
+            }
+            std::string why;
+            MeshData m = buildSheet(part, false, &why);
+            if (m.indices.empty()) return out.fail("Cannot convert " + body.name + ": " + why);
+            doc.scene.pushUndo("SHEETMETAL CONVERT " + body.name);
+            const double before = meshVolume(world);
+            body.kind = "sheet";
+            body.params = sheetParams(part);
+            body.mesh = std::move(m);
+            body.offset = {}, body.rotation = {}, body.scale = 1.0f;
+            body.brep.reset();
+            doc.scene.touchBodies();
+            doc.dirty = true;
+            out.say("Converted " + body.name + " to sheet metal: " + lengthText(t) + " thick, bend radius " + lengthText(r0) + ", " + std::to_string(walls) +
+                    (walls == 1 ? " wall" : " walls") + " as flanges; volume " + fmt3("%.3f", before / 1000.0) + " -> " +
+                    fmt3("%.3f", meshVolume(body.mesh) / 1000.0) + " cm3 (rounded bends, mitered corners)");
+            return out;
+        }
         SheetPart part;
         if (body.kind != "sheet" || !sheetFromParams(body.params, part)) return out.fail(body.name + " isn't a sheet metal part (SHEETMETAL BASE makes one)");
         // Bodies move with an offset: the part's own frame is where it was made.
@@ -1534,6 +1679,126 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             if (!outline.empty()) out.say("  flat pattern " + lengthText(hi.x - lo.x) + " x " + lengthText(hi.y - lo.y));
             return out;
         }
+        // The part changed: rebuilt, or refused with why (nothing changed).
+        auto commit = [&](const SheetPart& next, const std::string& what, const std::string& said) {
+            std::string why;
+            MeshData m = buildSheet(next, false, &why);
+            if (m.indices.empty()) return out.fail("Cannot add the " + what + ": " + why), false;
+            doc.scene.pushUndo("SHEETMETAL " + toUpper(what) + " " + body.name);
+            body.params = sheetParams(next);
+            body.mesh = std::move(m);
+            body.brep.reset();
+            doc.scene.touchBodies();
+            doc.dirty = true;
+            out.say(said);
+            return true;
+        };
+        auto pickEdge = [&]() -> int {
+            int pick = edgeNo;
+            if (near) {
+                float best = 1e30f;
+                for (std::size_t e = 0; e < edges.size(); ++e) {
+                    const float dd = length(shift((edges[e].a3 + edges[e].b3) * 0.5f) - *near);
+                    if (dd < best) best = dd, pick = static_cast<int>(e);
+                }
+            }
+            return pick >= 0 && pick < static_cast<int>(edges.size()) ? pick : -1;
+        };
+        const float rr = radius >= 0 ? radius : part.radius;
+        if (sub == "hem") {
+            // A flange folded flat back on itself: OPEN leaves a gap, CLOSED (the default) none.
+            if (!(flangeLen > 0)) return out.fail("SHEETMETAL HEM needs LENGTH l");
+            const int pick = pickEdge();
+            if (pick < 0) return out.fail("Give EDGE n (SHEETMETAL EDGES lists them) or NEAR x,y,z");
+            const SheetEdge& e = edges[static_cast<std::size_t>(pick)];
+            SheetPart next = part;
+            const float hr = hemGap > 0 ? hemGap * 0.5f : 0.02f * part.thickness; // the inside radius: half the gap
+            (void)closedHem;
+            next.flanges.push_back({e.parent, e.edge, flangeLen, 180.0f, down, hr});
+            commit(next, "hem", std::string(hemGap > 0 ? "Open" : "Closed") + " hem on " + body.name + ": " + lengthText(flangeLen) + " folded back" +
+                                    (hemGap > 0 ? ", gap " + lengthText(hemGap) : std::string()) + " (edge " + std::to_string(pick + 1) + ")");
+            return out;
+        }
+        if (sub == "jog") {
+            // Two bends the opposite way: the next flat steps OFFSET away and runs on LENGTH.
+            if (jogOffset == 0 || !(flangeLen > 0)) return out.fail("SHEETMETAL JOG needs OFFSET h and LENGTH l");
+            const int pick = pickEdge();
+            if (pick < 0) return out.fail("Give EDGE n (SHEETMETAL EDGES lists them) or NEAR x,y,z");
+            const SheetEdge& e = edges[static_cast<std::size_t>(pick)];
+            const bool dn = down != (jogOffset < 0);
+            const float first = jogFirstLength(part, e.parent, e.edge, std::fabs(jogOffset) * (dn ? -1.0f : 1.0f), angle, dn);
+            if (first < 0) return out.fail("An offset of " + lengthText(std::fabs(jogOffset)) + " is less than the two bends rise: a larger OFFSET or a smaller RADIUS");
+            SheetPart next = part;
+            next.flanges.push_back({e.parent, e.edge, first, angle, dn, radius});
+            next.flanges.push_back({static_cast<int>(next.flanges.size()) - 1, 0, flangeLen, angle, !dn, radius});
+            commit(next, "jog", "Jog on " + body.name + ": " + lengthText(std::fabs(jogOffset)) + " offset, " + fmt3("%g", angle) + " deg bends, " +
+                                    lengthText(first) + " between them, " + lengthText(flangeLen) + " beyond (edge " + std::to_string(pick + 1) + ")");
+            return out;
+        }
+        if (sub == "miter") {
+            // Flanges along base edges side by side, their shared corners cut on the bisector so
+            // they meet (GAP apart): across the bend zones, and along a wall that leans out.
+            if (!(flangeLen > 0) || edgeList.empty()) return out.fail("SHEETMETAL MITER needs EDGES n,m,... and LENGTH l");
+            const float g = miterGap >= 0 ? miterGap : 0.1f * part.thickness;
+            const std::size_t nb = part.base.size();
+            std::vector<int> baseEdges;
+            for (int ek : edgeList) {
+                if (ek >= static_cast<int>(edges.size()) || edges[static_cast<std::size_t>(ek)].parent >= 0)
+                    return out.fail("MITER takes free edges of the base (SHEETMETAL EDGES lists them)");
+                baseEdges.push_back(edges[static_cast<std::size_t>(ek)].edge);
+            }
+            auto chosen = [&](int be) { return std::find(baseEdges.begin(), baseEdges.end(), be) != baseEdges.end(); };
+            const float theta = angle * kPi / 180.0f;
+            const float ba = bendAllowance(angle, rr, part.k, part.thickness);
+            SheetPart next = part;
+            int corners = 0;
+            for (int be : baseEdges) {
+                SheetFlange fl{-1, be, flangeLen, angle, down, radius};
+                for (int end = 0; end < 2; ++end) {
+                    // The base corner at this end, and its neighbour edge there.
+                    const auto v = static_cast<std::size_t>(end ? (be + 1) % static_cast<int>(nb) : be);
+                    const int other = end ? (be + 1) % static_cast<int>(nb) : (be + static_cast<int>(nb) - 1) % static_cast<int>(nb);
+                    if (!chosen(other)) continue;
+                    const Vec2 pv = part.base[(v + nb - 1) % nb], cv = part.base[v], nv = part.base[(v + 1) % nb];
+                    const float phi = std::acos(std::clamp((( pv.x - cv.x) * (nv.x - cv.x) + (pv.y - cv.y) * (nv.y - cv.y)) /
+                                                               (std::hypot(pv.x - cv.x, pv.y - cv.y) * std::hypot(nv.x - cv.x, nv.y - cv.y)), -1.0f, 1.0f));
+                    const float cotHalf = 1.0f / std::tan(phi * 0.5f);
+                    // Reaching past the corner by the bend's outward reach (mid-sheet) at the end
+                    // of the zone, and by the wall's lean beyond it.
+                    const float reachOut = (rr + 0.5f * part.thickness) * std::sin(theta) * cotHalf;
+                    (end ? fl.inset1 : fl.inset0) = 0.5f * g;
+                    (end ? fl.slope1 : fl.slope0) = ba > 0 ? -reachOut / ba : 0.0f;
+                    (end ? fl.flare1 : fl.flare0) = -std::cos(theta) * cotHalf;
+                    ++corners;
+                }
+                next.flanges.push_back(fl);
+            }
+            commit(next, "miter", "Miter flange on " + body.name + ": " + std::to_string(baseEdges.size()) + " edges, " + lengthText(flangeLen) + " at " +
+                                      fmt3("%g", angle) + " deg, " + std::to_string(corners / 2) + " corners mitered (gap " + lengthText(g) + ")");
+            return out;
+        }
+        if (sub == "relief") {
+            // Where two flanges on the base meet at a corner, each held back SIZE from it (a
+            // rectangular relief), so their bends don't run into each other.
+            const float sz = relief > 0 ? relief : rr + part.thickness;
+            const std::size_t nb = part.base.size();
+            SheetPart next = part;
+            int made = 0;
+            for (SheetFlange& fl : next.flanges) {
+                if (fl.parent >= 0) continue;
+                for (int end = 0; end < 2; ++end) {
+                    const int other = end ? (fl.edge + 1) % static_cast<int>(nb) : (fl.edge + static_cast<int>(nb) - 1) % static_cast<int>(nb);
+                    const bool shared = std::any_of(next.flanges.begin(), next.flanges.end(), [&](const SheetFlange& o) { return o.parent < 0 && o.edge == other; });
+                    float& in = end ? fl.inset1 : fl.inset0;
+                    if (!shared || (end ? fl.slope1 : fl.slope0) != 0 || in >= sz) continue;
+                    in = sz;
+                    ++made;
+                }
+            }
+            if (!made) return out.fail(body.name + " has no corner where two flanges meet without a relief");
+            commit(next, "relief", "Corner reliefs on " + body.name + ": " + std::to_string(made) + " flange ends held back " + lengthText(sz));
+            return out;
+        }
         if (sub == "flange") {
             if (!(flangeLen >= 0)) return out.fail("SHEETMETAL FLANGE needs LENGTH l");
             int pick = edgeNo;
@@ -1548,7 +1813,9 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 return out.fail(edges.empty() ? body.name + " has no free edges left" : "Give EDGE n (1 to " + std::to_string(edges.size()) + ", SHEETMETAL EDGES) or NEAR x,y,z");
             const SheetEdge& e = edges[static_cast<std::size_t>(pick)];
             SheetPart next = part;
-            next.flanges.push_back({e.parent, e.edge, flangeLen, angle, down, radius});
+            SheetFlange fl{e.parent, e.edge, flangeLen, angle, down, radius};
+            fl.inset0 = inset0, fl.inset1 = inset1;
+            next.flanges.push_back(fl);
             std::string why;
             MeshData m = buildSheet(next, false, &why);
             if (m.indices.empty()) return out.fail("Cannot add the flange: " + why);

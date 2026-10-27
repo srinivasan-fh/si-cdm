@@ -954,3 +954,109 @@ TEST_CASE("Feature tree: suppress, roll back, reorder and change parameters") {
     REQUIRE(run(d, "HISTORY DELETE 2").ok);
     CHECK(d.state.rollback == 2);
 }
+
+TEST_CASE("Sheet metal: miters, hems, jogs, insets, reliefs and converting a shelled box") {
+    // A tray: three walls mitered at their corners, a hem on the fourth edge.
+    Document d;
+    REQUIRE(run(d, "RECT 0,0 80,50").ok);
+    REQUIRE(run(d, "SHEETMETAL BASE \"Rectangle 1\" THICKNESS 1.5 RADIUS 1.5").ok);
+    REQUIRE(run(d, "SHEETMETAL MITER EDGES 1,2,3 LENGTH 20").ok);
+    SheetPart part;
+    REQUIRE(sheetFromParams(last(d).params, part));
+    REQUIRE(part.flanges.size() == 3);
+    CHECK(part.flanges[0].slope1 < 0); // reaching round the corner it shares with flange 2
+    CHECK_NEAR(part.flanges[0].slope0, 0.0f, 1e-6);
+    // Folded: walls r + t outside the base, 20 + r + t high; closed at the corners.
+    const AABB tray = boundsOf(last(d));
+    CHECK_NEAR(tray.min.x, 0.0f, 0.01); // edge 4 (x = 0) has no wall
+    CHECK_NEAR(tray.min.y, -3.0f, 0.01);
+    CHECK_NEAR(tray.max.x, 83.0f, 0.01);
+    CHECK_NEAR(tray.max.z, 23.0f, 0.01);
+    // The wall tops reach past the base's corners to meet: longer than its 80 mm edge.
+    std::vector<SheetEdge> free = sheetFreeEdges(part);
+    bool found = false;
+    float farTop = 0;
+    for (const SheetEdge& e : free)
+        if (e.parent == 0) farTop = e.length;
+    CHECK(farTop > 82.0f);
+    REQUIRE(run(d, "SHEETMETAL HEM EDGE 1 LENGTH 8 OPEN 1").ok); // the free base edge: x = 0
+    REQUIRE(sheetFromParams(last(d).params, part));
+    CHECK_NEAR(part.flanges.back().angle, 180.0f, 1e-6);
+    CHECK_NEAR(part.flanges.back().radius, 0.5f, 1e-6); // half the gap
+    // The hem lies back over the base: sheet, gap, then the hem's middle half a sheet up.
+    found = false;
+    for (const SheetEdge& e : sheetFreeEdges(part))
+        if (e.parent == 3) {
+            found = true;
+            CHECK_NEAR(e.a3.z, 1.5f + 1.0f + 0.75f, 0.01);
+            CHECK(e.a3.x > 0.0f); // folded back over the base
+        }
+    CHECK(found);
+    CHECK(!run(d, "SHEETMETAL MITER EDGES 1 LENGTH 0").ok);
+
+    // A jog: up, then the other way; the second flat 10 above the base (mid-sheet to mid-sheet).
+    Document j;
+    REQUIRE(run(j, "RECT 0,0 60,30").ok);
+    REQUIRE(run(j, "SHEETMETAL BASE \"Rectangle 1\" THICKNESS 2 RADIUS 2").ok);
+    REQUIRE(run(j, "SHEETMETAL JOG EDGE 2 OFFSET 10 LENGTH 15").ok);
+    REQUIRE(sheetFromParams(last(j).params, part));
+    REQUIRE(part.flanges.size() == 2);
+    CHECK_NEAR(part.flanges[0].length, 4.0f, 1e-3); // 10 - two bends of mid radius 3
+    free = sheetFreeEdges(part);
+    for (const SheetEdge& e : free)
+        if (e.parent == 1) CHECK_NEAR(e.a3.z, 10.0f + 1.0f, 1e-3);
+    CHECK(!run(j, "SHEETMETAL JOG EDGE 1 OFFSET 2 LENGTH 5").ok); // less than the bends rise
+    // A flange held back 5 at each end.
+    REQUIRE(run(j, "SHEETMETAL FLANGE EDGE 1 LENGTH 10 INSET 5 5").ok);
+    REQUIRE(sheetFromParams(last(j).params, part));
+    free = sheetFreeEdges(part);
+    found = false;
+    for (const SheetEdge& e : free)
+        if (e.parent == 2) {
+            found = true;
+            CHECK_NEAR(e.length, 50.0f, 1e-3);
+        }
+    CHECK(found);
+    CHECK(openEdgeCount(last(j).mesh) == 0);
+
+    // Corner reliefs where two flanges meet.
+    Document r;
+    REQUIRE(run(r, "RECT 0,0 40,40").ok);
+    REQUIRE(run(r, "SHEETMETAL BASE \"Rectangle 1\" THICKNESS 1 RADIUS 1").ok);
+    REQUIRE(run(r, "SHEETMETAL FLANGE EDGE 1 LENGTH 10").ok);
+    REQUIRE(run(r, "SHEETMETAL FLANGE EDGE 1 LENGTH 10").ok); // the next base edge (numbers shift)
+    REQUIRE(run(r, "SHEETMETAL RELIEF SIZE 2").ok);
+    REQUIRE(sheetFromParams(last(r).params, part));
+    int held = 0;
+    for (const SheetFlange& f : part.flanges) held += (f.inset0 == 2.0f) + (f.inset1 == 2.0f);
+    CHECK(held == 2);
+    CHECK(!run(r, "SHEETMETAL RELIEF SIZE 2").ok); // nothing left to relieve
+
+    // Older projects' flange lists (six numbers a flange) still read.
+    std::vector<float> old = sheetParams(part);
+    std::vector<float> legacy(old.begin(), old.begin() + 13 + 2 * static_cast<long>(part.base.size()));
+    legacy.push_back(1);
+    legacy.insert(legacy.end(), {-1, 0, 10, 90, 0, -1});
+    SheetPart back;
+    REQUIRE(sheetFromParams(legacy, back));
+    CHECK(back.flanges.size() == 1);
+    CHECK(back.flanges[0].inset0 == 0.0f);
+
+    // A box shelled open at the top, turned into sheet metal: the bottom as the base, the four
+    // walls as flanges (r + t lower than the walls), the corners mitered shut.
+    Document c;
+    REQUIRE(run(c, "BOX 60 40 20 @0,0,0").ok);
+    REQUIRE(run(c, "SHELL \"Block 1\" THICKNESS 1.5 FACE 0,0,20").ok);
+    REQUIRE(run(c, "SHEETMETAL CONVERT \"Block 1\" FACE 0,0,0 RADIUS 1.5").ok);
+    REQUIRE(last(c).kind == "sheet");
+    REQUIRE(sheetFromParams(last(c).params, part));
+    CHECK_NEAR(part.thickness, 1.5f, 1e-3);
+    REQUIRE(part.flanges.size() == 4);
+    for (const SheetFlange& f : part.flanges) CHECK_NEAR(f.length, 17.0f, 0.02);
+    const AABB box = boundsOf(last(c));
+    CHECK_NEAR(box.max.x - box.min.x, 60.0f, 0.02);
+    CHECK_NEAR(box.max.y - box.min.y, 40.0f, 0.02);
+    CHECK_NEAR(box.max.z - box.min.z, 20.0f, 0.02);
+    REQUIRE(run(c, "SHEETMETAL FLAT \"Block 1\"").ok);
+    CHECK(!run(c, "SHEETMETAL CONVERT \"Block 1 flat\" FACE 0,0,0").ok);
+}
