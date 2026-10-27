@@ -102,6 +102,7 @@ add_library(sicdm_core STATIC
     src/core/Mcp.cpp
     src/core/StbImage.cpp
     src/core/Sketch.cpp
+    src/core/TextOutline.cpp
     src/ui/Tools.cpp
 )
 target_include_directories(sicdm_core PUBLIC src)
@@ -122,6 +123,10 @@ add_custom_command(
     COMMENT "Building the user guide in"
     VERBATIM)
 target_sources(sicdm_core PRIVATE src/core/HelpDocs.cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/EmbeddedDocs.cpp")
+# The fonts, built in for the UI and for raised and cut text on parts (TextOutline).
+include(EmbedFonts)
+sicdm_embed_core_fonts(SICDM_CORE_FONT_SOURCE)
+target_sources(sicdm_core PRIVATE ${SICDM_CORE_FONT_SOURCE})
 
 # Licences: the vendor's Ed25519 public key (64 hex digits) that licence files are checked
 # with. Empty: the build checks none and runs as the Community edition. Make a key pair

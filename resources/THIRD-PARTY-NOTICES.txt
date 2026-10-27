@@ -13,10 +13,10 @@ Dear ImGui 1.91.5             MIT licence             user interface
 stb_image                     MIT or public domain    image import
   Sean Barrett and contributors
 
-Inter 4.0                     SIL Open Font License   UI font
+Inter 4.0                     SIL Open Font License   UI font, lettering on parts
   The Inter Project Authors
 
-JetBrains Mono                SIL Open Font License   command-line font
+JetBrains Mono                SIL Open Font License   command-line font, lettering
   The JetBrains Mono Project Authors
 
 On Windows the executables also link the MinGW-w64 runtime statically (libstdc++ and

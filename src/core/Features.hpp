@@ -43,6 +43,10 @@ std::optional<MeshData> revolveProfile(const Profile& profile, const PlaneFrame&
 std::optional<MeshData> sweepProfile(const Profile& profile, const PlaneFrame& pf, const std::vector<Vec3>& path, bool closedPath,
                                      std::string* error = nullptr);
 
+// Where the plane cuts a closed world mesh: closed loops in the plane's coordinates, the
+// material on their left (outlines counter-clockwise, holes clockwise).
+std::vector<std::vector<Vec2>> planeSection(const MeshData& world, const PlaneFrame& f);
+
 // A closed counter-clockwise polygon moved in by `inset` (out when negative), each side
 // parallel to the old one and the corners mitred. Empty when it would turn inside out,
 // lose a side or cross itself.

@@ -93,7 +93,7 @@ The report lists the worst pairs first: how deep (or how close), when, and where
 ## Commands
 
 ```text
-SHELL   [body] THICKNESS t [OUTWARD] [OPEN x,y,z NORMAL x,y,z]
+SHELL   [body] THICKNESS t [OUTWARD] [OPEN x,y,z NORMAL x,y,z | FACE x,y,z]
 ARMOR   [body | robot PART word[, word...] [MERGE]] [CLEARANCE d] [THICKNESS t]
 JOINT   child [TO parent] AT x,y,z [AXIS X|Y|Z|x,y,z] [HINGE|BALL] [RANGE lo hi] [PERIOD s] [SIZE d]
 LIGHTEN [body] [SKIN t] [CELL c] [WALL w] [HOLLOW]

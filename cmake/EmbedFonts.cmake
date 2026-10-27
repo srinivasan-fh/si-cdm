@@ -29,15 +29,21 @@ function(sicdm_embed_blobs out header ns)
     endif()
 endfunction()
 
-# UI fonts (resources/fonts) and window icons (resources/icon); `out_var`
-# receives the generated sources.
-function(sicdm_embed_fonts out_var)
+# The fonts (resources/fonts), compiled into the core library; `out_var` receives the
+# generated source.
+function(sicdm_embed_core_fonts out_var)
     set(fonts "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
+    set(gen "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    sicdm_embed_blobs("${gen}/EmbeddedFonts.cpp" "core/FontData.hpp" "sicdm::fonts"
+        "${fonts}/Inter-Regular.ttf" "${fonts}/Inter-SemiBold.ttf" "${fonts}/JetBrainsMono-Regular.ttf")
+    set(${out_var} "${gen}/EmbeddedFonts.cpp" PARENT_SCOPE)
+endfunction()
+
+# Window icons (resources/icon) for the app; `out_var` receives the generated source.
+function(sicdm_embed_fonts out_var)
     set(icons "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon")
     set(gen "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    sicdm_embed_blobs("${gen}/EmbeddedFonts.cpp" "ui/EmbeddedFonts.hpp" "sicdm::fonts"
-        "${fonts}/Inter-Regular.ttf" "${fonts}/Inter-SemiBold.ttf" "${fonts}/JetBrainsMono-Regular.ttf")
     sicdm_embed_blobs("${gen}/EmbeddedIcons.cpp" "ui/EmbeddedFonts.hpp" "sicdm::icons"
         "${icons}/sicdm_256.png" "${icons}/sicdm_64.png" "${icons}/sicdm_32.png")
-    set(${out_var} "${gen}/EmbeddedFonts.cpp" "${gen}/EmbeddedIcons.cpp" PARENT_SCOPE)
+    set(${out_var} "${gen}/EmbeddedIcons.cpp" PARENT_SCOPE)
 endfunction()

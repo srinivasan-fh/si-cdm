@@ -12,6 +12,7 @@
 #include "core/Brep.hpp"
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
+#include "core/TextOutline.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -789,4 +790,97 @@ TEST_CASE("Variable-radius fillets and full rounds") {
     CHECK(openEdgeCount(last(w).mesh) == 0);
     CHECK_NEAR(boundsOf(last(w)).max.z, 30.0f, 0.02);
     CHECK(!run(w, "FILLET \"Block 1\" FULLROUND 500,0,0").ok);
+}
+
+TEST_CASE("Shell with a chosen open face, domes and ribs") {
+    // A 60 x 40 x 30 box, 2 mm walls, open at the top: 60*40*30 - 56*36*28.
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 30 @0,0,0").ok);
+    REQUIRE(run(d, "SHELL \"Block 1\" THICKNESS 2 FACE 0,0,30").ok);
+    CHECK_NEAR(volumeOf(last(d)), 60 * 40 * 30 - 56 * 36 * 28, 20.0);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+
+    // A dome on a disc reaching in by R(1 - cos a) as it rises h sin a: on a circle of radius
+    // R that is half an ellipsoid's cap of the same height, 2/3 pi R^2 h.
+    Document c;
+    REQUIRE(run(c, "CYLINDER 10 5 @0,0,0").ok);
+    const double disc = volumeOf(last(c));
+    REQUIRE(run(c, "DOME \"Cylinder 1\" FACE 0,0,5 HEIGHT 6").ok);
+    CHECK(openEdgeCount(last(c).mesh) == 0);
+    CHECK_NEAR(volumeOf(last(c)) - disc, 1266.0, 20.0); // the outline's reach is 98% of R (numerically 1265.7)
+    CHECK_NEAR(boundsOf(last(c)).max.z, 11.0f, 0.05);
+    // Dished in: the same shape taken out.
+    Document b;
+    REQUIRE(run(b, "BOX 40 40 10 @0,0,0").ok);
+    REQUIRE(run(b, "DOME \"Block 1\" FACE 0,0,10 HEIGHT 4 CONCAVE").ok);
+    CHECK_NEAR(volumeOf(last(b)), 16000 - 4297.3, 25.0);
+    CHECK(openEdgeCount(last(b).mesh) == 0);
+    CHECK(!run(b, "DOME \"Block 1\" FACE 0,0,10").ok); // needs a height
+
+    // A rib in the corner of an L: a 40 x 20 triangle, 4 mm thick.
+    Document l;
+    REQUIRE(run(l, "BOX 60 40 5 @0,0,0").ok);
+    REQUIRE(run(l, "BOX 5 40 40 @-27.5,0,0").ok);
+    REQUIRE(run(l, "BOOLEAN \"Block 1\" UNION \"Block 2\"").ok);
+    const double ell = volumeOf(last(l));
+    REQUIRE(run(l, "PLANE FRONT").ok);
+    REQUIRE(run(l, "LINE -25,25 15,5").ok);
+    REQUIRE(run(l, "RIB THICKNESS 4").ok);
+    const Body& ribbed = l.scene.bodies()[0];
+    CHECK_NEAR(volumeOf(ribbed) - ell, 40 * 20 / 2 * 4, 15.0);
+    CHECK(openEdgeCount(ribbed.mesh) == 0);
+    CHECK_NEAR(boundsOf(ribbed).max.x, 30.0f, 0.01); // nothing pokes out of the L
+    CHECK_NEAR(boundsOf(ribbed).min.x, -30.0f, 0.01);
+    CHECK_NEAR(boundsOf(ribbed).max.z, 40.0f, 0.01);
+    REQUIRE(run(l, "LINE -100,100 -90,100").ok);
+    CHECK(!run(l, "RIB \"Line 2\" THICKNESS 4").ok); // over nothing
+    REQUIRE(run(l, "RECT 0,10 10,20").ok);
+    CHECK(!run(l, "RIB THICKNESS 2").ok); // a closed curve
+}
+
+TEST_CASE("Text outlines and embossed or engraved lettering") {
+    // The built-in fonts' glyphs: 'o' is a ring (an outer contour and a hole), capitals as tall
+    // as asked.
+    float width = 0;
+    const auto o = textOutline("o", 10, TextFont::SansBold, &width);
+    REQUIRE(o.size() == 2);
+    CHECK(signedArea(o[0]) * signedArea(o[1]) < 0);
+    CHECK(width > 4.0f);
+    const auto h = textOutline("H", 10);
+    REQUIRE(h.size() == 1);
+    float top = 0, bottom = 1;
+    for (const Vec2& p : h[0]) top = std::max(top, p.y), bottom = std::min(bottom, p.y);
+    CHECK_NEAR(top, 10.0f, 1e-3);
+    CHECK_NEAR(bottom, 0.0f, 1e-3);
+    CHECK(textOutline("B8%", 5, TextFont::Mono).size() >= 6);
+    CHECK(textOutline("SI CDM", 5, TextFont::Sans).size() >= 6);
+    std::string why;
+    CHECK(textOutline("\xe4\xb8\xad", 5, TextFont::SansBold, nullptr, &why).empty()); // no CJK in the font
+    CHECK(!why.empty());
+
+    // Raised by the letters' area times the depth; cut likewise.
+    double area = 0;
+    for (const auto& l : textOutline("SI CDM", 8)) area += signedArea(l);
+    Document d;
+    REQUIRE(run(d, "BOX 80 30 10 @0,0,0").ok);
+    REQUIRE(run(d, "EMBOSS \"Block 1\" TEXT \"SI CDM\" FACE 0,0,10 HEIGHT 8 DEPTH 1").ok);
+    CHECK_NEAR(volumeOf(last(d)), 24000 + area, 1.0);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    CHECK_NEAR(boundsOf(last(d)).max.z, 11.0f, 1e-3);
+    double cutArea = 0;
+    for (const auto& l : textOutline("Part 42-B", 5)) cutArea += signedArea(l);
+    REQUIRE(run(d, "ENGRAVE \"Block 1\" TEXT \"Part 42-B\" FACE 0,-15,5 HEIGHT 5 DEPTH 0.5").ok);
+    CHECK_NEAR(volumeOf(last(d)), 24000 + area - 0.5 * cutArea, 1.0);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    CHECK_NEAR(boundsOf(last(d)).min.y, -15.0f, 1e-3); // cut in, nothing sticking out
+    // On a cylinder the letters follow the curve: all of them 1 mm proud of a 20 mm radius.
+    Document c;
+    REQUIRE(run(c, "CYLINDER 20 40 @0,0,0").ok);
+    REQUIRE(run(c, "EMBOSS \"Cylinder 1\" TEXT \"OK\" FACE 0,-20,20 HEIGHT 8 DEPTH 1").ok);
+    CHECK(openEdgeCount(last(c).mesh) == 0);
+    float rMax = 0;
+    for (const Vertex& v : worldMesh(last(c)).vertices) rMax = std::max(rMax, std::hypot(v.position.x, v.position.y));
+    CHECK_NEAR(rMax, 21.0f, 0.05);
+    CHECK(!run(c, "EMBOSS \"Cylinder 1\" TEXT \"MUCH TOO LONG FOR THIS\" FACE 0,-20,20 HEIGHT 30 DEPTH 1").ok);
+    CHECK(!run(c, "ENGRAVE \"Cylinder 1\" TEXT \"x\" FACE 0,-20,20 HEIGHT 5").ok); // no depth
 }

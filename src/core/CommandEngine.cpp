@@ -710,7 +710,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
-                                        "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA"};
+                                        "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -725,7 +725,7 @@ bool historyCommand(const std::string& cmd) {
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
-                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA"};
+                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -2443,7 +2443,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         cmd == "SKETCHMIRROR" || cmd == "SKETCHPATTERN" || cmd == "PROJECT")
         return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
-        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT" || cmd == "THREAD" || cmd == "SHEETMETAL" || cmd == "FEA")
+        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT" || cmd == "THREAD" || cmd == "SHEETMETAL" || cmd == "FEA" || cmd == "DOME" || cmd == "RIB" || cmd == "EMBOSS" || cmd == "ENGRAVE")
         return runFeatureCommand(doc, cmd, a, pc.quoted);
     if (cmd == "HISTORY" || cmd == "REGEN") return runHistoryCommand(doc, cmd, a, pc.quoted);
     if (cmd == "VAR" || cmd == "CONFIG") return runVariableCommand(doc, cmd, a);
@@ -2983,7 +2983,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "SHELL" || cmd == "ARMOR" || cmd == "INTERFERENCE" || cmd == "JOINT" || cmd == "LIGHTEN") {
         static const char* const kKeys[] = {"thickness", "outward", "open", "normal", "clearance", "part", "step",
                                             "duration", "bodies", "to", "at", "axis", "hinge", "ball", "range", "merge",
-                                            "period", "size", "skin", "cell", "wall", "hollow"};
+                                            "period", "size", "skin", "cell", "wall", "hollow", "face"};
         auto isKey = [&](const std::string& w) {
             const std::string k = lower(w);
             for (const char* q : kKeys)
@@ -3281,6 +3281,25 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                     const auto n = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt;
                     if (!n || length(*n) == 0) return out.fail("NORMAL needs x,y,z");
                     o.openNormal = normalize(*n);
+                } else if (k == "face") {
+                    // The face nearest the point is taken away: the cut lies a hair inside it.
+                    const auto p = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt;
+                    if (!p) return out.fail("FACE needs a point x,y,z on the face to leave open");
+                    const MeshData w = worldMesh(body);
+                    float best = 1e30f;
+                    Vec3 q{}, n{0, 0, 1};
+                    for (std::size_t t = 0; t + 2 < w.indices.size(); t += 3) {
+                        const Vec3 p0 = w.vertices[w.indices[t]].position, p1 = w.vertices[w.indices[t + 1]].position, p2 = w.vertices[w.indices[t + 2]].position;
+                        const Vec3 nn = cross(p1 - p0, p2 - p0);
+                        if (!(length(nn) > 0)) continue;
+                        const Vec3 c = closestPointOnTriangle(*p, p0, p1, p2);
+                        if (length(c - *p) < best) best = length(c - *p), q = c, n = normalize(nn);
+                    }
+                    if (best >= 1e30f) return out.fail(body.name + " has no faces");
+                    const AABB wb = w.bounds();
+                    o.open = true;
+                    o.openPoint = q - n * (1e-4f * length(wb.max - wb.min));
+                    o.openNormal = n;
                 } else {
                     return usage();
                 }

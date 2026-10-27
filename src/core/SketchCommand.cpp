@@ -484,47 +484,7 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         };
         int made = 0;
         if (section) {
-            // The section follows triangles through shared corners: one index per position.
-            std::vector<Vec3> pp;
-            std::vector<std::uint32_t> at(m.vertices.size());
-            {
-                std::map<std::tuple<long long, long long, long long>, std::uint32_t> seen;
-                const AABB bb = m.bounds();
-                const float q = std::max(1e-6f, 1e-6f * length(bb.max - bb.min));
-                for (std::size_t k = 0; k < m.vertices.size(); ++k) {
-                    const Vec3 w = m.vertices[k].position;
-                    const auto key = std::make_tuple(std::llround(w.x / q), std::llround(w.y / q), std::llround(w.z / q));
-                    auto [it, fresh] = seen.emplace(key, static_cast<std::uint32_t>(pp.size()));
-                    if (fresh) {
-                        const Vec3 d = w - f.origin;
-                        pp.push_back({dot(d, f.u), dot(d, f.v), dot(d, f.normal)});
-                    }
-                    at[k] = it->second;
-                }
-            }
-            std::vector<section::Tri> tris;
-            std::vector<std::uint32_t> cand;
-            float diag = 0;
-            for (const Vec3& q : pp) diag = std::max(diag, std::fabs(q.x) + std::fabs(q.y) + std::fabs(q.z));
-            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
-                const section::Tri tri{at[m.indices[t]], at[m.indices[t + 1]], at[m.indices[t + 2]]};
-                if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2]) continue;
-                const float z0 = pp[tri[0]].z, z1 = pp[tri[1]].z, z2 = pp[tri[2]].z;
-                if (std::min({z0, z1, z2}) > 1e-3f * diag || std::max({z0, z1, z2}) < -1e-3f * diag) continue;
-                cand.push_back(static_cast<std::uint32_t>(tris.size()));
-                tris.push_back(tri);
-            }
-            // Just off the plane when it runs through vertices (a face lying in it).
-            double level = 0;
-            for (const Vec3& q : pp)
-                if (std::fabs(q.z) < 1e-6f * std::max(diag, 1.0f)) {
-                    level = -1e-5 * std::max(diag, 1.0f);
-                    break;
-                }
-            const std::vector<section::Loop> loops = section::contours(pp, tris, cand, level);
-            for (const section::Loop& l : loops) {
-                std::vector<Vec2> pts;
-                for (const section::P2& q : l) pts.push_back({static_cast<float>(q.x), static_cast<float>(q.y)});
+            for (std::vector<Vec2> pts : planeSection(m, f)) {
                 pts = simplify(std::move(pts), true);
                 if (pts.size() < 3) continue;
                 add(std::move(pts), true);

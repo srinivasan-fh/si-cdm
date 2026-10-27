@@ -81,8 +81,8 @@ constexpr CommandSpec kCommands[] = {
     {"UNDO", "U", "UNDO", "Undo the last edit: a new, moved or deleted body, a feature, a sculpt or cut, a sketch edit or a CAM change"},
     {"REDO", "", "REDO", "Put back what the last UNDO took away"},
     // Wearable armour & exoskeletons
-    {"SHELL", "SOLIDIFY HOLLOW", "SHELL [body] THICKNESS t [OUTWARD] [OPEN x,y,z NORMAL x,y,z]",
-     "Hollow a solid to a wall thickness, or solidify a surface; OPEN cuts an opening first (the side the normal points to)"},
+    {"SHELL", "SOLIDIFY HOLLOW", "SHELL [body] THICKNESS t [OUTWARD] [FACE x,y,z | OPEN x,y,z NORMAL x,y,z]",
+     "Hollow a solid to a wall thickness, or solidify a surface; FACE leaves that face open, OPEN cuts an opening first (the side the normal points to)"},
     {"ARMOR", "ARMOUR", "ARMOR [body | robot PART word[, word...] [MERGE]] [CLEARANCE d] [THICKNESS t]",
      "Armour shells around a body (or a robot's parts whose names contain the words; MERGE: one shell around them "
      "all): inner face d off the surface, t thick; they move with their parts"},
@@ -149,6 +149,12 @@ constexpr CommandSpec kCommands[] = {
      "FEA [body] FIX FACE x,y,z | NEAR x,y,z r ... LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ... [MATERIAL m] [E MPa] [NU v] [YIELD MPa] [CELL size] "
      "[PLOT] [DEFORM scale] | FEA MATERIALS",
      "Linear static stress analysis: von Mises stress, displacement and factor of safety; PLOT colours the body by stress"},
+    {"RIB", "", "RIB [curve] THICKNESS t [BODY name] [FLIP] [KEEP]", "A thin wall from an open sketch curve down to the body, centred on the sketch plane"},
+    {"EMBOSS", "", "EMBOSS [body] TEXT \"words\" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]",
+     "Raised lettering on a face, flat or curved (\\n starts a new line)"},
+    {"ENGRAVE", "", "ENGRAVE [body] TEXT \"words\" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]",
+     "Lettering cut into a face, flat or curved"},
+    {"DOME", "", "DOME [body] FACE x,y,z HEIGHT h [CONCAVE]", "Raise a dome on a flat face (a quarter ellipse up from its outline), or dish it in with CONCAVE"},
     {"DRAFT", "TAPER", "DRAFT [body] ANGLE deg [PULL x,y,z | X | Y | Z] [NEUTRAL x,y,z]",
      "Tilt a body's side faces (those along the pull) for moulding, about the neutral plane (default: its bottom)"},
     {"FILLET", "ROUND", "FILLET [body] RADIUS r [CONVEX|CONCAVE|BOTH] [VOXEL v] [EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|TOP|BOTTOM|n...|"

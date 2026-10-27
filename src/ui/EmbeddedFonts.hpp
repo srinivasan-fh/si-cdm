@@ -1,21 +1,9 @@
 #pragma once
 
-#include <cstddef>
+#include "core/FontData.hpp"
 
-// UI fonts and app icons compiled into the app (see cmake/EmbedFonts.cmake,
-// resources/fonts, resources/icon).
-namespace sicdm::fonts {
-
-struct Blob {
-    const unsigned char* data;
-    std::size_t size;
-};
-
-extern const Blob Inter_Regular;
-extern const Blob Inter_SemiBold;
-extern const Blob JetBrainsMono_Regular;
-
-} // namespace sicdm::fonts
+// UI fonts (core/FontData.hpp) and app icons compiled into the app (see
+// cmake/EmbedFonts.cmake, resources/fonts, resources/icon).
 
 // App icon PNGs (rendered by tools/make_icon.py).
 namespace sicdm::icons {

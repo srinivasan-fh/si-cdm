@@ -14,9 +14,11 @@
 #include "core/Sculpt.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/Step.hpp"
+#include "core/TextOutline.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -220,6 +222,19 @@ std::optional<float> upToNext(const Document& doc, const std::vector<Vec3>& from
         far = std::max(far, best);
     }
     return far;
+}
+
+// The point of a mesh nearest `at`, and the normal of the triangle it is on.
+bool nearestFace(const MeshData& m, Vec3 at, Vec3& q, Vec3& n) {
+    float best = 1e30f;
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        const Vec3 p0 = m.vertices[m.indices[t]].position, p1 = m.vertices[m.indices[t + 1]].position, p2 = m.vertices[m.indices[t + 2]].position;
+        const Vec3 nn = cross(p1 - p0, p2 - p0);
+        if (!(length(nn) > 0)) continue;
+        const Vec3 c = closestPointOnTriangle(at, p0, p1, p2);
+        if (length(c - at) < best) best = length(c - at), q = c, n = normalize(nn);
+    }
+    return best < 1e30f;
 }
 
 } // namespace
@@ -1668,6 +1683,438 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             out.say("  plot: " + res.name + " (" + res.field + (deform > 0 ? ", shape x" + fmt3("%g", deform) : std::string()) + ")");
             addBody(doc, std::move(res));
         }
+        return out;
+    }
+
+    if (cmd == "DOME") {
+        // DOME [body] FACE x,y,z HEIGHT h [CONCAVE]
+        auto isKey = [](const std::string& w) { return w == "face" || w == "height" || w == "concave"; };
+        const char* usage = "Usage: DOME [body] FACE x,y,z HEIGHT h [CONCAVE]";
+        std::size_t i = 0;
+        const std::string name = leadingName(a, quoted, i, isKey);
+        const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select a body, or name it" : "No body named " + name);
+        std::optional<Vec3> at;
+        float height = 0;
+        bool concave = false;
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (k == "face" && i + 1 < a.size()) {
+                if (!(at = parseVec3(a[++i]))) return out.fail("FACE needs a point x,y,z on the face");
+            } else if (k == "height" && i + 1 < a.size()) {
+                const auto v = parseLength(a[++i]);
+                if (!v || !(*v > 0)) return out.fail("HEIGHT needs a length");
+                height = static_cast<float>(*v);
+            } else if (k == "concave") concave = true;
+            else return out.fail(usage);
+        }
+        if (!at || !(height > 0)) return out.fail(usage);
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const MeshData world = worldMesh(body);
+        // The flat face at the point: its plane, and the body's outline just inside it.
+        Vec3 q{}, n{0, 0, 1};
+        if (!nearestFace(world, *at, q, n)) return out.fail(body.name + " has no faces");
+        PlaneFrame f;
+        makePlaneFrame(q, n, std::fabs(n.z) > 0.9f ? Vec3{1, 0, 0} : cross(Vec3{0, 0, 1}, n), f);
+        const AABB wb = world.bounds();
+        const float eps = 1e-4f * length(wb.max - wb.min);
+        PlaneFrame inside = f;
+        inside.origin = q - n * eps;
+        std::vector<Vec2> outline;
+        for (std::vector<Vec2>& l : planeSection(world, inside)) {
+            if (signedArea(l) <= 0) continue; // a hole's loop
+            bool in = false; // the loop around the point
+            for (std::size_t k = 0, j = l.size() - 1; k < l.size(); j = k++)
+                if ((l[k].y > 0) != (l[j].y > 0) && 0 < (l[j].x - l[k].x) * (0 - l[k].y) / (l[j].y - l[k].y) + l[k].x) in = !in;
+            if (in) outline = std::move(l);
+        }
+        if (outline.size() < 3) return out.fail("No flat face of " + body.name + " at that point");
+        // Drop points in line (facets of a flat face) so the insets stay clean.
+        for (bool changed = true; changed && outline.size() > 3;) {
+            changed = false;
+            for (std::size_t k = 0; k < outline.size(); ++k) {
+                const Vec2 p0 = outline[(k + outline.size() - 1) % outline.size()], p1 = outline[k], p2 = outline[(k + 1) % outline.size()];
+                const float cr = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
+                if (std::fabs(cr) <= 1e-6f * std::max(1.0f, std::hypot(p2.x - p0.x, p2.y - p0.y))) {
+                    outline.erase(outline.begin() + static_cast<std::ptrdiff_t>(k));
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        // How far in the outline can shrink before it turns over: the dome's reach.
+        float lo = 0, hi = 0;
+        {
+            Vec2 bl = outline[0], bh = outline[0];
+            for (const Vec2& p : outline) bl = {std::min(bl.x, p.x), std::min(bl.y, p.y)}, bh = {std::max(bh.x, p.x), std::max(bh.y, p.y)};
+            hi = 0.5f * std::min(bh.x - bl.x, bh.y - bl.y);
+            for (int it = 0; it < 30; ++it) {
+                const float mid = 0.5f * (lo + hi);
+                (offsetPolygon(outline, mid).empty() ? hi : lo) = mid;
+            }
+        }
+        const float reach = lo * 0.98f;
+        if (!(reach > 0)) return out.fail("The face is too small or too thin for a dome");
+        // Rings rising as a quarter ellipse: in by reach (1 - cos a), up by height sin a.
+        const int steps = 24;
+        const float sgn = concave ? -1.0f : 1.0f;
+        std::vector<std::pair<float, std::vector<Vec2>>> rings;
+        rings.push_back({-eps * 20 * sgn, outline}); // a hair into (or out of) the body, so they join cleanly
+        for (int k = 0; k <= steps; ++k) {
+            const float t = static_cast<float>(k) / static_cast<float>(steps) * kPi * 0.5f;
+            std::vector<Vec2> r = offsetPolygon(outline, reach * (1 - std::cos(t)));
+            if (r.empty()) break;
+            rings.push_back({height * std::sin(t) * sgn, std::move(r)});
+        }
+        MeshData m;
+        auto world3 = [&](Vec2 p, float z) { return f.toWorld(p) + f.normal * z; };
+        auto tri = [&](Vec3 a3, Vec3 b3, Vec3 c3) {
+            const Vec3 nr = normalize(cross(b3 - a3, c3 - a3));
+            const auto base = static_cast<std::uint32_t>(m.vertices.size());
+            m.vertices.push_back({a3, nr}), m.vertices.push_back({b3, nr}), m.vertices.push_back({c3, nr});
+            m.indices.insert(m.indices.end(), {base, base + 1, base + 2});
+        };
+        const std::size_t np = outline.size();
+        for (std::size_t r = 0; r + 1 < rings.size(); ++r)
+            for (std::size_t k = 0; k < np; ++k) {
+                const std::size_t j = (k + 1) % np;
+                const Vec3 a0 = world3(rings[r].second[k], rings[r].first), b0 = world3(rings[r].second[j], rings[r].first);
+                const Vec3 a1 = world3(rings[r + 1].second[k], rings[r + 1].first), b1 = world3(rings[r + 1].second[j], rings[r + 1].first);
+                tri(a0, b0, b1), tri(a0, b1, a1);
+            }
+        for (int end = 0; end < 2; ++end) { // the base and the small top
+            const auto& ring = end ? rings.back() : rings.front();
+            const std::vector<std::uint32_t> ids = triangulatePolygon(ring.second);
+            if (ids.empty()) return out.fail("The face's outline could not be filled");
+            for (std::size_t k = 0; k + 2 < ids.size(); k += 3) {
+                const Vec3 a3 = world3(ring.second[ids[k]], ring.first), b3 = world3(ring.second[ids[k + 1]], ring.first),
+                           c3 = world3(ring.second[ids[k + 2]], ring.first);
+                if (end) tri(a3, b3, c3);
+                else tri(a3, c3, b3);
+            }
+        }
+        if (concave) // the same shape, wound inside out, is a cutter going down into the body
+            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) std::swap(m.indices[t + 1], m.indices[t + 2]);
+        if (meshVolume(m) < 0)
+            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) std::swap(m.indices[t + 1], m.indices[t + 2]);
+        doc.scene.pushUndo("DOME " + body.name);
+        const double before = meshVolume(world);
+        std::string why;
+        if (!bodyBoolean(body, meshBody("dome", std::move(m)), concave ? BooleanOp::Subtract : BooleanOp::Union, &why)) {
+            doc.scene.undo();
+            return out.fail("Cannot dome " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + why);
+        }
+        Body& done = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        SculptMesh(done).writeTo(done, true, 40.0f);
+        doc.scene.touchBodies();
+        doc.dirty = true;
+        out.say((concave ? "Dished " : "Domed ") + done.name + " " + lengthText(height) + (concave ? " deep: " : " high: ") + closedText(done.mesh) + ", volume " +
+                fmt3("%.2f", before / 1000.0) + " -> " + fmt3("%.2f", meshVolume(worldMesh(done)) / 1000.0) + " cm3");
+        return out;
+    }
+
+    if (cmd == "RIB") {
+        // RIB [curve] THICKNESS t [BODY name] [FLIP] [KEEP]
+        auto isKey = [](const std::string& w) { return w == "thickness" || w == "body" || w == "flip" || w == "keep"; };
+        const char* usage = "Usage: RIB [curve] THICKNESS t [BODY name] [FLIP] [KEEP]";
+        std::size_t i = 0;
+        const std::string name = leadingName(a, quoted, i, isKey);
+        const int ci = name.empty() ? doc.selectedCurve : curveNamed(doc, name);
+        if (ci < 0 || ci >= static_cast<int>(doc.scene.sketch().curves().size()))
+            return out.fail(name.empty() ? "Select an open sketch curve, or name it" : "No sketch curve named " + name);
+        float thick = 0;
+        std::string target;
+        bool flip = false, keep = false;
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (k == "thickness" && i + 1 < a.size()) {
+                const auto v = parseLength(a[++i]);
+                if (!v || !(*v > 0)) return out.fail("THICKNESS needs a length");
+                thick = static_cast<float>(*v);
+            } else if (k == "body" && i + 1 < a.size()) target = a[++i];
+            else if (k == "flip") flip = true;
+            else if (k == "keep") keep = true;
+            else return out.fail(usage);
+        }
+        if (!(thick > 0)) return out.fail(usage);
+        const SketchCurve curve = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
+        if (curve.isClosed()) return out.fail("A rib is drawn from an open curve (its free edge)");
+        const PlaneFrame f = curveFrame(curve);
+        std::vector<Vec2> strip = curve.planeStrip(0.5f);
+        if (strip.size() < 2) return out.fail(curve.name + " is too short for a rib");
+        float span = 0;
+        for (std::size_t k = 1; k < strip.size(); ++k) span += std::hypot(strip[k].x - strip[k - 1].x, strip[k].y - strip[k - 1].y);
+        {   // even samples along the curve, so the rib follows the surface below it
+            std::vector<Vec2> even{strip.front()};
+            const float step = span / 64.0f;
+            for (std::size_t k = 1; k < strip.size(); ++k) {
+                const Vec2 p0 = strip[k - 1], p1 = strip[k];
+                const int cuts = std::max(1, static_cast<int>(std::ceil(std::hypot(p1.x - p0.x, p1.y - p0.y) / step)));
+                for (int c = 1; c <= cuts; ++c) {
+                    const float t = static_cast<float>(c) / static_cast<float>(cuts);
+                    even.push_back({p0.x + (p1.x - p0.x) * t, p0.y + (p1.y - p0.y) * t});
+                }
+            }
+            strip = std::move(even);
+        }
+        // The rib grows in the sketch plane, square to the curve's chord, toward the body.
+        const Vec2 chord{strip.back().x - strip.front().x, strip.back().y - strip.front().y};
+        const float cl = std::hypot(chord.x, chord.y);
+        if (!(cl > 1e-4f)) return out.fail("The curve's ends meet; draw an open edge for the rib");
+        Vec2 d2{-chord.y / cl, chord.x / cl};
+        const Vec3 o3 = f.toWorld({0, 0});
+        auto dirOf = [&](Vec2 v) { return normalize(f.toWorld(v) - o3); };
+        const Vec3 mid = f.toWorld(strip[strip.size() / 2]);
+        int bi = target.empty() ? -1 : bodyNamed(doc, target);
+        if (!target.empty() && bi < 0) return out.fail("No body named " + target);
+        if (!flip) { // the side the body is on (or FLIP the other)
+            auto hit = [&](Vec2 v) {
+                if (bi >= 0) return upToNext(doc, {mid}, dirOf(v), bi);
+                return upToNext(doc, {mid}, dirOf(v), -1);
+            };
+            const auto fwd = hit(d2), back = hit({-d2.x, -d2.y});
+            if (!fwd || (back && *back < *fwd)) d2 = {-d2.x, -d2.y};
+        } else
+            d2 = {-d2.x, -d2.y};
+        const Vec3 d3 = dirOf(d2);
+        if (bi < 0) { // the nearest body that way
+            float best = 1e30f;
+            for (std::size_t b = 0; b < doc.scene.bodies().size(); ++b)
+                if (doc.scene.bodies()[b].visible)
+                    if (const auto h = upToNext(doc, {mid}, d3, static_cast<int>(b)); h && *h < best) best = *h, bi = static_cast<int>(b);
+            if (bi < 0) return out.fail("No body below " + curve.name + " for the rib to meet");
+        }
+        // How far down to the body under each sample, plus a little into it.
+        std::vector<Vec2> outline = strip;
+        const float back = 0.01f * span;
+        for (std::size_t k = strip.size(); k-- > 0;) {
+            const Vec3 p = f.toWorld(strip[k]) - d3 * back; // from a hair behind, so an end on the surface still meets it
+            const auto h = upToNext(doc, {p}, d3, bi);
+            if (!h) return out.fail("Part of " + curve.name + " is not over " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + " (try FLIP)");
+            const auto wall = upToNext(doc, {p + d3 * (*h + 1e-3f)}, d3, bi); // the body's thickness there
+            const float down = std::max(0.0f, *h - back) + std::min(thick, wall ? 0.5f * *wall : thick);
+            outline.push_back({strip[k].x + d2.x * down, strip[k].y + d2.y * down});
+        }
+        if (signedArea(outline) < 0) std::reverse(outline.begin(), outline.end());
+        if (!isSimplePolygon(outline)) return out.fail("The rib's outline crosses itself; use a flatter curve");
+        const std::vector<std::uint32_t> ids = triangulatePolygon(outline);
+        if (ids.empty()) return out.fail("The rib's outline could not be filled");
+        MeshData m;
+        auto tri = [&](Vec3 a3, Vec3 b3, Vec3 c3) {
+            const Vec3 nr = normalize(cross(b3 - a3, c3 - a3));
+            const auto base = static_cast<std::uint32_t>(m.vertices.size());
+            m.vertices.push_back({a3, nr}), m.vertices.push_back({b3, nr}), m.vertices.push_back({c3, nr});
+            m.indices.insert(m.indices.end(), {base, base + 1, base + 2});
+        };
+        auto at = [&](Vec2 p, float z) { return f.toWorld(p) + f.normal * z; };
+        const float h2 = 0.5f * thick;
+        for (std::size_t k = 0; k + 2 < ids.size(); k += 3) {
+            const Vec2 p0 = outline[ids[k]], p1 = outline[ids[k + 1]], p2 = outline[ids[k + 2]];
+            tri(at(p0, h2), at(p1, h2), at(p2, h2));
+            tri(at(p0, -h2), at(p2, -h2), at(p1, -h2));
+        }
+        for (std::size_t k = 0; k < outline.size(); ++k) {
+            const Vec2 p0 = outline[k], p1 = outline[(k + 1) % outline.size()];
+            tri(at(p0, -h2), at(p1, -h2), at(p1, h2)), tri(at(p0, -h2), at(p1, h2), at(p0, h2));
+        }
+        if (meshVolume(m) < 0)
+            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) std::swap(m.indices[t + 1], m.indices[t + 2]);
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        doc.scene.pushUndo("RIB " + body.name);
+        const double before = meshVolume(worldMesh(body));
+        std::string why;
+        if (!bodyBoolean(body, meshBody("rib", std::move(m)), BooleanOp::Union, &why)) {
+            doc.scene.undo();
+            return out.fail("Cannot add the rib to " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + why);
+        }
+        Body& done = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (!keep) hideCurve(doc, ci), doc.selectedCurve = -1;
+        doc.scene.touchBodies();
+        doc.dirty = true;
+        out.say("Added a " + lengthText(thick) + " rib from " + curve.name + " to " + done.name + ": " + closedText(done.mesh) + ", volume " +
+                fmt3("%.2f", before / 1000.0) + " -> " + fmt3("%.2f", meshVolume(worldMesh(done)) / 1000.0) + " cm3");
+        return out;
+    }
+
+    if (cmd == "EMBOSS" || cmd == "ENGRAVE") {
+        // EMBOSS|ENGRAVE [body] TEXT "words" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]
+        auto isKey = [](const std::string& w) { return w == "text" || w == "face" || w == "height" || w == "depth" || w == "angle" || w == "font"; };
+        const std::string usage = "Usage: " + cmd + " [body] TEXT \"words\" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]";
+        const bool cut = cmd == "ENGRAVE";
+        std::size_t i = 0;
+        const std::string name = leadingName(a, quoted, i, isKey);
+        const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select a body, or name it" : "No body named " + name);
+        std::string words;
+        std::optional<Vec3> at;
+        float height = 0, depth = 0, angle = 0;
+        TextFont font = TextFont::SansBold;
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (k == "text" && i + 1 < a.size()) {
+                words = a[++i];
+                for (std::size_t p; (p = words.find("\\n")) != std::string::npos;) words.replace(p, 2, "\n");
+            } else if (k == "face" && i + 1 < a.size()) {
+                if (!(at = parseVec3(a[++i]))) return out.fail("FACE needs a point x,y,z on the face");
+            } else if ((k == "height" || k == "depth") && i + 1 < a.size()) {
+                const auto v = parseLength(a[++i]);
+                if (!v || !(*v > 0)) return out.fail(a[i - 1] + " needs a length");
+                (k == "height" ? height : depth) = static_cast<float>(*v);
+            } else if (k == "angle" && i + 1 < a.size()) {
+                const auto v = parseNumber(a[++i]);
+                if (!v) return out.fail("ANGLE needs degrees");
+                angle = *v * kPi / 180.0f;
+            } else if (k == "font" && i + 1 < a.size()) {
+                if (!textFontNamed(a[++i], font)) return out.fail("FONT is sans, bold or mono");
+            } else return out.fail(usage);
+        }
+        if (words.empty() || !at || !(height > 0) || !(depth > 0)) return out.fail(usage);
+        std::string why;
+        float width = 0;
+        std::vector<std::vector<Vec2>> loops = textOutline(words, height, font, &width, &why);
+        if (loops.empty()) return out.fail("Cannot write \"" + words + "\": " + why);
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const MeshData world = worldMesh(body);
+        Vec3 q{}, n{0, 0, 1};
+        if (!nearestFace(world, *at, q, n)) return out.fail(body.name + " has no faces");
+        // The text's frame: on the face at the point, reading along +X (or across a side
+        // face, upright), turned by ANGLE; the words centred on the point.
+        PlaneFrame f;
+        makePlaneFrame(q, n, std::fabs(n.z) > 0.9f ? Vec3{1, 0, 0} : cross(Vec3{0, 0, 1}, n), f);
+        const auto extraLines = static_cast<float>(std::count(words.begin(), words.end(), '\n'));
+        const float ca = std::cos(angle), sa = std::sin(angle);
+        const float midY = 0.5f * (height - extraLines * 1.6f * height); // centre on the capitals of all the lines
+        for (auto& l : loops)
+            for (Vec2& p : l) {
+                const Vec2 c{p.x - width * 0.5f, p.y - midY};
+                p = {c.x * ca - c.y * sa, c.x * sa + c.y * ca};
+            }
+        // The surface under the text, as a height along the face normal at each point: the
+        // hit nearest the face's plane among the triangles facing the same way.
+        const AABB wb = world.bounds();
+        const float reach = length(wb.max - wb.min) + 1.0f;
+        std::vector<std::array<Vec3, 3>> facing;
+        Vec2 lo{1e30f, 1e30f}, hi{-1e30f, -1e30f};
+        for (const auto& l : loops)
+            for (const Vec2& p : l) lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)}, hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+        for (std::size_t t = 0; t + 2 < world.indices.size(); t += 3) {
+            const std::array<Vec3, 3> tr{world.vertices[world.indices[t]].position, world.vertices[world.indices[t + 1]].position,
+                                         world.vertices[world.indices[t + 2]].position};
+            if (!(dot(cross(tr[1] - tr[0], tr[2] - tr[0]), n) > 0)) continue;
+            Vec2 tl{1e30f, 1e30f}, th{-1e30f, -1e30f};
+            for (const Vec3& v : tr) {
+                const Vec2 p = f.toPlane(v);
+                tl = {std::min(tl.x, p.x), std::min(tl.y, p.y)}, th = {std::max(th.x, p.x), std::max(th.y, p.y)};
+            }
+            if (th.x >= lo.x && tl.x <= hi.x && th.y >= lo.y && tl.y <= hi.y) facing.push_back(tr);
+        }
+        auto surface = [&](Vec2 p) -> std::optional<float> {
+            const Ray ray{f.toWorld(p) + n * reach, n * -1.0f};
+            float best = 1e30f;
+            for (const auto& tr : facing) {
+                float d;
+                if (intersectTriangle(ray, tr[0], tr[1], tr[2], d) && std::fabs(reach - d) < std::fabs(best)) best = reach - d;
+            }
+            if (best >= 1e30f) return std::nullopt;
+            return best;
+        };
+        // Flat under the text: the letters stand straight up from the plane. Curved: their
+        // outlines are cut finer and every point follows the surface.
+        bool flat = true;
+        for (const auto& l : loops)
+            for (const Vec2& p : l) {
+                const auto s = surface(p);
+                if (!s) return out.fail("The text runs off the face of " + body.name + "; make it smaller or move it");
+                if (std::fabs(*s) > 1e-3f * height) flat = false;
+            }
+        const float fine = height / 8.0f;
+        MeshData solid, holes;
+        auto prism = [&](std::vector<Vec2> poly, MeshData& m, float under, float over) -> bool {
+            if (signedArea(poly) < 0) std::reverse(poly.begin(), poly.end());
+            std::vector<std::uint32_t> ids = triangulatePolygon(poly);
+            if (ids.empty()) return false;
+            int level = 0; // each cap triangle cut into 4^level, each outline edge into 2^level
+            if (!flat) {
+                float longest = 0;
+                for (std::size_t k = 0; k + 2 < ids.size(); k += 3)
+                    for (int e = 0; e < 3; ++e) {
+                        const Vec2 p0 = poly[ids[k + static_cast<std::size_t>(e)]], p1 = poly[ids[k + static_cast<std::size_t>((e + 1) % 3)]];
+                        longest = std::max(longest, std::hypot(p1.x - p0.x, p1.y - p0.y));
+                    }
+                while (level < 4 && longest / static_cast<float>(1 << level) > fine) ++level;
+            }
+            const int cuts = 1 << level;
+            auto point = [&](Vec2 p, float off) {
+                const float s = flat ? 0.0f : surface(p).value_or(0.0f);
+                return f.toWorld(p) + n * (s + off);
+            };
+            auto tri = [&](Vec3 a3, Vec3 b3, Vec3 c3) {
+                const Vec3 nr = normalize(cross(b3 - a3, c3 - a3));
+                const auto base = static_cast<std::uint32_t>(m.vertices.size());
+                m.vertices.push_back({a3, nr}), m.vertices.push_back({b3, nr}), m.vertices.push_back({c3, nr});
+                m.indices.insert(m.indices.end(), {base, base + 1, base + 2});
+            };
+            // A point a fraction t from p to q, worked out the same way from either end, so
+            // the triangles on both sides of an edge share its points exactly.
+            auto along = [&](Vec2 p, Vec2 e, int step) {
+                if (step == 0) return p;
+                if (step == cuts) return e;
+                if (e.x < p.x || (e.x == p.x && e.y < p.y)) std::swap(p, e), step = cuts - step;
+                const float t = static_cast<float>(step) / static_cast<float>(cuts);
+                return Vec2{p.x + (e.x - p.x) * t, p.y + (e.y - p.y) * t};
+            };
+            for (std::size_t k = 0; k + 2 < ids.size(); k += 3) {
+                const Vec2 A = poly[ids[k]], B = poly[ids[k + 1]], C = poly[ids[k + 2]];
+                auto bary = [&](int r, int c) { // r steps toward B, c toward C
+                    if (c == 0) return along(A, B, r);
+                    if (r == 0) return along(A, C, c);
+                    if (r + c == cuts) return along(C, B, r);
+                    const float u = static_cast<float>(r) / static_cast<float>(cuts), v = static_cast<float>(c) / static_cast<float>(cuts);
+                    return Vec2{A.x + (B.x - A.x) * u + (C.x - A.x) * v, A.y + (B.y - A.y) * u + (C.y - A.y) * v};
+                };
+                for (int r = 0; r < cuts; ++r)
+                    for (int c = 0; r + c < cuts; ++c) {
+                        const Vec2 p0 = bary(r, c), p1 = bary(r + 1, c), p2 = bary(r, c + 1);
+                        tri(point(p0, over), point(p1, over), point(p2, over));
+                        tri(point(p0, under), point(p2, under), point(p1, under));
+                        if (r + c + 1 < cuts) {
+                            const Vec2 p3 = bary(r + 1, c + 1);
+                            tri(point(p1, over), point(p3, over), point(p2, over));
+                            tri(point(p1, under), point(p2, under), point(p3, under));
+                        }
+                    }
+            }
+            for (std::size_t k = 0; k < poly.size(); ++k) {
+                const Vec2 p0 = poly[k], p1 = poly[(k + 1) % poly.size()];
+                for (int c = 0; c < cuts; ++c) {
+                    const Vec2 a2 = along(p0, p1, c), b2 = along(p0, p1, c + 1);
+                    tri(point(a2, under), point(b2, under), point(b2, over)), tri(point(a2, under), point(b2, over), point(a2, over));
+                }
+            }
+            return true;
+        };
+        // Raised letters stand from a little under the surface; cut ones reach a little over.
+        const float under = cut ? -depth : -0.25f * depth, over = cut ? 0.25f * depth : depth;
+        for (const auto& l : loops) {
+            const bool hole = signedArea(l) < 0;
+            if (!prism(l, hole ? holes : solid, hole ? under - 0.25f * depth : under, hole ? over + 0.25f * depth : over))
+                return out.fail("A letter's outline could not be filled");
+        }
+        Body tool = meshBody("text", std::move(solid));
+        if (!holes.indices.empty() && !bodyBoolean(tool, meshBody("holes", std::move(holes)), BooleanOp::Subtract, &why))
+            return out.fail("Cannot shape the letters: " + why);
+        doc.scene.pushUndo(cmd + " " + body.name);
+        const double before = meshVolume(world);
+        if (!bodyBoolean(body, tool, cut ? BooleanOp::Subtract : BooleanOp::Union, &why)) {
+            doc.scene.undo();
+            return out.fail("Cannot " + lower(cmd) + " " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + why);
+        }
+        Body& done = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        doc.scene.touchBodies();
+        doc.dirty = true;
+        out.say((cut ? "Engraved \"" : "Embossed \"") + words + "\" " + lengthText(height) + " high, " + lengthText(depth) + (cut ? " deep" : " proud") + " on " +
+                done.name + (flat ? "" : " (following the curved face)") + ": " + closedText(done.mesh) + ", volume " + fmt3("%.2f", before / 1000.0) + " -> " +
+                fmt3("%.2f", meshVolume(worldMesh(done)) / 1000.0) + " cm3");
         return out;
     }
 

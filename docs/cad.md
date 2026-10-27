@@ -637,6 +637,56 @@ rounded box on average and 0.06 mm at worst. The volume is within 0.3% of the St
 - It rounds all the edges of the kind chosen. To round only some, use `FILLET ... EDGES`
   (above).
 
+## Shell, dome, rib and lettering
+
+```text
+SHELL   [body] THICKNESS t [OUTWARD] FACE x,y,z            hollow the part, open at that face
+DOME    [body] FACE x,y,z HEIGHT h [CONCAVE]                raise (or dish in) a flat face
+RIB     [curve] THICKNESS t [BODY name] [FLIP] [KEEP]       a wall from an open curve to the body
+EMBOSS  [body] TEXT "words" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]
+ENGRAVE [body] TEXT "words" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]
+```
+
+**SHELL ... FACE** hollows the part with walls `t` thick and leaves the face at the point
+open, the way a CAD shell removes a chosen face. (`OPEN x,y,z NORMAL x,y,z` cuts the opening
+along any plane instead.)
+
+**DOME** raises the flat face at the point. Its outline shrinks inward by `R (1 - cos a)` as it
+rises by `h sin a`, so it meets the face square and is flat on top. `R` is how far the outline
+can shrink before it turns over. On a round face this is half an ellipsoid. **CONCAVE** dishes
+the same shape into the face.
+
+**RIB** grows a wall `t` thick, centred on the sketch plane, from an open curve to the body.
+The wall runs square to the curve's chord, toward the body (**FLIP** for the other side). It
+follows the surface under each point of the curve and reaches a little into it. The body is
+the nearest one that way, unless you name one with `BODY`. The curve is hidden unless you add
+**KEEP**.
+
+**EMBOSS** raises lettering on the face at the point, and **ENGRAVE** cuts it in:
+
+- **HEIGHT** is the height of the capitals and **DEPTH** how far the letters stand proud or go in.
+- The words are centred on the point. They read along +X on a top face and upright on a side
+  face, and **ANGLE** turns them. `\n` starts a new line.
+- The letters come from the built-in fonts, read from their TrueType outlines: **bold** (Inter
+  SemiBold, the default), **sans** (Inter) and **mono** (JetBrains Mono). These cover Latin
+  letters, digits and the usual symbols.
+- On a curved face the outlines are cut finer, and every point follows the surface along the
+  face's normal. The letters then stand an even `DEPTH` proud of a cylinder or a sphere.
+- Text that runs off the face is refused.
+
+```text
+BOX 80 30 10 @0,100,0
+EMBOSS "Block 1" TEXT "SI CDM" FACE 0,100,10 HEIGHT 8 DEPTH 1
+ENGRAVE "Block 1" TEXT "Part 42-B" FACE 0,85,5 HEIGHT 5 DEPTH 0.5
+
+BOX 60 40 5
+BOX 5 40 40 @-27.5,0,0
+BOOLEAN "Block 2" UNION "Block 3"
+PLANE FRONT
+LINE -25,25 15,5
+RIB THICKNESS 4                                            a 40 x 20 gusset in the corner
+```
+
 ## Mass properties
 
 ```text
