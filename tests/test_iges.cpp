@@ -132,7 +132,7 @@ TEST_CASE("IGES from the model: primitives, revolves and extrusions exact, other
     const std::string path = tempPath("sicdm_model.igs");
     auto r = run(d, "EXPORT " + path);
     REQUIRE(r.ok);
-    CHECK(r.lines.back().find("5 exact, 1 as planar facets") != std::string::npos);
+    CHECK(r.lines.back().find("6 exact, 0 as planar facets") != std::string::npos); // the rounded block too (see ExactMesh)
     Document e;
     r = run(e, "IMPORT " + path);
     REQUIRE(r.ok);

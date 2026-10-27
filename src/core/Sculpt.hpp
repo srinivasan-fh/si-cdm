@@ -29,6 +29,8 @@
 
 namespace sicdm {
 
+struct BSurface;
+
 struct HoleSpec;
 
 struct Body;
@@ -258,6 +260,9 @@ bool addBoss(Body& body, const Vec3& at, const Vec3& normal, BossShape shape, fl
              std::string* error = nullptr);
 // a = a (op) b (both bodies placed by their offsets).
 bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error = nullptr);
+// The same with the exact surfaces of a mesh tool `b` (in b's frame), so `a` keeps exact
+// geometry (see ExactMesh).
+bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error, const std::vector<BSurface>& toolSurfaces);
 
 // The body's mesh in world coordinates.
 MeshData worldMesh(const Body& body);

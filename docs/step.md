@@ -66,8 +66,25 @@ one product per body.
 **Planar facets:** every other mesh goes out as a B-rep of planar faces, with coplanar
 neighbouring triangles merged into one face. Closed meshes give closed solids.
 
+**Exact through features:** cutting or joining an exact body keeps it exact.
+
+- This covers holes (drill points and counterbores too), pockets, bosses, knife cuts,
+  `BOOLEAN` with another exact body, and rounds on chosen edges.
+- The cut is made on triangles. Afterwards each triangle is matched to the exact surface it
+  lies on, from the body's own surfaces and the tool's: a hole's cylinder and cone, a
+  pocket's planes, a round's cylinder (straight edge), torus (circular edge) or corner ball.
+- Neighbouring triangles on one surface become one face. Faces meet in true lines and
+  circles. Where two curved surfaces cross (two rounds meeting at a corner), they meet in
+  points that lie on both surfaces, joined straight.
+- The result is kept only if it tessellates back to a closed solid with the mesh's volume.
+  Most of its area must also lie on exact surfaces. Otherwise the body goes back to its mesh.
+
+A box with a through hole, a blind drilled hole, a pocket and two rounds exports as 16
+exact faces: eleven planes, three cylinders, a cone and a torus, joined by lines and circles.
+In other CAD systems those holes measure as true diameters.
+
 **When exact becomes faceted:** a body's exact geometry belongs to one mesh. Editing that
-mesh (a sculpt stroke, a boolean, a remesh, an edge fillet) leaves the exact geometry
+mesh some other way (a sculpt stroke, a remesh, a dome, lettering) leaves the exact geometry
 behind, and the body exports as facets from then on. The report says how many bodies went
 exact and how many as facets:
 
@@ -75,8 +92,8 @@ exact and how many as facets:
 Exported 8 bodies to model.step (STEP AP214, mm): 6 exact, 2 as planar facets
 ```
 
-Projects keep the exact geometry of imported and revolved bodies (saved with each one), so
-it survives `SAVE` and `OPEN`. Primitives and extrusions rebuild theirs from their
+Projects keep the exact geometry of imported, revolved and cut bodies (saved with each
+one), so it survives `SAVE` and `OPEN`. Primitives and extrusions rebuild theirs from their
 parameters.
 
 ## Precision

@@ -3,6 +3,7 @@
 #include "core/Brep.hpp"
 #include "core/Command.hpp"
 #include "core/Document.hpp"
+#include "core/ExactMesh.hpp"
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Iges.hpp"
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -60,12 +62,6 @@ double volumeOf(const std::vector<StepPart>& parts, double chord, std::size_t* o
         if (failed) *failed += r.failedFaces;
     }
     return v;
-}
-
-const Body* named(const Document& d, const std::string& name) {
-    for (const Body& b : d.scene.bodies())
-        if (b.name == name) return &b;
-    return nullptr;
 }
 
 } // namespace
@@ -145,14 +141,18 @@ TEST_CASE("STEP from the model: primitives exactly (turned and scaled too), othe
     const std::string path = tempPath("sicdm_model.step");
     auto r = run(d, "EXPORT " + path);
     REQUIRE(r.ok);
-    CHECK(text(r).find("5 exact, 1 as planar facets") != std::string::npos);
+    CHECK(text(r).find("6 exact, 0 as planar facets") != std::string::npos); // the rounded block too (see ExactMesh)
     const std::vector<StepPart> parts = readStepFile(path);
     REQUIRE(parts.size() == 6);
     const double expect[] = {24000.0, kPiT * 100 * 30, 4.0 / 3 * kPiT * 1728, 2 * kPiT * kPiT * 30 * 81, 2000.0};
     for (int i = 0; i < 5; ++i) CHECK_NEAR(volumeOf({parts[static_cast<std::size_t>(i)]}, 0.002), expect[i], 1e-3 * expect[i]);
-    // The filleted block went as facets: exactly the mesh's volume.
-    const double faceted = meshVolume(worldMesh(*named(d, "Block 6")));
-    CHECK_NEAR(volumeOf({parts[5]}, 0.01), faceted, 1e-6 * faceted);
+    // The rounded block went exact: planes and the rounds' cylinders. Four R2 rounds along
+    // 20 mm, less what two of them both take at each corner (0.76691 mm3, numerically).
+    const double rounded = 8000 - 4 * (1 - kPiT / 4) * 4 * 20 + 4 * 0.76691;
+    CHECK_NEAR(volumeOf({parts[5]}, 0.0005), rounded, 0.5);
+    int rounds = 0;
+    for (const BSurface& su : parts[5].brep->surfaces) rounds += su.kind == BSurfaceKind::Cylinder;
+    CHECK(rounds == 4);
     // Placed where the bodies are: the turned cylinder's centre stays at its base's position.
     const AABB cb = tessellate(*parts[1].brep).bounds();
     CHECK(cb.min.x > 25 && cb.max.x < 95);
@@ -412,4 +412,117 @@ TEST_CASE("IGES: touching parts stay separate parts, by name") {
     std::sort(names.begin(), names.end());
     CHECK(names == (std::vector<std::string>{"Block 1", "Block 2", "Block 3"}));
     std::remove(path.c_str());
+}
+
+namespace {
+
+// Faces of each kind in a body's exact geometry.
+std::map<BSurfaceKind, int> kinds(const Body& b) {
+    std::map<BSurfaceKind, int> k;
+    if (!b.brep) return k;
+    for (const BShell& sh : b.brep->shells)
+        for (const BFace& f : sh.faces) ++k[b.brep->surfaces[static_cast<std::size_t>(f.surface)].kind];
+    return k;
+}
+
+int circles(const Body& b) {
+    int n = 0;
+    for (const BrepEdge& e : b.brep->edges) n += e.curve >= 0 && b.brep->curves[static_cast<std::size_t>(e.curve)].kind == BCurveKind::Circle;
+    return n;
+}
+
+} // namespace
+
+TEST_CASE("Exact geometry through holes, pockets, bosses and rounds") {
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 15 @0,0,0").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT -20,0,15 DIAMETER 6 THROUGH").ok);
+    const Body& b = d.scene.bodies()[0];
+    // A hole through a box: its six planes, the hole's cylinder, its two rims circles.
+    REQUIRE(b.exact());
+    CHECK(kinds(b)[BSurfaceKind::Plane] == 6);
+    CHECK(kinds(b)[BSurfaceKind::Cylinder] == 1);
+    CHECK(circles(b) == 2);
+    for (const BSurface& s : b.brep->surfaces)
+        if (s.kind == BSurfaceKind::Cylinder) CHECK_NEAR(s.r1, 3.0, 1e-6);
+    // A blind drilled hole (its cone point closed at the apex), a pocket, a round on an edge and
+    // on the hole's rim: still exact, every face on its own surface.
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 20,0,15 DIAMETER 8 DEPTH 6").ok);
+    REQUIRE(run(d, "POCKET \"Block 1\" AT 0,10,15 WIDTH 10 LENGTH 14 DEPTH 4").ok);
+    REQUIRE(run(d, "FILLET \"Block 1\" RADIUS 1 EDGES NEAR -17,0,15").ok);
+    REQUIRE(run(d, "FILLET \"Block 1\" RADIUS 2 EDGES NEAR 0,-20,15").ok);
+    const Body& c = d.scene.bodies()[0];
+    REQUIRE(c.exact());
+    auto k = kinds(c);
+    CHECK(k[BSurfaceKind::Cylinder] == 3); // two holes and the edge round
+    CHECK(k[BSurfaceKind::Cone] == 1);     // the drill point
+    CHECK(k[BSurfaceKind::Torus] == 1);    // the round on the hole's rim
+    CHECK(k[BSurfaceKind::Plane] == 11);   // the box's six and the pocket's five
+    // Its tessellation is closed and holds the mesh's volume.
+    TessellateReport tr;
+    const MeshData m = tessellate(*c.brep, {}, &tr);
+    CHECK(tr.failedFaces == 0);
+    CHECK(openEdgeCount(m) == 0);
+    CHECK_NEAR(meshVolume(m), meshVolume(c.mesh), 2e-3 * meshVolume(c.mesh));
+
+    // To STEP as exact faces, and back in closed with the same faces.
+    const std::string path = tempPath("sicdm_exact_features.step");
+    const auto r = run(d, "EXPORT \"" + path + "\"");
+    REQUIRE(r.ok);
+    CHECK(text(r).find("1 exact, 0 as planar facets") != std::string::npos);
+    const std::vector<StepPart> parts = readStepFile(path);
+    REQUIRE(parts.size() == 1);
+    CHECK(parts[0].brep->faceCount() == c.brep->faceCount());
+    std::size_t open = 0, failed = 0;
+    const double v = volumeOf(parts, 0.01, &open, &failed);
+    CHECK(open == 0);
+    CHECK(failed == 0);
+    CHECK_NEAR(v, meshVolume(c.mesh), 2e-3 * meshVolume(c.mesh));
+    std::filesystem::remove(path);
+
+    // Saved with the project and opened exact again.
+    const std::string proj = tempPath("sicdm_exact_features.sicdm");
+    REQUIRE(run(d, "SAVE \"" + proj + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + proj + "\"").ok);
+    REQUIRE(!e.scene.bodies().empty());
+    CHECK(e.scene.bodies()[0].exact());
+    CHECK(e.scene.bodies()[0].brep->faceCount() == c.brep->faceCount());
+    std::filesystem::remove(proj);
+}
+
+TEST_CASE("Exact geometry through booleans of exact bodies, and not for meshes") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 10 @0,0,0").ok);
+    REQUIRE(run(d, "CYLINDER 8 20 @0,0,5").ok);
+    REQUIRE(run(d, "BOOLEAN \"Block 1\" UNION \"Cylinder 2\"").ok);
+    const Body& u = d.scene.bodies()[0];
+    REQUIRE(u.exact());
+    CHECK(kinds(u)[BSurfaceKind::Cylinder] == 1);
+    CHECK(kinds(u)[BSurfaceKind::Plane] == 7); // the box's six and the cylinder's top
+    // The boss's foot and top: circles.
+    CHECK(circles(u) == 2);
+    // A round on the boss's rim: a torus, meeting the cylinder and the top in circles.
+    REQUIRE(run(d, "FILLET \"Block 1\" RADIUS 1.5 EDGES NEAR 8,0,25").ok);
+    const Body& f = d.scene.bodies()[0];
+    REQUIRE(f.exact());
+    CHECK(kinds(f)[BSurfaceKind::Torus] == 1);
+    CHECK(circles(f) == 3);
+    // A sculpted (mesh) body cut by a hole gains no exact geometry of its own.
+    Document s;
+    REQUIRE(run(s, "SPHERE 20 @0,0,0").ok);
+    REQUIRE(run(s, "SCULPT \"Sphere 1\" INFLATE AT 0,0,40 RADIUS 10 STRENGTH 0.5").ok);
+    CHECK(!s.scene.bodies()[0].exact());
+    REQUIRE(run(s, "HOLE \"Sphere 1\" AT 0,0,40 DIAMETER 4 DEPTH 5").ok);
+    CHECK(!s.scene.bodies()[0].exact());
+    // The surfaces a profile of revolution makes.
+    const auto rs = revolveSurfaces({0, 0, 0}, {0, 0, 1}, {{0, -5}, {2, -4}, {2, 3}, {0, 3}});
+    REQUIRE(rs.size() == 3);
+    CHECK(rs[0].kind == BSurfaceKind::Cone);
+    CHECK(rs[1].kind == BSurfaceKind::Cylinder);
+    CHECK(rs[2].kind == BSurfaceKind::Plane);
+    double dist;
+    DVec3 n;
+    REQUIRE(surfaceDistance(rs[0], {1, 0, -4.5}, dist, n));
+    CHECK_NEAR(dist, 0.0, 1e-9); // on the cone
 }

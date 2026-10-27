@@ -1,6 +1,7 @@
 #include "core/Features.hpp"
 
 #include "core/Brep.hpp"
+#include "core/ExactMesh.hpp"
 
 #include "core/Print.hpp"
 #include "core/Scene.hpp"
@@ -1579,6 +1580,85 @@ std::optional<MeshData> cornerTool(const Vec3& V, const Vec3 d[3], const std::ve
     return tool;
 }
 
+// The exact surface a round of radius r leaves on a chain: a cylinder along a straight
+// edge, a torus round a circular one (none for other edges).
+std::vector<BSurface> roundSurfaces(const EdgeChain& c, float r) {
+    std::vector<BSurface> out;
+    if (c.pts.size() < 2) return out;
+    // The ball's centre at each point: r inside both faces (outside, for an inside corner).
+    std::vector<DVec3> centres;
+    for (std::size_t i = 0; i < c.pts.size(); ++i) {
+        const DVec3 nl(c.nL[i]), nr(c.nR[i]);
+        const double k = 1 + ddot(nl, nr);
+        if (k < 1e-6) return out;
+        centres.push_back(DVec3(c.pts[i]) + (nl + nr) * ((c.convex ? -1.0 : 1.0) * r / k));
+    }
+    const double tol = 1e-3 * r + 1e-5;
+    const DVec3 a = centres.front(), d = dnormalize(centres.back() - a);
+    bool straight = !c.closed && dlength(centres.back() - a) > 0;
+    for (const DVec3& p : centres) straight = straight && dlength(dcross(p - a, d)) <= tol;
+    BSurface s;
+    if (straight) {
+        s.kind = BSurfaceKind::Cylinder;
+        const DVec3 ref = std::fabs(d.z) < 0.9 ? DVec3{0, 0, 1} : DVec3{1, 0, 0};
+        s.f = Frame::make(a, d, ref);
+        s.r1 = r;
+        out.push_back(s);
+        return out;
+    }
+    // A circular edge: a torus about the circle's axis. The circle from the edge's points
+    // (exact), the ball's centre offset from it averaged over the chain (the normals at a
+    // faceted edge wobble), and snapped to r where the faces are square to each other.
+    if (c.pts.size() < 4) return out;
+    std::vector<DVec3> pts;
+    for (const Vec3& p : c.pts) pts.push_back(DVec3(p));
+    DVec3 m{0, 0, 0};
+    for (const DVec3& p : pts) m += p;
+    m = m / static_cast<double>(pts.size());
+    DVec3 n{0, 0, 0};
+    for (std::size_t i = 0; i + 1 < pts.size(); ++i) n += dcross(pts[i] - m, pts[i + 1] - m);
+    if (dlength(n) < 1e-12) return out;
+    n = dnormalize(n);
+    const DVec3 p0 = pts.front(), p1 = pts[pts.size() / 3], p2 = pts[2 * pts.size() / 3];
+    const DVec3 u = p1 - p0, v = p2 - p0, w = dcross(u, v);
+    if (dlength(w) < 1e-12) return out;
+    const DVec3 cc = p0 + (dcross(w, u) * ddot(v, v) + dcross(v, w) * ddot(u, u)) / (2 * ddot(w, w));
+    const double rho = dlength(p0 - cc);
+    for (const DVec3& p : pts)
+        if (std::fabs(dlength(p - cc) - rho) > tol || std::fabs(ddot(p - cc, n)) > tol) return out;
+    double radial = 0, axial = 0;
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        const DVec3 out1 = dnormalize((pts[i] - cc) - n * ddot(pts[i] - cc, n));
+        radial += ddot(centres[i] - pts[i], out1);
+        axial += ddot(centres[i] - pts[i], n);
+    }
+    radial /= static_cast<double>(pts.size());
+    axial /= static_cast<double>(pts.size());
+    for (double* q : {&radial, &axial})
+        for (double target : {-static_cast<double>(r), 0.0, static_cast<double>(r)})
+            if (std::fabs(*q - target) <= 0.02 * r) *q = target;
+    if (!(rho + radial > 0)) return out;
+    s.kind = BSurfaceKind::Torus;
+    s.f = Frame::make(cc + n * axial, n, p0 - cc);
+    s.r1 = rho + radial;
+    s.r2 = r;
+    out.push_back(s);
+    return out;
+}
+
+// The ball a corner of three rounds leaves.
+std::vector<BSurface> cornerSurfaces(const std::vector<Vec3>& normals, const Vec3& V, float r) {
+    if (normals.size() != 3) return {};
+    const Vec3 a{normals[0].x, normals[1].x, normals[2].x}, b{normals[0].y, normals[1].y, normals[2].y}, c{normals[0].z, normals[1].z, normals[2].z};
+    Vec3 rows;
+    if (!solve3(a, b, c, Vec3{-r, -r, -r}, rows)) return {};
+    BSurface s;
+    s.kind = BSurfaceKind::Sphere;
+    s.f = Frame::make(DVec3(V + rows), {0, 0, 1}, {1, 0, 0});
+    s.r1 = r;
+    return {s};
+}
+
 } // namespace
 
 bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::vector<int>& chosen, float size, bool chamfer, std::string* error,
@@ -1609,8 +1689,15 @@ bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::v
             if (k >= 0 && k < static_cast<int>(chains.size()) && chains[static_cast<std::size_t>(k)].closed)
                 return fail("A variable fillet needs open edges: a closed loop has no start or end");
     if (chosen.empty()) return fail("No edges chosen (EDGES lists them)");
-    // Work in world space.
+    // Work in world space (exact geometry moved along).
     if (body.offset.x != 0 || body.offset.y != 0 || body.offset.z != 0 || body.kind != "mesh" || body.scale != 1.0f) {
+        std::shared_ptr<Brep> exact;
+        if (body.exact()) {
+            exact = std::make_shared<Brep>(*body.brep);
+            Placement t;
+            t.t = DVec3(body.offset);
+            exact->transform(t);
+        }
         MeshData w = worldMesh(body);
         body.mesh = std::move(w);
         body.offset = {};
@@ -1618,6 +1705,8 @@ bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::v
         body.rotation = {};
         body.kind = "mesh";
         body.params.clear();
+        body.brep = exact;
+        body.brepKey = exact ? meshKey(body.mesh) : 0;
     }
     const bool wasClosed = openEdgeCount(body.mesh) == 0;
     for (int k : chosen) {
@@ -1626,7 +1715,7 @@ bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::v
         if (c.pts.size() < 2) continue;
         const Body tool = featureBody("edge tool", edgeTool(c, size, variable ? sizeEnd : size, chamfer), {});
         std::string e;
-        if (!bodyBoolean(body, tool, c.convex ? BooleanOp::Subtract : BooleanOp::Union, &e))
+        if (!bodyBoolean(body, tool, c.convex ? BooleanOp::Subtract : BooleanOp::Union, &e, chamfer || variable ? std::vector<BSurface>{} : roundSurfaces(c, size)))
             return fail("Edge " + std::to_string(k + 1) + ": " + e);
         if (wasClosed && openEdgeCount(body.mesh) > 0) return fail("Edge " + std::to_string(k + 1) + " came out with holes");
     }
@@ -1660,11 +1749,14 @@ bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::v
             if (!tool) continue;
             Body before = body;
             std::string e;
-            if (!bodyBoolean(body, featureBody("corner tool", *tool, {}), BooleanOp::Subtract, &e) || (wasClosed && openEdgeCount(body.mesh) > 0))
+            if (!bodyBoolean(body, featureBody("corner tool", *tool, {}), BooleanOp::Subtract, &e, cornerSurfaces(normals, ends[i].p, size)) ||
+                (wasClosed && openEdgeCount(body.mesh) > 0))
                 body = std::move(before); // keep the sharper corner rather than a broken one
         }
     }
+    const bool exact = body.exact();
     SculptMesh(body).writeTo(body, true, 40.0f);
+    if (exact) body.brepKey = meshKey(body.mesh); // the same surface, new normals
     return true;
 }
 

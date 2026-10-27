@@ -686,6 +686,26 @@ MateSolveReport solveMates(Scene& scene, const AssemblyState& st) {
         if (dlength(axis) < 0.1) axis = dcross(da, DVec3{1, 0, 0});
         u.q = expRot(dnormalize(axis) * want) * u.q;
     }
+    // Likewise a mate that lines two directions up (two axes, two faces) when they start
+    // exactly square to each other: a saddle with no slope either way. Turn a free part a
+    // quarter turn first.
+    for (std::size_t k = 0; k < active.size(); ++k) {
+        const Mate& m = *active[k];
+        const Start& s = starts[k];
+        const bool lines = (m.type == MateType::Concentric && s.a.geom == MateGeom::Axis && s.b.geom == MateGeom::Axis) || m.type == MateType::Parallel ||
+                           ((m.type == MateType::Coincident || m.type == MateType::Distance) && s.a.geom == MateGeom::Plane && s.b.geom == MateGeom::Plane);
+        if (!lines) continue;
+        const DVec3 da = cur[static_cast<std::size_t>(s.ua)].q * s.a.d, db = cur[static_cast<std::size_t>(s.ub)].q * s.b.d;
+        if (std::fabs(ddot(da, db)) > 1e-6) continue;
+        const bool bFree = std::find(varUnit.begin(), varUnit.end(), s.ub) != varUnit.end();
+        const bool aFree = std::find(varUnit.begin(), varUnit.end(), s.ua) != varUnit.end();
+        if (!aFree && !bFree) continue;
+        const DVec3 from = bFree ? db : da, to = bFree ? da : db;
+        const DVec3 axis = dcross(from, to);
+        if (dlength(axis) < 1e-9) continue;
+        Unit& u = cur[static_cast<std::size_t>(bFree ? s.ub : s.ua)];
+        u.q = expRot(dnormalize(axis) * (kPiA / 2)) * u.q;
+    }
     std::vector<double> r = residuals(cur, nullptr);
     double err = maxAbs(r);
     double lambda = 1e-6;

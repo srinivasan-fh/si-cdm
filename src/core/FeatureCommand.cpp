@@ -1805,7 +1805,9 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             return out.fail("Cannot dome " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + why);
         }
         Body& done = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const bool exact = done.exact();
         SculptMesh(done).writeTo(done, true, 40.0f);
+        if (exact) done.brepKey = meshKey(done.mesh); // the same surface, new normals
         doc.scene.touchBodies();
         doc.dirty = true;
         out.say((concave ? "Dished " : "Domed ") + done.name + " " + lengthText(height) + (concave ? " deep: " : " high: ") + closedText(done.mesh) + ", volume " +

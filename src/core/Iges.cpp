@@ -706,7 +706,16 @@ private:
             const double t = l2 > 0 ? std::clamp(ddot(p - pc.a, d) / l2, 0.0, 1.0) : 0.0;
             return dlength(pc.a + d * t - p);
         }
-        if (pc.c.kind == BCurveKind::Polyline) return dlength(pc.at(fractionOn(pc, p)) - p);
+        if (pc.c.kind == BCurveKind::Polyline) { // the nearest of its segments (the piece's ends match already)
+            double best = std::min(dlength(pc.a - p), dlength(pc.b - p));
+            for (std::size_t i = 0; i + 1 < pc.c.pts.size(); ++i) {
+                const DVec3 a = pc.c.pts[i], d = pc.c.pts[i + 1] - a;
+                const double l2 = ddot(d, d);
+                const double t = l2 > 0 ? std::clamp(ddot(p - a, d) / l2, 0.0, 1.0) : 0.0;
+                best = std::min(best, dlength(a + d * t - p));
+            }
+            return best;
+        }
         // The nearest point of the curve, if it is on this piece of it; else an end.
         double t = pc.c.param(p);
         if (pc.c.periodic()) t = pc.t0 + std::fmod(std::fmod(t - pc.t0, 2 * kPiI) + 2 * kPiI, 2 * kPiI);

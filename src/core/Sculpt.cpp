@@ -1,5 +1,6 @@
 #include "core/Sculpt.hpp"
 #include "core/HoleWizard.hpp"
+#include "core/ExactMesh.hpp"
 
 #include "core/Scene.hpp"
 
@@ -3080,7 +3081,42 @@ void setLocalMesh(Body& body, MeshData m) {
     body.params.clear();
 }
 
-bool applyCut(Body& body, const MeshData& worldTool, BooleanOp op, const char* what, std::string* error) {
+// The exact surfaces of the cutters below (world frame), so a cut body keeps exact geometry.
+std::vector<BSurface> boxSurfaces(const Vec3& c, const Vec3& u, const Vec3& v, const Vec3& w, const Vec3& h) {
+    std::vector<BSurface> out;
+    const Vec3 axes[3] = {u, v, w};
+    const float half[3] = {h.x, h.y, h.z};
+    for (int k = 0; k < 3; ++k)
+        for (int sgn = -1; sgn <= 1; sgn += 2) {
+            BSurface s;
+            s.kind = BSurfaceKind::Plane;
+            const Vec3 n = axes[k] * static_cast<float>(sgn);
+            s.f = Frame::make(DVec3(c + n * half[k]), DVec3(n), DVec3(axes[(k + 1) % 3]));
+            out.push_back(s);
+        }
+    return out;
+}
+
+std::vector<BSurface> sphereSurfaces(const Vec3& c, float r) {
+    BSurface s;
+    s.kind = BSurfaceKind::Sphere;
+    s.f = Frame::make(DVec3(c), {0, 0, 1}, {1, 0, 0});
+    s.r1 = r;
+    return {s};
+}
+
+std::vector<BSurface> cylinderSurfaces(const Vec3& from, const Vec3& to, float r) {
+    const float h = length(to - from);
+    return revolveSurfaces(from, to - from, {{0, 0}, {r, 0}, {r, h}, {0, h}});
+}
+
+bool applyCut(Body& body, const MeshData& worldTool, BooleanOp op, const char* what, std::string* error,
+              const std::vector<BSurface>& toolSurfaces = {}) {
+    std::vector<BSurface> surfaces = exactSurfaces(body); // before the mesh changes
+    for (BSurface t : toolSurfaces) {
+        t.f.o = t.f.o - DVec3(body.offset);
+        surfaces.push_back(t);
+    }
     MeshData a = body.mesh;
     MeshData tool = worldTool;
     if (body.offset.x != 0 || body.offset.y != 0 || body.offset.z != 0) tool.transform(translate(-body.offset));
@@ -3110,6 +3146,7 @@ bool applyCut(Body& body, const MeshData& worldTool, BooleanOp op, const char* w
         return false;
     }
     setLocalMesh(body, std::move(a));
+    keepExactGeometry(body, surfaces);
     return true;
 }
 
@@ -3136,7 +3173,7 @@ bool drillHole(Body& body, const Vec3& at, const Vec3& normal, float diameter, f
         const float through = bodySize(body) * 2.0f + length(at - body.bounds().center());
         prof = {{0, -through}, {r, -through}, {r, margin}, {0, margin}};
     }
-    return applyCut(body, revolve(at, n, prof, 48), BooleanOp::Subtract, "hole", error);
+    return applyCut(body, revolve(at, n, prof, 48), BooleanOp::Subtract, "hole", error, revolveSurfaces(at, n, prof));
 }
 
 bool drillHole(Body& body, const Vec3& at, const Vec3& normal, const HoleSpec& hole, std::string* error) {
@@ -3145,7 +3182,7 @@ bool drillHole(Body& body, const Vec3& at, const Vec3& normal, const HoleSpec& h
     const float through = bodySize(body) * 2.0f + length(at - body.bounds().center());
     std::vector<std::pair<float, float>> prof;
     if (!holeProfile(hole, through, margin, prof, error)) return false;
-    return applyCut(body, revolve(at, normalize(normal), prof, 48), BooleanOp::Subtract, "hole", error);
+    return applyCut(body, revolve(at, normalize(normal), prof, 48), BooleanOp::Subtract, "hole", error, revolveSurfaces(at, normalize(normal), prof));
 }
 
 bool cutPocket(Body& body, const Vec3& at, const Vec3& normal, PocketShape shape, float width, float length_,
@@ -3165,20 +3202,26 @@ bool cutPocket(Body& body, const Vec3& at, const Vec3& normal, PocketShape shape
     }
     const float margin = std::max(0.5f, width * 0.25f);
     MeshData tool;
+    std::vector<BSurface> exact;
     switch (shape) {
     case PocketShape::Box: {
         const float h = (depth + margin) * 0.5f;
         tool = cutterBox(at + n * (margin - h), u, v, n, {width * 0.5f, length_ * 0.5f, h});
+        exact = boxSurfaces(at + n * (margin - h), u, v, n, {width * 0.5f, length_ * 0.5f, h});
         break;
     }
-    case PocketShape::Round: tool = cutterCylinder(at - n * depth, at + n * margin, width * 0.5f, 48); break;
+    case PocketShape::Round:
+        tool = cutterCylinder(at - n * depth, at + n * margin, width * 0.5f, 48);
+        exact = cylinderSurfaces(at - n * depth, at + n * margin, width * 0.5f);
+        break;
     case PocketShape::Ball: {
         const float r = width * 0.5f;
         tool = cutterSphere(at - n * ((depth > 0 ? depth : r) - r), r, 40, 20);
+        exact = sphereSurfaces(at - n * ((depth > 0 ? depth : r) - r), r);
         break;
     }
     }
-    return applyCut(body, tool, BooleanOp::Subtract, "pocket", error);
+    return applyCut(body, tool, BooleanOp::Subtract, "pocket", error, exact);
 }
 
 bool cutChannel(Body& body, const std::vector<Vec3>& path, const std::vector<Vec3>& normals, float width, float depth,
@@ -3259,8 +3302,8 @@ bool trimByPlane(Body& body, const Vec3& point, const Vec3& normal, std::string*
     // Just big enough to swallow everything on that side (a tight box keeps the
     // shared grid of the boolean fine).
     const float L = length(point - body.bounds().center()) + bodySize(body) * 0.6f + 1.0f;
-    return applyCut(body, cutterBox(point + n * (L * 0.5f), u, v, n, {L, L, L * 0.5f}), BooleanOp::Subtract, "knife",
-                    error);
+    return applyCut(body, cutterBox(point + n * (L * 0.5f), u, v, n, {L, L, L * 0.5f}), BooleanOp::Subtract, "knife", error,
+                    boxSurfaces(point + n * (L * 0.5f), u, v, n, {L, L, L * 0.5f}));
 }
 
 bool addBoss(Body& body, const Vec3& at, const Vec3& normal, BossShape shape, float diameter, float height,
@@ -3272,31 +3315,46 @@ bool addBoss(Body& body, const Vec3& at, const Vec3& normal, BossShape shape, fl
     const Vec3 n = normalize(normal);
     const float sink = std::max(0.5f, diameter * 0.25f); // overlaps the body so the two fuse
     MeshData tool;
+    std::vector<BSurface> exact;
     switch (shape) {
-    case BossShape::Cylinder: tool = cutterCylinder(at - n * sink, at + n * height, diameter * 0.5f, 48); break;
+    case BossShape::Cylinder:
+        tool = cutterCylinder(at - n * sink, at + n * height, diameter * 0.5f, 48);
+        exact = cylinderSurfaces(at - n * sink, at + n * height, diameter * 0.5f);
+        break;
     case BossShape::Box: {
         Vec3 u, v;
         frameOf(n, u, v);
         const float h = (height + sink) * 0.5f;
         tool = cutterBox(at + n * (height - h), u, v, n, {diameter * 0.5f, diameter * 0.5f, h});
+        exact = boxSurfaces(at + n * (height - h), u, v, n, {diameter * 0.5f, diameter * 0.5f, h});
         break;
     }
     case BossShape::Ball: {
         const float r = diameter * 0.5f;
         // A dome of the given height (at most 90% of a ball, so it is sunk in and fuses).
         tool = cutterSphere(at + n * (std::min(height > 0 ? height : r, diameter * 0.9f) - r), r, 40, 20);
+        exact = sphereSurfaces(at + n * (std::min(height > 0 ? height : r, diameter * 0.9f) - r), r);
         break;
     }
     }
-    return applyCut(body, tool, BooleanOp::Union, "boss", error);
+    return applyCut(body, tool, BooleanOp::Union, "boss", error, exact);
 }
 
 bool meshBooleanRobust(MeshData& a, const MeshData& b, BooleanOp op) { return robustBoolean(a, b, op); }
 
-bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error) {
+bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error) { return bodyBoolean(a, b, op, error, {}); }
+
+bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error, const std::vector<BSurface>& toolSurfaces) {
     MeshData m = a.mesh; // in a's frame (see applyCut)
     MeshData other = b.mesh;
     const Vec3 shift = b.offset - a.offset;
+    std::vector<BSurface> surfaces = exactSurfaces(a);
+    std::vector<BSurface> fromB = exactSurfaces(b);
+    fromB.insert(fromB.end(), toolSurfaces.begin(), toolSurfaces.end());
+    for (BSurface s : fromB) {
+        s.f.o = s.f.o + DVec3(shift);
+        surfaces.push_back(s);
+    }
     if (shift.x != 0 || shift.y != 0 || shift.z != 0) other.transform(translate(shift));
     if (!robustBoolean(m, other, op)) {
         if (error)
@@ -3305,6 +3363,7 @@ bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error) {
         return false;
     }
     setLocalMesh(a, std::move(m));
+    keepExactGeometry(a, surfaces);
     return true;
 }
 

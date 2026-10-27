@@ -1333,10 +1333,13 @@ bool tessellateFace(TessContext& tc, const BFace& face, FaceMesh& out, std::stri
                 const double target = wrapNear(at, 0.5 * (ca + cc), P);
                 const double lo = std::min(ca, cc), hi = std::max(ca, cc);
                 if (target < lo - 1e-12 || target > hi + 1e-12 || hi - lo < 1e-15) continue;
-                const double t = (target - ca) / (cc - ca);
+                // Start at the nearer of the segment's points rather than a new one between
+                // them: the edge is shared with the next face, which has no such point (the
+                // seam may lean a little; both its sides lean alike).
+                const double t = (target - ca) / (cc - ca) < 0.5 ? 0.0 : 1.0;
                 const P2 m{a.x + (c.x - a.x) * t, a.y + (c.y - a.y) * t};
                 const DVec3 pm = l.p[i] + (l.p[(i + 1) % n] - l.p[i]) * t;
-                const double shift = (alongU ? m.x : m.y) - at; // to bring m onto `at`
+                const double shift = std::round(((alongU ? m.x : m.y) - at) / P) * P; // whole turns, near `at`
                 auto shifted = [&](P2 q) {
                     (alongU ? q.x : q.y) -= shift;
                     return q;
@@ -1377,21 +1380,22 @@ bool tessellateFace(TessContext& tc, const BFace& face, FaceMesh& out, std::stri
                 std::reverse(lo.begin(), lo.end());
                 std::reverse(lop.begin(), lop.end());
             }
-            // Shift so lo starts at `at` exactly.
-            const double s0 = c(lo.front()) - at;
+            // Shift by whole turns so lo starts near `at`.
+            const double s0 = std::round((c(lo.front()) - at) / P) * P;
             for (P2& q : lo) (alongU ? q.x : q.y) -= s0;
+            const double start = c(lo.front());
             if (highW) {
                 cut(loops[static_cast<std::size_t>(highW->loop)], at, hi, hip);
                 if (c(hi.back()) < c(hi.front())) {
                     std::reverse(hi.begin(), hi.end());
                     std::reverse(hip.begin(), hip.end());
                 }
-                const double s1 = c(hi.front()) - at;
+                const double s1 = std::round((c(hi.front()) - start) / P) * P;
                 for (P2& q : hi) (alongU ? q.x : q.y) -= s1;
             } else {
-                // The limit line, sampled like a seam, from at + P back to at.
-                P2 a = alongU ? P2{at + P, limit} : P2{limit, at + P};
-                P2 e = alongU ? P2{at, limit} : P2{limit, at};
+                // The limit line, sampled like a seam, from start + P back to start.
+                P2 a = alongU ? P2{start + P, limit} : P2{limit, start + P};
+                P2 e = alongU ? P2{start, limit} : P2{limit, start};
                 hi.push_back(e);
                 hip.push_back({nan, nan, nan});
                 std::vector<P2> mid;
@@ -1436,6 +1440,7 @@ bool tessellateFace(TessContext& tc, const BFace& face, FaceMesh& out, std::stri
             double side = ws[0].dir * (alongU ? sDu : -sDv);
             if (!poleLevels.empty()) side = poleLevels[0] > ws[0].level ? 1.0 : -1.0;
             double limit = side > 0 ? lim1 : lim0;
+            if (std::fabs(limit) > 1e11 && !poleLevels.empty()) limit = poleLevels[0]; // a cone closed at its apex
             if (std::fabs(limit) > 1e11) { // an unbounded direction (a cone opening away): can't close it
                 err = "an open face round a periodic surface";
                 return false;
