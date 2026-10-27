@@ -54,9 +54,10 @@ constexpr CommandSpec kCommands[] = {
     // Sculpting & booleans
     {"SCULPT", "SCULPTING BRUSH",
      "SCULPT [body] brush [AT] x,y,z [x,y,z...] [RADIUS r] [STRENGTH 0-1] [INVERT] [SYMMETRY [X|Y|Z...]] [RADIAL n [X|Y|Z]] "
-     "[FALLOFF smooth|sphere|sharp|linear|constant] [DETAIL d] [NOREFINE] [MOVE dx,dy,dz]  |  SCULPT [body] REFINE detail  |  SCULPT LIST",
+     "[FALLOFF smooth|sphere|sharp|linear|constant] [DETAIL d] [NOREFINE] [MOVE dx,dy,dz] [COLOR c] "
+     "[ALPHA name|file [ALPHAANGLE deg] [FOLLOW] [TILE n]] [SPACING radii]  |  SCULPT [body] REFINE detail  |  SCULPT LIST | ALPHAS",
      "Digital clay: DRAW (pull, INVERT pushes), CLAY, CLAYSTRIPS, LAYER, CARVE, INFLATE, BLOB, GRAB (MOVE), SNAKEHOOK, NUDGE, "
-     "PINCH, CREASE, SMOOTH, FLATTEN, SCRAPE, FILL, MASK. Dabs along the points every radius / 4; the mesh refines itself"},
+     "PINCH, CREASE, SMOOTH, FLATTEN, SCRAPE, FILL, MASK, PAINT. Dabs along the points every radius / 4 (SPACING); an ALPHA stamps a pattern; the mesh refines itself"},
     {"REMESH", "DYNAMESH VOXEL", "REMESH [body [\"other\"...]] [VOXEL v] [BLEND b] [SMOOTH s]",
      "Voxel remesh: fuse bodies into one evenly meshed solid, joins filleted to the blend radius, detail finer than s rounded"},
     {"MASK", "", "MASK [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n] | GROUP n|AT x,y,z [INVERT]",

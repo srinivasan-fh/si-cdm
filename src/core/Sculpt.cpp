@@ -2,6 +2,7 @@
 #include "core/HoleWizard.hpp"
 #include "core/ExactMesh.hpp"
 
+#include "core/FileIO.hpp"
 #include "core/Scene.hpp"
 
 #include <algorithm>
@@ -977,13 +978,16 @@ std::vector<SculptMesh::Image> SculptMesh::images(const Vec3& centre, const Scul
 
 void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s, const Vec3& dir) {
     const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
-    // Clay Strips works on a square under the brush, the rest on its disc.
-    const float reach = s.brush == SculptBrush::ClayStrips ? R * 1.15f : R, reach2 = reach * reach;
+    // Clay Strips works on a square under the brush, the rest on its disc; with an alpha,
+    // the whole square the alpha covers (the falloff spread to its corners).
+    const bool alpha = s.alpha && !s.alpha->empty();
+    const float span = alpha ? R * 1.4143f : R;
+    const float reach = s.brush == SculptBrush::ClayStrips ? std::max(R * 1.15f, span) : span, reach2 = reach * reach;
     std::vector<std::pair<std::uint32_t, float>> region;
     for (std::size_t i = 0; i < m_p.size(); ++i) {
         const Vec3 d = m_p[i] - centre;
         const float dd = dot(d, d);
-        if (dd < reach2 && !pinned(static_cast<std::uint32_t>(i))) region.emplace_back(static_cast<std::uint32_t>(i), falloffOf(std::sqrt(dd), R, s.falloff));
+        if (dd < reach2 && !pinned(static_cast<std::uint32_t>(i))) region.emplace_back(static_cast<std::uint32_t>(i), falloffOf(std::sqrt(dd), span, s.falloff));
     }
     if (region.empty()) return;
     // Front faces only: the surface facing the way the dab's own spot does. A brush
@@ -1003,6 +1007,25 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s, const Vec
         region.erase(std::remove_if(region.begin(), region.end(), [&](const auto& e) { return dot(m_n[e.first], facing) <= 0.0f; }),
                      region.end());
         if (region.empty()) return;
+        if (alpha) { // pressed through the alpha, laid on the surface's tangent plane
+            const Vec3 n = normalize(facing);
+            Vec3 t = s.alphaFollow ? dir - n * dot(dir, n) : Vec3{};
+            if (length(t) < 1e-9f) { // no heading: the world axis least along the normal
+                const Vec3 ref = std::fabs(n.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+                t = ref - n * dot(ref, n);
+            }
+            t = normalize(t);
+            Vec3 b = cross(n, t);
+            const float ang = radians(s.alphaAngle), ca = std::cos(ang), sa = std::sin(ang);
+            const Vec3 tr = t * ca + b * sa;
+            b = cross(n, tr);
+            for (auto& [i, f] : region) {
+                const Vec3 d = m_p[i] - centre;
+                f *= s.alpha->sample(dot(d, tr) / R, dot(d, b) / R, s.alphaTile);
+            }
+            region.erase(std::remove_if(region.begin(), region.end(), [](const auto& e) { return !(e.second > 0.0f); }), region.end());
+            if (region.empty()) return;
+        }
     }
 
     const float sign = s.invert ? -1.0f : 1.0f;
@@ -1149,12 +1172,13 @@ void SculptMesh::dab(const Vec3& centre, const SculptSettings& s, const Vec3& di
     // A brush no smaller than 0.2% of the body: below that, dynamic topology
     // would refine without end.
     const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
-    const float detail = std::max(s.detail > 0 ? s.detail : R * 0.25f, m_size * 2e-4f);
+    const bool alpha = s.alpha && !s.alpha->empty();
+    const float detail = std::max(s.detail > 0 ? s.detail : R * (alpha ? 0.035f : 0.25f), m_size * 2e-4f);
     const std::vector<Image> copies = images(centre, s, R);
     // A mask or paint needs no new triangles (paint as finely as the surface is divided).
     const bool topology = s.refine && s.brush != SculptBrush::Mask && s.brush != SculptBrush::Paint;
     if (topology) {
-        for (const Image& c : copies) refineRegion(c.centre, R, detail);
+        for (const Image& c : copies) refineRegion(c.centre, alpha ? R * 1.4143f : R, detail);
         updateNormals();
     }
     for (const Image& c : copies) applyDab(c.centre, s, c.apply(dir));
@@ -1372,7 +1396,7 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
             out.indices[static_cast<std::size_t>(g) * 3 + static_cast<std::size_t>(j)] = out_i;
         }
     }
-    if (featureEdges) out.computeFeatureEdges(40.0f);
+    if (featureEdges) out.computeFeatureEdges(40.0f, m_size * 0.006f, 75.0f); // fine sculpted detail: only its sharpest creases
     if (m_group.size() == m_t.size()) out.groups = m_group;
     body.mesh = std::move(out);
     body.kind = "mesh";
@@ -1445,7 +1469,7 @@ void SculptMesh::runStroke(const std::vector<Vec3>& path, const SculptSettings& 
     const bool onSurface = s.brush != SculptBrush::SnakeHook;
     float total = 0.0f;
     for (std::size_t i = 1; i < path.size(); ++i) total += length(path[i] - path[i - 1]);
-    const float spacing = std::max({s.radius * 0.25f, total / 1000.0f, 1e-3f});
+    const float spacing = std::max({s.radius * (s.spacing > 0 ? s.spacing : 0.25f), total / 1000.0f, 1e-3f});
     Vec3 last = closestPoint(path.front());
     dab(last, s);
     float carry = 0.0f;
@@ -1638,6 +1662,192 @@ constexpr NamedColour kColours[] = {
     {"copper", 0.72f, 0.45f, 0.20f}, {"clay", 0.70f, 0.48f, 0.38f}};
 
 } // namespace
+
+// --- alphas -----------------------------------------------------------------------------------
+
+float SculptAlpha::sample(float u, float v, int tile) const noexcept {
+    if (value.empty() || !(std::fabs(u) <= 1.0f) || !(std::fabs(v) <= 1.0f)) return 0.0f;
+    const float n = static_cast<float>(std::max(tile, 1));
+    float x = (u * 0.5f + 0.5f) * n, y = (0.5f - v * 0.5f) * n; // image: rows top to bottom
+    x = (x - std::floor(x)) * static_cast<float>(width) - 0.5f, y = (y - std::floor(y)) * static_cast<float>(height) - 0.5f;
+    const int x0 = static_cast<int>(std::floor(x)), y0 = static_cast<int>(std::floor(y));
+    const float fx = x - static_cast<float>(x0), fy = y - static_cast<float>(y0);
+    auto at = [&](int i, int j) {
+        i = tile > 1 ? (i % width + width) % width : std::clamp(i, 0, width - 1);
+        j = tile > 1 ? (j % height + height) % height : std::clamp(j, 0, height - 1);
+        return value[static_cast<std::size_t>(j) * static_cast<std::size_t>(width) + static_cast<std::size_t>(i)];
+    };
+    return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy;
+}
+
+namespace {
+
+// A smooth hash noise in [0, 1) at integer lattice points, and value noise between them.
+float lattice(int x, int y, std::uint32_t seed) {
+    std::uint32_t h = static_cast<std::uint32_t>(x) * 374761393u + static_cast<std::uint32_t>(y) * 668265263u + seed * 2246822519u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return static_cast<float>((h ^ (h >> 16)) & 0xFFFFFFu) / 16777216.0f;
+}
+float valueNoise(float x, float y, std::uint32_t seed) {
+    const int x0 = static_cast<int>(std::floor(x)), y0 = static_cast<int>(std::floor(y));
+    float fx = x - static_cast<float>(x0), fy = y - static_cast<float>(y0);
+    fx = fx * fx * (3 - 2 * fx), fy = fy * fy * (3 - 2 * fy);
+    const float a = lattice(x0, y0, seed), b = lattice(x0 + 1, y0, seed), c = lattice(x0, y0 + 1, seed), d = lattice(x0 + 1, y0 + 1, seed);
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+}
+float smoothStep(float e0, float e1, float x) {
+    const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+    return t * t * (3 - 2 * t);
+}
+
+// The built-in alphas, as functions of (x, y) in 0..1 across the square.
+struct AlphaRecipe {
+    const char* name;
+    float (*f)(float x, float y);
+};
+constexpr float kTau = 6.28318530718f;
+const AlphaRecipe kAlphas[] = {
+    {"noise", [](float x, float y) { // four octaves of value noise
+         float a = 0, amp = 0.5f, f = 6;
+         for (int o = 0; o < 4; ++o, amp *= 0.5f, f *= 2) a += amp * valueNoise(x * f, y * f, 17u + static_cast<std::uint32_t>(o));
+         return std::clamp((a - 0.2f) / 0.65f, 0.0f, 1.0f);
+     }},
+    {"ring", [](float x, float y) { // a crater's rim
+         const float r = std::hypot(x - 0.5f, y - 0.5f) * 2;
+         return std::exp(-std::pow((r - 0.68f) / 0.14f, 2.0f));
+     }},
+    {"square", [](float x, float y) { // a flat stamp with soft edges
+         return smoothStep(0.0f, 0.06f, 0.42f - std::max(std::fabs(x - 0.5f), std::fabs(y - 0.5f)));
+     }},
+    {"dots", [](float x, float y) { // a grid of round bumps
+         const float gx = x * 6 - std::floor(x * 6) - 0.5f, gy = y * 6 - std::floor(y * 6) - 0.5f;
+         const float r = std::hypot(gx, gy) / 0.38f;
+         return r < 1 ? std::sqrt(1 - r * r) : 0.0f;
+     }},
+    {"scales", [](float x, float y) { // overlapping fish scales, each rising to its rim
+         const float n = 5;
+         const float row = std::floor(y * n * 1.25f);
+         float best = 0;
+         for (int k = -1; k <= 1; ++k) {
+             const float r0 = row + static_cast<float>(k);
+             const float cy = (r0 + 0.5f) / (n * 1.25f);
+             const float shift = std::fmod(r0, 2.0f) == 0 ? 0.0f : 0.5f / n;
+             const float cx = (std::floor((x - shift) * n) + 0.5f) / n + shift;
+             const float d = std::hypot((x - cx) * n, (y - cy) * n * 1.25f);
+             if (d < 0.7f && y >= cy - 0.02f) best = std::max(best, 0.3f + 0.7f * d / 0.7f);
+         }
+         return best;
+     }},
+    {"crosshatch", [](float x, float y) { // two sets of fine diagonal grooves
+         const float a = std::pow(std::fabs(std::sin((x + y) * kTau * 4)), 4.0f), b = std::pow(std::fabs(std::sin((x - y) * kTau * 4)), 4.0f);
+         return std::max(a, b);
+     }},
+    {"bricks", [](float x, float y) { // running bond: the bricks raised, the mortar low
+         const float rows = 7, cols = 3.5f;
+         const float ry = y * rows, row = std::floor(ry);
+         const float rx = x * cols + (std::fmod(row, 2.0f) == 0 ? 0.0f : 0.5f);
+         const float fx = rx - std::floor(rx), fy = ry - row;
+         return smoothStep(0.0f, 0.06f, std::min({fx, 1 - fx, (fy) * 0.5f / 0.5f, 1 - fy}) - 0.04f);
+     }},
+    {"pores", [](float x, float y) { // skin: small pits (cell noise)
+         const float n = 22;
+         const float px = x * n, py = y * n;
+         const int cx = static_cast<int>(std::floor(px)), cy = static_cast<int>(std::floor(py));
+         float d1 = 9;
+         for (int j = -1; j <= 1; ++j)
+             for (int i = -1; i <= 1; ++i) {
+                 const float fx = static_cast<float>(cx + i) + lattice(cx + i, cy + j, 5u), fy = static_cast<float>(cy + j) + lattice(cx + i, cy + j, 9u);
+                 d1 = std::min(d1, std::hypot(px - fx, py - fy));
+             }
+         return 1.0f - smoothStep(0.05f, 0.28f, d1);
+     }},
+    {"weave", [](float x, float y) { // over and under
+         const float n = 6;
+         const float u = x * n, v = y * n;
+         const int iu = static_cast<int>(std::floor(u)), iv = static_cast<int>(std::floor(v));
+         const float fu = u - static_cast<float>(iu), fv = v - static_cast<float>(iv);
+         const bool across = ((iu + iv) & 1) == 0;
+         const float t = across ? fv : fu, along = across ? fu : fv;
+         return std::sin(t * 3.14159265f) * (0.6f + 0.4f * std::sin(along * 3.14159265f));
+     }},
+    {"stripes", [](float x, float y) { // parallel grooves
+         (void)y;
+         return 0.5f + 0.5f * std::cos(x * kTau * 8);
+     }},
+};
+
+} // namespace
+
+const std::vector<std::string>& sculptAlphaNames() {
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> n;
+        for (const AlphaRecipe& r : kAlphas) n.push_back(r.name);
+        return n;
+    }();
+    return names;
+}
+
+std::shared_ptr<const SculptAlpha> sculptAlpha(const std::string& nameOrPath, std::string* why) {
+    const std::string key = lower(nameOrPath);
+    for (const AlphaRecipe& r : kAlphas)
+        if (key == r.name) {
+            auto a = std::make_shared<SculptAlpha>();
+            a->name = r.name;
+            a->width = a->height = 256;
+            a->value.resize(256 * 256);
+            for (int j = 0; j < 256; ++j)
+                for (int i = 0; i < 256; ++i)
+                    a->value[static_cast<std::size_t>(j) * 256 + static_cast<std::size_t>(i)] =
+                        std::clamp(r.f((static_cast<float>(i) + 0.5f) / 256.0f, 1.0f - (static_cast<float>(j) + 0.5f) / 256.0f), 0.0f, 1.0f);
+            // Softened a little (a box blur 5 pixels wide, twice), so cliffs in the pattern
+            // become steep slopes a sculpted surface can follow.
+            std::vector<float> tmp(a->value.size());
+            for (int pass = 0; pass < 2; ++pass) {
+                for (int j = 0; j < 256; ++j)
+                    for (int i = 0; i < 256; ++i) {
+                        float sum = 0;
+                        for (int k = -2; k <= 2; ++k) sum += a->value[static_cast<std::size_t>(j) * 256 + static_cast<std::size_t>(std::clamp(i + k, 0, 255))];
+                        tmp[static_cast<std::size_t>(j) * 256 + static_cast<std::size_t>(i)] = sum / 5;
+                    }
+                for (int j = 0; j < 256; ++j)
+                    for (int i = 0; i < 256; ++i) {
+                        float sum = 0;
+                        for (int k = -2; k <= 2; ++k) sum += tmp[static_cast<std::size_t>(std::clamp(j + k, 0, 255)) * 256 + static_cast<std::size_t>(i)];
+                        a->value[static_cast<std::size_t>(j) * 256 + static_cast<std::size_t>(i)] = sum / 5;
+                    }
+            }
+            // ... and stretched back to the full 0..1.
+            const auto [mn, mx] = std::minmax_element(a->value.begin(), a->value.end());
+            const float lo = *mn, span = std::max(*mx - *mn, 1e-6f);
+            for (float& v : a->value) v = (v - lo) / span;
+            return a;
+        }
+    ImageRef img;
+    img.path = nameOrPath;
+    std::string err;
+    if (!loadImagePixels(img, &err) || img.pixelWidth <= 0 || img.pixelHeight <= 0) {
+        if (why) *why = "No alpha named " + nameOrPath + " (SCULPT ALPHAS lists them) and no image there" + (err.empty() ? "" : ": " + err);
+        return nullptr;
+    }
+    // Its brightness, at most 1024 across (larger images averaged down).
+    const int step = std::max(1, std::max(img.pixelWidth, img.pixelHeight) / 1024);
+    auto a = std::make_shared<SculptAlpha>();
+    a->name = nameOrPath;
+    a->width = img.pixelWidth / step, a->height = img.pixelHeight / step;
+    a->value.resize(static_cast<std::size_t>(a->width) * static_cast<std::size_t>(a->height));
+    for (int j = 0; j < a->height; ++j)
+        for (int i = 0; i < a->width; ++i) {
+            float sum = 0;
+            for (int q = 0; q < step; ++q)
+                for (int p = 0; p < step; ++p) {
+                    const std::size_t k = (static_cast<std::size_t>(j * step + q) * static_cast<std::size_t>(img.pixelWidth) + static_cast<std::size_t>(i * step + p)) * 4;
+                    const float lum = (0.2126f * img.pixels[k] + 0.7152f * img.pixels[k + 1] + 0.0722f * img.pixels[k + 2]) / 255.0f;
+                    sum += lum * (static_cast<float>(img.pixels[k + 3]) / 255.0f);
+                }
+            a->value[static_cast<std::size_t>(j) * static_cast<std::size_t>(a->width) + static_cast<std::size_t>(i)] = sum / static_cast<float>(step * step);
+        }
+    return a;
+}
 
 bool parseColorText(const std::string& text, Vec3& rgb) {
     const std::string t = lower(text);

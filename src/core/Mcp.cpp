@@ -370,6 +370,12 @@ Json McpServer::toolDefinitions() {
         p.set("color", prop("string", "paint / paint_fill: a colour name (red, skin...), #RRGGBB or \"r,g,b\""));
         p.set("group", prop("number", "paint_fill / mask_group: the polygroup (or give 'points' [[x,y,z]] near it)"));
         p.set("angle", prop("number", "polygroup_auto: faces turning less than this many degrees share a group (default 20)"));
+        p.set("alpha", prop("string", "Brushes: press through an alpha: noise, ring, square, dots, scales, crosshatch, bricks, pores, "
+                                      "weave, stripes, or an image file (its brightness)"));
+        p.set("alpha_angle", prop("number", "The alpha's turn, degrees"));
+        p.set("alpha_follow", prop("boolean", "Turn the alpha along the stroke"));
+        p.set("alpha_tile", prop("number", "Repeat the alpha this many times across the brush"));
+        p.set("spacing", prop("number", "Dabs along a stroke, in radii apart (default 0.25; 2 puts stamps side by side)"));
         p.set("body", prop("string", "Body to work on (default: the selection)"));
         p.set("points", prop("array", "Points [[x,y,z], ...] in mm on the surface: the stroke, the hole / pocket / boss "
                                       "position, the channel path or a point of the knife plane"));
@@ -1605,7 +1611,9 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                    (a["symmetry_axes"].isString() ? " SYMMETRY " + a["symmetry_axes"].asString() : a["symmetry"].asBool() ? " SYMMETRY" : "") +
                    (a["radial"].isNumber() ? " RADIAL " + num(a["radial"].asNumber()) + " " + a["radial_axis"].asString("z") : "") +
                    (a["falloff"].isString() ? " FALLOFF " + a["falloff"].asString() : "") +
-                   (a["move"].isArray() ? " MOVE " + vec(a["move"]) : "") + (a["color"].isString() ? " COLOR " + a["color"].asString() : "");
+                   (a["move"].isArray() ? " MOVE " + vec(a["move"]) : "") + (a["color"].isString() ? " COLOR " + a["color"].asString() : "") +
+                   (a["alpha"].isString() ? " ALPHA " + quote(a["alpha"].asString()) : "") + opt("alpha_angle", "ALPHAANGLE") +
+                   (a["alpha_follow"].asBool() ? " FOLLOW" : "") + opt("alpha_tile", "TILE") + opt("spacing", "SPACING");
         }
         if (a["direction"].isArray() && (op == "hole" || op == "pocket" || op == "boss" || op == "channel"))
             line += " DIR " + vec(a["direction"]);

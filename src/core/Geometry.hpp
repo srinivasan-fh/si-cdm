@@ -39,7 +39,9 @@ struct MeshData {
 
     // Rebuilds edgeVertices from the triangles: open boundaries plus edges
     // whose adjacent faces meet at more than `angleDeg` (for imported meshes).
-    void computeFeatureEdges(float angleDeg = 30.0f);
+    // Edges shorter than `shortLength` must turn more than `shortAngleDeg` (sculpted
+    // detail stays clean while the rims of machined faces still show).
+    void computeFeatureEdges(float angleDeg = 30.0f, float shortLength = 0.0f, float shortAngleDeg = 0.0f);
 };
 
 // A fast 64-bit key of a mesh's vertices and triangles (equal meshes, equal keys): tells

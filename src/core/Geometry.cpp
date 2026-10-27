@@ -149,7 +149,7 @@ MeshData clusterMesh(const MeshData& m, float cell) {
     return out; // no edge lines: a drawing keeps the full shape's
 }
 
-void MeshData::computeFeatureEdges(float angleDeg) {
+void MeshData::computeFeatureEdges(float angleDeg, float shortLength, float shortAngleDeg) {
     // Weld coincident positions so faces that share an edge find each other (ids in the
     // order positions first appear, so the result doesn't depend on hashing).
     struct Key {
@@ -195,13 +195,15 @@ void MeshData::computeFeatureEdges(float angleDeg) {
         }
     }
     std::stable_sort(ef.begin(), ef.end(), [](const EdgeFace& x, const EdgeFace& y) { return x.key < y.key; });
-    const float cosLimit = std::cos(radians(angleDeg));
+    const float cosLimit = std::cos(radians(angleDeg)), cosShort = std::cos(radians(std::max(shortAngleDeg, angleDeg)));
     edgeVertices.clear();
     for (std::size_t i = 0; i < ef.size();) {
         std::size_t j = i + 1;
         bool sharp = false;
+        const bool shortEdge = shortLength > 0 &&
+                               length(welded[static_cast<std::uint32_t>(ef[i].key >> 32)] - welded[static_cast<std::uint32_t>(ef[i].key & 0xFFFFFFFFu)]) < shortLength;
         for (; j < ef.size() && ef[j].key == ef[i].key; ++j)
-            if (dot(ef[i].n, ef[j].n) < cosLimit) sharp = true;
+            if (dot(ef[i].n, ef[j].n) < (shortEdge ? cosShort : cosLimit)) sharp = true;
         const std::size_t count = j - i;
         if (count == 1 || sharp || count > 2) {
             edgeVertices.push_back(welded[static_cast<std::uint32_t>(ef[i].key >> 32)]);

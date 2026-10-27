@@ -18,6 +18,7 @@
 #include "core/Multibody.hpp"
 #include "core/Rig.hpp"
 #include "core/Scene.hpp"
+#include "core/Sculpt.hpp"
 #include "core/Terrain.hpp"
 #include "core/Units.hpp"
 #include "ui/Theme.hpp"
@@ -964,6 +965,33 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             ImGui::SetNextItemWidth(78);
             ImGui::Combo("##falloff", &st.sculptFalloff, kFalloffs, 5);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush falloff from its centre to its rim");
+        }
+        if (tool.id != ToolId::SculptMask && tool.id != ToolId::SculptGrab && tool.id != ToolId::SculptSnakeHook) {
+            static std::vector<std::string> labels;
+            if (labels.empty()) {
+                labels.push_back("No alpha");
+                for (const std::string& n : sculptAlphaNames()) labels.push_back("Alpha: " + n);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(118);
+            if (ImGui::BeginCombo("##alpha", labels[static_cast<std::size_t>(std::clamp(st.sculptAlpha, 0, static_cast<int>(labels.size()) - 1))].c_str())) {
+                for (int k = 0; k < static_cast<int>(labels.size()); ++k)
+                    if (ImGui::Selectable(labels[static_cast<std::size_t>(k)].c_str(), k == st.sculptAlpha)) st.sculptAlpha = k;
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press the brush through a pattern (SCULPT ... ALPHA \"image.png\" takes your own)");
+            if (st.sculptAlpha > 0) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(56);
+                ImGui::DragFloat("##alphaangle", &st.sculptAlphaAngle, 1.0f, -360.0f, 360.0f, "%.0f deg");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the alpha");
+                ImGui::SameLine();
+                ImGui::Checkbox("Follow##alphafollow", &st.sculptAlphaFollow);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the alpha along the stroke");
+                ImGui::SameLine();
+                ImGui::Checkbox("Stamp##stamp", &st.sculptStamp);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag out one stamp from where you press: its size and turn follow the mouse");
+            }
         }
         if (tool.id == ToolId::SculptPaint) {
             ImGui::SameLine();

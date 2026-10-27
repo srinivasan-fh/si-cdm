@@ -22,6 +22,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -44,6 +45,22 @@ enum class SculptFalloff { Smooth, Sphere, Sharp, Linear, Constant };
 const char* sculptFalloffKey(SculptFalloff f) noexcept;
 std::optional<SculptFalloff> sculptFalloffFromKey(const std::string& key) noexcept;
 
+// An alpha: a grey stamp the brush is pressed through (white: the full effect, black:
+// none), laid over the brush's square. Built in (noise, ring, square, dots, scales,
+// crosshatch, bricks, pores, weave, stripes) or read from an image.
+struct SculptAlpha {
+    std::string name;
+    int width = 0, height = 0;
+    std::vector<float> value; // rows top to bottom, 0..1
+    // At (u, v) across the brush (-1..1 each way, v up); outside it, 0. `tile` repeats it
+    // that many times across.
+    float sample(float u, float v, int tile = 1) const noexcept;
+    bool empty() const noexcept { return value.empty(); }
+};
+// A built-in alpha by name, or an image file (its brightness). Null (why) when neither.
+std::shared_ptr<const SculptAlpha> sculptAlpha(const std::string& nameOrPath, std::string* why = nullptr);
+const std::vector<std::string>& sculptAlphaNames();
+
 const char* sculptBrushKey(SculptBrush b) noexcept;  // "draw", "clay", ...
 const char* sculptBrushName(SculptBrush b) noexcept; // "Draw (Push / Pull)", ...
 std::optional<SculptBrush> sculptBrushFromKey(const std::string& key) noexcept;
@@ -63,6 +80,14 @@ struct SculptSettings {
     bool refine = true;      // dynamic topology: split long edges under the brush
     float detail = 0.0f;     // mm, longest edge left under the brush; 0 = radius / 4
     Vec3 color{0.8f, 0.2f, 0.2f}; // Paint: the colour laid on (inverted: back to the body's own)
+    // An alpha the brush is pressed through, turned by `alphaAngle` degrees (and with
+    // `alphaFollow`, along the stroke), repeated `alphaTile` times across. With an alpha the
+    // surface is divided finer under the brush (a twentieth of the radius) to take its detail.
+    std::shared_ptr<const SculptAlpha> alpha;
+    float alphaAngle = 0.0f;
+    bool alphaFollow = false;
+    int alphaTile = 1;
+    float spacing = 0.0f; // dabs along a stroke, in radii apart (0: a quarter; 2: stamps side by side)
 };
 
 enum class MaskOp { Clear, Invert, Smooth, Grow, Shrink, All };

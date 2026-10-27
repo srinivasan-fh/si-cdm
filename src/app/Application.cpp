@@ -756,6 +756,14 @@ bool Application::beginSculpt(float x, float y) {
     s.refine = m_uiState.sculptRefine;
     s.detail = std::max(m_uiState.sculptDetail, 0.0f);
     s.color = {m_uiState.sculptColor[0], m_uiState.sculptColor[1], m_uiState.sculptColor[2]};
+    if (m_uiState.sculptAlpha > 0 && static_cast<std::size_t>(m_uiState.sculptAlpha) <= sculptAlphaNames().size()) {
+        static std::vector<std::shared_ptr<const SculptAlpha>> made(sculptAlphaNames().size()); // built once each
+        auto& a = made[static_cast<std::size_t>(m_uiState.sculptAlpha - 1)];
+        if (!a) a = sculptAlpha(sculptAlphaNames()[static_cast<std::size_t>(m_uiState.sculptAlpha - 1)]);
+        s.alpha = a;
+        s.alphaAngle = m_uiState.sculptAlphaAngle;
+        s.alphaFollow = m_uiState.sculptAlphaFollow;
+    }
     m_sculptSettings = s;
     m_sculptBody = hit->body;
     m_sculptName = body.name;
@@ -763,9 +771,12 @@ bool Application::beginSculpt(float x, float y) {
     const ImGuiIO& io = ImGui::GetIO();
     const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
     const Vec3 p = m_sculptMesh.raycast(ray).value_or(hit->point);
+    m_stamping = s.alpha && m_uiState.sculptStamp && s.brush != SculptBrush::Grab;
     if (s.brush == SculptBrush::Grab) {
         m_sculptMesh.beginGrab(p, s);
         m_grabPoint = p;
+    } else if (m_stamping) { // nothing yet: the drag sizes and turns the stamp
+        m_stampBase = m_sculptMesh;
     } else {
         m_sculptMesh.beginStroke();
         m_sculptMesh.dab(p, s);
@@ -800,11 +811,23 @@ void Application::continueSculpt(float x, float y) {
         float t = 0;
         if (!intersectPlane(ray, m_grabPoint, camera().forward(), t)) return;
         m_sculptMesh.grabTo(ray.at(t) - m_grabPoint);
+    } else if (m_stamping) { // the stamp from where the press was, as large as the drag, turned along it
+        float t = 0;
+        if (!intersectPlane(ray, m_lastDab, camera().forward(), t)) return;
+        const Vec3 to = ray.at(t) - m_lastDab;
+        if (length(to) < 1e-3f) return;
+        SculptSettings s = m_sculptSettings;
+        s.radius = length(to);
+        s.alphaFollow = true;
+        m_sculptMesh = m_stampBase;
+        m_sculptMesh.beginStroke();
+        m_sculptMesh.dab(m_lastDab, s, to);
+        m_dabs = 1;
     } else {
         const auto hit = m_sculptMesh.raycast(ray);
         if (!hit) return;
-        // Dabs every quarter radius along the stroke, each on the surface.
-        const float spacing = std::max(m_sculptSettings.radius * 0.25f, 1e-3f);
+        // Dabs every quarter radius (or the spacing set) along the stroke, each on the surface.
+        const float spacing = std::max(m_sculptSettings.radius * (m_sculptSettings.spacing > 0 ? m_sculptSettings.spacing : 0.25f), 1e-3f);
         const Vec3 from = m_lastDab;
         const float len = length(*hit - from);
         if (len < spacing) return;
@@ -841,6 +864,8 @@ void Application::endSculpt() {
     m_sculptBody = -1;
     m_sculptOverrides.clear();
     m_sculptMesh = SculptMesh();
+    m_stampBase = SculptMesh();
+    m_stamping = false;
 }
 
 void Application::abortSculpt() {
@@ -856,6 +881,8 @@ void Application::abortSculpt() {
     m_sculptBody = -1;
     m_sculptOverrides.clear();
     m_sculptMesh = SculptMesh();
+    m_stampBase = SculptMesh();
+    m_stamping = false;
 }
 
 void Application::finishMoveDrag(bool commit) {
@@ -1738,6 +1765,8 @@ void Application::afterDocumentReplaced() {
     m_sculptBody = -1;
     m_sculptOverrides.clear();
     m_sculptMesh = SculptMesh();
+    m_stampBase = SculptMesh();
+    m_stamping = false;
     cancelInteraction(false);
     m_cam3D.resetRoll(false);
     m_cam3D.setStandardView(StandardView::Isometric, false);

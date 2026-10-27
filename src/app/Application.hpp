@@ -229,6 +229,8 @@ private:
     // Sculpting stroke in progress (a welded copy of the body, written back each frame).
     int m_sculptBody = -1;
     SculptMesh m_sculptMesh;
+    SculptMesh m_stampBase;   // Stamp: the surface before the stamp being dragged out
+    bool m_stamping = false;
     SculptSettings m_sculptSettings;
     Vec3 m_lastDab{};
     int m_dabs = 0;

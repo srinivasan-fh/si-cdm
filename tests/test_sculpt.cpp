@@ -4,6 +4,7 @@
 #include "core/Document.hpp"
 #include "core/FileIO.hpp"
 #include "core/Scene.hpp"
+#include "core/ImageWrite.hpp"
 #include "core/Sculpt.hpp"
 
 #include <algorithm>
@@ -859,4 +860,82 @@ TEST_CASE("polygroups: by angle, pieces, mask and paint; masking a group; kept t
     CHECK(!d.scene.bodies()[0].mesh.hasGroups());
     CHECK(!run(d, "MASK \"" + name + "\" GROUP 0").ok); // no groups left
     CHECK(!run(d, "POLYGROUP SHOW").ok);                // headless
+}
+
+TEST_CASE("alphas: built-in patterns and images stamped through the brush") {
+    // Each built-in alpha has light and dark, and is 0 outside the brush's square.
+    REQUIRE(sculptAlphaNames().size() >= 10);
+    for (const std::string& n : sculptAlphaNames()) {
+        const auto a = sculptAlpha(n);
+        REQUIRE(a != nullptr);
+        float lo = 1, hi = 0;
+        for (float v : a->value) lo = std::min(lo, v), hi = std::max(hi, v);
+        CHECK(lo < 0.2f);
+        CHECK(hi > 0.8f);
+        CHECK(a->sample(1.5f, 0) == 0.0f);
+    }
+    std::string why;
+    CHECK(!sculptAlpha("no-such-alpha", &why));
+    CHECK(!why.empty());
+    // An image alpha: its brightness, black on the left, white on the right.
+    const std::string png = (std::filesystem::temp_directory_path() / "sicdm_alpha.png").string();
+    {
+        std::vector<std::uint8_t> px(32 * 16 * 3);
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 32; ++x)
+                for (int c = 0; c < 3; ++c) px[static_cast<std::size_t>((y * 32 + x) * 3 + c)] = x < 16 ? 0 : 255;
+        REQUIRE(writePng8(png, 32, 16, 3, px));
+    }
+    const auto img = sculptAlpha(png);
+    REQUIRE(img != nullptr);
+    CHECK(img->width == 32);
+    CHECK(img->sample(-0.6f, 0) < 0.05f);
+    CHECK(img->sample(0.6f, 0) > 0.95f);
+    CHECK(img->sample(0.2f, 0.0f, 2) < 0.05f); // tiled twice: the second copy starts dark again
+    std::filesystem::remove(png);
+
+    // A stamp of dots raises bumps with low ground between them; without the alpha the
+    // same dab is one smooth hump.
+    auto stamp = [](const char* alpha) {
+        Body b = makeBody("Clay", "box", {-30, -30, 0, 30, 30, 10});
+        SculptSettings s;
+        s.brush = SculptBrush::Draw;
+        s.radius = 15;
+        s.strength = 0.5f;
+        s.falloff = SculptFalloff::Constant;
+        if (alpha) s.alpha = sculptAlpha(alpha);
+        sculptStroke(b, {{0, 0, 10}}, s);
+        return b;
+    };
+    const Body dots = stamp("dots"), plain = stamp(nullptr);
+    CHECK(openEdgeCount(dots.mesh) == 0);
+    CHECK(dots.mesh.indices.size() > plain.mesh.indices.size() * 4); // finer under an alpha
+    // Heights over the stamp: dots go up and down many times along a line; the plain dab doesn't.
+    auto bumps = [](const Body& b) {
+        int changes = 0;
+        float prev = -1;
+        bool rising = false;
+        for (float x = -14; x <= 14; x += 0.25f) {
+            float top = 0;
+            for (const Vertex& v : b.mesh.vertices)
+                if (std::fabs(v.position.x - x) < 0.2f && std::fabs(v.position.y - 1.25f) < 0.6f) top = std::max(top, v.position.z);
+            if (prev >= 0 && std::fabs(top - prev) > 0.05f) {
+                const bool up = top > prev;
+                if (up != rising) ++changes, rising = up;
+            }
+            prev = top;
+        }
+        return changes;
+    };
+    CHECK(bumps(dots) >= 6);
+    CHECK(bumps(plain) <= 3);
+    // The command: an alpha by name, turned, tiled, spaced; refused when unknown.
+    Document d;
+    REQUIRE(run(d, "BOX 60 60 10 @0,0,0").ok);
+    REQUIRE(run(d, "SCULPT \"Block 1\" DRAW AT -20,0,10 20,0,10 RADIUS 8 STRENGTH 0.3 ALPHA bricks ALPHAANGLE 30 TILE 2 SPACING 2").ok);
+    CHECK(openEdgeCount(d.scene.bodies()[0].mesh) == 0);
+    REQUIRE(run(d, "SCULPT \"Block 1\" CLAY AT 0,10,10 RADIUS 8 ALPHA noise FOLLOW").ok);
+    CHECK(!run(d, "SCULPT \"Block 1\" DRAW AT 0,0,10 ALPHA nothing").ok);
+    CHECK(!run(d, "SCULPT \"Block 1\" DRAW AT 0,0,10 ALPHA dots TILE 0").ok);
+    CHECK(run(d, "SCULPT ALPHAS").ok);
 }

@@ -11,6 +11,7 @@ The toolset follows the common ground of the professional sculpting tools: ZBrus
 - falloff curves;
 - mirror and radial symmetry;
 - masking;
+- alphas;
 - polypaint and polygroups;
 - dynamic topology;
 - voxel remesh;
@@ -98,6 +99,38 @@ scan.
 - Dabs are spaced a quarter radius apart along the stroke, each snapped to the surface.
 
 Hard CAD edges stay crisp in the shading: normals are smoothed only across edges that turn less than 40°.
+
+## Alphas
+
+![Stamps through the built-in alphas: dots, scales, bricks, a ring, a weave and crosshatch](sculpt-alphas.png)
+
+An alpha is a grey pattern the brush is pressed through: white gets the brush's full effect,
+black none. Any brush takes one (Draw, Clay, Inflate, Carve, Paint...), for scales, bricks,
+pores, rivets or a logo.
+
+- **Built in:** `NOISE`, `RING`, `SQUARE`, `DOTS`, `SCALES`, `CROSSHATCH`, `BRICKS`, `PORES`,
+  `WEAVE` and `STRIPES` (`SCULPT ALPHAS` lists them).
+- **Your own:** `ALPHA "pattern.png"` reads any image (PNG, JPEG, BMP, TGA...) as an alpha by
+  its brightness. Transparent parts count as black.
+- **Placing it:** the alpha covers the brush's square, laid on the surface under it.
+  - `ALPHAANGLE deg` turns it.
+  - `FOLLOW` turns it along the stroke.
+  - `TILE n` repeats it n times across.
+- **Stamps:** a single point is one stamp. `SPACING 2` sets stamps side by side along a
+  stroke (the gap between dabs, in radii; strokes default to a quarter).
+- **The falloff still applies,** spread over the square: `FALLOFF CONSTANT` gives a crisp,
+  even stamp, and `SMOOTH` fades it out to the edges.
+- **Detail:** under an alpha, dynamic topology divides the surface to about a thirtieth of
+  the radius, so the pattern comes out. Larger brushes give larger, cleaner patterns.
+- **In the app:** the options bar has an alpha list, its angle and *Follow*. *Stamp* drags
+  out one stamp: press where it goes, then drag to size and turn it.
+
+```text
+SCULPT "Armour" DRAW AT 0,0,40 RADIUS 20 STRENGTH 0.35 ALPHA scales FALLOFF constant
+SCULPT "Wall" DRAW AT -40,0,10 40,0,10 RADIUS 12 STRENGTH 0.4 ALPHA bricks SPACING 2 FALLOFF constant
+SCULPT "Head" DRAW AT 0,-30,60 RADIUS 8 STRENGTH 0.1 ALPHA pores SPACING 0.6
+SCULPT "Badge" DRAW AT 0,0,5 RADIUS 15 STRENGTH 0.3 ALPHA "logo.png"
+```
 
 ## Polypaint and polygroups
 
@@ -288,11 +321,12 @@ printing, or to CAM for CNC machining.
 ```text
 SCULPT [body] brush [AT] x,y,z [x,y,z...] [RADIUS r] [STRENGTH 0-1] [INVERT] [SYMMETRY [X|Y|Z...]]
        [RADIAL n [X|Y|Z]] [FALLOFF smooth|sphere|sharp|linear|constant] [DETAIL d] [NOREFINE] [MOVE dx,dy,dz]
-       [COLOR colour]
+       [COLOR colour] [ALPHA name|"image" [ALPHAANGLE deg] [FOLLOW] [TILE n]] [SPACING radii]
        brushes: DRAW CLAY CLAYSTRIPS LAYER CARVE INFLATE BLOB GRAB SNAKEHOOK NUDGE PINCH CREASE
                 SMOOTH FLATTEN SCRAPE FILL MASK PAINT
 SCULPT [body] REFINE edge-length           refine the whole body before sculpting
-SCULPT LIST
+SCULPT LIST                                the brushes
+SCULPT ALPHAS                              the built-in alphas
 HOLE    [body] [AT] x,y,z [DIR x,y,z] DIAMETER d [DEPTH h | THROUGH]
 POCKET  [body] [AT] x,y,z [DIR x,y,z] [BOX|ROUND|BALL] WIDTH w [LENGTH l] DEPTH d [ANGLE deg]
 CHANNEL [body] [PATH] x,y,z x,y,z ... WIDTH w [DEPTH d]
@@ -323,4 +357,4 @@ Over MCP: the `sculpt` tool (`operation` = a brush name, `hole`, `pocket`, `chan
 `boolean`, `refine`, `remesh`, `subdivide`, `symmetrize`, `decimate`, `mask_clear`, `mask_invert`,
 `mask_smooth`, `mask_group`, `paint_fill`, `paint_clear`, `polygroup_auto`, `polygroup_islands`,
 `polygroup_mask`, `polygroup_paint`, `polygroup_clear`, `undo` or `redo`; `symmetry_axes`, `radial`,
-`falloff` and `color` for the brushes).
+`falloff`, `color`, `alpha`, `alpha_angle`, `alpha_follow`, `alpha_tile` and `spacing` for the brushes).

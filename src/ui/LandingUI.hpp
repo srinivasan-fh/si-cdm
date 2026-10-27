@@ -93,6 +93,10 @@ struct UiState {
     bool sculptRefine = true;     // dynamic topology under the brush
     float sculptDetail = 0.0f;    // longest edge under the brush (mm); 0 = radius / 4
     float sculptColor[3] = {0.80f, 0.20f, 0.20f}; // the Paint brush's colour
+    int sculptAlpha = 0;          // 0: none, else 1 + index into sculptAlphaNames()
+    float sculptAlphaAngle = 0.0f; // degrees
+    bool sculptAlphaFollow = false; // turn the alpha along the stroke
+    bool sculptStamp = false;       // drag out one stamp (its size and turn) instead of a stroke
     std::string sculptInfo;       // triangles / closed state of the body being edited
     // Cut tools.
     float holeDiameter = 6.0f, holeDepth = 10.0f;

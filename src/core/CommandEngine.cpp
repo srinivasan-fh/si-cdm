@@ -2791,6 +2791,13 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "SCULPT" || cmd == "HOLE" || cmd == "POCKET" || cmd == "CHANNEL" || cmd == "TRIM" || cmd == "BOSS") {
+        if (cmd == "SCULPT" && a.size() == 1 && iequal(a[0], "alphas")) {
+            out.say("Alphas (SCULPT ... ALPHA name, or ALPHA \"image.png\" for your own; white presses, black holds):");
+            std::string names = " ";
+            for (const std::string& n : sculptAlphaNames()) names += " " + toUpper(n);
+            out.say(names);
+            return out;
+        }
         if (cmd == "SCULPT" && a.size() == 1 && iequal(a[0], "list")) {
             out.say("Brushes:");
             for (SculptBrush br : sculptBrushes()) out.say(std::string("  ") + toUpper(sculptBrushKey(br)) + "  " + sculptBrushName(br));
@@ -2801,7 +2808,8 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                                             "norefine", "move", "refine", "diameter", "d", "depth", "through", "box",
                                             "round", "ball", "width", "length", "angle", "path", "plane", "normal",
                                             "smaller", "cylinder", "height", "size", "fit", "cbore", "counterbore", "csink",
-                                            "countersink", "tapped", "tap", "thread", "flat", "color", "colour"};
+                                            "countersink", "tapped", "tap", "thread", "flat", "color", "colour",
+                                            "alpha", "alphaangle", "follow", "tile", "spacing"};
         auto isKey = [&](const std::string& w) {
             const std::string k = lower(w);
             if (cmd == "SCULPT" && sculptBrushFromKey(k)) return true;
@@ -2898,6 +2906,25 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 if (!lengthArg(ss.detail, "DETAIL")) return out.fail("DETAIL needs a length");
             } else if (k == "color" || k == "colour") {
                 if (i + 1 >= a.size() || !parseColorText(a[++i], ss.color)) return out.fail("COLOR is a name (red, skin...), #RRGGBB or r,g,b");
+            } else if (k == "alpha") {
+                if (i + 1 >= a.size()) return out.fail("ALPHA needs a name (SCULPT ALPHAS lists them) or an image file");
+                std::string why;
+                ss.alpha = sculptAlpha(a[++i], &why);
+                if (!ss.alpha) return out.fail(why);
+            } else if (k == "alphaangle") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v) return out.fail("ALPHAANGLE needs degrees");
+                ss.alphaAngle = static_cast<float>(*v);
+            } else if (k == "follow") {
+                ss.alphaFollow = true;
+            } else if (k == "tile") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v || *v < 1 || *v > 64) return out.fail("TILE repeats the alpha 1 to 64 times across the brush");
+                ss.alphaTile = static_cast<int>(*v);
+            } else if (k == "spacing") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v || !(*v > 0) || *v > 10) return out.fail("SPACING is the gap between dabs in radii (0.25: the default; 2: stamps side by side)");
+                ss.spacing = static_cast<float>(*v);
             } else if (k == "norefine") {
                 ss.refine = false;
             } else if (k == "move" || k == "dir" || k == "normal") {
