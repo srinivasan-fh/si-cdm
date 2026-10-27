@@ -884,3 +884,73 @@ TEST_CASE("Text outlines and embossed or engraved lettering") {
     CHECK(!run(c, "EMBOSS \"Cylinder 1\" TEXT \"MUCH TOO LONG FOR THIS\" FACE 0,-20,20 HEIGHT 30 DEPTH 1").ok);
     CHECK(!run(c, "ENGRAVE \"Cylinder 1\" TEXT \"x\" FACE 0,-20,20 HEIGHT 5").ok); // no depth
 }
+
+TEST_CASE("Feature tree: suppress, roll back, reorder and change parameters") {
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 15 @0,0,0").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT -20,0,15 DIAMETER 6 THROUGH").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 20,0,15 DIAMETER 8 THROUGH").ok);
+    const double pi = 3.14159265358979;
+    const double box = 60 * 40 * 15, h6 = pi * 9 * 15, h8 = pi * 16 * 15, h10 = pi * 25 * 15;
+    CHECK_NEAR(volumeOf(last(d)), box - h6 - h8, 6.0);
+    // A parameter changed in place.
+    REQUIRE(run(d, "HISTORY SET 2 DIAMETER 10").ok);
+    CHECK(d.state.history[1].line == "HOLE \"Block 1\" AT -20,0,15 DIAMETER 10 THROUGH");
+    CHECK_NEAR(volumeOf(last(d)), box - h10 - h8, 6.0);
+    CHECK(!run(d, "HISTORY SET 2 RADIUS 3").ok); // a hole has no RADIUS
+    CHECK(!run(d, "HISTORY SET 9 DIAMETER 3").ok);
+    // Suppressed: kept, skipped; then back.
+    REQUIRE(run(d, "HISTORY SUPPRESS 2").ok);
+    CHECK(d.state.history[1].suppressed);
+    CHECK_NEAR(volumeOf(last(d)), box - h8, 6.0);
+    CHECK(run(d, "HISTORY").lines[2].find("(suppressed)") != std::string::npos);
+    REQUIRE(run(d, "HISTORY UNSUPPRESS 2-3").ok);
+    CHECK_NEAR(volumeOf(last(d)), box - h10 - h8, 6.0);
+    // Suppressing the step that makes the body leaves later steps nothing to work on:
+    // refused, and nothing changes.
+    CHECK(!run(d, "HISTORY SUPPRESS 1").ok);
+    CHECK(!d.state.history[0].suppressed);
+    CHECK_NEAR(volumeOf(last(d)), box - h10 - h8, 6.0);
+
+    // Rolled back to step 1: only the box; a new step goes in there.
+    REQUIRE(run(d, "HISTORY ROLLBACK 1").ok);
+    CHECK(d.state.rollback == 1);
+    CHECK_NEAR(volumeOf(last(d)), box, 1.0);
+    REQUIRE(run(d, "FILLET \"Block 1\" RADIUS 2 EDGES NEAR 0,20,15").ok);
+    REQUIRE(d.state.history.size() == 4);
+    CHECK(d.state.history[1].line.find("FILLET") == 0);
+    CHECK(d.state.rollback == 2);
+    // Saved and opened rolled back, with the flags.
+    REQUIRE(run(d, "HISTORY SUPPRESS 4").ok);
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_tree_test.sicdm").string();
+    REQUIRE(run(d, "SAVE \"" + path + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + path + "\"").ok);
+    CHECK(e.state.rollback == 2);
+    REQUIRE(e.state.history.size() == 4);
+    CHECK(e.state.history[3].suppressed);
+    std::filesystem::remove(path);
+    // UNDO takes back the step before the bar.
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.state.history.size() == 3);
+    CHECK(d.state.rollback == 1);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(d.state.rollback == 2);
+    // Forward again: everything built (the suppressed hole left out).
+    REQUIRE(run(d, "HISTORY ROLLFORWARD").ok);
+    CHECK(d.state.rollback == -1);
+    const double rounded = volumeOf(last(d));
+    CHECK_NEAR(rounded, box - h10 - (1 - pi / 4) * 4 * 60, 6.0); // the R2 round along the 60 mm edge
+
+    // Reordered: the second hole before the fillet gives the same part; a step moved before
+    // the body it needs is refused.
+    REQUIRE(run(d, "HISTORY MOVE 3 TO 2").ok);
+    CHECK(d.state.history[1].line.find("HOLE") == 0);
+    CHECK_NEAR(volumeOf(last(d)), rounded, 0.5);
+    CHECK(!run(d, "HISTORY MOVE 2 TO 1").ok);
+    CHECK(d.state.history[0].line.find("BOX") == 0);
+    // Deleting a step before the bar moves the bar with it.
+    REQUIRE(run(d, "HISTORY ROLLBACK 3").ok);
+    REQUIRE(run(d, "HISTORY DELETE 2").ok);
+    CHECK(d.state.rollback == 2);
+}

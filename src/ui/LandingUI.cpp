@@ -1382,6 +1382,75 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
     dl->AddText(font, fs, {x0 + 2, y0 + 3}, text, unitInfo(rulerUnit).symbol);
 }
 
+// The feature history as a tree: each step with its suppress switch, a menu to edit, move,
+// suppress, delete or roll back to it, and the rollback bar.
+void LandingUI::drawFeatureHistory(UiCommands& cmd, const UiState& st) {
+    if (!st.project) return;
+    const std::vector<HistoryStep>& steps = st.project->history;
+    const int rollback = st.project->rollback;
+    char label[48];
+    std::snprintf(label, sizeof(label), "Features (%zu)###features", steps.size());
+    ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+    if (!ImGui::TreeNode(label)) return;
+    if (steps.empty()) ImGui::TextDisabled("Model commands are listed here");
+    auto rollbackBar = [&]() {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kWarning));
+        ImGui::TextUnformatted("--- rolled back ---");
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Roll forward")) cmd.commands.push_back("HISTORY ROLLFORWARD");
+    };
+    for (int i = 0; i < static_cast<int>(steps.size()); ++i) {
+        const HistoryStep& h = steps[static_cast<std::size_t>(i)];
+        const std::string n = std::to_string(i + 1);
+        if (i == rollback) rollbackBar();
+        ImGui::PushID(5000 + i);
+        bool on = !h.suppressed;
+        if (ImGui::Checkbox("##on", &on)) cmd.commands.push_back(std::string("HISTORY ") + (on ? "UNSUPPRESS " : "SUPPRESS ") + n);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(h.suppressed ? "Suppressed: skipped when the model is built" : "Built (untick to suppress)");
+        ImGui::SameLine(0, 4);
+        const bool dim = h.suppressed || (rollback >= 0 && i >= rollback);
+        if (dim) ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kTextFaint));
+        const std::string text = n + ". " + h.line;
+        ImGui::Selectable(text.c_str(), m_historyEdit == i);
+        if (dim) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            m_historyEdit = i;
+            std::snprintf(m_historyEditLine, sizeof(m_historyEditLine), "%s", h.line.c_str());
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nDouble-click to edit; right-click for more", h.line.c_str());
+        if (ImGui::BeginPopupContextItem("##step")) {
+            if (ImGui::MenuItem("Edit...")) {
+                m_historyEdit = i;
+                std::snprintf(m_historyEditLine, sizeof(m_historyEditLine), "%s", h.line.c_str());
+            }
+            if (ImGui::MenuItem(h.suppressed ? "Unsuppress" : "Suppress")) cmd.commands.push_back(std::string("HISTORY ") + (h.suppressed ? "UNSUPPRESS " : "SUPPRESS ") + n);
+            if (ImGui::MenuItem("Move up", nullptr, false, i > 0)) cmd.commands.push_back("HISTORY MOVE " + n + " TO " + std::to_string(i));
+            if (ImGui::MenuItem("Move down", nullptr, false, i + 1 < static_cast<int>(steps.size())))
+                cmd.commands.push_back("HISTORY MOVE " + n + " TO " + std::to_string(i + 2));
+            if (ImGui::MenuItem("Roll back to here")) cmd.commands.push_back("HISTORY ROLLBACK " + std::to_string(i));
+            if (ImGui::MenuItem("Roll back after this")) cmd.commands.push_back("HISTORY ROLLBACK " + n);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete")) cmd.commands.push_back("HISTORY DELETE " + n);
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
+    }
+    if (rollback >= static_cast<int>(steps.size())) rollbackBar();
+    if (m_historyEdit >= static_cast<int>(steps.size())) m_historyEdit = -1;
+    if (m_historyEdit >= 0) { // the step's command, edited in place; Apply rebuilds the model
+        ImGui::SetNextItemWidth(-1);
+        const bool enter = ImGui::InputText("##editstep", m_historyEditLine, sizeof(m_historyEditLine), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::Button("Apply") || enter) {
+            cmd.commands.push_back("HISTORY EDIT " + std::to_string(m_historyEdit + 1) + " " + m_historyEditLine);
+            m_historyEdit = -1;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) m_historyEdit = -1;
+    }
+    ImGui::TreePop();
+}
+
 float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float x, float top, float bottom) {
     // Docked full-height panel; only its right edge can be dragged to resize.
     const float height = std::max(bottom - top, 100.0f);
@@ -1421,6 +1490,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
     } else if (visible) {
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
         if (ImGui::TreeNode("##root", "%s  (Part)", st.projectName.c_str())) {
+            drawFeatureHistory(cmd, st);
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             if (ImGui::TreeNode("Bodies")) {
                 auto& bodies = scene.bodies();

@@ -1474,6 +1474,7 @@ void Application::frame(float dt) {
     refreshFileTabs();
     updateSheet();
     m_uiState.assembly = &m_doc.state.assembly;
+    m_uiState.project = &m_doc.state;
     m_uiState.cam = &m_doc.state.cam;
     m_uiState.lathe = &m_doc.state.lathe;
     m_uiState.activeFrame = activePlaneFrame(m_doc.state);

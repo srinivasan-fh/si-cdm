@@ -172,8 +172,9 @@ constexpr CommandSpec kCommands[] = {
     {"CONSTRAINTS", "", "CONSTRAINTS", "The sketch's constraints and dimensions, and its degrees of freedom"},
     {"CONSTRAINT", "", "CONSTRAINT EDIT D1 value | CONSTRAINT DELETE C2",
      "Change a dimension (the model is rebuilt from the history) or remove a constraint"},
-    {"HISTORY", "HIST", "HISTORY [LIST] | HISTORY EDIT n command | HISTORY INSERT n command | HISTORY DELETE n | HISTORY CLEAR",
-     "The feature history: the model commands in order; edit, insert or delete a step and the model is rebuilt"},
+    {"HISTORY", "HIST", "HISTORY [LIST] | HISTORY EDIT n command | HISTORY SET n KEY value | HISTORY INSERT n command | HISTORY DELETE n | "
+                        "HISTORY MOVE n TO m | HISTORY SUPPRESS n | HISTORY UNSUPPRESS n | HISTORY ROLLBACK n | HISTORY ROLLFORWARD | HISTORY CLEAR",
+     "The feature history (feature tree): edit, re-parameter, insert, delete, reorder or suppress a step, or roll back, and the model is rebuilt"},
     {"REGEN", "REGENERATE", "REGEN [FORCE]", "Rebuild the model from its feature history"},
     {"CAM", "MILL MACHINE", "CAM SETUP|MACHINE|TOOL|LIBRARY|FACE|ROUGH|POCKET|CONTOUR|PARALLEL|WATERLINE|DRILL|BORE|ROTARY|HOLES|TOOLS|LIST|SIMULATE|POST|CHECK ...",
      "CNC milling: CAM SETUP [body] [STOCK margin|x,y,z] [MATERIAL m] [ORIGIN CORNER|CENTRE|MODEL]; CAM TOOL n FLAT|BALL|BULL|FACE|DRILL|SPOT|"

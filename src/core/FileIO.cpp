@@ -659,10 +659,12 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             j.set("unit", unitInfo(step.unit).symbol);
             if (!step.selectedBody.empty()) j.set("body", step.selectedBody);
             if (!step.selectedCurve.empty()) j.set("curve", step.selectedCurve);
+            if (step.suppressed) j.set("suppressed", true);
             h.push(j);
         }
         doc.set("history", h);
         doc.set("history_complete", state.historyComplete);
+        if (state.rollback >= 0) doc.set("history_rollback", state.rollback);
     }
 
     return writeFile(path, doc.dump() + "\n", error);
@@ -953,9 +955,12 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         if (const auto u = parseUnitName(j["unit"].asString("mm"))) step.unit = *u;
         step.selectedBody = j["body"].asString("");
         step.selectedCurve = j["curve"].asString("");
+        step.suppressed = j["suppressed"].asBool(false);
         if (!step.line.empty()) st.history.push_back(std::move(step));
     }
     st.historyComplete = (*doc)["history_complete"].asBool(true);
+    st.rollback = std::clamp((*doc)["history_rollback"].asInt(-1), -1, static_cast<int>(st.history.size()));
+    if (st.rollback == static_cast<int>(st.history.size())) st.rollback = -1;
     const Json& du = (*doc)["display_units"];
     st.units = UnitSettings{};
     if (const auto u = parseUnitName(du["unit"].asString("mm"))) st.units.unit = *u;

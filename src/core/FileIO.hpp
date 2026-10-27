@@ -38,6 +38,7 @@ struct HistoryStep {
     // What was selected when it ran (a click selects without a command): commands that
     // default to the selection find the same body and curve again on replay.
     std::string selectedBody, selectedCurve;
+    bool suppressed = false; // kept in the history but skipped when the model is rebuilt
 };
 
 struct ProjectState {
@@ -59,6 +60,7 @@ struct ProjectState {
     std::vector<HistoryStep> history;     // the feature history
     std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)
     bool historyComplete = true;          // false: the model was also changed outside commands
+    int rollback = -1;                    // >= 0: the model is built from only that many steps, and new ones go there
     std::uint64_t historyRevision = 0;    // the scene's revision after the last command (not saved)
 };
 

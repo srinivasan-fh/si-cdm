@@ -4,6 +4,7 @@
 #include "core/Cam.hpp"
 #include "core/Camera.hpp"
 #include "core/Drawing.hpp"
+#include "core/FileIO.hpp"
 #include "core/Lathe.hpp"
 #include "core/Scene.hpp"
 #include "render/Renderer.hpp"
@@ -45,6 +46,7 @@ struct UiState {
     // Assembly: the mates (the app points this at the document's), and the mate tool:
     // its type (COINCIDENT, FLUSH... ; empty: off), value, and the face picked first.
     const AssemblyState* assembly = nullptr;
+    const ProjectState* project = nullptr; // the feature history for the model tree
     // Manufacturing: the jobs (the app points these at the document's), the operation picked
     // in the CAM panel (-1: none), and the tool library and machine windows.
     const CamJob* cam = nullptr;
@@ -198,6 +200,7 @@ private:
     void drawFileTabs(UiCommands& cmd, const UiState& st);
     void requestClose(UiCommands& cmd, const UiState& st, int index);
     void drawRulers(const OrbitCamera& cam, const UiState& st);
+    void drawFeatureHistory(UiCommands& cmd, const UiState& st);
     float drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float x, float top, float bottom); // returns width
     void drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st);
     void drawCamPanel(UiCommands& cmd, const Scene& scene, UiState& st);   // the dock's CAM page (CamPanel.cpp)
@@ -289,6 +292,8 @@ private:
     std::size_t m_camOpsSeen = 0; // a new operation gets picked
     LatheOperation m_latheEdit;
     int m_latheEditIndex = -1;
+    int m_historyEdit = -1;        // the feature history step being edited (its popup)
+    char m_historyEditLine[1024] = {}; // the edited command line
     bool m_latheEditDirty = false;
     std::size_t m_latheOpsSeen = 0;
     bool m_latheCycles = false;   // post rough turning and facing as G71 / G72

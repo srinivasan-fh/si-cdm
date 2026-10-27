@@ -2231,7 +2231,10 @@ bool regenerateHistory(Document& doc, const std::vector<HistoryStep>& steps, Com
     doc.state.refAxes.clear();
     doc.state.refPoints.clear();
     doc.replaying = true;
-    for (std::size_t k = 0; k < steps.size(); ++k) {
+    // Rolled back: only the steps before the rollback point; suppressed steps are skipped.
+    const std::size_t built = doc.state.rollback >= 0 ? std::min(steps.size(), static_cast<std::size_t>(doc.state.rollback)) : steps.size();
+    for (std::size_t k = 0; k < built; ++k) {
+        if (steps[k].suppressed) continue;
         doc.apiMillimeters = steps[k].millimetres;
         doc.state.units.unit = steps[k].unit;
         doc.replayStep = static_cast<int>(k);
@@ -2279,13 +2282,97 @@ CommandOutput runHistoryCommand(Document& doc, const std::string& cmd, const std
         out.say("History: " + std::to_string(st.history.size()) + " steps" +
                 (st.historyComplete ? std::string(" (REGEN rebuilds the model from them)")
                                     : std::string(" - the model was also changed outside the command line (brush strokes, drags); REGEN FORCE would lose that")));
-        for (std::size_t k = 0; k < st.history.size(); ++k) out.say("  " + std::to_string(k + 1) + ". " + st.history[k].line);
+        for (std::size_t k = 0; k < st.history.size(); ++k) {
+            if (static_cast<int>(k) == st.rollback) out.say("  -- rolled back here: the steps below are not built (HISTORY ROLLFORWARD) --");
+            out.say("  " + std::to_string(k + 1) + ". " + st.history[k].line + (st.history[k].suppressed ? "   (suppressed)" : ""));
+        }
+        return out;
+    }
+    // Step numbers from a[from] on: "3", "3 5 7" or "3-5".
+    auto stepList = [&](std::size_t from, std::vector<std::size_t>& ks) {
+        for (std::size_t i = from; i < a.size(); ++i) {
+            const std::string w = a[i];
+            const std::size_t dash = w.find('-', 1);
+            const auto lo = parseNumber(dash == std::string::npos ? w : w.substr(0, dash));
+            const auto hi = dash == std::string::npos ? lo : parseNumber(w.substr(dash + 1));
+            if (!lo || !hi || *lo < 1 || *hi < *lo || *hi > static_cast<double>(st.history.size())) return false;
+            for (auto k = static_cast<std::size_t>(*lo); k <= static_cast<std::size_t>(*hi); ++k) ks.push_back(k - 1);
+        }
+        return !ks.empty();
+    };
+    if (sub == "suppress" || sub == "unsuppress") {
+        std::vector<std::size_t> ks;
+        if (!stepList(1, ks)) return out.fail("HISTORY " + toUpper(sub) + " n [m ...]: steps' numbers (or a range a-b; HISTORY lists them)");
+        std::vector<HistoryStep> steps = st.history;
+        for (const std::size_t k : ks) steps[k].suppressed = sub == "suppress";
+        if (!regenerateHistory(doc, steps, out)) return out;
+        out.say((sub == "suppress" ? "Suppressed " : "Unsuppressed ") + std::string(ks.size() == 1 ? "step " : "steps ") + rejoinArgs(a, quoted, 1) +
+                " and regenerated: " + std::to_string(doc.scene.bodies().size()) + " bodies");
+        return out;
+    }
+    if (sub == "rollback" || sub == "rollforward") {
+        const int was = st.rollback;
+        if (sub == "rollforward" || (a.size() > 1 && (lower(a[1]) == "end" || lower(a[1]) == "off"))) st.rollback = -1;
+        else {
+            const auto n = a.size() > 1 ? parseNumber(a[1]) : std::nullopt;
+            if (!n || *n < 0 || *n > static_cast<double>(st.history.size()))
+                return out.fail("HISTORY ROLLBACK n: build only steps 1 to n (0: none) and add new steps there; HISTORY ROLLFORWARD builds them all");
+            st.rollback = static_cast<int>(*n) == static_cast<int>(st.history.size()) ? -1 : static_cast<int>(*n);
+        }
+        const std::vector<HistoryStep> steps = st.history;
+        if (!regenerateHistory(doc, steps, out)) {
+            st.rollback = was;
+            return out;
+        }
+        if (st.rollback < 0) out.say("Rolled forward: all " + std::to_string(steps.size()) + " steps built");
+        else
+            out.say("Rolled back to step " + std::to_string(st.rollback) + " of " + std::to_string(steps.size()) +
+                    ": new steps go in there; HISTORY ROLLFORWARD builds the rest");
+        return out;
+    }
+    if (sub == "move") { // HISTORY MOVE n [TO|BEFORE] m: step n becomes step m
+        std::size_t i = 1;
+        const auto n = a.size() > i ? parseNumber(a[i++]) : std::nullopt;
+        if (i < a.size() && (lower(a[i]) == "to" || lower(a[i]) == "before")) ++i;
+        const auto m = a.size() > i ? parseNumber(a[i]) : std::nullopt;
+        const auto size = static_cast<double>(st.history.size());
+        if (!n || !m || *n < 1 || *m < 1 || *n > size || *m > size) return out.fail("HISTORY MOVE n TO m: step n becomes step m (HISTORY lists them)");
+        const auto from = static_cast<std::size_t>(*n) - 1, to = static_cast<std::size_t>(*m) - 1;
+        std::vector<HistoryStep> steps = st.history;
+        HistoryStep moved = steps[from];
+        steps.erase(steps.begin() + static_cast<std::ptrdiff_t>(from));
+        steps.insert(steps.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
+        if (!regenerateHistory(doc, steps, out)) return out;
+        out.say("Moved step " + std::to_string(from + 1) + " to " + std::to_string(to + 1) + " and regenerated " + std::to_string(steps.size()) + " steps");
+        return out;
+    }
+    if (sub == "set") { // HISTORY SET n KEY value [KEY value ...]: change a feature's parameters
+        const auto n = a.size() > 1 ? parseNumber(a[1]) : std::nullopt;
+        if (!n || *n < 1 || *n > static_cast<double>(st.history.size()) || a.size() < 4 || (a.size() - 2) % 2 != 0)
+            return out.fail("HISTORY SET n KEY value [KEY value ...]: change parameters of step n, e.g. HISTORY SET 2 DIAMETER 10");
+        const auto k = static_cast<std::size_t>(*n) - 1;
+        ParsedCommand pc = tokenizeCommand(st.history[k].line);
+        for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
+            bool found = false;
+            for (std::size_t j = 0; j + 1 < pc.args.size() && !found; ++j)
+                if (!(j < pc.quoted.size() && pc.quoted[j]) && lower(pc.args[j]) == lower(a[i])) {
+                    pc.args[j + 1] = a[i + 1];
+                    if (j + 1 < pc.quoted.size()) pc.quoted[j + 1] = i + 1 < quoted.size() && quoted[i + 1];
+                    found = true;
+                }
+            if (!found) return out.fail("Step " + std::to_string(k + 1) + " (" + st.history[k].line + ") has no " + toUpper(a[i]) + " to change");
+        }
+        std::vector<HistoryStep> steps = st.history;
+        steps[k].line = pc.name + (pc.args.empty() ? "" : " " + rejoinArgs(pc.args, pc.quoted, 0));
+        if (!regenerateHistory(doc, steps, out)) return out;
+        out.say("Step " + std::to_string(k + 1) + " is now " + steps[k].line + "; regenerated " + std::to_string(steps.size()) + " steps");
         return out;
     }
     if (sub == "clear") {
         st.history.clear();
         st.historyRedo.clear();
         st.historyComplete = true;
+        st.rollback = -1;
         out.say("History cleared (the model stays)");
         return out;
     }
@@ -2307,8 +2394,10 @@ CommandOutput runHistoryCommand(Document& doc, const std::string& cmd, const std
         if (!n || *n < 1 || *n > static_cast<double>(max)) return out.fail("HISTORY " + toUpper(sub) + " n: a step's number (HISTORY lists them)");
         const std::size_t k = static_cast<std::size_t>(*n) - 1;
         std::vector<HistoryStep> steps = st.history;
+        const int was = st.rollback;
         if (sub == "delete") {
             steps.erase(steps.begin() + static_cast<std::ptrdiff_t>(k));
+            if (st.rollback > static_cast<int>(k)) --st.rollback;
         } else {
             const std::string line = rejoinArgs(a, quoted, 2);
             if (line.empty()) return out.fail("HISTORY " + toUpper(sub) + " n command...: the new command");
@@ -2321,15 +2410,22 @@ CommandOutput runHistoryCommand(Document& doc, const std::string& cmd, const std
                 step.selectedCurve = steps[k].selectedCurve;
                 step.millimetres = false;
                 steps[k] = step;
-            } else
+            } else {
                 steps.insert(steps.begin() + static_cast<std::ptrdiff_t>(k), step);
+                if (st.rollback >= static_cast<int>(k)) ++st.rollback;
+            }
         }
-        if (!regenerateHistory(doc, steps, out)) return out;
+        if (st.rollback >= static_cast<int>(steps.size())) st.rollback = -1;
+        if (!regenerateHistory(doc, steps, out)) {
+            st.rollback = was;
+            return out;
+        }
         out.say((sub == "delete" ? "Deleted step " : sub == "edit" ? "Changed step " : "Inserted step ") + std::to_string(k + 1) + " and regenerated " +
                 std::to_string(steps.size()) + " steps");
         return out;
     }
-    return out.fail("Usage: HISTORY [LIST] | HISTORY EDIT n command | HISTORY INSERT n command | HISTORY DELETE n | HISTORY CLEAR | REGEN [FORCE]");
+    return out.fail("Usage: HISTORY [LIST] | HISTORY EDIT n command | HISTORY SET n KEY value | HISTORY INSERT n command | HISTORY DELETE n | "
+                    "HISTORY MOVE n TO m | HISTORY SUPPRESS n | HISTORY UNSUPPRESS n | HISTORY ROLLBACK n | HISTORY ROLLFORWARD | HISTORY CLEAR | REGEN [FORCE]");
 }
 
 } // namespace sicdm

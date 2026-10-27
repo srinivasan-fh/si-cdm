@@ -739,25 +739,32 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     const CommandSpec* spec = findCommand(pc.name);
     if (!spec) return;
     const std::string cmd = spec->name;
+    // Rolled back: the model ends at the rollback point, where new steps go in.
+    const bool rolledBack = st.rollback >= 0 && st.rollback < static_cast<int>(st.history.size());
+    if (!rolledBack) st.rollback = -1;
+    const std::size_t end = rolledBack ? static_cast<std::size_t>(st.rollback) : st.history.size();
     if (cmd == "NEW") {
         st.history.clear();
         st.historyRedo.clear();
         st.historyComplete = true;
+        st.rollback = -1;
         return;
     }
     if (cmd == "UNDO") { // the last step an UNDO takes back goes to the redo list
-        for (std::size_t i = st.history.size(); i-- > 0;)
-            if (st.history[i].undoable) {
+        for (std::size_t i = end; i-- > 0;)
+            if (st.history[i].undoable && !st.history[i].suppressed) {
                 st.historyRedo.push_back(st.history[i]);
                 st.history.erase(st.history.begin() + static_cast<std::ptrdiff_t>(i));
+                if (rolledBack) --st.rollback;
                 break;
             }
         return;
     }
     if (cmd == "REDO") {
         if (!st.historyRedo.empty()) {
-            st.history.push_back(st.historyRedo.back());
+            st.history.insert(st.history.begin() + static_cast<std::ptrdiff_t>(end), st.historyRedo.back());
             st.historyRedo.pop_back();
+            if (rolledBack) ++st.rollback;
         }
         return;
     }
@@ -790,7 +797,8 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     step.unit = st.units.unit;
     step.selectedBody = selBody;
     step.selectedCurve = selCurve;
-    st.history.push_back(std::move(step));
+    if (rolledBack) st.history.insert(st.history.begin() + st.rollback++, std::move(step));
+    else st.history.push_back(std::move(step));
     st.historyRedo.clear();
 }
 

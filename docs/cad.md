@@ -794,10 +794,16 @@ Every model command that succeeds is recorded in order: sketches, solids, featur
 sculpting, moves, selections and plane changes.
 
 ```text
-HISTORY                         the steps
+HISTORY                         the steps (the feature tree)
 HISTORY EDIT n command          change a step, and rebuild
+HISTORY SET n KEY value ...     change one or more of a step's parameters, and rebuild
 HISTORY INSERT n command        add a step before step n, and rebuild
 HISTORY DELETE n                remove a step, and rebuild
+HISTORY MOVE n TO m             reorder: step n becomes step m, and rebuild
+HISTORY SUPPRESS n [m | a-b]    keep steps but leave them out of the model
+HISTORY UNSUPPRESS n [m | a-b]  put them back
+HISTORY ROLLBACK n              build only steps 1 to n; new steps go in there
+HISTORY ROLLFORWARD             build every step again
 HISTORY CLEAR                   forget the history (the model stays)
 REGEN [FORCE]                   rebuild the model from the history
 ```
@@ -812,6 +818,29 @@ History: 4 steps (REGEN rebuilds the model from them)
 > HISTORY EDIT 2 HOLE "Block 1" AT -20,0,15 DIAMETER 10 THROUGH
 Changed step 2 and regenerated 4 steps
 ```
+
+**The feature tree:**
+
+- The **Features** list at the top of the Model panel shows the steps.
+- Untick a step to suppress it. Double-click a step to edit its command.
+- Right-click a step to edit, suppress, move up or down, roll back to it, or delete it.
+- Suppressed steps and steps below the rollback bar are greyed. **Roll forward** on the bar
+  builds them again.
+
+```text
+> HISTORY SET 2 DIAMETER 10
+Step 2 is now HOLE "Block 1" AT -20,0,15 DIAMETER 10 THROUGH; regenerated 3 steps
+> HISTORY ROLLBACK 1
+Rolled back to step 1 of 3: new steps go in there; HISTORY ROLLFORWARD builds the rest
+> FILLET "Block 1" RADIUS 2 EDGES NEAR 0,20,15        (goes in as step 2)
+> HISTORY ROLLFORWARD
+```
+
+- A suppressed or moved step can leave a later step without what it needs, such as a hole on
+  a body that no longer exists. The change is then refused, and the report names the step that
+  failed.
+- Suppressed steps and the rollback point are saved with the project.
+- While rolled back, UNDO takes back the step just above the bar.
 
 **Rebuilding:**
 
