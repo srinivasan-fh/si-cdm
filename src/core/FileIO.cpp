@@ -554,6 +554,15 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 for (std::uint32_t g : b.mesh.groups) putU32(grp, g);
                 mesh.set("groups_b64", base64(grp));
             }
+            if (b.mesh.hasLayers()) {
+                Json layers = Json::array();
+                for (const SculptLayer& l : b.mesh.layers) {
+                    std::vector<unsigned char> off;
+                    for (const Vec3& o : l.offset) putF32(off, o.x), putF32(off, o.y), putF32(off, o.z);
+                    layers.push(Json::object().set("name", l.name).set("strength", l.strength).set("saved", l.saved).set("offsets_b64", base64(off)));
+                }
+                mesh.set("layers", layers).set("record_layer", b.mesh.recordLayer);
+            }
             jb.set("mesh", mesh);
             binaryMeshes = true;
             if (b.exact()) jb.set("brep_step", writeStep({StepPart{b.name, std::const_pointer_cast<Brep>(b.brep), ""}}, b.name + ".step"));
@@ -581,6 +590,15 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 Json grp = Json::array(); // polygroups, per triangle
                 for (std::uint32_t g : b.mesh.groups) grp.push(static_cast<double>(g));
                 mesh.set("groups", grp);
+            }
+            if (b.mesh.hasLayers()) {
+                Json layers = Json::array(); // sculpt layers: per vertex offsets
+                for (const SculptLayer& l : b.mesh.layers) {
+                    Json off = Json::array();
+                    for (const Vec3& o : l.offset) off.push(o.x).push(o.y).push(o.z);
+                    layers.push(Json::object().set("name", l.name).set("strength", l.strength).set("saved", l.saved).set("offsets", off));
+                }
+                mesh.set("layers", layers).set("record_layer", b.mesh.recordLayer);
             }
             jb.set("mesh", mesh);
             // Exact geometry kept with the mesh it belongs to (as a STEP record).
@@ -840,6 +858,18 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             if (colors.size() == b.mesh.vertices.size())
                 for (std::size_t i = 0; i < colors.size(); ++i) b.mesh.vertices[i].color = colors[i];
             if (groups.size() * 3 == b.mesh.indices.size()) b.mesh.groups = std::move(groups);
+            for (const Json& jl : m["layers"].items()) {
+                SculptLayer l;
+                l.name = jl["name"].asString("Layer");
+                l.strength = jl["strength"].asFloat(1.0f), l.saved = jl["saved"].asFloat(1.0f);
+                raw.clear();
+                if (jl["offsets_b64"].isString() && unbase64(jl["offsets_b64"].asString(), raw))
+                    for (std::size_t i = 0; i + 12 <= raw.size(); i += 12) l.offset.push_back({getF32(&raw[i]), getF32(&raw[i + 4]), getF32(&raw[i + 8])});
+                const auto& o = jl["offsets"].items();
+                for (std::size_t i = 0; i + 2 < o.size(); i += 3) l.offset.push_back({o[i].asFloat(), o[i + 1].asFloat(), o[i + 2].asFloat()});
+                if (l.offset.size() == b.mesh.vertices.size()) b.mesh.layers.push_back(std::move(l));
+            }
+            b.mesh.recordLayer = std::clamp(m["record_layer"].asInt(-1), -1, static_cast<int>(b.mesh.layers.size()) - 1);
             b.name = jb["name"].asString("Mesh");
             b.kind = "mesh";
             if (jb["brep_step"].isString()) {

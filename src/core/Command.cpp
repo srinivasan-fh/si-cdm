@@ -64,6 +64,8 @@ constexpr CommandSpec kCommands[] = {
      "Edit the sculpt mask (the MASK brush paints it; masked surface holds still under the brushes), or mask a polygroup"},
     {"PAINT", "POLYPAINT", "PAINT [body] FILL colour [GROUP n|AT x,y,z] | CLEAR",
      "Polypaint: fill a body (or a polygroup) with a colour, the mask holding it off; the PAINT brush paints strokes"},
+    {"LAYER", "LAYERS", "LAYER [body] NEW name [RECORD] | RECORD name | STOP | STRENGTH name s | ON name | OFF name | DELETE name | BAKE name|ALL | LIST",
+     "Sculpt layers: strokes recorded into a layer can be dialled in and out (strength), turned off, deleted or baked"},
     {"POLYGROUP", "POLYGROUPS PGROUP", "POLYGROUP [body] AUTO [ANGLE deg] | ISLANDS | MASK | PAINT | CLEAR | LIST",
      "Polygroups: faces grouped by their angle, connected pieces, the mask or the paint"},
     {"SUBDIVIDE", "SUBD", "SUBDIVIDE [body] [LEVELS n]", "Loop subdivision: four triangles for each, smoothed"},

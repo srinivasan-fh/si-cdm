@@ -849,6 +849,7 @@ void Application::endSculpt() {
         return;
     }
     Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(m_sculptBody)];
+    m_sculptMesh.commitLayers(); // the stroke goes into the recording layer, if any
     m_sculptMesh.writeTo(body, true);
     m_doc.scene.touchBodies();
     m_doc.scene.sealUndo();

@@ -726,7 +726,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP"};
+                                         "PAINT", "POLYGROUP", "LAYER"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -772,7 +772,9 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (!historyCommand(cmd)) return;
     if ((cmd == "PLANE" || cmd == "REFAXIS" || cmd == "REFPOINT") && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (cmd == "SHEETMETAL" && !pc.args.empty() && (iequal(pc.args[0], "edges") || iequal(pc.args[0], "info"))) return;
-    if (cmd == "POLYGROUP" && std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); })) return;
+    if ((cmd == "POLYGROUP" || cmd == "LAYER") &&
+        std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); }))
+        return;
     if (cmd == "FEA" && std::none_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "plot") || iequal(w, "deform") || iequal(w, "mode"); }))
         return; // a report only: the history keeps analyses that leave a plot
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
@@ -2572,6 +2574,86 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         }
         doc.scene.touchBodies();
         markChanged(doc);
+        return out;
+    }
+    if (cmd == "LAYER") {
+        // LAYER [body] NEW name [RECORD] | RECORD name | STOP | STRENGTH name s | ON name | OFF name | DELETE name | BAKE name|ALL | LIST
+        static const char* const kWords[] = {"new", "add", "record", "stop", "strength", "on", "off", "delete", "remove", "bake", "merge", "list"};
+        auto isWord = [&](std::size_t k) {
+            if (quotedArg(k)) return false;
+            const std::string w = lower(a[k]);
+            for (const char* q : kWords)
+                if (w == q) return true;
+            return false;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        if (!a.empty() && quotedArg(0) && a.size() > 1 && isWord(1)) nameWords.push_back(a[i++]);
+        else
+            while (i < a.size() && !isWord(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        if (i >= a.size()) return usage();
+        const std::string op = lower(a[i++]);
+        Body* body = &doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (body->mesh.indices.empty()) return out.fail(body->name + " has no surface");
+        if (op == "list") {
+            if (!body->mesh.hasLayers()) out.say(body->name + " has no sculpt layers (LAYER NEW name RECORD starts one)");
+            for (std::size_t k = 0; k < body->mesh.layers.size() && body->mesh.hasLayers(); ++k) {
+                const SculptLayer& l = body->mesh.layers[k];
+                float most = 0;
+                for (const Vec3& o : l.offset) most = std::max(most, length(o));
+                out.say("  " + l.name + fmt(": strength %g", static_cast<double>(l.strength)) + fmt(", moves up to %.3g mm", static_cast<double>(most)) +
+                        (static_cast<int>(k) == body->mesh.recordLayer ? "  (recording)" : ""));
+            }
+            return out;
+        }
+        const std::string layer = i < a.size() ? a[i] : std::string();
+        doc.scene.pushUndo("LAYER " + body->name);
+        body = &doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        std::string why, done;
+        bool ok = true;
+        if (op == "new" || op == "add") {
+            const bool rec = i + 1 < a.size() && iequal(a[i + 1], "record");
+            ok = layerAdd(*body, layer, rec, &why);
+            done = "layer " + layer + " added" + (rec ? ", recording: strokes go into it" : "");
+        } else if (op == "record") {
+            ok = layerRecord(*body, layer, &why);
+            done = "strokes now go into layer " + layer;
+        } else if (op == "stop") {
+            ok = layerRecord(*body, "", &why);
+            done = "no layer recording";
+        } else if (op == "strength") {
+            const auto v = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
+            if (!v) return doc.scene.undo(), out.fail("LAYER STRENGTH name s (1: as sculpted, 0: off, 2: twice as strong, -1: the other way)");
+            ok = layerStrength(*body, layer, static_cast<float>(*v), &why);
+            done = "layer " + layer + fmt(" at strength %g", *v);
+        } else if (op == "on" || op == "off") {
+            float to = 0.0f;
+            if (op == "on") {
+                for (const SculptLayer& l : body->mesh.layers)
+                    if (iequal(l.name, layer)) to = l.saved > 0.0f ? l.saved : 1.0f;
+            }
+            ok = layerStrength(*body, layer, to, &why);
+            done = "layer " + layer + (op == "on" ? " on" : " off");
+        } else if (op == "delete" || op == "remove") {
+            ok = layerDelete(*body, layer, &why);
+            done = "layer " + layer + " deleted (its sculpting taken out)";
+        } else if (op == "bake" || op == "merge") {
+            ok = layerBake(*body, iequal(layer, "all") ? std::string() : layer, &why);
+            done = iequal(layer, "all") || layer.empty() ? "all layers baked into the shape" : "layer " + layer + " baked into the shape";
+        } else {
+            doc.scene.undo();
+            return usage();
+        }
+        if (!ok) {
+            doc.scene.undo();
+            return out.fail(why);
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        out.say(doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + done);
         return out;
     }
     if (cmd == "PAINT" || cmd == "POLYGROUP") {

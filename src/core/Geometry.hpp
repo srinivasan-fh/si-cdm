@@ -22,6 +22,15 @@ std::uint32_t packColor(const Vec3& rgb) noexcept;
 Vec3 unpackColor(std::uint32_t c) noexcept;
 inline bool painted(std::uint32_t c) noexcept { return (c >> 24) != 0; }
 
+// A sculpt layer: how far each vertex was moved while the layer recorded, applied at
+// `strength` (0: off). The surface shown is the layers' sum over the shape beneath them.
+struct SculptLayer {
+    std::string name;
+    float strength = 1.0f;
+    float saved = 1.0f;          // the strength before it was turned off
+    std::vector<Vec3> offset;    // per vertex
+};
+
 // Renderable tessellation of a body: shaded triangles plus the
 // feature edges drawn on top (the classic "shaded with edges" CAD look).
 struct MeshData {
@@ -32,6 +41,16 @@ struct MeshData {
     // triangles after an edit that didn't keep them: none).
     std::vector<std::uint32_t> groups;
     bool hasGroups() const noexcept { return !groups.empty() && groups.size() * 3 == indices.size(); }
+    // Sculpt layers (each a vertex's offset; out of step with the vertices after an edit
+    // that didn't keep them: none), and the one strokes record into (-1: none).
+    std::vector<SculptLayer> layers;
+    int recordLayer = -1;
+    bool hasLayers() const noexcept {
+        if (layers.empty()) return false;
+        for (const SculptLayer& l : layers)
+            if (l.offset.size() != vertices.size()) return false;
+        return true;
+    }
 
     AABB bounds() const noexcept;
     void transform(const Mat4& m);

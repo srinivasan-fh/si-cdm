@@ -124,6 +124,16 @@ std::vector<std::pair<std::uint32_t, std::size_t>> groupSizes(const Body& body);
 // Masks exactly the faces of `group` (the rest unmasked; `invert`: the other way round).
 bool maskGroup(Body& body, std::uint32_t group, bool invert = false);
 
+// --- sculpt layers -------------------------------------------------------------------------
+// Each layer holds how far strokes moved each vertex while it recorded; its strength
+// scales that in or out of the surface. False (why) for a name that isn't there (or is).
+bool layerAdd(Body& body, const std::string& name, bool record, std::string* why = nullptr);
+bool layerRecord(Body& body, const std::string& name, std::string* why = nullptr); // "": record into none
+bool layerStrength(Body& body, const std::string& name, float strength, std::string* why = nullptr);
+bool layerDelete(Body& body, const std::string& name, std::string* why = nullptr);  // its offsets taken out
+bool layerBake(Body& body, const std::string& name, std::string* why = nullptr);    // the shape kept, the layer dropped ("": all)
+
+
 // A welded, editable copy of a body's surface (world coordinates).
 class SculptMesh {
 public:
@@ -150,7 +160,10 @@ public:
     // Not for Grab.
     void dab(const Vec3& centre, const SculptSettings& s, const Vec3& dir = {});
     // Starts a stroke: the Layer brush builds up to its height once per stroke.
-    void beginStroke() { m_layer.clear(); }
+    void beginStroke() {
+        m_layer.clear();
+        if (m_record >= 0) m_start = m_p;
+    }
     // Grab: pick up the surface around `centre`, then move it by `delta` from where it was.
     void beginGrab(const Vec3& centre, const SculptSettings& s);
     void grabTo(const Vec3& delta);
@@ -167,6 +180,9 @@ public:
     // triangle; empty: none). They follow the surface through dynamic topology.
     const std::vector<std::uint32_t>& colors() const noexcept { return m_color; }
     const std::vector<std::uint32_t>& groups() const noexcept { return m_group; }
+    // Sculpt layers: a stroke's movement since it began is added to the recording layer
+    // (scaled by its strength) when the stroke is committed.
+    void commitLayers();
 
     // A stroke (dabs along the points, snapped to the surface) or a grab from
     // points[0] by `grabDelta`, run on the part of the surface it can reach.
@@ -219,6 +235,11 @@ private:
     std::vector<std::uint32_t> m_color; // polypaint, per vertex, or empty
     std::vector<std::uint32_t> m_group; // polygroups, per triangle, or empty
     Vec3 m_base{0.72f, 0.75f, 0.80f};   // the body's own colour (unpainted)
+    // Sculpt layers: names and strengths, each a per-vertex offset; the recording one,
+    // and where each vertex was when the stroke began.
+    std::vector<SculptLayer> m_layers; // offsets per welded vertex
+    int m_record = -1;
+    std::vector<Vec3> m_start;
     // A window on a larger mesh: where each vertex came from there (kFresh: made
     // here), and the vertices on the cut border, which nothing may move or split.
     std::vector<std::uint32_t> m_from;

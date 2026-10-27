@@ -1022,6 +1022,66 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             if (ImGui::Button("Auto groups")) cmd.commands.push_back("POLYGROUP AUTO");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Polygroups from the faces' angles (View > Polygroups shows them)");
         }
+        // Sculpt layers of the selected body.
+        if (m_menuScene && st.selectedBody >= 0 && st.selectedBody < static_cast<int>(m_menuScene->bodies().size())) {
+            const Body& lb = m_menuScene->bodies()[static_cast<std::size_t>(st.selectedBody)];
+            const std::string q = "LAYER \"" + lb.name + "\" ";
+            const bool has = lb.mesh.hasLayers();
+            ImGui::SameLine();
+            if (ImGui::Button(has ? "Layers..." : "Layers")) ImGui::OpenPopup("##sculptlayers");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sculpt layers: record strokes into a layer, then dial it in or out");
+            if (ImGui::BeginPopup("##sculptlayers")) {
+                if (ImGui::Button("New layer")) {
+                    int n = static_cast<int>(lb.mesh.layers.size()) + 1;
+                    auto taken = [&](const std::string& nm) {
+                        for (const SculptLayer& l : lb.mesh.layers)
+                            if (l.name == nm) return true;
+                        return false;
+                    };
+                    while (taken("Layer " + std::to_string(n))) ++n;
+                    cmd.commands.push_back(q + "NEW \"Layer " + std::to_string(n) + "\" RECORD");
+                }
+                if (has) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Bake all")) cmd.commands.push_back(q + "BAKE ALL");
+                    if (lb.mesh.recordLayer >= 0) {
+                        ImGui::SameLine();
+                        if (ImGui::Button("Stop recording")) cmd.commands.push_back(q + "STOP");
+                    }
+                    ImGui::Separator();
+                    for (std::size_t k = 0; k < lb.mesh.layers.size(); ++k) {
+                        const SculptLayer& l = lb.mesh.layers[k];
+                        const std::string nm = "\"" + l.name + "\"";
+                        ImGui::PushID(static_cast<int>(k));
+                        bool on = l.strength > 0.0f;
+                        if (ImGui::Checkbox("##on", &on)) cmd.commands.push_back(q + (on ? "ON " : "OFF ") + nm);
+                        ImGui::SameLine();
+                        const bool rec = static_cast<int>(k) == lb.mesh.recordLayer;
+                        if (ImGui::RadioButton("##rec", rec) && !rec) cmd.commands.push_back(q + "RECORD " + nm);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Record strokes into this layer");
+                        ImGui::SameLine();
+                        ImGui::TextUnformatted(l.name.c_str());
+                        ImGui::SameLine(170);
+                        // The value being dragged lives in ImGui's storage; the layer changes on release.
+                        float* v = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID("strengthval"), l.strength);
+                        ImGui::SetNextItemWidth(110);
+                        ImGui::SliderFloat("##strength", v, -1.0f, 2.0f, "%.2f");
+                        if (ImGui::IsItemDeactivatedAfterEdit()) {
+                            char b[64];
+                            std::snprintf(b, sizeof b, "%.3f", static_cast<double>(*v));
+                            cmd.commands.push_back(q + "STRENGTH " + nm + " " + b);
+                        }
+                        if (!ImGui::IsItemActive()) *v = l.strength;
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Bake")) cmd.commands.push_back(q + "BAKE " + nm);
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Delete")) cmd.commands.push_back(q + "DELETE " + nm);
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndPopup();
+            }
+        }
         ImGui::SameLine();
         ImGui::Checkbox("Dyntopo", &st.sculptRefine);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dynamic topology: split long edges under the brush so detail can be added anywhere");

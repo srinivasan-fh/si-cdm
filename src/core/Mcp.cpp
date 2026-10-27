@@ -366,7 +366,10 @@ Json McpServer::toolDefinitions() {
                                 "channel, trim (knife), boss (add volume), boolean, refine, remesh (voxel: fuse 'body' with "
                                 "'others'), subdivide, symmetrize, decimate, mask_clear, mask_invert, mask_smooth, mask_group, "
                                 "paint_fill, paint_clear, polygroup_auto, polygroup_islands, polygroup_mask, polygroup_paint, "
-                                "polygroup_clear, undo, redo"));
+                                "polygroup_clear, layer_new, layer_record, layer_stop, layer_strength, layer_on, layer_off, layer_delete, "
+                                "layer_bake, layer_list, undo, redo"));
+        p.set("layer", prop("string", "layer_*: the sculpt layer's name (layer_bake without one bakes them all)"));
+        p.set("value", prop("number", "layer_strength: the strength (1: as sculpted, 0: off, 2: twice)"));
         p.set("color", prop("string", "paint / paint_fill: a colour name (red, skin...), #RRGGBB or \"r,g,b\""));
         p.set("group", prop("number", "paint_fill / mask_group: the polygroup (or give 'points' [[x,y,z]] near it)"));
         p.set("angle", prop("number", "polygroup_auto: faces turning less than this many degrees share a group (default 20)"));
@@ -1580,6 +1583,16 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             } else {
                 if (!a["color"].isString()) return textResult("paint_fill needs 'color'", true);
                 line = "PAINT " + body + " FILL " + a["color"].asString() + which;
+            }
+        } else if (op.rfind("layer_", 0) == 0) {
+            const std::string what = op.substr(6);
+            const std::string layer = a["layer"].isString() ? quote(a["layer"].asString()) : "";
+            if (layer.empty() && what != "stop" && what != "list" && what != "bake") return textResult(op + " needs 'layer'", true);
+            line = "LAYER " + body + " " + (what == "bake" && layer.empty() ? std::string("BAKE ALL") : what + " " + layer);
+            if (what == "new") line += " RECORD";
+            if (what == "strength") {
+                if (!a["value"].isNumber()) return textResult("layer_strength needs 'value'", true);
+                line += " " + num(a["value"].asNumber());
             }
         } else if (op == "paint_clear") {
             line = "PAINT " + body + " CLEAR";

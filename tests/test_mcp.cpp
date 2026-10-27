@@ -6,6 +6,7 @@
 #include "core/Physics.hpp"
 #include "core/Sculpt.hpp"
 
+#include <cmath>
 #include <filesystem>
 
 using namespace sicdm;
@@ -397,4 +398,23 @@ TEST_CASE("MCP sculpt paints and groups a body") {
     CHECK(paintedFraction(d.scene.bodies().back()) == 0.0f);
     CHECK(!tool(s, "sculpt", R"({"operation":"polygroup_clear","body":"Clay"})")["isError"].asBool());
     CHECK(!d.scene.bodies().back().mesh.hasGroups());
+}
+
+TEST_CASE("MCP sculpt records into layers and dials them") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "create_solid", R"({"kind":"sphere","radius":20,"name":"Head"})")["isError"].asBool());
+    CHECK(!tool(s, "sculpt", R"({"operation":"refine","body":"Head","detail":3})")["isError"].asBool());
+    CHECK(!tool(s, "sculpt", R"({"operation":"layer_new","body":"Head","layer":"Brow"})")["isError"].asBool());
+    const float top0 = d.scene.bodies()[0].bounds().max.z;
+    CHECK(!tool(s, "sculpt", R"({"operation":"draw","body":"Head","points":[[0,0,40]],"radius":8,"strength":1})")["isError"].asBool());
+    const float top1 = d.scene.bodies()[0].bounds().max.z;
+    CHECK(top1 > top0 + 0.5f);
+    CHECK(!tool(s, "sculpt", R"({"operation":"layer_strength","body":"Head","layer":"Brow","value":0})")["isError"].asBool());
+    CHECK(std::fabs(d.scene.bodies()[0].bounds().max.z - top0) < 0.1f);
+    CHECK(tool(s, "sculpt", R"({"operation":"layer_strength","body":"Head","layer":"Brow"})")["isError"].asBool()); // no value
+    CHECK(!tool(s, "sculpt", R"({"operation":"layer_on","body":"Head","layer":"Brow"})")["isError"].asBool());
+    CHECK(!tool(s, "sculpt", R"({"operation":"layer_list","body":"Head"})")["isError"].asBool());
+    CHECK(!tool(s, "sculpt", R"({"operation":"layer_bake","body":"Head"})")["isError"].asBool());
+    CHECK(d.scene.bodies()[0].mesh.layers.empty());
 }

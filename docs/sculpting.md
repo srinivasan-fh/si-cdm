@@ -12,6 +12,7 @@ The toolset follows the common ground of the professional sculpting tools: ZBrus
 - mirror and radial symmetry;
 - masking;
 - alphas;
+- sculpt layers;
 - polypaint and polygroups;
 - dynamic topology;
 - voxel remesh;
@@ -131,6 +132,36 @@ SCULPT "Wall" DRAW AT -40,0,10 40,0,10 RADIUS 12 STRENGTH 0.4 ALPHA bricks SPACI
 SCULPT "Head" DRAW AT 0,-30,60 RADIUS 8 STRENGTH 0.1 ALPHA pores SPACING 0.6
 SCULPT "Badge" DRAW AT 0,0,5 RADIUS 15 STRENGTH 0.3 ALPHA "logo.png"
 ```
+
+## Sculpt layers
+
+A layer holds what the strokes did while it recorded: how far each vertex moved. Its
+strength dials that in and out, so a detail pass, a wrinkle set or an expression can be
+tried at half strength, turned off, pushed further, or thrown away without touching the
+rest.
+
+```text
+LAYER "Head" NEW Wrinkles RECORD      a new layer; strokes now go into it
+SCULPT "Head" CREASE AT ...           (sculpt as usual)
+LAYER "Head" STRENGTH Wrinkles 0.5    half as deep
+LAYER "Head" OFF Wrinkles             the shape beneath (ON brings it back)
+LAYER "Head" RECORD Brow              strokes go into another layer; STOP: into none
+LAYER "Head" DELETE Wrinkles          its strokes taken out
+LAYER "Head" BAKE ALL                 the shape kept, the layers dropped
+LAYER "Head" LIST
+```
+
+- **Every brush records,** including Grab, Snake Hook and alpha stamps. Strokes made with no
+  layer recording go into the shape beneath all the layers.
+- **Strength** goes from -1 (the strokes reversed) through 0 (off) and 1 (as sculpted) to 2
+  and beyond. A layer that is off doesn't record.
+- **Layers follow dynamic topology:** new vertices take their neighbours' offsets. So you
+  can add detail on top of a layer and still dial the layer.
+- **Kept:** layers are saved in the project, and UNDO takes back a layer change.
+- **Subdivision and decimation keep the layers.** Voxel remesh, booleans and cuts (holes,
+  pockets, the knife) build a new mesh and drop them: bake or finish with the layers first.
+- **In the app:** *Layers* in the sculpt options bar lists the selected body's layers. Each
+  row has an on/off box, a record button, a strength slider, and Bake and Delete buttons.
 
 ## Polypaint and polygroups
 
@@ -341,6 +372,7 @@ MASK    [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]   edit the mask (the MASK
 MASK    [body] GROUP n | GROUP AT x,y,z [INVERT]       mask one polygroup
 PAINT   [body] FILL colour [GROUP n | GROUP AT x,y,z] | CLEAR    polypaint (the PAINT brush paints strokes)
 POLYGROUP [body] AUTO [ANGLE deg] | ISLANDS | MASK | PAINT | CLEAR | LIST | SHOW | HIDE
+LAYER   [body] NEW name [RECORD] | RECORD name | STOP | STRENGTH name s | ON name | OFF name | DELETE name | BAKE name|ALL | LIST
 SUBDIVIDE [body] [LEVELS n]                Loop subdivision
 SYMMETRIZE [body] [X|Y|Z] [-]              mirror the + side (or the - side) across the body's origin
 DECIMATE [body] TO n | RATIO r             reduce to about n triangles
@@ -356,5 +388,6 @@ whether the result is closed.
 Over MCP: the `sculpt` tool (`operation` = a brush name, `hole`, `pocket`, `channel`, `trim`, `boss`,
 `boolean`, `refine`, `remesh`, `subdivide`, `symmetrize`, `decimate`, `mask_clear`, `mask_invert`,
 `mask_smooth`, `mask_group`, `paint_fill`, `paint_clear`, `polygroup_auto`, `polygroup_islands`,
-`polygroup_mask`, `polygroup_paint`, `polygroup_clear`, `undo` or `redo`; `symmetry_axes`, `radial`,
+`polygroup_mask`, `polygroup_paint`, `polygroup_clear`, `layer_new` (recording), `layer_record`, `layer_stop`,
+`layer_strength` (`value`), `layer_on`, `layer_off`, `layer_delete`, `layer_bake`, `layer_list`, `undo` or `redo`; `symmetry_axes`, `radial`,
 `falloff`, `color`, `alpha`, `alpha_angle`, `alpha_follow`, `alpha_tile` and `spacing` for the brushes).

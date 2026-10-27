@@ -251,7 +251,7 @@ Two sections at the bottom of the tool rail turn any body into digital clay and 
 
 - **Digital Sculpting:** 18 brushes: Draw, Clay, Clay Strips, Layer, Carve, Inflate, Blob, Grab, Snake
   Hook, Nudge, Pinch, Crease, Smooth, Flatten, Scrape, Fill, Mask and Paint. Drag over a body; Ctrl inverts,
-  Shift smooths, `[` `]` resize. There are falloff curves, alphas (stamps), X / Y / Z and radial symmetry, masking,
+  Shift smooths, `[` `]` resize. There are falloff curves, alphas (stamps), sculpt layers, X / Y / Z and radial symmetry, masking,
   polypaint and polygroups.
   The mesh refines itself under the brush (dynamic topology). Also: voxel remesh, Loop subdivision,
   symmetrize, decimate, undo and redo.

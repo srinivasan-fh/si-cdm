@@ -939,3 +939,58 @@ TEST_CASE("alphas: built-in patterns and images stamped through the brush") {
     CHECK(!run(d, "SCULPT \"Block 1\" DRAW AT 0,0,10 ALPHA dots TILE 0").ok);
     CHECK(run(d, "SCULPT ALPHAS").ok);
 }
+
+TEST_CASE("sculpt layers: strokes recorded, dialled in and out, deleted, baked and saved") {
+    Document d;
+    REQUIRE(run(d, "SPHERE 30 @0,0,0").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" REFINE 3").ok);
+    auto top = [&] { return d.scene.bodies()[0].bounds().max.z; };
+    auto volume = [&] { return meshVolume(worldMesh(d.scene.bodies()[0])); };
+    const float top0 = top();
+    REQUIRE(run(d, "LAYER \"Sphere 1\" NEW Horns RECORD").ok);
+    CHECK(!run(d, "LAYER \"Sphere 1\" NEW Horns").ok); // taken
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" DRAW AT 0,0,60 RADIUS 12 STRENGTH 1").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" DRAW AT 0,0,60 RADIUS 12 STRENGTH 1").ok);
+    const float rise = top() - top0;
+    CHECK(rise > 1.0f);
+    REQUIRE(d.scene.bodies()[0].mesh.hasLayers());
+    // Off: the shape beneath; twice as strong: twice the rise; on again: as sculpted.
+    REQUIRE(run(d, "LAYER \"Sphere 1\" OFF Horns").ok);
+    CHECK_NEAR(top(), top0, 0.1f);
+    CHECK(d.scene.bodies()[0].mesh.recordLayer == -1); // an off layer stops recording
+    REQUIRE(run(d, "LAYER \"Sphere 1\" STRENGTH Horns 2").ok);
+    CHECK_NEAR(top() - top0, 2 * rise, 0.15f);
+    REQUIRE(run(d, "LAYER \"Sphere 1\" STRENGTH Horns 1").ok);
+    CHECK_NEAR(top() - top0, rise, 0.1f);
+    // A second layer: a carve, then deleted: the volume as before it.
+    const double v0 = volume();
+    REQUIRE(run(d, "LAYER \"Sphere 1\" NEW Detail RECORD").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" CARVE AT 30,0,30 RADIUS 8 STRENGTH 0.8").ok);
+    CHECK(volume() < v0 - 10);
+    // Saved and read back with the layers.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_layers.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene scene;
+    ProjectState state;
+    REQUIRE(loadProject(scene, state, path, &err));
+    REQUIRE(scene.bodies()[0].mesh.layers.size() == 2);
+    CHECK(scene.bodies()[0].mesh.hasLayers());
+    CHECK(scene.bodies()[0].mesh.recordLayer == 1);
+    CHECK(scene.bodies()[0].mesh.layers[0].name == "Horns");
+    std::filesystem::remove(path);
+    REQUIRE(run(d, "LAYER \"Sphere 1\" DELETE Detail").ok);
+    CHECK(std::fabs(volume() - v0) < std::fabs(v0) * 0.002);
+    CHECK(d.scene.bodies()[0].mesh.layers.size() == 1);
+    // Undo brings the layer back.
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.bodies()[0].mesh.layers.size() == 2);
+    REQUIRE(run(d, "REDO").ok);
+    // Baked: the shape stays, the layers go.
+    const float before = top();
+    REQUIRE(run(d, "LAYER \"Sphere 1\" BAKE ALL").ok);
+    CHECK(d.scene.bodies()[0].mesh.layers.empty());
+    CHECK_NEAR(top(), before, 1e-4f);
+    CHECK(!run(d, "LAYER \"Sphere 1\" OFF Horns").ok);
+    CHECK(run(d, "LAYER \"Sphere 1\" LIST").ok);
+}

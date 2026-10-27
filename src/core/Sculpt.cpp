@@ -322,6 +322,17 @@ SculptMesh::SculptMesh(const Body& body) {
     m_p.reserve(pts.size());
     for (const D3& p : pts) m_p.push_back(p.f());
     m_base = body.color;
+    // Sculpt layers: a welded vertex's offsets are its corners' (they are the same).
+    if (body.mesh.hasLayers()) {
+        m_layers = body.mesh.layers;
+        for (SculptLayer& l : m_layers) {
+            std::vector<Vec3> off(m_p.size(), Vec3{});
+            for (std::size_t k = 0; k < id.size() && k < idx.size(); ++k) off[id[k]] = l.offset[idx[k]];
+            l.offset = std::move(off);
+        }
+        m_record = body.mesh.recordLayer >= 0 && body.mesh.recordLayer < static_cast<int>(m_layers.size()) ? body.mesh.recordLayer : -1;
+        if (m_record >= 0) m_start = m_p;
+    }
     // Polypaint: a vertex welded from several corners takes a painted one's colour.
     if (std::any_of(v.begin(), v.end(), [](const Vertex& c) { return painted(c.color); })) {
         m_color.assign(m_p.size(), packColor(m_base));
@@ -875,6 +886,8 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
             if (!m_mask.empty()) m_mask[a] = std::max(m_mask[a], m_mask[b]);
             if (!m_layer.empty()) m_layer[a] = 0.5f * (m_layer[a] + m_layer[b]);
             if (!m_color.empty()) m_color[a] = packColor((unpackColor(m_color[a]) + unpackColor(m_color[b])) * 0.5f);
+            for (SculptLayer& l : m_layers) l.offset[a] = (l.offset[a] + l.offset[b]) * 0.5f;
+            if (!m_start.empty()) m_start[a] = (m_start[a] + m_start[b]) * 0.5f;
             locked[a] = locked[b] = 1;
             for (std::uint32_t w : ringA) locked[w] = 1;
             for (std::uint32_t w : ringB) locked[w] = 1;
@@ -907,6 +920,8 @@ void SculptMesh::dropUnused() {
     std::vector<char> pins;
     std::vector<float> mask, layer;
     std::vector<std::uint32_t> color;
+    std::vector<Vec3> start;
+    std::vector<std::vector<Vec3>> lay(m_layers.size());
     for (auto& t : m_t)
         for (auto& v : t) {
             if (remap[v] == 0xFFFFFFFFu) {
@@ -919,6 +934,8 @@ void SculptMesh::dropUnused() {
                 if (!m_mask.empty()) mask.push_back(m_mask[v]);
                 if (!m_layer.empty()) layer.push_back(m_layer[v]);
                 if (!m_color.empty()) color.push_back(m_color[v]);
+                if (!m_start.empty()) start.push_back(m_start[v]);
+                for (std::size_t k = 0; k < m_layers.size(); ++k) lay[k].push_back(m_layers[k].offset[v]);
             }
             v = remap[v];
         }
@@ -930,6 +947,8 @@ void SculptMesh::dropUnused() {
     if (!m_mask.empty()) m_mask = std::move(mask);
     if (!m_layer.empty()) m_layer = std::move(layer);
     if (!m_color.empty()) m_color = std::move(color);
+    if (!m_start.empty()) m_start = std::move(start);
+    for (std::size_t k = 0; k < m_layers.size(); ++k) m_layers[k].offset = std::move(lay[k]);
 }
 
 void SculptMesh::addVertexExtras(std::uint32_t a, std::uint32_t b) {
@@ -940,6 +959,8 @@ void SculptMesh::addVertexExtras(std::uint32_t a, std::uint32_t b) {
     if (!m_mask.empty()) m_mask.push_back(0.5f * (m_mask[a] + m_mask[b]));
     if (!m_layer.empty()) m_layer.push_back(0.5f * (m_layer[a] + m_layer[b]));
     if (!m_color.empty()) m_color.push_back(packColor((unpackColor(m_color[a]) + unpackColor(m_color[b])) * 0.5f));
+    for (SculptLayer& l : m_layers) l.offset.push_back((l.offset[a] + l.offset[b]) * 0.5f);
+    if (!m_start.empty()) m_start.push_back((m_start[a] + m_start[b]) * 0.5f);
 }
 
 std::vector<SculptMesh::Image> SculptMesh::images(const Vec3& centre, const SculptSettings& s, float R) const {
@@ -1189,6 +1210,7 @@ void SculptMesh::dab(const Vec3& centre, const SculptSettings& s, const Vec3& di
 
 void SculptMesh::beginGrab(const Vec3& centre, const SculptSettings& s) {
     m_grab.clear();
+    if (m_record >= 0) m_start = m_p;
     const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
     m_grabImages = images(centre, s, R);
     if (m_grabImages.size() > 255) m_grabImages.resize(255);
@@ -1371,6 +1393,7 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
     MeshData out;
     out.vertices.reserve(V + V / 4);
     out.indices.assign(T * 3, 0);
+    std::vector<std::vector<Vec3>> outLayers(m_layers.size());
     std::vector<std::pair<Vec3, std::uint32_t>> clusters;
     for (std::size_t v = 0; v < V; ++v) {
         clusters.clear();
@@ -1390,6 +1413,7 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
                 out_i = static_cast<std::uint32_t>(out.vertices.size());
                 out.vertices.push_back({m_p[v] - body.offset, n, held(static_cast<std::uint32_t>(v)), m_color.empty() ? 0u : m_color[v]});
                 clusters.emplace_back(n, out_i);
+                for (std::size_t li = 0; li < m_layers.size(); ++li) outLayers[li].push_back(m_layers[li].offset[v]);
             }
             const auto& t = m_t[g];
             const int j = t[0] == v ? 0 : t[1] == v ? 1 : 2;
@@ -1398,6 +1422,9 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
     }
     if (featureEdges) out.computeFeatureEdges(40.0f, m_size * 0.006f, 75.0f); // fine sculpted detail: only its sharpest creases
     if (m_group.size() == m_t.size()) out.groups = m_group;
+    out.layers = m_layers;
+    for (std::size_t k = 0; k < m_layers.size(); ++k) out.layers[k].offset = std::move(outLayers[k]);
+    out.recordLayer = m_record;
     body.mesh = std::move(out);
     body.kind = "mesh";
     body.params.clear();
@@ -1494,6 +1521,11 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
     w.m_mirrorX = m_mirrorX;
     w.m_centre = m_centre;
     w.m_base = m_base;
+    w.m_record = m_record;
+    for (const SculptLayer& l : m_layers) {
+        w.m_layers.push_back(l);
+        w.m_layers.back().offset.clear();
+    }
     constexpr std::uint32_t kNone = 0xFFFFFFFFu;
     std::vector<std::uint32_t> toWindow(m_p.size(), kNone);
     std::vector<char> in(m_t.size(), 0);
@@ -1518,6 +1550,8 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
                 w.m_from.push_back(v);
                 if (!m_mask.empty()) w.m_mask.push_back(m_mask[v]);
                 if (!m_color.empty()) w.m_color.push_back(m_color[v]);
+                if (!m_start.empty()) w.m_start.push_back(m_start[v]);
+                for (std::size_t k = 0; k < m_layers.size(); ++k) w.m_layers[k].offset.push_back(m_layers[k].offset[v]);
             }
             wt[static_cast<std::size_t>(c)] = toWindow[v];
         }
@@ -1550,11 +1584,16 @@ void SculptMesh::stitch(const SculptMesh& w, const std::vector<std::uint32_t>& t
             m_p[w.m_from[i]] = w.m_p[i];
             if (!m_mask.empty()) m_mask[w.m_from[i]] = w.m_mask[i];
             if (!m_color.empty()) m_color[w.m_from[i]] = w.m_color[i];
+            if (!m_start.empty() && i < w.m_start.size()) m_start[w.m_from[i]] = w.m_start[i];
+            for (std::size_t k = 0; k < m_layers.size() && k < w.m_layers.size(); ++k) m_layers[k].offset[w.m_from[i]] = w.m_layers[k].offset[i];
         } else {
             toMesh[i] = static_cast<std::uint32_t>(m_p.size());
             m_p.push_back(w.m_p[i]);
             if (!m_mask.empty()) m_mask.push_back(w.m_mask[i]);
             if (!m_color.empty()) m_color.push_back(w.m_color[i]);
+            if (!m_start.empty()) m_start.push_back(i < w.m_start.size() ? w.m_start[i] : w.m_p[i]);
+            for (std::size_t k = 0; k < m_layers.size(); ++k)
+                m_layers[k].offset.push_back(k < w.m_layers.size() && i < w.m_layers[k].offset.size() ? w.m_layers[k].offset[i] : Vec3{});
         }
     }
     std::vector<char> gone(m_t.size(), 0);
@@ -1576,6 +1615,14 @@ void SculptMesh::stitch(const SculptMesh& w, const std::vector<std::uint32_t>& t
     updateNormals();
 }
 
+void SculptMesh::commitLayers() {
+    if (m_record < 0 || m_record >= static_cast<int>(m_layers.size()) || m_start.size() != m_p.size()) return;
+    SculptLayer& l = m_layers[static_cast<std::size_t>(m_record)];
+    const float k = 1.0f / std::max(l.strength, 0.01f); // what the stroke did, at the layer's full strength
+    for (std::size_t v = 0; v < m_p.size(); ++v) l.offset[v] += (m_p[v] - m_start[v]) * k;
+    m_start = m_p;
+}
+
 void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta) {
     if (points.empty()) return;
     SculptMesh sm(body);
@@ -1585,6 +1632,7 @@ void sculptStroke(Body& body, const std::vector<Vec3>& points, const SculptSetti
 void sculptStroke(Body& body, SculptMesh& sm, const std::vector<Vec3>& points, const SculptSettings& s, const Vec3& grabDelta) {
     if (points.empty() || sm.empty()) return;
     sm.stroke(points, s, grabDelta);
+    sm.commitLayers();
     sm.writeTo(body, true);
 }
 
@@ -2014,6 +2062,102 @@ bool maskGroup(Body& body, std::uint32_t group, bool invert) {
     if (!any) return false;
     for (std::size_t i = 0; i < m.vertices.size(); ++i) m.vertices[i].mask = (idIn[w.id[i]] != 0) != invert ? 1.0f : 0.0f;
     keepMesh(body);
+    return true;
+}
+
+namespace {
+
+// The layer named (any case), or -1; layers that no longer fit the mesh are dropped first.
+int layerIndex(Body& body, const std::string& name) {
+    MeshData& m = body.mesh;
+    if (!m.layers.empty() && !m.hasLayers()) m.layers.clear(), m.recordLayer = -1; // an edit that couldn't keep them
+    for (std::size_t k = 0; k < m.layers.size(); ++k)
+        if (lower(m.layers[k].name) == lower(name)) return static_cast<int>(k);
+    return -1;
+}
+
+// Moves the surface by `factor` times a layer's offsets, normals made again.
+void shiftByLayer(Body& body, std::size_t k, float factor) {
+    MeshData& m = body.mesh;
+    for (std::size_t v = 0; v < m.vertices.size(); ++v) m.vertices[v].position += m.layers[k].offset[v] * factor;
+    SculptMesh sm(body);
+    if (!sm.empty()) sm.writeTo(body, true);
+}
+
+bool failWith(std::string* why, const std::string& text) {
+    if (why) *why = text;
+    return false;
+}
+
+bool noLayer(const std::string& name, std::string* why) {
+    if (why) *why = "No layer named " + name + " (LAYER LIST shows them)";
+    return false;
+}
+
+} // namespace
+
+bool layerAdd(Body& body, const std::string& name, bool record, std::string* why) {
+    if (name.empty()) return failWith(why, "A layer needs a name");
+    if (layerIndex(body, name) >= 0) return failWith(why, "There is already a layer named " + name);
+    keepMesh(body);
+    SculptLayer l;
+    l.name = name;
+    l.offset.assign(body.mesh.vertices.size(), Vec3{});
+    body.mesh.layers.push_back(std::move(l));
+    if (record) body.mesh.recordLayer = static_cast<int>(body.mesh.layers.size()) - 1;
+    return true;
+}
+
+bool layerRecord(Body& body, const std::string& name, std::string* why) {
+    if (name.empty()) {
+        body.mesh.recordLayer = -1;
+        return true;
+    }
+    const int k = layerIndex(body, name);
+    if (k < 0) return noLayer(name, why);
+    if (!(body.mesh.layers[static_cast<std::size_t>(k)].strength > 0.01f)) return failWith(why, name + " is off: turn it on to record into it");
+    body.mesh.recordLayer = k;
+    return true;
+}
+
+bool layerStrength(Body& body, const std::string& name, float strength, std::string* why) {
+    const int k = layerIndex(body, name);
+    if (k < 0) return noLayer(name, why);
+    SculptLayer& l = body.mesh.layers[static_cast<std::size_t>(k)];
+    if (!std::isfinite(strength)) return failWith(why, "The strength is a number (1: as sculpted, 0: off)");
+    const float old = l.strength;
+    if (strength > 0.0f) l.saved = strength;
+    else if (old > 0.0f) l.saved = old;
+    l.strength = strength;
+    if (strength <= 0.01f && body.mesh.recordLayer == k) body.mesh.recordLayer = -1; // an off layer can't record
+    shiftByLayer(body, static_cast<std::size_t>(k), strength - old);
+    return true;
+}
+
+bool layerDelete(Body& body, const std::string& name, std::string* why) {
+    const int k = layerIndex(body, name);
+    if (k < 0) return noLayer(name, why);
+    const float s = body.mesh.layers[static_cast<std::size_t>(k)].strength;
+    shiftByLayer(body, static_cast<std::size_t>(k), -s);
+    MeshData& m = body.mesh;
+    m.layers.erase(m.layers.begin() + k);
+    if (m.recordLayer == k) m.recordLayer = -1;
+    else if (m.recordLayer > k) --m.recordLayer;
+    return true;
+}
+
+bool layerBake(Body& body, const std::string& name, std::string* why) {
+    MeshData& m = body.mesh;
+    if (name.empty()) {
+        m.layers.clear();
+        m.recordLayer = -1;
+        return true;
+    }
+    const int k = layerIndex(body, name);
+    if (k < 0) return noLayer(name, why);
+    m.layers.erase(m.layers.begin() + k);
+    if (m.recordLayer == k) m.recordLayer = -1;
+    else if (m.recordLayer > k) --m.recordLayer;
     return true;
 }
 
