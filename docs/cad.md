@@ -571,6 +571,8 @@ DRAFT "Block 1" ANGLE 5
 ```text
 EDGES [body]
 FILLET [body] RADIUS r EDGES ALL|CONVEX|CONCAVE|VERTICAL|HORIZONTAL|TOP|BOTTOM|n...|NEAR x,y,z...
+FILLET [body] RADIUS r TO r2 EDGES ... [START x,y,z]      a variable fillet
+FILLET [body] FULLROUND x,y,z                             a full round on the face at the point
 CHAMFER [body] DISTANCE d [EDGES ...]
 ```
 
@@ -590,6 +592,18 @@ rounded outside edges meet, the corner becomes a ball, as in a CAD system. A cha
 face back by `d`. Without `EDGES`, CHAMFER takes the outside edges.
 
 On a 40 × 30 × 20 box with R3 on every edge, the volume is within 0.03% of the exact rounded box.
+
+
+**Variable fillets:** `RADIUS r TO r2` runs the radius from `r` to `r2` along each chosen
+edge, from its end nearest `START` (its first end without one). Open edges only.
+
+**Full rounds:** `FULLROUND x,y,z` rounds the face at the point, between two outside edges,
+into one half circle: both edges at half the face's width.
+
+```text
+BOX 60 6 30
+FILLET "Block 1" FULLROUND 0,0,30
+```
 
 ## Fillet (rolling ball on every edge)
 

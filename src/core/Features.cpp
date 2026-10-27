@@ -1428,12 +1428,17 @@ namespace {
 
 // The cutter (outside edges) or filler (inside corners) along one chain: the section at
 // each point comes from the two faces' normals there.
-MeshData edgeTool(const EdgeChain& c, float r, bool chamfer) {
+MeshData edgeTool(const EdgeChain& c, float r0, float r1, bool chamfer) {
     const int arc = chamfer ? 0 : 12;
-    const float eps = r * 0.05f;
+    const float eps = std::max(r0, r1) * 0.05f;
     const std::size_t n = c.pts.size();
+    // The size along the chain: r0 at its start to r1 at its end, by length (a variable fillet).
+    std::vector<float> along(n, 0.0f);
+    for (std::size_t i = 1; i < n; ++i) along[i] = along[i - 1] + length(c.pts[i] - c.pts[i - 1]);
+    const float total = along[n - 1];
     std::vector<std::vector<Vec3>> rings;
     for (std::size_t i = 0; i < n; ++i) {
+        const float r = total > 0 ? r0 + (r1 - r0) * along[i] / total : r0;
         Vec3 P = c.pts[i];
         const Vec3 nL = c.nL[i], nR = c.nR[i];
         if (!c.closed && c.convex && (i == 0 || i + 1 == n)) { // a hair past the ends, so the cut is clean (a filler stays flush)
@@ -1467,11 +1472,11 @@ MeshData edgeTool(const EdgeChain& c, float r, bool chamfer) {
     RawMesh mesh;
     const std::size_t m = rings[0].size();
     for (const auto& ring : rings) mesh.p.insert(mesh.p.end(), ring.begin(), ring.end());
-    auto at = [&](std::size_t r0, std::size_t j) { return static_cast<std::uint32_t>((r0 % n) * m + j % m); };
-    for (std::size_t r0 = 0; r0 < (c.closed ? n : n - 1); ++r0)
+    auto at = [&](std::size_t ri, std::size_t j) { return static_cast<std::uint32_t>((ri % n) * m + j % m); };
+    for (std::size_t ri = 0; ri < (c.closed ? n : n - 1); ++ri)
         for (std::size_t j = 0; j < m; ++j) {
-            mesh.tri(at(r0, j), at(r0, j + 1), at(r0 + 1, j + 1));
-            mesh.tri(at(r0, j), at(r0 + 1, j + 1), at(r0 + 1, j));
+            mesh.tri(at(ri, j), at(ri, j + 1), at(ri + 1, j + 1));
+            mesh.tri(at(ri, j), at(ri + 1, j + 1), at(ri + 1, j));
         }
     if (!c.closed) {
         const std::vector<std::uint32_t> t0 = capTriangles(rings.front()), t1 = capTriangles(rings.back());
@@ -1527,12 +1532,33 @@ std::optional<MeshData> cornerTool(const Vec3& V, const Vec3 d[3], const std::ve
 
 } // namespace
 
-bool roundEdges(Body& body, const std::vector<EdgeChain>& chains, const std::vector<int>& chosen, float size, bool chamfer, std::string* error) {
+bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::vector<int>& chosen, float size, bool chamfer, std::string* error,
+                float sizeEnd, const std::optional<Vec3>& start) {
     auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
     };
     if (!(size > 0)) return fail("The size must be positive");
+    const bool variable = sizeEnd > 0 && std::fabs(sizeEnd - size) > 1e-6f;
+    if (variable && chamfer) return fail("A chamfer has one size");
+    // A variable size runs from `size` at the end of each chain nearest `start` (its first
+    // point without one) to `sizeEnd` at the other.
+    std::vector<EdgeChain> chains = chainsIn;
+    if (variable && start)
+        for (int k : chosen)
+            if (k >= 0 && k < static_cast<int>(chains.size())) {
+                EdgeChain& c = chains[static_cast<std::size_t>(k)];
+                if (!c.closed && c.pts.size() > 1 && length(c.pts.back() - *start) < length(c.pts.front() - *start)) {
+                    std::reverse(c.pts.begin(), c.pts.end());
+                    std::reverse(c.nL.begin(), c.nL.end());
+                    std::reverse(c.nR.begin(), c.nR.end());
+                    std::swap(c.nL, c.nR); // walking the other way swaps left and right
+                }
+            }
+    if (variable)
+        for (int k : chosen)
+            if (k >= 0 && k < static_cast<int>(chains.size()) && chains[static_cast<std::size_t>(k)].closed)
+                return fail("A variable fillet needs open edges: a closed loop has no start or end");
     if (chosen.empty()) return fail("No edges chosen (EDGES lists them)");
     // Work in world space.
     if (body.offset.x != 0 || body.offset.y != 0 || body.offset.z != 0 || body.kind != "mesh" || body.scale != 1.0f) {
@@ -1549,14 +1575,14 @@ bool roundEdges(Body& body, const std::vector<EdgeChain>& chains, const std::vec
         if (k < 0 || k >= static_cast<int>(chains.size())) continue;
         const EdgeChain& c = chains[static_cast<std::size_t>(k)];
         if (c.pts.size() < 2) continue;
-        const Body tool = featureBody("edge tool", edgeTool(c, size, chamfer), {});
+        const Body tool = featureBody("edge tool", edgeTool(c, size, variable ? sizeEnd : size, chamfer), {});
         std::string e;
         if (!bodyBoolean(body, tool, c.convex ? BooleanOp::Subtract : BooleanOp::Union, &e))
             return fail("Edge " + std::to_string(k + 1) + ": " + e);
         if (wasClosed && openEdgeCount(body.mesh) > 0) return fail("Edge " + std::to_string(k + 1) + " came out with holes");
     }
-    // Corners where three rounded outside edges meet become balls.
-    if (!chamfer) {
+    // Corners where three rounded outside edges meet become balls (one size only).
+    if (!chamfer && !variable) {
         struct End { Vec3 p, d, nL, nR; };
         std::vector<End> ends;
         for (int k : chosen) {

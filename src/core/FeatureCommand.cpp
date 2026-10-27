@@ -1053,7 +1053,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         const bool chamfer = cmd == "CHAMFER";
         auto isKey = [](const std::string& w) {
             return w == "radius" || w == "r" || w == "convex" || w == "concave" || w == "both" || w == "voxel" || w == "edges" || w == "edge" ||
-                   w == "distance" || w == "d" || w == "size";
+                   w == "distance" || w == "d" || w == "size" || w == "to" || w == "start" || w == "fullround";
         };
         std::size_t i = 0;
         const std::string name = leadingName(a, quoted, i, isKey);
@@ -1063,8 +1063,25 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         RoundOptions o;
         bool radiusGiven = false, edges = chamfer;
         EdgeFilter ef;
+        float radiusEnd = -1;              // TO r2: a variable fillet
+        std::optional<Vec3> start, fullRound; // START x,y,z; FULLROUND x,y,z
         for (; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
+            if (k == "to") {
+                const auto v = i + 1 < a.size() ? parseLength(a[++i]) : std::nullopt;
+                if (!v || !(*v > 0)) return out.fail("TO needs the radius at the edge's other end");
+                radiusEnd = static_cast<float>(*v);
+                edges = true;
+                continue;
+            }
+            if (k == "start" || k == "fullround") {
+                const auto v = i + 1 < a.size() ? parseVec3(a[++i]) : std::nullopt;
+                if (!v) return out.fail(toUpper(k) + " needs a point x,y,z");
+                (k == "start" ? start : fullRound) = *v;
+                edges = true;
+                if (k == "fullround") radiusGiven = true; // the wall sets it
+                continue;
+            }
             if (k == "edges" || k == "edge") {
                 edges = true;
                 for (++i; i < a.size(); ++i) {
@@ -1114,12 +1131,48 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             const MeshData world = worldMesh(body);
             const auto chains = edgeChains(world);
             if (chamfer && ef.numbers.empty() && ef.near.empty() && !ef.concave) ef.convex = true; // a chamfer defaults to the outside edges
-            const auto chosen = selectEdges(chains, world, ef);
+            std::vector<int> chosen;
+            if (fullRound) {
+                if (chamfer) return out.fail("FULLROUND is a fillet");
+                // The two outside edges either side of the face at the point; the radius half the
+                // wall between them, so the two rounds meet in one half circle.
+                auto nearest = [&](const EdgeChain& c, Vec3& at) {
+                    float best = 1e30f;
+                    const std::size_t segs = c.closed ? c.pts.size() : c.pts.size() - 1;
+                    for (std::size_t k2 = 0; k2 < segs; ++k2) {
+                        const Vec3 p0 = c.pts[k2], p1 = c.pts[(k2 + 1) % c.pts.size()], d = p1 - p0;
+                        const float l2 = dot(d, d);
+                        const float t = l2 > 0 ? std::clamp(dot(*fullRound - p0, d) / l2, 0.0f, 1.0f) : 0.0f;
+                        const Vec3 q = p0 + d * t;
+                        if (length(q - *fullRound) < best) best = length(q - *fullRound), at = q;
+                    }
+                    return best;
+                };
+                int c1 = -1, c2 = -1;
+                Vec3 q1{}, q2{};
+                float d1 = 1e30f, d2 = 1e30f;
+                for (std::size_t k2 = 0; k2 < chains.size(); ++k2) {
+                    if (!chains[k2].convex || chains[k2].pts.size() < 2) continue;
+                    Vec3 q;
+                    const float dd = nearest(chains[k2], q);
+                    if (dd < d1) c2 = c1, q2 = q1, d2 = d1, c1 = static_cast<int>(k2), q1 = q, d1 = dd;
+                    else if (dd < d2) c2 = static_cast<int>(k2), q2 = q, d2 = dd;
+                }
+                if (c1 < 0 || c2 < 0) return out.fail("FULLROUND needs a face between two outside edges at the point");
+                const Vec3 across = q2 - q1;
+                // They must lie either side of the point.
+                if (dot(*fullRound - q1, across) <= 0 || dot(*fullRound - q2, across) >= 0 || length(*fullRound - (q1 + q2) * 0.5f) > length(across))
+                    return out.fail("FULLROUND: the point must be on the face between two edges");
+                o.radius = 0.4995f * length(across);
+                chosen = {c1, c2};
+            } else {
+                chosen = selectEdges(chains, world, ef);
+            }
             if (chosen.empty()) return out.fail("No edges match (EDGES lists " + body.name + "'s)");
             const double before = meshVolume(world);
             doc.scene.pushUndo(cmd + " " + body.name);
             std::string e;
-            if (!roundEdges(body, chains, chosen, o.radius, chamfer, &e)) {
+            if (!roundEdges(body, chains, chosen, o.radius, chamfer, &e, radiusEnd, start)) {
                 doc.scene.undo();
                 return out.fail(std::string("Cannot ") + (chamfer ? "chamfer " : "round ") + doc.scene.bodies()[static_cast<std::size_t>(bi)].name + ": " + e);
             }
@@ -1128,7 +1181,8 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             std::string list;
             for (int k : chosen) list += (list.empty() ? "" : ", ") + std::to_string(k + 1);
             out.say(std::string(chamfer ? "Chamfered " : "Rounded ") + std::to_string(chosen.size()) + (chosen.size() == 1 ? " edge" : " edges") + " (" + list +
-                    ") of " + body.name + (chamfer ? " by " : " with R") + lengthText(o.radius) + ": " + closedText(body.mesh) + ", volume " +
+                    ") of " + body.name + (chamfer ? " by " : " with R") + lengthText(o.radius) +
+                    (radiusEnd > 0 ? " to R" + lengthText(radiusEnd) : std::string()) + (fullRound ? " (a full round)" : "") + ": " + closedText(body.mesh) + ", volume " +
                     fmt3("%.1f", before / 1000.0) + " -> " + fmt3("%.1f", meshVolume(body.mesh) / 1000.0) + " cm3");
             return out;
         }

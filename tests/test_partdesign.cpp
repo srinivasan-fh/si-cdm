@@ -765,3 +765,28 @@ TEST_CASE("FEA: a cantilever's deflection and bending stress match beam theory")
     CHECK(!run(d, "FEA \"Block 1\" LOAD FACE 100,0,5 FORCE 0,0,-100").ok);
     CHECK(!run(d, "FEA \"Block 1\" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 MATERIAL unobtainium").ok);
 }
+
+TEST_CASE("Variable-radius fillets and full rounds") {
+    // R2 to R8 along a 60 mm edge: the corner removed is (1 - pi/4) r^2, integrated along it.
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 20 @0,0,0").ok);
+    REQUIRE(run(d, "FILLET \"Block 1\" RADIUS 2 TO 8 EDGES NEAR 0,-20,20 START -30,-20,20").ok);
+    const double removed = (1 - 3.14159265 / 4) * 60 * (4 + 16 + 64) / 3.0;
+    CHECK_NEAR(volumeOf(last(d)), 48000 - removed, 6.0);
+    CHECK(openEdgeCount(last(d).mesh) == 0);
+    // The small end where START is: the face at x = -30 keeps nearly all its corner.
+    float zAtMinX = -1e9f;
+    for (const Vertex& v : worldMesh(last(d)).vertices)
+        if (std::fabs(v.position.x + 30) < 1e-3f && std::fabs(v.position.y + 20) < 1e-3f) zAtMinX = std::max(zAtMinX, v.position.z);
+    CHECK_NEAR(zAtMinX, 18.0f, 0.05);
+    CHECK(!run(d, "CHAMFER \"Block 1\" DISTANCE 1 TO 3 EDGES 5").ok); // a chamfer has one size
+
+    // A full round on a 6 mm wall: both top edges at R3, meeting in a half circle.
+    Document w;
+    REQUIRE(run(w, "BOX 60 6 30 @0,0,0").ok);
+    REQUIRE(run(w, "FILLET \"Block 1\" FULLROUND 0,0,30").ok);
+    CHECK_NEAR(volumeOf(last(w)), 60 * 6 * 30 - 2 * (1 - 3.14159265 / 4) * 9 * 60, 4.0);
+    CHECK(openEdgeCount(last(w).mesh) == 0);
+    CHECK_NEAR(boundsOf(last(w)).max.z, 30.0f, 0.02);
+    CHECK(!run(w, "FILLET \"Block 1\" FULLROUND 500,0,0").ok);
+}

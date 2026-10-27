@@ -118,7 +118,7 @@ std::vector<int> selectEdges(const std::vector<EdgeChain>& chains, const MeshDat
 // a cutter swept along each chain is cut away (outside edges) or joined on (inside
 // corners). Where several rounded edges meet, the corner is mitred, not blended.
 bool roundEdges(Body& body, const std::vector<EdgeChain>& chains, const std::vector<int>& chosen, float size, bool chamfer,
-                std::string* error = nullptr);
+                std::string* error = nullptr, float sizeEnd = -1, const std::optional<Vec3>& start = std::nullopt);
 
 struct SolidMass {
     double volume = 0, area = 0, mass = 0; // mm^3, mm^2, g
