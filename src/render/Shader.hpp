@@ -3,7 +3,9 @@
 #include "core/Math.hpp"
 #include "render/GL.hpp"
 
+#include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace sicdm {
 
@@ -30,9 +32,11 @@ public:
     void set(const char* name, const Mat4& m) const noexcept;
 
 private:
-    GLint location(const char* name) const noexcept { return glGetUniformLocation(m_program, name); }
+    // Looked up once per name (thousands of parts set their uniforms every frame).
+    GLint location(const char* name) const noexcept;
 
     GLuint m_program = 0;
+    mutable std::unordered_map<std::string, GLint> m_locations;
 };
 
 } // namespace sicdm

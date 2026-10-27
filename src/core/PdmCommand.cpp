@@ -163,7 +163,6 @@ CommandOutput runPdmCommand(Document& doc, const std::string& cmd, const std::ve
             if (i + 1 >= a.size()) return out.fail("PROPERTY [body] DELETE key");
             const std::string key = upperOf(a[i + 1]);
             if (!props->erase(key)) return out.fail(who + " has no property " + key);
-            doc.scene.touchBodies();
             doc.dirty = true;
             out.say(who + ": " + key + " removed");
             return out;
@@ -178,7 +177,6 @@ CommandOutput runPdmCommand(Document& doc, const std::string& cmd, const std::ve
         }
         const std::string value = joined(a, i + 1);
         (*props)[key] = value;
-        doc.scene.touchBodies();
         doc.dirty = true;
         out.say(who + ": " + key + " = " + value);
         return out;

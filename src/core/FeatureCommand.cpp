@@ -21,6 +21,7 @@
 #include "core/Units.hpp"
 
 #include <algorithm>
+#include <unordered_set>
 #include <map>
 #include <tuple>
 #include <array>
@@ -1047,9 +1048,16 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             return out;
         }
         int next = 2;
+        std::unordered_set<std::string> taken; // the names in use (a set: thousands of copies stay quick)
+        for (const Body& b : doc.scene.bodies()) taken.insert(lower(b.name));
+        auto freeName = [&]() {
+            while (taken.count(lower(src.name + " (" + std::to_string(next) + ")"))) ++next;
+            std::string n = src.name + " (" + std::to_string(next++) + ")";
+            taken.insert(lower(n));
+            return n;
+        };
         for (std::size_t c = 0; c < copies.size(); ++c) {
-            while (bodyNamed(doc, src.name + " (" + std::to_string(next) + ")") >= 0) ++next; // names stay unique
-            Body b = featureBody(src.name + " (" + std::to_string(next++) + ")", std::move(copies[c]), src.color);
+            Body b = featureBody(freeName(), std::move(copies[c]), src.color);
             if (!exactWorld.empty() && c < copyMoves.size()) keepExactGeometry(b, movedSurfaces(copyMoves[c]));
             b.component = src.component;
             b.assembly = src.assembly;
@@ -1059,9 +1067,8 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         // normals stay; a shifted copy keeps the very same mesh.
         for (const Mat4& w : placements) {
             if (cmd != "PATTERN") break;
-            while (bodyNamed(doc, src.name + " (" + std::to_string(next) + ")") >= 0) ++next;
             Body b = src;
-            b.name = src.name + " (" + std::to_string(next++) + ")";
+            b.name = freeName();
             b.attachedTo.clear();
             const Vec3 shift = w.transformPoint(src.offset) - src.offset;
             const bool turned = std::fabs(w.m[0][0] - 1) > 1e-7f || std::fabs(w.m[1][1] - 1) > 1e-7f || std::fabs(w.m[2][2] - 1) > 1e-7f;

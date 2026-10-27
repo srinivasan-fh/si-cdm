@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -153,7 +154,9 @@ public:
     const Sketch& sketch() const noexcept { return m_sketch; }
 
     Body& add(Body body) {
+        const bool frozen = m_revision == m_frozenRevision;
         m_revision = nextRevision();
+        if (frozen) m_frozenRevision = m_revision; // the other bodies' meshes are as they were
         return m_bodies.emplace_back(std::move(body));
     }
     void remove(std::size_t index); // bodies attached to it are let go
@@ -241,9 +244,28 @@ private:
         Vec3 color;
         bool visible = true;
     };
+    // Undo keeps the bodies without their meshes, and each mesh as a shared, unchanging copy:
+    // a mesh that is the same as one already kept (the body wasn't reshaped since, or is
+    // one of many equal pattern copies) is kept once, so an edit of a big model copies only
+    // what changed.
+    using SharedMesh = std::shared_ptr<const MeshData>;
+    struct FrozenBodies {
+        std::vector<Body> bodies; // meshes left empty
+        std::vector<SharedMesh> meshes;
+    };
+    FrozenBodies freezeBodies();
+    void thawBodies(FrozenBodies frozen); // makes them the scene's bodies, at a new revision
+    struct FrozenMesh {
+        SharedMesh mesh;
+        const void* vertices = nullptr; // the body's own buffers then: while they and the
+        const void* indices = nullptr;  // revision are unchanged, so is the mesh
+        std::size_t vertexCount = 0, indexCount = 0;
+    };
+    std::unordered_map<std::string, FrozenMesh> m_frozenByName; // the last freeze's meshes
+    std::uint64_t m_frozenRevision = 0;
     struct Snapshot {
         std::string label;
-        std::vector<Body> bodies;
+        FrozenBodies bodies;
         std::vector<Motion> motions;
         bool sealed = false;
         std::uint64_t before = 0;        // revision when it was taken
@@ -260,7 +282,7 @@ private:
     std::uint64_t m_undoPushes = 0;
     struct Redo {
         std::string label;
-        std::vector<Body> bodies;   // as the edit had left them
+        FrozenBodies bodies;        // as the edit had left them
         std::vector<Motion> motions;
         std::uint64_t at = 0;       // revision the undo left
         std::uint64_t from = 0;     // revision before the undo (what the redo brings back)

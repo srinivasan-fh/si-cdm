@@ -271,3 +271,35 @@ TEST_CASE("Performance: big meshes are saved as binary once per shape, and read 
     CHECK((*j2)["reader_version"].asInt() == 1);
     std::filesystem::remove(path);
 }
+
+TEST_CASE("Performance: undo keeps unchanged meshes once, so a big model keeps its whole undo history") {
+    Document d;
+    REQUIRE(run(d, "SPHERE 20 @0,0,0").ok);
+    for (int i = 0; i < 3; ++i) REQUIRE(run(d, "SUBDIVIDE \"Sphere 1\"").ok);
+    REQUIRE(run(d, "PATTERN \"Sphere 1\" LINEAR 32 SPACING 50").ok);
+    std::size_t vertices = 0;
+    for (const Body& b : d.scene.bodies()) vertices += b.mesh.vertices.size();
+    REQUIRE(vertices > 2000000); // more than the undo history's budget, kept as copies
+    const std::uint64_t shape = meshContentKey(d.scene.bodies()[0].mesh);
+    // Ten moves of different parts: all ten undo, back to where each was.
+    for (int i = 0; i < 10; ++i) REQUIRE(run(d, "MOVE 0,5,0 \"Sphere 1 (" + std::to_string(i + 2) + ")\"").ok);
+    for (int i = 0; i < 10; ++i) REQUIRE(run(d, "UNDO").ok);
+    for (const Body& b : d.scene.bodies()) CHECK(std::fabs(b.offset.y) < 1e-6f);
+    // A reshaped part comes back as it was, the others untouched.
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" INFLATE AT 0,0,40 RADIUS 8").ok);
+    CHECK(meshContentKey(d.scene.bodies()[0].mesh) != shape);
+    REQUIRE(run(d, "MOVE 5,0,0 \"Sphere 1 (3)\"").ok);
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(meshContentKey(d.scene.bodies()[0].mesh) == shape);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(meshContentKey(d.scene.bodies()[0].mesh) != shape);
+    // Thousands of pattern copies get their names quickly.
+    Document e;
+    REQUIRE(run(e, "CYLINDER 3 10 @0,0,0").ok);
+    const auto t0 = std::chrono::steady_clock::now();
+    REQUIRE(run(e, "PATTERN \"Cylinder 1\" LINEAR 60 SPACING 10 ROWS 60 SPACING2 10 DIR2 0,1,0").ok);
+    CHECK(e.scene.bodies().size() == 3600);
+    CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 20.0); // was quadratic
+    CHECK(e.scene.bodies().back().name == "Cylinder 1 (3600)");
+}

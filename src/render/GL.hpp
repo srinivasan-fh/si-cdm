@@ -39,6 +39,7 @@
     X(PFNGLDELETESHADERPROC, glDeleteShader) \
     X(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays) \
     X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray) \
+    X(PFNGLDISABLEVERTEXATTRIBARRAYPROC, glDisableVertexAttribArray) \
     X(PFNGLFRAMEBUFFERTEXTURE2DPROC, glFramebufferTexture2D) \
     X(PFNGLGENBUFFERSPROC, glGenBuffers) \
     X(PFNGLGENFRAMEBUFFERSPROC, glGenFramebuffers) \
@@ -60,7 +61,10 @@
     X(PFNGLUNIFORM4FPROC, glUniform4f) \
     X(PFNGLUNIFORMMATRIX4FVPROC, glUniformMatrix4fv) \
     X(PFNGLUSEPROGRAMPROC, glUseProgram) \
-    X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer)
+    X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer) \
+    X(PFNGLVERTEXATTRIBDIVISORPROC, glVertexAttribDivisor) \
+    X(PFNGLDRAWELEMENTSINSTANCEDPROC, glDrawElementsInstanced) \
+    X(PFNGLDRAWARRAYSINSTANCEDPROC, glDrawArraysInstanced)
 // Pointers are named p_glX (token pasting keeps the glX macros below out of the X-macros).
 namespace sicdm::gl {
 #  define SICDM_GL_DECLARE(type, name) extern type p_##name;
@@ -84,6 +88,7 @@ SICDM_GL_FUNCTIONS(SICDM_GL_DECLARE)
 #  define glDeleteShader sicdm::gl::p_glDeleteShader
 #  define glDeleteVertexArrays sicdm::gl::p_glDeleteVertexArrays
 #  define glEnableVertexAttribArray sicdm::gl::p_glEnableVertexAttribArray
+#  define glDisableVertexAttribArray sicdm::gl::p_glDisableVertexAttribArray
 #  define glFramebufferTexture2D sicdm::gl::p_glFramebufferTexture2D
 #  define glGenBuffers sicdm::gl::p_glGenBuffers
 #  define glGenFramebuffers sicdm::gl::p_glGenFramebuffers
@@ -105,6 +110,9 @@ SICDM_GL_FUNCTIONS(SICDM_GL_DECLARE)
 #  define glUniformMatrix4fv sicdm::gl::p_glUniformMatrix4fv
 #  define glUseProgram sicdm::gl::p_glUseProgram
 #  define glVertexAttribPointer sicdm::gl::p_glVertexAttribPointer
+#  define glVertexAttribDivisor sicdm::gl::p_glVertexAttribDivisor
+#  define glDrawElementsInstanced sicdm::gl::p_glDrawElementsInstanced
+#  define glDrawArraysInstanced sicdm::gl::p_glDrawArraysInstanced
 #endif
 
 namespace sicdm {

@@ -736,6 +736,9 @@ centre and opacity in the Model panel, or drag it with the Move tool.
 | Picking | A bounding volume hierarchy per body, built once the model holds still | Under 0.01 ms per click, was milliseconds |
 | Patterns | `PATTERN` copies keep their kind and their exact geometry, and share the mesh | 24 copies of a 440,000-triangle part: 0.24 s, was about 2 minutes |
 | Project files | Large meshes are stored as binary, once per distinct shape | 25 such parts: 18 MB, saved in 0.9 s and opened in 0.4 s (was 650 MB) |
+| Many parts | Copies of one shape are drawn together, one instanced draw call per shape. Parts outside the view are skipped. Small shapes used many times also get coarser copies | 10,000 parts (5 M triangles), software GL: 983 ms → 422 ms per frame |
+| Undo | Undo steps keep each mesh once and share it while it is unchanged, so an edit no longer copies the whole model. A big model keeps its full undo history | 1.7 M triangles: a move takes about 0 ms (was a full copy of the model on every edit). 10,000 parts: a new body 84 → 27 ms, UNDO 534 → 0.1 ms |
+| Patterns of thousands | Names for copies are found in a set | 10,000 copies: 0.24 s, was 12.3 s |
 
 ## AI agents (MCP)
 

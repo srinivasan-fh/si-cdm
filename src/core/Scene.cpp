@@ -1,4 +1,6 @@
 #include "core/Scene.hpp"
+#include <cstring>
+#include <unordered_set>
 
 #include <unordered_map>
 
@@ -132,11 +134,100 @@ void Scene::pushUndo(std::string label) {
     Snapshot s;
     s.id = m_undoPushes;
     s.label = std::move(label);
-    s.bodies = m_bodies;
+    s.bodies = freezeBodies();
     s.motions = m_motions;
     s.before = m_revision;
     m_undo.push_back(std::move(s));
     m_redo.clear(); // a new edit: what was undone is gone for good
+}
+
+namespace {
+
+template <class T>
+bool sameBytes(const std::vector<T>& a, const std::vector<T>& b) {
+    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(T)) == 0);
+}
+
+bool sameMesh(const MeshData& a, const MeshData& b) {
+    if (!sameBytes(a.vertices, b.vertices) || !sameBytes(a.indices, b.indices) || !sameBytes(a.edgeVertices, b.edgeVertices) ||
+        !sameBytes(a.groups, b.groups) || !sameBytes(a.ids, b.ids) || !sameBytes(a.quads, b.quads) || !sameBytes(a.uvs, b.uvs) ||
+        a.recordLayer != b.recordLayer || a.layers.size() != b.layers.size())
+        return false;
+    for (std::size_t i = 0; i < a.layers.size(); ++i)
+        if (a.layers[i].name != b.layers[i].name || a.layers[i].strength != b.layers[i].strength || a.layers[i].saved != b.layers[i].saved ||
+            !sameBytes(a.layers[i].offset, b.layers[i].offset))
+            return false;
+    return true;
+}
+
+} // namespace
+
+Scene::FrozenBodies Scene::freezeBodies() {
+    FrozenBodies f;
+    f.bodies.reserve(m_bodies.size());
+    f.meshes.reserve(m_bodies.size());
+    // No shape changed since the last freeze (only moves, colours, materials...): a body
+    // whose buffers are the ones it had then has that mesh, without comparing.
+    const bool sameRevision = m_revision == m_frozenRevision;
+    std::unordered_map<std::string, FrozenMesh> byName;
+    byName.reserve(m_bodies.size());
+    std::unordered_map<std::uint64_t, SharedMesh> byContent; // equal copies (patterns) kept once
+    for (Body& b : m_bodies) {
+        SharedMesh kept;
+        if (const auto it = m_frozenByName.find(b.name); it != m_frozenByName.end()) {
+            const FrozenMesh& was = it->second;
+            const bool sameBuffers = was.vertices == b.mesh.vertices.data() && was.indices == b.mesh.indices.data() &&
+                                     was.vertexCount == b.mesh.vertices.size() && was.indexCount == b.mesh.indices.size();
+            if ((sameRevision && sameBuffers) || sameMesh(*was.mesh, b.mesh)) kept = was.mesh;
+        }
+        if (!kept) {
+            const std::uint64_t key = meshContentKey(b.mesh);
+            if (const auto it = byContent.find(key); it != byContent.end() && sameMesh(*it->second, b.mesh)) kept = it->second;
+            else byContent[key] = kept = std::make_shared<const MeshData>(b.mesh);
+        }
+        f.meshes.push_back(kept);
+        byName[b.name] = {kept, b.mesh.vertices.data(), b.mesh.indices.data(), b.mesh.vertices.size(), b.mesh.indices.size()};
+        // The body without its mesh (moved aside and back: no copy).
+        MeshData mesh = std::move(b.mesh);
+        b.mesh = MeshData{};
+        f.bodies.push_back(b);
+        b.mesh = std::move(mesh);
+    }
+    m_frozenByName = std::move(byName);
+    m_frozenRevision = m_revision;
+    return f;
+}
+
+void Scene::thawBodies(FrozenBodies f) { // (a new revision)
+    // A body whose mesh is the same as the one now in the scene keeps that one (moved, not copied).
+    std::unordered_map<std::string, std::size_t> now;
+    for (std::size_t i = 0; i < m_bodies.size(); ++i) now.emplace(m_bodies[i].name, i);
+    const bool sameRevision = m_revision == m_frozenRevision;
+    for (std::size_t i = 0; i < f.bodies.size(); ++i) {
+        const MeshData& kept = *f.meshes[i];
+        const auto it = now.find(f.bodies[i].name);
+        bool same = false;
+        if (it != now.end()) {
+            MeshData& cur = m_bodies[it->second].mesh;
+            // Known without comparing: the last freeze kept this very mesh for it, and its
+            // buffers and the revision haven't changed since.
+            const auto fz = m_frozenByName.find(f.bodies[i].name);
+            same = sameRevision && fz != m_frozenByName.end() && fz->second.mesh == f.meshes[i] && fz->second.vertices == cur.vertices.data() &&
+                   fz->second.indices == cur.indices.data() && fz->second.vertexCount == cur.vertices.size() && fz->second.indexCount == cur.indices.size();
+            same = same || sameMesh(cur, kept);
+        }
+        if (same) f.bodies[i].mesh = std::move(m_bodies[it->second].mesh);
+        else f.bodies[i].mesh = kept;
+    }
+    m_bodies = std::move(f.bodies);
+    m_revision = nextRevision();
+    // Each body's mesh is now the kept one (moved buffers or a copy): the next freeze knows it.
+    m_frozenByName.clear();
+    for (std::size_t i = 0; i < m_bodies.size(); ++i) {
+        const MeshData& m = m_bodies[i].mesh;
+        m_frozenByName[m_bodies[i].name] = {f.meshes[i], m.vertices.data(), m.indices.data(), m.vertices.size(), m.indices.size()};
+    }
+    m_frozenRevision = m_revision;
 }
 
 void Scene::pushSketchUndo(std::string label) {
@@ -238,9 +329,12 @@ void Scene::sealUndo() {
     s.motionsChanged = s.afterMotions != motionsKey(s.motions) || !sameMotionPrograms(s.motions, m_motions);
     // At most 16 steps and about 2 million vertices of history (trimmed only once an
     // edit has succeeded, so a failed one costs no history).
+    // Meshes kept by several steps count once.
     std::size_t vertices = 0;
+    std::unordered_set<const MeshData*> counted;
     for (std::size_t i = m_undo.size(); i-- > 0;) {
-        for (const Body& b : m_undo[i].bodies) vertices += b.mesh.vertices.size();
+        for (const SharedMesh& m : m_undo[i].bodies.meshes)
+            if (counted.insert(m.get()).second) vertices += m->vertices.size();
         if (m_undo.size() - i > 16 || (vertices > 2000000 && i + 1 < m_undo.size())) {
             m_undo.erase(m_undo.begin(), m_undo.begin() + static_cast<std::ptrdiff_t>(i + 1));
             break;
@@ -281,22 +375,20 @@ std::string Scene::undo(std::string* why) {
             return "";
         }
         // Keep what was done to the bodies since the edit: moves, colours, renames.
-        keepLaterChanges(s.bodies, s.afterBodies);
+        keepLaterChanges(s.bodies.bodies, s.afterBodies);
         Redo r;
         r.label = s.label;
-        r.bodies = m_bodies;
+        r.bodies = freezeBodies();
         r.motions = m_motions;
         r.from = m_revision;
         if (s.motionsChanged) m_motions = std::move(s.motions);
-        m_bodies = std::move(s.bodies);
-        m_revision = nextRevision();
+        thawBodies(std::move(s.bodies));
         r.at = m_revision;
         for (const Body& b : m_bodies) r.atBodies.push_back({b.name, b.offset, b.color, b.visible});
         m_redo.push_back(std::move(r));
     } else {
         m_motions = std::move(s.motions); // a failed edit: everything as it was
-        m_bodies = std::move(s.bodies);
-        m_revision = nextRevision();
+        thawBodies(std::move(s.bodies));
     }
     // Back to the state before this edit, which the edit before it left (unless
     // something changed in between): that one can be undone next.
@@ -348,16 +440,15 @@ std::string Scene::redo(std::string* why) {
         m_redo.clear();
         return "";
     }
-    keepLaterChanges(r.bodies, r.atBodies);
+    keepLaterChanges(r.bodies.bodies, r.atBodies);
     // Undoable again: the state before the redo is the snapshot.
     Snapshot s;
     s.label = r.label;
-    s.bodies = m_bodies;
+    s.bodies = freezeBodies();
     s.motions = m_motions;
     s.before = m_revision;
-    m_bodies = std::move(r.bodies);
+    thawBodies(std::move(r.bodies));
     m_motions = std::move(r.motions);
-    m_revision = nextRevision();
     m_undo.push_back(std::move(s));
     sealUndo();
     // Back to the state the undo before this one left: that one can be redone next.
@@ -368,6 +459,7 @@ std::string Scene::redo(std::string* why) {
 void Scene::clear() {
     m_bodies.clear();
     m_undo.clear();
+    m_frozenByName.clear();
     m_redo.clear();
     m_images.clear();
     m_motions.clear();
@@ -429,7 +521,9 @@ void Scene::remove(std::size_t index) {
     if (!another)
         for (Body& b : m_bodies)
             if (b.attachedTo == name) b.attachedTo.clear();
+    const bool frozen = m_revision == m_frozenRevision;
     m_revision = nextRevision();
+    if (frozen) m_frozenRevision = m_revision; // the others' meshes are as they were
 }
 
 void Scene::renameBody(std::size_t index, const std::string& name) {

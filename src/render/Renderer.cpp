@@ -42,16 +42,23 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in float aMask;
 layout(location = 3) in vec4 aColor; // polypaint (alpha 0: unpainted)
 layout(location = 4) in vec2 aUV;    // texture coordinates (bodies that have them)
+layout(location = 5) in mat4 aInstModel; // drawn instanced: each copy's placement (5..8)
+layout(location = 9) in vec4 aInstColor; // ... and colour
 uniform mat4 uViewProj;
 uniform mat4 uModel; // body offset and simulated motion (rigid)
+uniform vec3 uColor;
+uniform float uInstanced; // 1: many copies of one shape in one draw
 out vec3 vWorldPos;
 out vec3 vNormal;
 out float vMask;
 out vec4 vColor;
 out vec2 vTex;
+flat out vec3 vBodyColor;
 void main() {
-    vWorldPos = (uModel * vec4(aPos, 1.0)).xyz;
-    vNormal = mat3(uModel) * aNormal;
+    mat4 M = uInstanced > 0.5 ? aInstModel : uModel;
+    vBodyColor = uInstanced > 0.5 ? aInstColor.rgb : uColor;
+    vWorldPos = (M * vec4(aPos, 1.0)).xyz;
+    vNormal = mat3(M) * aNormal;
     vMask = aMask;
     vColor = aColor;
     vTex = aUV;
@@ -65,7 +72,7 @@ in vec3 vNormal;
 in float vMask;
 in vec4 vColor;
 in vec2 vTex;
-uniform vec3 uColor;
+flat in vec3 vBodyColor;
 uniform float uChecker;   // 1: a checker on the texture coordinates
 uniform float uColorMap;  // 1: colour from uColorTex
 uniform float uNormalMap; // 1: tangent-space normals from uNormalTex
@@ -131,7 +138,7 @@ void main() {
     float hemi = 0.5 + 0.5 * N.z;
     vec3 ambient = mix(vec3(0.16, 0.15, 0.14), vec3(0.24, 0.26, 0.30), hemi);
 
-    vec3 own = vColor.a > 0.5 ? vColor.rgb : uColor;
+    vec3 own = vColor.a > 0.5 ? vColor.rgb : vBodyColor;
     if (uColorMap > 0.5) own = texture(uColorTex, vTex).rgb;
     if (uChecker > 0.5) { // squares of a sixteenth, numbered rows to see turns and stretch
         vec2 c = floor(vTex * 16.0);
@@ -165,9 +172,11 @@ void main() {
 
 constexpr const char* kLinesVS = R"(#version 410 core
 layout(location = 0) in vec3 aPos;
+layout(location = 5) in mat4 aInstModel; // drawn instanced: each copy's placement
 uniform mat4 uViewProj;
 uniform mat4 uModel;
-void main() { gl_Position = uViewProj * uModel * vec4(aPos, 1.0); }
+uniform float uInstanced;
+void main() { gl_Position = uViewProj * (uInstanced > 0.5 ? aInstModel : uModel) * vec4(aPos, 1.0); }
 )";
 
 constexpr const char* kLinesFS = R"(#version 410 core
@@ -388,6 +397,7 @@ Renderer::~Renderer() {
     releaseImages();
     if (m_outlineVao) glDeleteVertexArrays(1, &m_outlineVao);
     if (m_outlineVbo) glDeleteBuffers(1, &m_outlineVbo);
+    if (m_instanceVbo) glDeleteBuffers(1, &m_instanceVbo);
 }
 
 bool Renderer::valid() const noexcept {
@@ -412,7 +422,8 @@ void releaseMesh(GpuMesh& g) {
 
 namespace {
 
-constexpr std::size_t kLodTriangles = 60000; // shapes this big get coarser copies
+constexpr std::size_t kLodTriangles = 60000; // shapes this big get coarser copies,
+constexpr std::size_t kLodRepeated = 200;    // ...and smaller ones used so often they add up to it
 constexpr std::chrono::milliseconds kLodSettle{400}; // ...once unchanged this long
 
 // How big a coarser copy's cells may look on screen (pixels): still, so the change can't be
@@ -427,7 +438,7 @@ std::vector<std::pair<float, MeshData>> buildLods(const MeshData& m) {
     if (!b.valid()) return out;
     const float diag = length(b.max - b.min);
     std::size_t prev = m.indices.size() / 3;
-    for (float div : {200.0f, 80.0f, 30.0f}) {
+    for (float div : {200.0f, 80.0f, 30.0f, 10.0f}) {
         MeshData c = clusterMesh(m, diag / div);
         const std::size_t n = c.indices.size() / 3;
         if (n == 0 || n * 10 > prev * 6) continue;
@@ -435,6 +446,14 @@ std::vector<std::pair<float, MeshData>> buildLods(const MeshData& m) {
         out.push_back({diag / div, std::move(c)});
     }
     return out;
+}
+
+} // namespace
+
+namespace {
+
+bool wantsLods(std::size_t triangles, std::size_t uses) {
+    return triangles >= kLodTriangles || (triangles >= kLodRepeated && triangles * uses >= kLodTriangles);
 }
 
 } // namespace
@@ -455,7 +474,7 @@ void Renderer::releaseMeshes() {
 
 bool Renderer::pendingWork() const noexcept {
     for (const auto& e : m_entries)
-        if (e && ((!e->lodStarted && e->triangles >= kLodTriangles) || e->job.valid())) return true;
+        if (e && ((!e->lodStarted && wantsLods(e->triangles, e->uses)) || e->job.valid())) return true;
     return false;
 }
 
@@ -510,6 +529,8 @@ void Renderer::upload(const Scene& scene) {
             if (e->job.valid()) m_orphanJobs.push_back(std::move(e->job)); // finishes on its own
         }
     m_entries = std::move(entries);
+    for (const auto& e : m_entries) e->uses = 0;
+    for (const auto& e : m_entries) ++e->uses;
     m_stats.uploads = uploads;
     m_uploadedRevision = scene.revision();
 }
@@ -764,7 +785,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     std::erase_if(m_orphanJobs, [](auto& f) { return !f.valid() || f.wait_for(std::chrono::seconds(0)) == std::future_status::ready; });
     for (std::size_t i = 0; i < count; ++i) {
         MeshEntry& e = *m_entries[i];
-        if (!e.lodStarted && e.triangles >= kLodTriangles && std::chrono::steady_clock::now() - e.born >= kLodSettle) {
+        if (!e.lodStarted && wantsLods(e.triangles, e.uses) && std::chrono::steady_clock::now() - e.born >= kLodSettle) {
             e.lodStarted = true;
             e.job = std::async(std::launch::async, [m = bodies[i].mesh]() { return buildLods(m); });
         }
@@ -797,11 +818,40 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     m_lastViewProj = vp;
     const float cellLimit = moving ? kLodCellPixelsMoving : kLodCellPixels;
     m_refine = false;
+    // The view's six planes (from the view-projection's rows): a body wholly outside one
+    // isn't drawn.
+    Vec4 planes[6];
+    {
+        auto row = [&](int r) { return Vec4{vp.m[0][r], vp.m[1][r], vp.m[2][r], vp.m[3][r]}; };
+        const Vec4 r3 = row(3);
+        for (int k = 0; k < 6; ++k) {
+            const Vec4 r = row(k / 2);
+            const float sg = k % 2 ? -1.0f : 1.0f;
+            planes[k] = Vec4{r3.x + sg * r.x, r3.y + sg * r.y, r3.z + sg * r.z, r3.w + sg * r.w};
+        }
+        for (Vec4& p : planes) {
+            const float n = std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+            if (n > 0) p = Vec4{p.x / n, p.y / n, p.z / n, p.w / n};
+        }
+    }
+    std::vector<char> shown(count, 0); // visible and in view
+    m_stats.culledBodies = 0;
     for (std::size_t i = 0; i < count; ++i) {
         const MeshEntry& e = *m_entries[i];
         drawn[i] = m_streamed[i].vao ? &m_streamed[i] : &e.full;
         if (!bodies[i].visible) continue;
         m_stats.fullTriangles += e.triangles;
+        if (!m_streamed[i].vao && e.box.valid()) {
+            const Vec3 c = model(i).transformPoint((e.box.min + e.box.max) * 0.5f);
+            const float R = 0.5f * length(e.box.max - e.box.min);
+            bool outside = false;
+            for (const Vec4& p : planes) outside = outside || p.x * c.x + p.y * c.y + p.z * c.z + p.w < -R;
+            if (outside) {
+                ++m_stats.culledBodies;
+                continue;
+            }
+        }
+        shown[i] = 1;
         if (!m_streamed[i].vao && !e.lods.empty() && e.box.valid()) {
             const Mat4 mdl = model(i);
             const Vec3 c = mdl.transformPoint((e.box.min + e.box.max) * 0.5f);
@@ -827,6 +877,70 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     }
     auto gpu = [&](std::size_t i) -> const GpuMesh& { return *drawn[i]; };
 
+    // Copies of one shape with nothing of their own to show (not selected, no result plot,
+    // polygroups or texture maps) are drawn together: one instanced draw a shape, each copy's
+    // placement and colour from a buffer. Large assemblies are mostly such copies.
+    auto plain = [&](std::size_t i) {
+        if (!shown[i] || static_cast<int>(i) == selectedBody || !bodies[i].field.empty() || m_streamed[i].vao) return false;
+        if (s.showPolygroups && gpu(i).groupTex) return false;
+        if (gpu(i).mapped)
+            for (const auto& t : s.textures)
+                if (t.body == bodies[i].name) return false;
+        return true;
+    };
+    std::unordered_map<const GpuMesh*, std::vector<std::size_t>> byShape;
+    for (std::size_t i = 0; i < count; ++i)
+        if (plain(i)) byShape[&gpu(i)].push_back(i);
+    std::vector<char> instanced(count, 0);
+    struct Batch {
+        const GpuMesh* mesh;
+        GLsizei first, count;
+        GLuint edgeVao;
+        GLsizei edgeCount;
+    };
+    std::vector<Batch> batches;
+    std::vector<float> inst; // 20 floats a copy: the placement (column by column), the colour
+    for (auto& [mesh, members] : byShape) {
+        if (members.size() < 2) continue;
+        // The edges come from the full shape (a coarser copy keeps the full edges).
+        const GpuMesh& full = m_entries[members[0]]->full;
+        batches.push_back({mesh, static_cast<GLsizei>(inst.size() / 20), static_cast<GLsizei>(members.size()), full.edgeVao, full.edgeVertexCount});
+        for (std::size_t i : members) {
+            instanced[i] = 1;
+            const Mat4 m = model(i);
+            inst.insert(inst.end(), m.data(), m.data() + 16);
+            inst.insert(inst.end(), {bodies[i].color.x, bodies[i].color.y, bodies[i].color.z, 1.0f});
+        }
+    }
+    m_stats.instancedBodies = 0;
+    for (const Batch& b : batches) m_stats.instancedBodies += static_cast<std::size_t>(b.count);
+    if (!inst.empty()) {
+        if (!m_instanceVbo) glGenBuffers(1, &m_instanceVbo);
+        glBindBuffer(GL_ARRAY_BUFFER, m_instanceVbo);
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(inst.size() * sizeof(float)), inst.data(), GL_STREAM_DRAW);
+    }
+    // Points a vertex array's attributes 5..8 (and 9, the colour) at a batch's copies.
+    auto bindInstances = [&](const Batch& b, bool colour) {
+        glBindBuffer(GL_ARRAY_BUFFER, m_instanceVbo);
+        const std::size_t base = static_cast<std::size_t>(b.first) * 20 * sizeof(float);
+        for (GLuint c = 0; c < 4; ++c) {
+            glEnableVertexAttribArray(5 + c);
+            glVertexAttribPointer(5 + c, 4, GL_FLOAT, GL_FALSE, 20 * sizeof(float), reinterpret_cast<const void*>(base + c * 4 * sizeof(float)));
+            glVertexAttribDivisor(5 + c, 1);
+        }
+        if (colour) {
+            glEnableVertexAttribArray(9);
+            glVertexAttribPointer(9, 4, GL_FLOAT, GL_FALSE, 20 * sizeof(float), reinterpret_cast<const void*>(base + 16 * sizeof(float)));
+            glVertexAttribDivisor(9, 1);
+        }
+    };
+    auto unbindInstances = [&]() { // so the same arrays drawn alone don't read the copies
+        for (GLuint a = 5; a <= 9; ++a) {
+            glDisableVertexAttribArray(a);
+            glVertexAttribDivisor(a, 0);
+        }
+    };
+
     // Solid pass, pushed back slightly so edges win the depth test.
     const bool hidden = s.displayMode == DisplayMode::HiddenLine;
     if (s.displayMode != DisplayMode::Wireframe) {
@@ -846,8 +960,19 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         glUniform1i(glGetUniformLocation(m_mesh.program(), "uColorTex"), 2); // texture maps on units 2 and 3
         glUniform1i(glGetUniformLocation(m_mesh.program(), "uNormalTex"), 3);
         if (s.textureRevision != m_bodyTextureRevision) uploadBodyTextures(s);
+        if (!batches.empty()) {
+            m_mesh.set("uInstanced", 1.0f);
+            for (const char* off : {"uField", "uHighlight", "uPolygroups", "uChecker", "uColorMap", "uNormalMap"}) m_mesh.set(off, 0.0f);
+            for (const Batch& b : batches) {
+                glBindVertexArray(b.mesh->vao);
+                bindInstances(b, true);
+                glDrawElementsInstanced(GL_TRIANGLES, b.mesh->indexCount, GL_UNSIGNED_INT, nullptr, b.count);
+                unbindInstances();
+            }
+            m_mesh.set("uInstanced", 0.0f);
+        }
         for (std::size_t i = 0; i < count; ++i) {
-            if (!bodies[i].visible) continue;
+            if (!shown[i] || instanced[i]) continue;
             m_mesh.set("uColor", bodies[i].color);
             m_mesh.set("uField", bodies[i].field.empty() ? 0.0f : bodies[i].field.rfind("zebra", 0) == 0 ? 2.0f : 1.0f);
             m_mesh.set("uModel", model(i));
@@ -892,8 +1017,20 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         m_lines.bind();
         m_lines.set("uViewProj", vp);
         const bool wire = s.displayMode == DisplayMode::Wireframe;
+        if (!wire && !batches.empty()) {
+            m_lines.set("uInstanced", 1.0f);
+            m_lines.set("uColor", Vec4{s.edgeColor.x, s.edgeColor.y, s.edgeColor.z, 1.0f});
+            for (const Batch& b : batches) {
+                if (!b.edgeVao) continue;
+                glBindVertexArray(b.edgeVao);
+                bindInstances(b, false);
+                glDrawArraysInstanced(GL_LINES, 0, b.edgeCount, b.count);
+                unbindInstances();
+            }
+            m_lines.set("uInstanced", 0.0f);
+        }
         for (std::size_t i = 0; i < count; ++i) {
-            if (!bodies[i].visible) continue;
+            if (!shown[i] || (instanced[i] && !wire)) continue;
             const bool sel = static_cast<int>(i) == selectedBody;
             m_lines.set("uModel", model(i));
             if (wire) {

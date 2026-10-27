@@ -96,6 +96,7 @@ private:
     void releaseBodyTextures();
     std::uint64_t m_imageRevision = ~std::uint64_t{0};
     GLuint m_outlineVao = 0, m_outlineVbo = 0;
+    GLuint m_instanceVbo = 0; // each frame's placements and colours of shapes drawn instanced
 
     struct SketchRange {
         GLint first;
@@ -116,6 +117,7 @@ private:
         std::uint64_t key = 0;
         GpuMesh full;
         std::size_t triangles = 0;
+        std::size_t uses = 1; // bodies of this shape (pattern copies, repeated parts)
         AABB box; // mesh coordinates
         std::chrono::steady_clock::time_point born;
         bool lodStarted = false;
@@ -134,6 +136,8 @@ public:
         std::size_t triangles = 0;     // drawn
         std::size_t fullTriangles = 0; // the bodies' own
         int coarseBodies = 0;          // drawn from a coarser copy
+        std::size_t culledBodies = 0;  // outside the view: not drawn
+        std::size_t instancedBodies = 0; // drawn as copies of one shape, a draw call a shape
         int uploads = 0;               // shapes uploaded by the last upload()
     };
     const FrameStats& stats() const noexcept { return m_stats; }

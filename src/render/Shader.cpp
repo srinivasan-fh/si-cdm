@@ -63,14 +63,23 @@ Shader::~Shader() {
     if (m_program) glDeleteProgram(m_program);
 }
 
-Shader::Shader(Shader&& o) noexcept : m_program(std::exchange(o.m_program, 0)) {}
+Shader::Shader(Shader&& o) noexcept : m_program(std::exchange(o.m_program, 0)), m_locations(std::move(o.m_locations)) {}
 
 Shader& Shader::operator=(Shader&& o) noexcept {
     if (this != &o) {
         if (m_program) glDeleteProgram(m_program);
         m_program = std::exchange(o.m_program, 0);
+        m_locations = std::move(o.m_locations);
     }
     return *this;
+}
+
+GLint Shader::location(const char* name) const noexcept {
+    const auto it = m_locations.find(name);
+    if (it != m_locations.end()) return it->second;
+    const GLint at = glGetUniformLocation(m_program, name);
+    m_locations.emplace(name, at);
+    return at;
 }
 
 void Shader::set(const char* n, float v) const noexcept { glUniform1f(location(n), v); }
