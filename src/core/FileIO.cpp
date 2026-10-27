@@ -1,4 +1,5 @@
 #include "core/FileIO.hpp"
+#include "core/Multires.hpp"
 
 #include "core/Brep.hpp"
 #include "core/Step.hpp"
@@ -478,6 +479,17 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (!b.attachedTo.empty()) jb.set("attached_to", b.attachedTo);
         if (!b.assembly.empty()) jb.set("assembly", b.assembly);
         if (!b.field.empty()) jb.set("field", b.field);
+        if (b.multires && !b.multires->levels.empty()) { // the cage's triangles and each level's positions (finer triangles follow)
+            std::vector<unsigned char> tri;
+            for (const auto& t : b.multires->levels[0].t) putU32(tri, t[0]), putU32(tri, t[1]), putU32(tri, t[2]);
+            Json levels = Json::array();
+            for (const MultiresLevel& l : b.multires->levels) {
+                std::vector<unsigned char> pos;
+                for (const Vec3& q : l.p) putF32(pos, q.x), putF32(pos, q.y), putF32(pos, q.z);
+                levels.push(base64(pos));
+            }
+            jb.set("multires", Json::object().set("current", b.multires->current).set("cage_triangles_b64", base64(tri)).set("levels_b64", levels));
+        }
         if (!b.holes.empty()) {
             Json hs = Json::array();
             for (const HoleNote& h : b.holes) {
@@ -895,6 +907,32 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         b.attachedTo = jb["attached_to"].asString();
         b.assembly = jb["assembly"].asString();
         b.field = jb["field"].asString();
+        if (const Json& jm = jb["multires"]; jm.isObject()) { // levels that don't fit together are left out
+            auto md = std::make_shared<MultiresData>();
+            std::vector<unsigned char> raw;
+            MultiresLevel cage;
+            if (unbase64(jm["cage_triangles_b64"].asString(), raw))
+                for (std::size_t i = 0; i + 12 <= raw.size(); i += 12) cage.t.push_back({getU32(&raw[i]), getU32(&raw[i + 4]), getU32(&raw[i + 8])});
+            bool fits = !cage.t.empty();
+            for (const Json& jl : jm["levels_b64"].items()) {
+                raw.clear();
+                if (!fits || !unbase64(jl.asString(), raw)) break;
+                MultiresLevel l;
+                if (md->levels.empty()) l.t = cage.t;
+                else l = loopSubdivideLevel(md->levels.back());
+                std::vector<Vec3> p;
+                for (std::size_t i = 0; i + 12 <= raw.size(); i += 12) p.push_back({getF32(&raw[i]), getF32(&raw[i + 4]), getF32(&raw[i + 8])});
+                if (md->levels.empty()) {
+                    for (const auto& t : l.t)
+                        for (std::uint32_t v : t) fits = fits && v < p.size();
+                } else fits = fits && p.size() == l.p.size();
+                if (!fits) break;
+                l.p = std::move(p);
+                md->levels.push_back(std::move(l));
+            }
+            md->current = jm["current"].asInt(0);
+            if (fits && md->levels.size() >= 2 && md->current >= 0 && md->current < static_cast<int>(md->levels.size())) b.multires = std::move(md);
+        }
         for (const Json& jh : jb["holes"].items()) {
             HoleNote& h = b.holes.emplace_back();
             h.at = jsonVec3(jh["at"]), h.dir = jsonVec3(jh["dir"], {0, 0, -1}), h.callout = jh["callout"].asString();

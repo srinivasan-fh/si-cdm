@@ -18,6 +18,7 @@
 #include "core/Multibody.hpp"
 #include "core/Rig.hpp"
 #include "core/Scene.hpp"
+#include "core/Multires.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Terrain.hpp"
 #include "core/Units.hpp"
@@ -1027,6 +1028,20 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             const Body& lb = m_menuScene->bodies()[static_cast<std::size_t>(st.selectedBody)];
             const std::string q = "LAYER \"" + lb.name + "\" ";
             const bool has = lb.mesh.hasLayers();
+            // Multiresolution levels: down / up, or a level more.
+            const std::string mq = "MULTIRES \"" + lb.name + "\" ";
+            ImGui::SameLine();
+            if (lb.multires) {
+                if (ImGui::ArrowButton("##levdown", ImGuiDir_Left)) cmd.commands.push_back(mq + "DOWN");
+                ImGui::SameLine();
+                ImGui::Text("Level %d/%d", lb.multires->current, static_cast<int>(lb.multires->levels.size()) - 1);
+                ImGui::SameLine();
+                if (ImGui::ArrowButton("##levup", ImGuiDir_Right)) cmd.commands.push_back(mq + "UP");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sculpt big forms at low levels, detail at high ones: the detail follows");
+                ImGui::SameLine();
+            }
+            if (ImGui::Button("+ Level")) cmd.commands.push_back(mq + "ADD 1");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiresolution: add a subdivision level (keeps the levels below to sculpt at)");
             ImGui::SameLine();
             if (ImGui::Button(has ? "Layers..." : "Layers")) ImGui::OpenPopup("##sculptlayers");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sculpt layers: record strokes into a layer, then dial it in or out");

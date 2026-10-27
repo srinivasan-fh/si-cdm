@@ -20,6 +20,7 @@
 namespace sicdm {
 
 struct Brep;
+struct MultiresData;
 
 // A hole the hole wizard made: where, which way it goes in, and its callout ("M6 tapped
 // 12 deep (drill 5 x 15)"), relative to the body's offset.
@@ -55,6 +56,9 @@ struct Body {
     // while the mesh is still the one made with it (a sculpt, boolean or remesh leaves it
     // behind, and exports fall back to the mesh's facets).
     std::shared_ptr<const Brep> brep;
+    // Multiresolution levels (see Multires.hpp), shared between copies and replaced whole
+    // when they change (so undo snapshots keep theirs); null: none.
+    std::shared_ptr<const MultiresData> multires;
     std::uint64_t brepKey = 0; // meshKey() of that mesh
     bool exact() const;
 

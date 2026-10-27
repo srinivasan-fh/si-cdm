@@ -240,6 +240,7 @@ private:
     std::vector<SculptLayer> m_layers; // offsets per welded vertex
     int m_record = -1;
     std::vector<Vec3> m_start;
+    std::vector<std::uint32_t> m_ids; // per vertex (MeshData::ids), or empty; new vertices get 0xFFFFFFFF
     // A window on a larger mesh: where each vertex came from there (kFresh: made
     // here), and the vertices on the cut border, which nothing may move or split.
     std::vector<std::uint32_t> m_from;

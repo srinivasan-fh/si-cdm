@@ -5,6 +5,7 @@
 #include "core/FileIO.hpp"
 #include "core/Scene.hpp"
 #include "core/ImageWrite.hpp"
+#include "core/Multires.hpp"
 #include "core/Sculpt.hpp"
 
 #include <algorithm>
@@ -993,4 +994,61 @@ TEST_CASE("sculpt layers: strokes recorded, dialled in and out, deleted, baked a
     CHECK_NEAR(top(), before, 1e-4f);
     CHECK(!run(d, "LAYER \"Sphere 1\" OFF Horns").ok);
     CHECK(run(d, "LAYER \"Sphere 1\" LIST").ok);
+}
+
+TEST_CASE("multiresolution: detail sculpted high rides along when the form is moved low") {
+    // Two blocks alike; one gets a bump at the finest level. Both are pulled up at level 1.
+    auto make = [](Document& d, bool bump) {
+        REQUIRE(run(d, "BOX 40 40 40 @0,0,0").ok);
+        REQUIRE(run(d, "MULTIRES \"Block 1\" ADD 3").ok);
+        if (bump) REQUIRE(run(d, "SCULPT \"Block 1\" DRAW AT 0,0,40 RADIUS 6 STRENGTH 1").ok);
+    };
+    Document a, b;
+    make(a, true);
+    make(b, false);
+    auto top = [](Document& d) { return d.scene.bodies()[0].bounds().max.z; };
+    const float bump = top(a) - top(b);
+    CHECK(bump > 0.5f);
+    for (Document* d : {&a, &b}) {
+        REQUIRE(run(*d, "MULTIRES \"Block 1\" LEVEL 1").ok);
+        CHECK(d->scene.bodies()[0].mesh.indices.size() / 3 == 48);
+        REQUIRE(run(*d, "SCULPT \"Block 1\" GRAB AT 0,0,40 RADIUS 30 MOVE 0,0,15").ok);
+        REQUIRE(run(*d, "MULTIRES \"Block 1\" LEVEL 3").ok);
+        CHECK(d->scene.bodies()[0].mesh.indices.size() / 3 == 768);
+    }
+    CHECK(top(b) > 45.0f);                      // the form moved
+    CHECK_NEAR(top(a) - top(b), bump, 0.35f * bump); // and the bump came along on top of it
+    CHECK(openEdgeCount(a.scene.bodies()[0].mesh) == 0);
+    // SUBDIVIDE on top adds a level; saved and read back with its levels.
+    REQUIRE(run(a, "SUBDIVIDE \"Block 1\"").ok);
+    REQUIRE(a.scene.bodies()[0].multires != nullptr);
+    CHECK(a.scene.bodies()[0].multires->levels.size() == 5);
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_multires.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(a.scene, a.state, path, &err));
+    Scene scene;
+    ProjectState state;
+    REQUIRE(loadProject(scene, state, path, &err));
+    REQUIRE(scene.bodies()[0].multires != nullptr);
+    CHECK(scene.bodies()[0].multires->levels.size() == 5);
+    CHECK(scene.bodies()[0].multires->current == 4);
+    CHECK(scene.bodies()[0].multires->levels[4].t == a.scene.bodies()[0].multires->levels[4].t);
+    std::filesystem::remove(path);
+    // Down a level and up again: nothing moves.
+    const float before = top(a);
+    REQUIRE(run(a, "MULTIRES \"Block 1\" DOWN").ok);
+    REQUIRE(run(a, "MULTIRES \"Block 1\" UP").ok);
+    CHECK_NEAR(top(a), before, 1e-3f);
+    // A cut changes the triangles: the levels go, the shape stays.
+    REQUIRE(run(a, "HOLE \"Block 1\" AT 20,0,20 DIAMETER 6 DEPTH 5").ok);
+    CHECK(!run(a, "MULTIRES \"Block 1\" LEVEL 0").ok);
+    CHECK(!a.scene.bodies()[0].multires);
+    // Dropping levels below or above, and applying.
+    REQUIRE(run(b, "MULTIRES \"Block 1\" LEVEL 2").ok);
+    REQUIRE(run(b, "MULTIRES \"Block 1\" DELETE HIGHER").ok);
+    CHECK(b.scene.bodies()[0].multires->levels.size() == 3);
+    REQUIRE(run(b, "MULTIRES \"Block 1\" DELETE LOWER").ok);
+    CHECK(!b.scene.bodies()[0].multires); // one level left: none
+    CHECK(!run(b, "MULTIRES \"Block 1\" APPLY").ok);
+    CHECK(run(b, "MULTIRES \"Block 1\" LIST").ok);
 }

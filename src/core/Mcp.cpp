@@ -367,7 +367,7 @@ Json McpServer::toolDefinitions() {
                                 "'others'), subdivide, symmetrize, decimate, mask_clear, mask_invert, mask_smooth, mask_group, "
                                 "paint_fill, paint_clear, polygroup_auto, polygroup_islands, polygroup_mask, polygroup_paint, "
                                 "polygroup_clear, layer_new, layer_record, layer_stop, layer_strength, layer_on, layer_off, layer_delete, "
-                                "layer_bake, layer_list, undo, redo"));
+                                "layer_bake, layer_list, multires_add, multires_level, multires_up, multires_down, multires_apply, undo, redo"));
         p.set("layer", prop("string", "layer_*: the sculpt layer's name (layer_bake without one bakes them all)"));
         p.set("value", prop("number", "layer_strength: the strength (1: as sculpted, 0: off, 2: twice)"));
         p.set("color", prop("string", "paint / paint_fill: a colour name (red, skin...), #RRGGBB or \"r,g,b\""));
@@ -1583,6 +1583,14 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             } else {
                 if (!a["color"].isString()) return textResult("paint_fill needs 'color'", true);
                 line = "PAINT " + body + " FILL " + a["color"].asString() + which;
+            }
+        } else if (op.rfind("multires_", 0) == 0) {
+            const std::string what = op.substr(9);
+            line = "MULTIRES " + body + " " + what;
+            if (what == "add") line += " " + num(a["levels"].asNumber(1));
+            if (what == "level") {
+                if (!a["value"].isNumber()) return textResult("multires_level needs 'value' (0: the cage)", true);
+                line += " " + num(a["value"].asNumber());
             }
         } else if (op.rfind("layer_", 0) == 0) {
             const std::string what = op.substr(6);

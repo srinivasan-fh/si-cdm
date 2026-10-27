@@ -25,6 +25,7 @@
 #include "core/Step.hpp"
 #include "core/Brep.hpp"
 #include "core/Print.hpp"
+#include "core/Multires.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
 #include "core/Units.hpp"
@@ -726,7 +727,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -772,7 +773,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (!historyCommand(cmd)) return;
     if ((cmd == "PLANE" || cmd == "REFAXIS" || cmd == "REFPOINT") && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (cmd == "SHEETMETAL" && !pc.args.empty() && (iequal(pc.args[0], "edges") || iequal(pc.args[0], "info"))) return;
-    if ((cmd == "POLYGROUP" || cmd == "LAYER") &&
+    if ((cmd == "POLYGROUP" || cmd == "LAYER" || cmd == "MULTIRES") &&
         std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); }))
         return;
     if (cmd == "FEA" && std::none_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "plot") || iequal(w, "deform") || iequal(w, "mode"); }))
@@ -2576,6 +2577,74 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         markChanged(doc);
         return out;
     }
+    if (cmd == "MULTIRES") {
+        // MULTIRES [body] ADD [n] | LEVEL n | UP | DOWN | APPLY | DELETE LOWER|HIGHER | LIST
+        static const char* const kWords[] = {"add", "level", "up", "down", "apply", "delete", "list"};
+        auto isWord = [&](std::size_t k) {
+            if (quotedArg(k)) return false;
+            const std::string w = lower(a[k]);
+            for (const char* q : kWords)
+                if (w == q) return true;
+            return false;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        while (i < a.size() && !isWord(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        if (i >= a.size()) return usage();
+        const std::string op = lower(a[i++]);
+        auto levelsText = [&](const Body& b) {
+            if (!b.multires) return b.name + " has no levels";
+            return b.name + fmt(": level %g", static_cast<double>(b.multires->current)) + fmt(" of 0 to %g", static_cast<double>(b.multires->levels.size() - 1)) +
+                   fmt(", %g triangles shown", static_cast<double>(b.mesh.indices.size() / 3));
+        };
+        if (op == "list") {
+            Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            std::string why;
+            if (b.multires && !multiresSync(b, &why)) out.say(why);
+            out.say(levelsText(b));
+            if (b.multires)
+                for (std::size_t k = 0; k < b.multires->levels.size(); ++k)
+                    out.say(fmt("  level %g: ", static_cast<double>(k)) + fmt("%g triangles", static_cast<double>(b.multires->levels[k].t.size())) +
+                            (static_cast<int>(k) == b.multires->current ? "  (shown)" : ""));
+            return out;
+        }
+        doc.scene.pushUndo("MULTIRES " + doc.scene.bodies()[static_cast<std::size_t>(bi)].name);
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const bool hadLevels = body.multires != nullptr;
+        std::string why;
+        bool ok = true;
+        if (op == "add") {
+            const auto n = i < a.size() ? parseNumber(a[i]) : std::nullopt;
+            ok = multiresAdd(body, n ? std::clamp(static_cast<int>(*n), 1, 6) : 1, &why);
+        } else if (op == "level") {
+            const auto n = i < a.size() ? parseNumber(a[i]) : std::nullopt;
+            if (!n) return doc.scene.undo(), out.fail("MULTIRES LEVEL n (0: the coarse cage)");
+            ok = multiresLevel(body, static_cast<int>(*n), &why);
+        } else if (op == "up" || op == "down") {
+            if (!body.multires) ok = false, why = body.name + " has no levels (MULTIRES ADD makes them)";
+            else ok = multiresLevel(body, body.multires->current + (op == "up" ? 1 : -1), &why);
+        } else if (op == "apply") {
+            ok = multiresApply(body, &why);
+        } else if (op == "delete") {
+            const std::string which = i < a.size() ? lower(a[i]) : "";
+            if (which == "lower") ok = multiresDeleteLower(body, &why);
+            else if (which == "higher") ok = multiresDeleteHigher(body, &why);
+            else return doc.scene.undo(), out.fail("MULTIRES DELETE LOWER|HIGHER");
+        } else return doc.scene.undo(), usage();
+        if (!ok) {
+            // A sync that found the triangles changed has dropped the levels: that stays.
+            const bool dropped = hadLevels && !doc.scene.bodies()[static_cast<std::size_t>(bi)].multires;
+            if (!dropped) doc.scene.undo();
+            return out.fail(why);
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        out.say(op == "apply" ? body.name + ": levels dropped, the shown shape kept" : levelsText(body));
+        return out;
+    }
     if (cmd == "LAYER") {
         // LAYER [body] NEW name [RECORD] | RECORD name | STOP | STRENGTH name s | ON name | OFF name | DELETE name | BAKE name|ALL | LIST
         static const char* const kWords[] = {"new", "add", "record", "stop", "strength", "on", "off", "delete", "remove", "bake", "merge", "list"};
@@ -2803,7 +2872,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             int levels = 1;
             for (std::size_t k = 0; k < rest.size(); ++k)
                 if (const auto n = parseNumber(rest[k])) levels = std::clamp(static_cast<int>(*n), 1, 6);
-            ok = subdivideBody(body, levels, 4000000, &error);
+            ok = body.multires ? multiresAdd(body, levels, &error) : subdivideBody(body, levels, 4000000, &error); // multires: a level more
             done = fmt("subdivided %g times", static_cast<double>(levels));
         } else if (cmd == "SYMMETRIZE") {
             int axis = 0;
@@ -3096,6 +3165,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                     if (ss.brush == SculptBrush::SnakeHook) break;
                 }
                 if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
+                if (body.multires) ss.refine = false; // the levels keep their vertices
                 sculptStroke(body, surface, points, ss, move.value_or(Vec3{}));
                 ok = true;
                 done = std::string(sculptBrushKey(ss.brush)) + (ss.invert ? " (inverted)" : "") +

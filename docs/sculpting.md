@@ -13,6 +13,7 @@ The toolset follows the common ground of the professional sculpting tools: ZBrus
 - masking;
 - alphas;
 - sculpt layers;
+- multiresolution levels;
 - polypaint and polygroups;
 - dynamic topology;
 - voxel remesh;
@@ -162,6 +163,37 @@ LAYER "Head" LIST
   pockets, the knife) build a new mesh and drop them: bake or finish with the layers first.
 - **In the app:** *Layers* in the sculpt options bar lists the selected body's layers. Each
   row has an on/off box, a record button, a strength slider, and Bake and Delete buttons.
+
+## Multiresolution
+
+A body can keep several subdivision levels at once. Level 0 is the coarse cage, and each
+level above is the one below subdivided once, plus its own detail.
+
+- **Big forms low:** at a low level a few vertices move a lot of surface, so posing a limb
+  or pulling out a horn is quick and smooth.
+- **Detail high:** pores, wrinkles and scales go on at the top.
+- **The detail follows:** when the form changes at a low level, every level above keeps its
+  detail on the moved surface. The detail is carried in the surface's own frame, so a bump
+  stays a bump when the surface under it tilts.
+
+```text
+MULTIRES "Head" ADD 3           three levels over the current mesh; the top is shown
+SCULPT "Head" DRAW AT ...       detail at the top
+MULTIRES "Head" LEVEL 1         a coarse level (DOWN / UP step one at a time)
+SCULPT "Head" GRAB AT ...       move the big form
+MULTIRES "Head" LEVEL 3         back to the top: the detail rode along
+MULTIRES "Head" APPLY           keep what is shown, drop the levels
+MULTIRES "Head" DELETE LOWER    drop the levels below the one shown (or HIGHER: above)
+```
+
+- **Dynamic topology is off** while a body has levels: each level keeps its vertices.
+  `SUBDIVIDE` on the top level adds a level.
+- **Edits that change the triangles drop the levels,** keeping the shape shown. Those are
+  a remesh, a boolean or a cut. The next level change says so.
+- **Kept:** the levels are saved in the project (the cage's triangles and every level's
+  points) and undone with UNDO.
+- **In the app:** the sculpt options bar shows *Level n/N* with arrows to step, and
+  *+ Level*.
 
 ## Polypaint and polygroups
 
@@ -373,6 +405,7 @@ MASK    [body] GROUP n | GROUP AT x,y,z [INVERT]       mask one polygroup
 PAINT   [body] FILL colour [GROUP n | GROUP AT x,y,z] | CLEAR    polypaint (the PAINT brush paints strokes)
 POLYGROUP [body] AUTO [ANGLE deg] | ISLANDS | MASK | PAINT | CLEAR | LIST | SHOW | HIDE
 LAYER   [body] NEW name [RECORD] | RECORD name | STOP | STRENGTH name s | ON name | OFF name | DELETE name | BAKE name|ALL | LIST
+MULTIRES [body] ADD [n] | LEVEL n | UP | DOWN | APPLY | DELETE LOWER|HIGHER | LIST
 SUBDIVIDE [body] [LEVELS n]                Loop subdivision
 SYMMETRIZE [body] [X|Y|Z] [-]              mirror the + side (or the - side) across the body's origin
 DECIMATE [body] TO n | RATIO r             reduce to about n triangles
@@ -389,5 +422,6 @@ Over MCP: the `sculpt` tool (`operation` = a brush name, `hole`, `pocket`, `chan
 `boolean`, `refine`, `remesh`, `subdivide`, `symmetrize`, `decimate`, `mask_clear`, `mask_invert`,
 `mask_smooth`, `mask_group`, `paint_fill`, `paint_clear`, `polygroup_auto`, `polygroup_islands`,
 `polygroup_mask`, `polygroup_paint`, `polygroup_clear`, `layer_new` (recording), `layer_record`, `layer_stop`,
-`layer_strength` (`value`), `layer_on`, `layer_off`, `layer_delete`, `layer_bake`, `layer_list`, `undo` or `redo`; `symmetry_axes`, `radial`,
+`layer_strength` (`value`), `layer_on`, `layer_off`, `layer_delete`, `layer_bake`, `layer_list`, `multires_add`
+(`levels`), `multires_level` (`value`), `multires_up`, `multires_down`, `multires_apply`, `undo` or `redo`; `symmetry_axes`, `radial`,
 `falloff`, `color`, `alpha`, `alpha_angle`, `alpha_follow`, `alpha_tile` and `spacing` for the brushes).

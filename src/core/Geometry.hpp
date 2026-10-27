@@ -45,6 +45,9 @@ struct MeshData {
     // that didn't keep them: none), and the one strokes record into (-1: none).
     std::vector<SculptLayer> layers;
     int recordLayer = -1;
+    // Who each vertex is (multiresolution levels match their vertices by it); empty: none.
+    std::vector<std::uint32_t> ids;
+    bool hasIds() const noexcept { return !ids.empty() && ids.size() == vertices.size(); }
     bool hasLayers() const noexcept {
         if (layers.empty()) return false;
         for (const SculptLayer& l : layers)

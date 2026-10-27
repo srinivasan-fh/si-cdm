@@ -322,6 +322,10 @@ SculptMesh::SculptMesh(const Body& body) {
     m_p.reserve(pts.size());
     for (const D3& p : pts) m_p.push_back(p.f());
     m_base = body.color;
+    if (body.mesh.hasIds()) {
+        m_ids.assign(m_p.size(), 0xFFFFFFFFu);
+        for (std::size_t k = 0; k < id.size() && k < idx.size(); ++k) m_ids[id[k]] = body.mesh.ids[idx[k]];
+    }
     // Sculpt layers: a welded vertex's offsets are its corners' (they are the same).
     if (body.mesh.hasLayers()) {
         m_layers = body.mesh.layers;
@@ -921,6 +925,7 @@ void SculptMesh::dropUnused() {
     std::vector<float> mask, layer;
     std::vector<std::uint32_t> color;
     std::vector<Vec3> start;
+    std::vector<std::uint32_t> ids;
     std::vector<std::vector<Vec3>> lay(m_layers.size());
     for (auto& t : m_t)
         for (auto& v : t) {
@@ -935,6 +940,7 @@ void SculptMesh::dropUnused() {
                 if (!m_layer.empty()) layer.push_back(m_layer[v]);
                 if (!m_color.empty()) color.push_back(m_color[v]);
                 if (!m_start.empty()) start.push_back(m_start[v]);
+                if (!m_ids.empty()) ids.push_back(m_ids[v]);
                 for (std::size_t k = 0; k < m_layers.size(); ++k) lay[k].push_back(m_layers[k].offset[v]);
             }
             v = remap[v];
@@ -948,6 +954,7 @@ void SculptMesh::dropUnused() {
     if (!m_layer.empty()) m_layer = std::move(layer);
     if (!m_color.empty()) m_color = std::move(color);
     if (!m_start.empty()) m_start = std::move(start);
+    if (!m_ids.empty()) m_ids = std::move(ids);
     for (std::size_t k = 0; k < m_layers.size(); ++k) m_layers[k].offset = std::move(lay[k]);
 }
 
@@ -961,6 +968,7 @@ void SculptMesh::addVertexExtras(std::uint32_t a, std::uint32_t b) {
     if (!m_color.empty()) m_color.push_back(packColor((unpackColor(m_color[a]) + unpackColor(m_color[b])) * 0.5f));
     for (SculptLayer& l : m_layers) l.offset.push_back((l.offset[a] + l.offset[b]) * 0.5f);
     if (!m_start.empty()) m_start.push_back((m_start[a] + m_start[b]) * 0.5f);
+    if (!m_ids.empty()) m_ids.push_back(0xFFFFFFFFu);
 }
 
 std::vector<SculptMesh::Image> SculptMesh::images(const Vec3& centre, const SculptSettings& s, float R) const {
@@ -1414,6 +1422,7 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
                 out.vertices.push_back({m_p[v] - body.offset, n, held(static_cast<std::uint32_t>(v)), m_color.empty() ? 0u : m_color[v]});
                 clusters.emplace_back(n, out_i);
                 for (std::size_t li = 0; li < m_layers.size(); ++li) outLayers[li].push_back(m_layers[li].offset[v]);
+                if (!m_ids.empty()) out.ids.push_back(m_ids[v]);
             }
             const auto& t = m_t[g];
             const int j = t[0] == v ? 0 : t[1] == v ? 1 : 2;
@@ -1551,6 +1560,7 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
                 if (!m_mask.empty()) w.m_mask.push_back(m_mask[v]);
                 if (!m_color.empty()) w.m_color.push_back(m_color[v]);
                 if (!m_start.empty()) w.m_start.push_back(m_start[v]);
+                if (!m_ids.empty()) w.m_ids.push_back(m_ids[v]);
                 for (std::size_t k = 0; k < m_layers.size(); ++k) w.m_layers[k].offset.push_back(m_layers[k].offset[v]);
             }
             wt[static_cast<std::size_t>(c)] = toWindow[v];
@@ -1585,6 +1595,7 @@ void SculptMesh::stitch(const SculptMesh& w, const std::vector<std::uint32_t>& t
             if (!m_mask.empty()) m_mask[w.m_from[i]] = w.m_mask[i];
             if (!m_color.empty()) m_color[w.m_from[i]] = w.m_color[i];
             if (!m_start.empty() && i < w.m_start.size()) m_start[w.m_from[i]] = w.m_start[i];
+            if (!m_ids.empty() && i < w.m_ids.size()) m_ids[w.m_from[i]] = w.m_ids[i];
             for (std::size_t k = 0; k < m_layers.size() && k < w.m_layers.size(); ++k) m_layers[k].offset[w.m_from[i]] = w.m_layers[k].offset[i];
         } else {
             toMesh[i] = static_cast<std::uint32_t>(m_p.size());
@@ -1592,6 +1603,7 @@ void SculptMesh::stitch(const SculptMesh& w, const std::vector<std::uint32_t>& t
             if (!m_mask.empty()) m_mask.push_back(w.m_mask[i]);
             if (!m_color.empty()) m_color.push_back(w.m_color[i]);
             if (!m_start.empty()) m_start.push_back(i < w.m_start.size() ? w.m_start[i] : w.m_p[i]);
+            if (!m_ids.empty()) m_ids.push_back(i < w.m_ids.size() ? w.m_ids[i] : 0xFFFFFFFFu);
             for (std::size_t k = 0; k < m_layers.size(); ++k)
                 m_layers[k].offset.push_back(k < w.m_layers.size() && i < w.m_layers[k].offset.size() ? w.m_layers[k].offset[i] : Vec3{});
         }

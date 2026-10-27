@@ -753,7 +753,7 @@ bool Application::beginSculpt(float x, float y) {
     s.symmetryZ = m_uiState.sculptSymmetryZ;
     s.radial = m_uiState.sculptRadial > 1 ? m_uiState.sculptRadial : 0;
     s.falloff = static_cast<SculptFalloff>(std::clamp(m_uiState.sculptFalloff, 0, 4));
-    s.refine = m_uiState.sculptRefine;
+    s.refine = m_uiState.sculptRefine && !body.multires; // multiresolution levels keep their vertices
     s.detail = std::max(m_uiState.sculptDetail, 0.0f);
     s.color = {m_uiState.sculptColor[0], m_uiState.sculptColor[1], m_uiState.sculptColor[2]};
     if (m_uiState.sculptAlpha > 0 && static_cast<std::size_t>(m_uiState.sculptAlpha) <= sculptAlphaNames().size()) {
