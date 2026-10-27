@@ -508,6 +508,27 @@ TEST_CASE("Exact geometry through booleans of exact bodies, and not for meshes")
     REQUIRE(f.exact());
     CHECK(kinds(f)[BSurfaceKind::Torus] == 1);
     CHECK(circles(f) == 3);
+    // Extrude cuts, mirrored copies and patterns of exact bodies cut into another stay exact.
+    Document m;
+    REQUIRE(run(m, "BOX 60 40 15 @0,0,0").ok);
+    REQUIRE(run(m, "CIRCLE 10,5 4").ok);
+    REQUIRE(run(m, "EXTRUDE \"Circle 1\" 30 CUT \"Block 1\"").ok);
+    REQUIRE(m.scene.bodies()[0].exact());
+    CHECK(kinds(m.scene.bodies()[0])[BSurfaceKind::Cylinder] == 1);
+    REQUIRE(run(m, "MIRROR \"Block 1\" PLANE YZ").ok);
+    REQUIRE(m.scene.bodies().size() == 2);
+    const Body& mirrored = m.scene.bodies()[1];
+    REQUIRE(mirrored.exact());
+    for (const BSurface& q : mirrored.brep->surfaces)
+        if (q.kind == BSurfaceKind::Cylinder) CHECK_NEAR(q.f.o.x, -10.0, 1e-4); // the hole moved across
+    REQUIRE(run(m, "CYLINDER 3 10 @-20,10,10").ok);
+    REQUIRE(run(m, "PATTERN \"Cylinder 3\" LINEAR 3 SPACING 8 DIR 1,0,0 SUBTRACT \"Block 1\"").ok);
+    const Body* block = nullptr;
+    for (const Body& b : m.scene.bodies())
+        if (b.name == "Block 1") block = &b;
+    REQUIRE(block);
+    REQUIRE(block->exact());
+    CHECK(kinds(*block)[BSurfaceKind::Cylinder] == 4); // the cut hole and three blind pockets
     // A sculpted (mesh) body cut by a hole gains no exact geometry of its own.
     Document s;
     REQUIRE(run(s, "SPHERE 20 @0,0,0").ok);

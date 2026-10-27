@@ -5,6 +5,7 @@
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/Extrude.hpp"
+#include "core/ExactMesh.hpp"
 #include "core/Brep.hpp"
 #include "core/Features.hpp"
 #include "core/HoleWizard.hpp"
@@ -137,7 +138,8 @@ std::optional<Vec3> axisWord(const std::string& w) {
 // Cuts `tool` (a closed world mesh) from the bodies it meets, or joins it with them into the
 // first. `target` names the only body to use ("" for any visible one it meets). The undo
 // snapshot must already be taken: on false (why in `why`) the caller undoes.
-bool combineTool(Document& doc, MeshData tool, BooleanOp op, const std::string& target, std::string& result, std::string& why) {
+bool combineTool(Document& doc, MeshData tool, BooleanOp op, const std::string& target, std::string& result, std::string& why,
+                 const std::vector<BSurface>& toolSurfaces = {}) {
     const AABB tb = tool.bounds();
     std::vector<int> hits;
     if (!target.empty()) {
@@ -163,7 +165,7 @@ bool combineTool(Document& doc, MeshData tool, BooleanOp op, const std::string& 
             const bool wasClosed = openEdgeCount(b.mesh) == 0;
             Body trial = b;
             std::string e;
-            if (!bodyBoolean(trial, toolBody, BooleanOp::Subtract, &e)) continue; // only its box overlaps
+            if (!bodyBoolean(trial, toolBody, BooleanOp::Subtract, &e, toolSurfaces)) continue; // only its box overlaps
             if (wasClosed && openEdgeCount(trial.mesh) > 0) return why = "cutting " + b.name + " left holes in it", false;
             b = std::move(trial);
             done.push_back(b.name);
@@ -173,7 +175,7 @@ bool combineTool(Document& doc, MeshData tool, BooleanOp op, const std::string& 
         Body& into = doc.scene.bodies()[static_cast<std::size_t>(hits[0])];
         const bool wasClosed = openEdgeCount(into.mesh) == 0;
         std::string e;
-        if (!bodyBoolean(into, toolBody, BooleanOp::Union, &e)) return why = e, false;
+        if (!bodyBoolean(into, toolBody, BooleanOp::Union, &e, toolSurfaces)) return why = e, false;
         done.push_back(into.name);
         // Other bodies it meets join in too.
         std::vector<int> gone;
@@ -415,7 +417,9 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         if (op) {
             doc.scene.pushUndo("EXTRUDE " + curve.name);
             std::string into;
-            if (!combineTool(doc, worldMesh(b), *op, target, into, why)) {
+            std::vector<BSurface> exact = exactSurfaces(b); // the tool's, in world space
+            for (BSurface& q : exact) q.f.o = q.f.o + DVec3(b.offset);
+            if (!combineTool(doc, worldMesh(b), *op, target, into, why, exact)) {
                 doc.scene.undo();
                 return out.fail("Cannot " + std::string(*op == BooleanOp::Subtract ? "cut" : "join") + " with " + curve.name + ": " + why +
                                 " (nothing changed)");
@@ -505,7 +509,13 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         if (op) { // a revolved cut (a groove) or boss
             doc.scene.pushUndo("REVOLVE " + curve.name);
             std::string into;
-            if (!combineTool(doc, std::move(*mesh), *op, target, into, why)) {
+            std::vector<BSurface> surfaces;
+            if (exact)
+                for (const BSurface& q : exact->surfaces)
+                    if (q.kind == BSurfaceKind::Plane || q.kind == BSurfaceKind::Cylinder || q.kind == BSurfaceKind::Cone || q.kind == BSurfaceKind::Sphere ||
+                        q.kind == BSurfaceKind::Torus)
+                        surfaces.push_back(q);
+            if (!combineTool(doc, std::move(*mesh), *op, target, into, why, surfaces)) {
                 doc.scene.undo();
                 return out.fail("Cannot " + std::string(*op == BooleanOp::Subtract ? "cut" : "join") + " with " + curve.name + ": " + why +
                                 " (nothing changed)");
@@ -697,6 +707,24 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             return out.fail(name.empty() ? "Select a body, or name it" : "No body named " + name);
         const Body src = doc.scene.bodies()[static_cast<std::size_t>(bi)];
         const MeshData world = worldMesh(src);
+        // Its exact surfaces in world space, and how each mesh copy below was moved (so
+        // copies and the bodies they join keep exact geometry).
+        std::vector<BSurface> exactWorld = exactSurfaces(src);
+        for (BSurface& q : exactWorld) q.f.o = q.f.o + DVec3(src.offset);
+        std::vector<Mat4> copyMoves;
+        auto movedSurfaces = [&](const Mat4& t) {
+            std::vector<BSurface> moved = exactWorld;
+            auto pt = [&](const DVec3& p) {
+                return DVec3{t.m[0][0] * p.x + t.m[1][0] * p.y + t.m[2][0] * p.z + t.m[3][0], t.m[0][1] * p.x + t.m[1][1] * p.y + t.m[2][1] * p.z + t.m[3][1],
+                             t.m[0][2] * p.x + t.m[1][2] * p.y + t.m[2][2] * p.z + t.m[3][2]};
+            };
+            auto dir = [&](const DVec3& d) {
+                return dnormalize(DVec3{t.m[0][0] * d.x + t.m[1][0] * d.y + t.m[2][0] * d.z, t.m[0][1] * d.x + t.m[1][1] * d.y + t.m[2][1] * d.z,
+                                        t.m[0][2] * d.x + t.m[1][2] * d.y + t.m[2][2] * d.z});
+            };
+            for (BSurface& q : moved) q.f = Frame::make(pt(q.f.o), dir(q.f.z), dir(q.f.x));
+            return moved;
+        };
         if (world.indices.empty()) return out.fail(src.name + " has no surface");
         std::vector<MeshData> copies;
         std::vector<Mat4> placements; // PATTERN: where each copy goes
@@ -785,6 +813,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 MeshData m = world;
                 m.transform(t);
                 copies.push_back(std::move(m));
+                copyMoves.push_back(t);
             };
             if (special) {
                 if ((!alongName.empty()) + (!fillName.empty()) + points > 1) return out.fail("ALONG, POINTS and FILL go one at a time");
@@ -910,6 +939,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                         MeshData m = world;
                         m.transform(move);
                         copies.push_back(std::move(m));
+                        copyMoves.push_back(move);
                     }
                 what = std::to_string(n) + (rows > 1 ? " x " + std::to_string(rows) : std::string()) + " linear";
             } else {
@@ -924,6 +954,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                     MeshData m = world;
                     m.transform(turn);
                     copies.push_back(std::move(m));
+                    copyMoves.push_back(turn);
                 }
                 what = std::to_string(n) + " circular";
             }
@@ -956,6 +987,14 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 else return out.fail("Usage: MIRROR [body] [PLANE XY|YZ|XZ] [AT x,y,z] [NORMAL x,y,z] [COPY|MOVE] [UNION]");
             }
             copies.push_back(mirrorMesh(world, point, normal));
+            Mat4 flip = Mat4::identity(); // p - 2 n (n . (p - point))
+            const Vec3 nn = normalize(normal);
+            const float nv[3] = {nn.x, nn.y, nn.z};
+            for (int c = 0; c < 3; ++c)
+                for (int r = 0; r < 3; ++r) flip.m[c][r] = (c == r ? 1.0f : 0.0f) - 2 * nv[r] * nv[c];
+            const float k = 2 * dot(nn, point);
+            flip.m[3][0] = nv[0] * k, flip.m[3][1] = nv[1] * k, flip.m[3][2] = nv[2] * k;
+            copyMoves.push_back(flip);
             moveOriginal = !copy;
             what = "mirror";
             if (merge) into = src.name;
@@ -966,6 +1005,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             const std::string keepName = b.name;
             const Vec3 keepColor = b.color;
             b = featureBody(keepName, std::move(copies[0]), keepColor);
+            if (!exactWorld.empty()) keepExactGeometry(b, movedSurfaces(copyMoves[0]));
             doc.scene.touchBodies();
             doc.dirty = true;
             out.say("Mirrored " + keepName + ": " + closedText(b.mesh));
@@ -976,14 +1016,14 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             if (ti < 0) return out.fail("No body named " + into);
             Body& target = doc.scene.bodies()[static_cast<std::size_t>(ti)];
             // The original joins too when it isn't the target.
-            if (ti != bi && op == BooleanOp::Union) copies.insert(copies.begin(), world);
-            if (ti != bi && op == BooleanOp::Subtract) copies.insert(copies.begin(), world);
+            if (ti != bi) copies.insert(copies.begin(), world), copyMoves.insert(copyMoves.begin(), Mat4::identity());
             std::size_t done = 0;
             const bool wasClosed = openEdgeCount(target.mesh) == 0;
-            for (MeshData& m : copies) {
-                const Body tool = meshBody("tool", std::move(m));
+            for (std::size_t c = 0; c < copies.size(); ++c) {
+                const Body tool = meshBody("tool", std::move(copies[c]));
                 std::string e;
-                if (!bodyBoolean(target, tool, op, &e) || (wasClosed && openEdgeCount(target.mesh) > 0)) {
+                if (!bodyBoolean(target, tool, op, &e, c < copyMoves.size() ? movedSurfaces(copyMoves[c]) : std::vector<BSurface>{}) ||
+                    (wasClosed && openEdgeCount(target.mesh) > 0)) {
                     if (e.empty()) e = "the result came out with holes";
                     doc.scene.undo();
                     return out.fail("The " + what + " copy " + std::to_string(done + 1) + " couldn't be " +
@@ -1003,9 +1043,10 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             return out;
         }
         int next = 2;
-        for (MeshData& m : copies) {
+        for (std::size_t c = 0; c < copies.size(); ++c) {
             while (bodyNamed(doc, src.name + " (" + std::to_string(next) + ")") >= 0) ++next; // names stay unique
-            Body b = featureBody(src.name + " (" + std::to_string(next++) + ")", std::move(m), src.color);
+            Body b = featureBody(src.name + " (" + std::to_string(next++) + ")", std::move(copies[c]), src.color);
+            if (!exactWorld.empty() && c < copyMoves.size()) keepExactGeometry(b, movedSurfaces(copyMoves[c]));
             b.component = src.component;
             b.assembly = src.assembly;
             doc.scene.add(std::move(b));

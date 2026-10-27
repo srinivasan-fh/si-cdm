@@ -757,8 +757,9 @@ bool keepExactGeometry(Body& body, const std::vector<BSurface>& surfaces) {
     auto b = exactBrepFromMesh(body.mesh, surfaces, &rep, 600);
     if (std::getenv("SICDM_EXACT_DEBUG"))
         std::fprintf(stderr, "exact %s: %s faces %zu exact %zu area %.3f\n", body.name.c_str(), b ? "ok" : rep.why.c_str(), rep.faces, rep.exactFaces, rep.exactArea);
-    // Mostly facets (a mesh body cut by an exact tool): no better than the mesh.
-    if (!b || rep.exactArea < 0.5) return false;
+    // Mostly facets (a mesh body cut by an exact tool, a cut by a tool with no exact
+    // surfaces): no better than the mesh.
+    if (!b || rep.exactArea < 0.5 || rep.faces - rep.exactFaces > std::max<std::size_t>(8, rep.exactFaces)) return false;
     b->name = body.name;
     body.brep = std::move(b);
     body.brepKey = meshKey(body.mesh);

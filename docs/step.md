@@ -69,7 +69,8 @@ neighbouring triangles merged into one face. Closed meshes give closed solids.
 **Exact through features:** cutting or joining an exact body keeps it exact.
 
 - This covers holes (drill points and counterbores too), pockets, bosses, knife cuts,
-  `BOOLEAN` with another exact body, and rounds on chosen edges.
+  `EXTRUDE` and `REVOLVE` cuts and joins, `BOOLEAN` with another exact body, rounds on
+  chosen edges, and `MIRROR` and `PATTERN` copies (joined, cut or on their own).
 - The cut is made on triangles. Afterwards each triangle is matched to the exact surface it
   lies on, from the body's own surfaces and the tool's: a hole's cylinder and cone, a
   pocket's planes, a round's cylinder (straight edge), torus (circular edge) or corner ball.
