@@ -36,6 +36,7 @@
 #include "core/HoleWizard.hpp"
 #include "core/Variables.hpp"
 #include "core/Translate.hpp"
+#include "core/Render.hpp"
 #include "core/Assembly.hpp"
 #include "core/Drawing.hpp"
 #include "core/Rig.hpp"
@@ -787,7 +788,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -803,7 +804,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -2686,6 +2687,184 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         }
         doc.scene.touchBodies();
         markChanged(doc);
+        return out;
+    }
+    if (cmd == "MATERIAL") {
+        // MATERIAL [body] preset | COLOR c | METALLIC m | ROUGHNESS r | TRANSMISSION t | IOR n | EMISSION e
+        //          | COLORMAP file | NORMALMAP file | DEFAULT | LIST
+        if (!a.empty() && iequal(a[0], "list")) {
+            for (const MaterialPreset& p : materialPresets()) out.say(std::string("  ") + p.name + "  " + p.description);
+            return out;
+        }
+        static const char* const kWords[] = {"color", "colour", "metallic", "roughness", "transmission", "ior", "emission", "colormap", "normalmap", "default"};
+        auto isWord = [&](std::size_t k) {
+            if (quotedArg(k)) return false;
+            const std::string w = lower(a[k]);
+            for (const char* q : kWords)
+                if (w == q) return true;
+            MaterialProps probe;
+            return applyMaterialPreset(w, probe, nullptr);
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        while (i < a.size() && !isWord(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (i >= a.size()) { // what it has
+            const MaterialProps& m = b.material;
+            out.say(b.name + ": " + (m.preset.empty() ? std::string("plastic (the default)") : m.preset) + fmt(", metallic %g", static_cast<double>(m.metallic)) +
+                    fmt(", roughness %g", static_cast<double>(m.roughness)) +
+                    (m.transmission > 0 ? fmt(", transmission %g", static_cast<double>(m.transmission)) + fmt(" (IOR %g)", static_cast<double>(m.ior)) : std::string()) +
+                    (m.emission > 0 ? fmt(", emission %g", static_cast<double>(m.emission)) : std::string()) +
+                    (m.colorMap.empty() ? std::string() : ", colour map " + m.colorMap) + (m.normalMap.empty() ? std::string() : ", normal map " + m.normalMap));
+            return out;
+        }
+        MaterialProps m = b.material;
+        Vec3 color = b.color;
+        for (; i < a.size(); ++i) {
+            const std::string w = lower(a[i]);
+            const auto value = [&](float lo, float hi, float& v) {
+                const auto n = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!n || *n < lo || *n > hi) return false;
+                v = *n;
+                return true;
+            };
+            if (w == "color" || w == "colour") {
+                if (i + 1 >= a.size()) return out.fail("COLOR needs a colour name, #RRGGBB or r,g,b");
+                if (!parseColorText(a[++i], color)) return out.fail("Unknown colour " + a[i]);
+            } else if (w == "metallic") {
+                if (!value(0, 1, m.metallic)) return out.fail("METALLIC is 0 (plastic, paint) to 1 (metal)");
+            } else if (w == "roughness") {
+                if (!value(0, 1, m.roughness)) return out.fail("ROUGHNESS is 0 (a mirror) to 1 (matte)");
+            } else if (w == "transmission") {
+                if (!value(0, 1, m.transmission)) return out.fail("TRANSMISSION is 0 (opaque) to 1 (clear)");
+            } else if (w == "ior") {
+                if (!value(1, 4, m.ior)) return out.fail("IOR is 1 to 4 (glass 1.5, water 1.33)");
+            } else if (w == "emission") {
+                if (!value(0, 1000, m.emission)) return out.fail("EMISSION is 0 (none) or more (how bright it glows)");
+            } else if (w == "colormap" || w == "normalmap") {
+                if (i + 1 >= a.size()) return out.fail(toUpper(w) + " needs an image file, or NONE");
+                const std::string f = a[++i];
+                (w == "colormap" ? m.colorMap : m.normalMap) = iequal(f, "none") ? std::string() : f;
+            } else if (w == "default") {
+                m = MaterialProps{};
+            } else if (!applyMaterialPreset(w, m, &color)) {
+                return out.fail("Unknown material " + a[i] + " (MATERIAL LIST shows them)");
+            }
+            if (w == "metallic" || w == "roughness" || w == "transmission" || w == "ior" || w == "emission") m.preset = m.preset.empty() ? "custom" : m.preset;
+        }
+        b.material = m;
+        b.color = color;
+        doc.scene.touchBodies();
+        out.say(b.name + ": " + (m.preset.empty() ? std::string("plastic") : m.preset) + fmt(", metallic %g", static_cast<double>(m.metallic)) +
+                fmt(", roughness %g", static_cast<double>(m.roughness)) + (m.transmission > 0 ? std::string(", clear") : std::string()) +
+                (m.emission > 0 ? std::string(", glowing") : std::string()));
+        return out;
+    }
+    if (cmd == "RENDER") {
+        // RENDER [file.png] [SIZE w h] [SAMPLES n] [BOUNCES b] [ENV studio|sky|white|dark] [SUN az el]
+        //        [LIGHT x] [EXPOSURE ev] [FLOOR ON|OFF] [DENOISE ON|OFF] [VIEW ISO|FRONT|...]
+        RenderSettings& rs = doc.state.render;
+        std::string path;
+        std::optional<StandardView> standard;
+        bool window = false, start = false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const std::string w = lower(a[i]);
+            const auto num = [&]() { return i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt; };
+            auto onOff = [&](bool& v) {
+                if (i + 1 >= a.size()) return false;
+                const std::string x = lower(a[++i]);
+                if (x == "on" || x == "yes") v = true;
+                else if (x == "off" || x == "no") v = false;
+                else return false;
+                return true;
+            };
+            if (w == "size") {
+                const auto x = num(), y = num();
+                if (!x || !y || *x < 8 || *y < 8 || *x > 8192 || *y > 8192) return out.fail("SIZE is two numbers of pixels, 8 to 8192");
+                rs.width = static_cast<int>(*x), rs.height = static_cast<int>(*y);
+            } else if (w == "samples") {
+                const auto n = num();
+                if (!n || *n < 1 || *n > 65536) return out.fail("SAMPLES is 1 to 65536 a pixel");
+                rs.samples = static_cast<int>(*n);
+            } else if (w == "bounces") {
+                const auto n = num();
+                if (!n || *n < 1 || *n > 64) return out.fail("BOUNCES is 1 to 64");
+                rs.bounces = static_cast<int>(*n);
+            } else if (w == "env" || w == "environment") {
+                const std::string e = i + 1 < a.size() ? lower(a[++i]) : std::string();
+                if (std::find(renderEnvironments().begin(), renderEnvironments().end(), e) == renderEnvironments().end())
+                    return out.fail("ENV is STUDIO, SKY, WHITE or DARK");
+                rs.environment = e;
+            } else if (w == "sun") {
+                const auto az = num(), el = num();
+                if (!az || !el || *el < 1 || *el > 90) return out.fail("SUN needs an azimuth and an elevation (1 to 90 degrees)");
+                rs.sunAzimuth = *az, rs.sunElevation = *el;
+            } else if (w == "light") {
+                const auto n = num();
+                if (!n || *n < 0 || *n > 100) return out.fail("LIGHT is 0 to 100 (1: as the environment is)");
+                rs.light = *n;
+            } else if (w == "exposure") {
+                const auto n = num();
+                if (!n || *n < -10 || *n > 10) return out.fail("EXPOSURE is -10 to 10 stops");
+                rs.exposure = *n;
+            } else if (w == "floor") {
+                if (!onOff(rs.floor)) return out.fail("FLOOR is ON or OFF");
+            } else if (w == "denoise") {
+                if (!onOff(rs.denoise)) return out.fail("DENOISE is ON or OFF");
+            } else if (w == "view") {
+                const std::string v = i + 1 < a.size() ? lower(a[++i]) : std::string();
+                if (v == "iso" || v == "isometric") standard = StandardView::Isometric;
+                else if (v == "front") standard = StandardView::Front;
+                else if (v == "back") standard = StandardView::Back;
+                else if (v == "left") standard = StandardView::Left;
+                else if (v == "right") standard = StandardView::Right;
+                else if (v == "top") standard = StandardView::Top;
+                else if (v == "bottom") standard = StandardView::Bottom;
+                else if (v != "current") return out.fail("VIEW is ISO, FRONT, BACK, LEFT, RIGHT, TOP, BOTTOM or CURRENT");
+            } else if (w == "window") {
+                window = true;
+            } else if (w == "start") {
+                window = start = true;
+            } else if (path.empty() && w.find('.') != std::string::npos) {
+                path = a[i];
+            } else {
+                return usage();
+            }
+        }
+        if (window) { // the render window (START: making the picture at once)
+            if (!view) return out.fail("The render window needs the app window (RENDER file.png renders without it)");
+            view->setPanelPage(start ? 9 : 8);
+            if (path.empty()) return out;
+        }
+        if (path.empty()) {
+            out.say("Render settings: " + rs.environment + fmt(" environment, %g x ", static_cast<double>(rs.width)) + fmt("%g", static_cast<double>(rs.height)) +
+                    fmt(", %g samples", static_cast<double>(rs.samples)) + fmt(", %g bounces", static_cast<double>(rs.bounces)) +
+                    (rs.floor ? ", floor" : ", no floor") + (rs.denoise ? ", denoised" : "") + "  (RENDER file.png makes the picture)");
+            return out;
+        }
+        if (doc.replaying) return out; // regenerating the model doesn't write files
+        const float aspect = static_cast<float>(rs.width) / static_cast<float>(rs.height);
+        // The 3D window's view (at the picture's shape), else the one asked for (iso by default).
+        RenderCamera rc;
+        const OrbitCamera* vc = standard || !view ? nullptr : view->viewCamera();
+        OrbitCamera cam = vc ? *vc : OrbitCamera{};
+        cam.setAspect(aspect);
+        if (!vc) {
+            cam.setStandardView(standard.value_or(StandardView::Isometric), false);
+            cam.fitToBounds(doc.scene.bounds(), false);
+        }
+        rc = renderCamera(cam);
+        std::vector<std::uint8_t> px;
+        RenderStats stats;
+        std::string why;
+        if (!renderImage(doc.scene, rs, rc, px, &stats, &why)) return out.fail("Cannot render: " + why);
+        std::string err;
+        if (!writeFile(path, encodePngCompressed(rs.width, rs.height, 3, px), &err)) return out.fail("Cannot write the picture: " + err);
+        out.say(fmt("Rendered %g x ", static_cast<double>(rs.width)) + fmt("%g", static_cast<double>(rs.height)) + fmt(", %g samples a pixel", static_cast<double>(rs.samples)) +
+                fmt(" in %.1f s -> ", stats.seconds) + path);
         return out;
     }
     if (cmd == "UV") {

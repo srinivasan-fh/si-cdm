@@ -1,5 +1,6 @@
 #include "ui/LandingUI.hpp"
 #include "core/Translate.hpp"
+#include "core/Render.hpp"
 
 #include "core/HelpDocs.hpp"
 
@@ -369,11 +370,125 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showCamTools && st.cam) drawCamToolsWindow(cmd, st);
     if (st.showHelp) drawHelpWindow(cmd, st);
     if (st.showPreferences) drawPreferencesWindow(cmd, st);
+    if (st.showRender) drawRenderWindow(cmd, st);
     if (st.showLicence) drawLicenceWindow(cmd, st);
     if (st.showCamMachine && st.cam) drawCamMachineWindow(cmd, st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
     if (!st.mateTool.empty()) drawMateWindow(cmd, st);
     return cmd;
+}
+
+namespace {
+std::string fmtNumber(float v) {
+    char b[32];
+    std::snprintf(b, sizeof(b), "%.4g", static_cast<double>(v));
+    return b;
+}
+} // namespace
+
+void LandingUI::drawRenderWindow(UiCommands& cmd, UiState& st) {
+    if (!ImGui::Begin(tr("Render"), &st.showRender, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+    const RenderSettings rs = st.project ? st.project->render : RenderSettings{};
+    auto set = [&](const std::string& words) { cmd.commands.push_back("RENDER " + words); };
+    // The environment and its light.
+    static const char* const kEnvs[] = {"studio", "sky", "white", "dark"};
+    static const char* const kEnvNames[] = {SICDM_TR_NOOP("Studio (soft boxes)"), SICDM_TR_NOOP("Sky and sun"), SICDM_TR_NOOP("White"),
+                                            SICDM_TR_NOOP("Dark studio")};
+    int env = 0;
+    for (int i = 0; i < 4; ++i)
+        if (rs.environment == kEnvs[i]) env = i;
+    ImGui::SetNextItemWidth(220);
+    if (ImGui::BeginCombo(tr("Environment"), tr(kEnvNames[env]))) {
+        for (int i = 0; i < 4; ++i)
+            if (ImGui::Selectable(tr(kEnvNames[i]), i == env)) set(std::string("ENV ") + kEnvs[i]);
+        ImGui::EndCombo();
+    }
+    if (rs.environment == "sky") {
+        float sun[2] = {rs.sunAzimuth, rs.sunElevation};
+        ImGui::SetNextItemWidth(220);
+        ImGui::SliderFloat2(tr("Sun (azimuth, elevation)"), sun, 0.0f, 360.0f, "%.0f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) set("SUN " + fmtNumber(sun[0]) + " " + fmtNumber(std::clamp(sun[1], 1.0f, 90.0f)));
+    }
+    float light = rs.light, exposure = rs.exposure;
+    ImGui::SetNextItemWidth(220);
+    ImGui::SliderFloat(tr("Light"), &light, 0.1f, 4.0f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) set("LIGHT " + fmtNumber(light));
+    ImGui::SetNextItemWidth(220);
+    ImGui::SliderFloat(tr("Exposure (stops)"), &exposure, -4.0f, 4.0f, "%+.1f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) set("EXPOSURE " + fmtNumber(exposure));
+    bool floorOn = rs.floor, denoise = rs.denoise;
+    if (ImGui::Checkbox(tr("Floor"), &floorOn)) set(floorOn ? "FLOOR ON" : "FLOOR OFF");
+    ImGui::SameLine();
+    if (ImGui::Checkbox(tr("Denoise"), &denoise)) set(denoise ? "DENOISE ON" : "DENOISE OFF");
+    // Size and quality.
+    static const int kSizes[][2] = {{640, 400}, {1280, 800}, {1920, 1080}, {3840, 2160}};
+    static const int kSamples[] = {16, 64, 256, 1024};
+    ImGui::SetNextItemWidth(160);
+    const std::string sizeNow = std::to_string(rs.width) + " x " + std::to_string(rs.height);
+    if (ImGui::BeginCombo(tr("Size"), sizeNow.c_str())) {
+        for (const auto& sz : kSizes) {
+            const std::string label = std::to_string(sz[0]) + " x " + std::to_string(sz[1]);
+            if (ImGui::Selectable(label.c_str(), rs.width == sz[0] && rs.height == sz[1])) set("SIZE " + std::to_string(sz[0]) + " " + std::to_string(sz[1]));
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120);
+    const std::string samplesNow = std::to_string(rs.samples);
+    if (ImGui::BeginCombo(tr("Samples"), samplesNow.c_str())) {
+        for (int n : kSamples)
+            if (ImGui::Selectable(std::to_string(n).c_str(), rs.samples == n)) set("SAMPLES " + std::to_string(n));
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("More samples: less noise, longer to make"));
+    // The selected body's material.
+    if (m_menuScene && st.selectedBody >= 0 && st.selectedBody < static_cast<int>(m_menuScene->bodies().size())) {
+        const Body& b = m_menuScene->bodies()[static_cast<std::size_t>(st.selectedBody)];
+        ImGui::SeparatorText(tr("Material of the selected body"));
+        const std::string mq = "MATERIAL \"" + b.name + "\" ";
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo(tr("Material"), b.material.preset.empty() ? tr("plastic") : tr(b.material.preset.c_str()))) {
+            for (const MaterialPreset& p : materialPresets()) {
+                if (ImGui::Selectable(tr(p.name), b.material.preset == p.name)) cmd.commands.push_back(mq + p.name);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(p.description));
+            }
+            ImGui::EndCombo();
+        }
+        float rough = b.material.roughness, metal = b.material.metallic;
+        ImGui::SetNextItemWidth(220);
+        ImGui::SliderFloat(tr("Roughness"), &rough, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back(mq + "ROUGHNESS " + fmtNumber(rough));
+        ImGui::SetNextItemWidth(220);
+        ImGui::SliderFloat(tr("Metallic"), &metal, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back(mq + "METALLIC " + fmtNumber(metal));
+    }
+    // Make it, and see it.
+    ImGui::Separator();
+    if (st.renderRunning) {
+        ImGui::ProgressBar(st.renderProgress, {300, 0});
+        ImGui::SameLine();
+        if (ImGui::Button(tr("Stop"))) st.renderCancel = true;
+    } else {
+        if (ImGui::Button(tr("Render"))) st.renderStart = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A photoreal picture of the 3D view as it is now"));
+    }
+    if (!st.renderInfo.empty()) {
+        ImGui::SameLine();
+        ImGui::TextColored(theme::vec(theme::kTextDim), "%s", st.renderInfo.c_str());
+    }
+    if (st.renderTexture && st.renderWidth > 0) {
+        const float w = std::min(640.0f, ImGui::GetMainViewport()->Size.x * 0.5f);
+        ImGui::Image(static_cast<ImTextureID>(st.renderTexture), {w, w * static_cast<float>(st.renderHeight) / static_cast<float>(st.renderWidth)});
+        static char path[512] = "render.png";
+        ImGui::SetNextItemWidth(260);
+        ImGui::InputText("##renderpath", path, sizeof(path));
+        ImGui::SameLine();
+        if (ImGui::Button(tr("Save Picture"))) st.renderSavePath = path;
+    }
+    ImGui::End();
 }
 
 void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st) {
@@ -455,6 +570,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::Separator();
         }
         if (ImGui::MenuItem(tr("Zoom to Fit"), "F")) cmd.fit = true;
+        if (!is2D && ImGui::MenuItem(tr("Render..."))) st.showRender = true;
         if (!is2D) {
             if (ImGui::MenuItem(tr("Orthographic"), "P", cam.projection() == Projection::Orthographic))
                 cmd.toggleProjection = true;

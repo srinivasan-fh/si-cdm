@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Render.hpp"
 #include "core/Camera.hpp"
 #include "core/Constraints.hpp"
 #include "core/Document.hpp"
@@ -15,6 +16,7 @@
 #include "ui/LandingUI.hpp"
 #include "core/UpdateCheck.hpp"
 
+#include <atomic>
 #include <future>
 #include <memory>
 #include <optional>
@@ -62,6 +64,7 @@ public:
     void setDisplay(int mode) override;
     void setGrid(std::optional<bool> on) override;
     bool setPolygroups(std::optional<bool> on) override;
+    const OrbitCamera* viewCamera() const override { return &m_cam3D; }
     bool setBodyTexture(const std::string& body, bool checker, const std::string& colorPath, const std::string& normalPath, std::string* error) override;
     void setPanel(std::optional<bool> on) override;
     void setPanelPage(int page) override;
@@ -277,6 +280,21 @@ private:
     Autosaver m_autosaver;
     double m_autosaveCheck = 0.0;
     std::future<UpdateResult> m_updateCheck; // the check at start (Preferences), while it runs
+    // The render window's picture: made in the background from a copy of the scene.
+    void pollRender();
+    struct RenderJob {
+        std::vector<std::uint8_t> pixels;
+        int width = 0, height = 0, samples = 0;
+        RenderStats stats;
+        std::string why;
+        std::atomic<float> progress{0};
+        std::atomic<bool> stop{false};
+    };
+    std::shared_ptr<RenderJob> m_renderJob;
+    std::future<bool> m_renderDone;
+    std::vector<std::uint8_t> m_renderPixels; // the last picture (to save)
+    int m_renderWidth = 0, m_renderHeight = 0;
+    unsigned m_renderTexture = 0;
     bool m_autosaveOn = true;
     int m_commandFailures = 0; // commands that failed (a scripted --screenshot run exits with 3)
     std::vector<RecoveryFile> m_recoverable;

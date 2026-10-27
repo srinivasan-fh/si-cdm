@@ -2,6 +2,7 @@
 
 #include "core/Bvh.hpp"
 #include "core/Geometry.hpp"
+#include "core/Material.hpp"
 #include "core/Motion.hpp"
 #include "core/Physics.hpp"
 #include "core/Rig.hpp"
@@ -50,6 +51,7 @@ struct Body {
     std::string attachedTo; // moves rigidly with this body (armour on its part, a hinge pin on its parent)
     std::string assembly;   // the sub-assembly it sits in ("Gearbox/Input shaft"; "" = the top level)
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
+    MaterialProps material; // how it looks rendered (RENDER): metal, glass, roughness, maps
     std::vector<HoleNote> holes; // hole wizard callouts (tapped holes carry a cosmetic thread)
     std::string field;      // a result plot ("von Mises stress, MPa: 0 to 120"): the mesh's mask is the value, 0..1, drawn in colours
     // Exact geometry (STEP imports and the primitives), in the mesh's own frame: good
@@ -270,6 +272,7 @@ private:
         std::uint64_t id = 0, revision = 0;
         std::vector<BodyState> bodies;
         std::vector<PhysicsProps> physics; // each body's (an edit of them is an undo step too)
+        std::vector<MaterialProps> materials;
         std::string motions;
         std::vector<Motion> programs; // the motions as they were (their keys too)
         std::vector<Redo> redo;

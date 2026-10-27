@@ -84,6 +84,7 @@ public:
     virtual void setDisplay(int mode) = 0; // 0 shaded, 1 shaded+edges, 2 wireframe, 3 hidden line
     virtual void setGrid(std::optional<bool> on) = 0;  // nullopt toggles
     virtual bool setPolygroups(std::optional<bool> on) { (void)on; return false; } // polygroup colours; nullopt toggles
+    virtual const OrbitCamera* viewCamera() const { return nullptr; } // the 3D view's camera (RENDER uses it)
     // Shows a body with texture maps on its texture coordinates (a checker, a colour map
     // image, a normal map image); none of them: shown plain again. False (error) when an
     // image can't be read, or there is no window.
@@ -94,7 +95,7 @@ public:
     }
     virtual void setPanel(std::optional<bool> on) = 0; // Model panel
     // Open the panel on a page (0 Model, 1 Library, 2 CAM), or a window (3 CAM tools, 4 machine,
-    // 5 user guide, 6 preferences, 7 licence).
+    // 5 user guide, 6 preferences, 7 licence, 8 render, 9 render and start making the picture).
     virtual void setPanelPage(int page) { (void)page; }
     virtual std::string describe() const = 0;          // window, plane, camera summary
 

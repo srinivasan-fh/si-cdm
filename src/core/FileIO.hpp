@@ -12,6 +12,7 @@
 #include "core/Lathe.hpp"
 #include "core/Assembly.hpp"
 #include "core/Drawing.hpp"
+#include "core/Render.hpp"
 #include "core/Scene.hpp"
 #include "core/Units.hpp"
 #include "core/Variables.hpp"
@@ -57,6 +58,7 @@ struct ProjectState {
     LatheJob lathe;           // lathe CAM: setup, tools and operations
     Drawing drawing;          // the drawing sheet: views, dimensions, title block
     AssemblyState assembly;   // mates between the parts
+    RenderSettings render;    // RENDER: environment, lights, size, samples
     std::vector<HistoryStep> history;     // the feature history
     std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)
     bool historyComplete = true;          // false: the model was also changed outside commands

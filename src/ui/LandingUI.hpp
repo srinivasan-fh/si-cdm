@@ -56,6 +56,15 @@ struct UiState {
     // The user guide window and the page it shows ("cam.md", "cam.md#the-cam-panel").
     bool showHelp = false;
     bool showPreferences = false, showLicence = false;
+    // The render window. The app renders the 3D view in the background when renderStart is
+    // set (and stops when renderCancel is), and shows the picture (renderTexture, an OpenGL
+    // texture); renderSavePath set: the app writes the picture there.
+    bool showRender = false;
+    bool renderStart = false, renderCancel = false, renderRunning = false;
+    float renderProgress = 0;
+    unsigned renderTexture = 0;
+    int renderWidth = 0, renderHeight = 0;
+    std::string renderInfo, renderSavePath;
     std::string helpPage = "getting-started.md";
     std::string mateTool;
     float mateValue = 0.0f;
@@ -201,6 +210,7 @@ public:
 
 private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
+    void drawRenderWindow(UiCommands& cmd, UiState& st);
     void drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawFileTabs(UiCommands& cmd, const UiState& st);
     void requestClose(UiCommands& cmd, const UiState& st, int index);

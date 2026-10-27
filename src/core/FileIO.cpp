@@ -529,6 +529,15 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             }
             jb.set("physics", ph);
         }
+        if (!b.material.isDefault()) {
+            const MaterialProps& m = b.material;
+            Json jm = Json::object();
+            if (!m.preset.empty()) jm.set("preset", m.preset);
+            jm.set("metallic", m.metallic).set("roughness", m.roughness).set("transmission", m.transmission).set("ior", m.ior).set("emission", m.emission);
+            if (!m.colorMap.empty()) jm.set("color_map", m.colorMap);
+            if (!m.normalMap.empty()) jm.set("normal_map", m.normalMap);
+            jb.set("material", jm);
+        }
         // A large shape already written for another body (pattern copies, repeated parts):
         // a reference to it.
         const std::uint64_t shapeKey = !isPrimitiveKind(b.kind) && b.mesh.vertices.size() >= kBinaryMeshVertices ? meshContentKey(b.mesh) : 0;
@@ -723,6 +732,19 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     if (!state.cam.empty()) doc.set("cam", camToJson(state.cam));
     if (!state.lathe.empty()) doc.set("lathe", latheToJson(state.lathe));
     if (!state.assembly.empty()) doc.set("assembly", assemblyToJson(state.assembly));
+    {
+        const RenderSettings& r = state.render;
+        doc.set("render", Json::object()
+                              .set("environment", r.environment)
+                              .set("sun", Json::array().push(r.sunAzimuth).push(r.sunElevation))
+                              .set("light", r.light)
+                              .set("exposure", r.exposure)
+                              .set("floor", r.floor)
+                              .set("size", Json::array().push(r.width).push(r.height))
+                              .set("samples", r.samples)
+                              .set("bounces", r.bounces)
+                              .set("denoise", r.denoise));
+    }
     if (!scene.rigs().empty()) doc.set("robots", rigStateToJson(scene.rigs()));
     if (scene.terrain().active()) doc.set("terrain", terrainToJson(scene.terrain()));
     if (!state.drawing.empty()) doc.set("drawing", drawingToJson(state.drawing));
@@ -1003,6 +1025,17 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             p.waveFrequency = std::max(ph["wave_frequency"].asFloat(p.waveFrequency), 1e-6f);
             p.waveSpeed = std::max(ph["wave_speed"].asFloat(p.waveSpeed), 1e-6f);
         }
+        if (const Json& jm = jb["material"]; jm.isObject()) {
+            MaterialProps& m = b.material;
+            m.preset = jm["preset"].asString();
+            m.metallic = std::clamp(jm["metallic"].asFloat(m.metallic), 0.0f, 1.0f);
+            m.roughness = std::clamp(jm["roughness"].asFloat(m.roughness), 0.0f, 1.0f);
+            m.transmission = std::clamp(jm["transmission"].asFloat(m.transmission), 0.0f, 1.0f);
+            m.ior = std::clamp(jm["ior"].asFloat(m.ior), 1.0f, 4.0f);
+            m.emission = std::clamp(jm["emission"].asFloat(m.emission), 0.0f, 1000.0f);
+            m.colorMap = jm["color_map"].asString();
+            m.normalMap = jm["normal_map"].asString();
+        }
         loaded.add(std::move(b));
     }
 
@@ -1099,6 +1132,19 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     if (const Json& cj = (*doc)["cam"]; cj.isObject()) camFromJson(cj, st.cam);
     if (const Json& lj = (*doc)["lathe"]; lj.isObject()) latheFromJson(lj, st.lathe);
     if (const Json& aj = (*doc)["assembly"]; aj.isObject()) assemblyFromJson(aj, st.assembly);
+    if (const Json& rj = (*doc)["render"]; rj.isObject()) {
+        RenderSettings& r = st.render;
+        const std::string env = rj["environment"].asString(r.environment);
+        if (std::find(renderEnvironments().begin(), renderEnvironments().end(), env) != renderEnvironments().end()) r.environment = env;
+        if (rj["sun"].size() == 2) r.sunAzimuth = rj["sun"][0].asFloat(r.sunAzimuth), r.sunElevation = std::clamp(rj["sun"][1].asFloat(r.sunElevation), 1.0f, 90.0f);
+        r.light = std::clamp(rj["light"].asFloat(r.light), 0.0f, 100.0f);
+        r.exposure = std::clamp(rj["exposure"].asFloat(r.exposure), -10.0f, 10.0f);
+        r.floor = rj["floor"].asBool(r.floor);
+        if (rj["size"].size() == 2) r.width = std::clamp(rj["size"][0].asInt(r.width), 8, 8192), r.height = std::clamp(rj["size"][1].asInt(r.height), 8, 8192);
+        r.samples = std::clamp(rj["samples"].asInt(r.samples), 1, 65536);
+        r.bounces = std::clamp(rj["bounces"].asInt(r.bounces), 1, 64);
+        r.denoise = rj["denoise"].asBool(r.denoise);
+    }
     if (const Json& rj = (*doc)["robots"]; rj.isObject()) rigStateFromJson(rj, loaded.rigs());
     if (const Json& tj = (*doc)["terrain"]; tj.isObject()) terrainFromJson(tj, loaded.terrain());
     if (const Json& dj = (*doc)["drawing"]; dj.isObject()) drawingFromJson(dj, st.drawing);

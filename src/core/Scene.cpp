@@ -153,7 +153,7 @@ void Scene::pushSketchUndo(std::string label) {
 void Scene::beginBodyEdit(std::string label) {
     PendingEdit p;
     p.revision = m_revision;
-    for (const Body& b : m_bodies) p.bodies.push_back({b.name, b.offset, b.color, b.visible}), p.physics.push_back(b.physics);
+    for (const Body& b : m_bodies) p.bodies.push_back({b.name, b.offset, b.color, b.visible}), p.physics.push_back(b.physics), p.materials.push_back(b.material);
     p.motions = motionsKey(m_motions);
     p.programs = m_motions;
     p.redo = m_redo; // pushUndo drops it; put back if nothing comes of this
@@ -173,6 +173,11 @@ bool samePhysics(const PhysicsProps& a, const PhysicsProps& b) {
            a.waveSpeed == b.waveSpeed;
 }
 
+bool sameMaterial(const MaterialProps& a, const MaterialProps& b) {
+    return a.preset == b.preset && a.metallic == b.metallic && a.roughness == b.roughness && a.transmission == b.transmission && a.ior == b.ior &&
+           a.emission == b.emission && a.colorMap == b.colorMap && a.normalMap == b.normalMap;
+}
+
 } // namespace
 
 void Scene::endBodyEdit() {
@@ -190,7 +195,8 @@ void Scene::endBodyEdit() {
         const Body& b = m_bodies[i];
         const BodyState& w = p.bodies[i];
         changed = b.name != w.name || b.visible != w.visible || b.offset.x != w.offset.x || b.offset.y != w.offset.y || b.offset.z != w.offset.z ||
-                  b.color.x != w.color.x || b.color.y != w.color.y || b.color.z != w.color.z || !samePhysics(b.physics, p.physics[i]);
+                  b.color.x != w.color.x || b.color.y != w.color.y || b.color.z != w.color.z || !samePhysics(b.physics, p.physics[i]) ||
+                  !sameMaterial(b.material, p.materials[i]);
     }
     if (changed && !innerKept) return; // an undo step: sealed by the caller
     for (std::size_t i = m_undo.size(); i-- > 0;)

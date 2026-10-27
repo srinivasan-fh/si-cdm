@@ -731,6 +731,23 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("path", prop("string", "The picture to write (.png); omit to only set materials and settings"));
+        p.set("material", prop("string", "Give 'body' this material first: plastic, matte, paint, rubber, ceramic, wood, steel, brushed, aluminium, "
+                                          "anodised, chrome, brass, copper, gold, titanium, glass, tinted, water, light"));
+        p.set("body", prop("string", "The body 'material' (and 'roughness', 'metallic', 'color') applies to"));
+        p.set("roughness", prop("number", "0 a mirror to 1 matte"));
+        p.set("metallic", prop("number", "0 plastic or paint to 1 metal"));
+        p.set("color", prop("string", "The body's colour: a name, #RRGGBB or r,g,b"));
+        p.set("environment", enumProp({"studio", "sky", "white", "dark"}, "The light: photo studio soft boxes, a sky with its sun, plain white, or a dark studio"));
+        p.set("sun", numberArray(2, "sky: the sun's azimuth and elevation, degrees"));
+        p.set("size", numberArray(2, "Width and height in pixels (default 1280 x 800)"));
+        p.set("samples", prop("number", "Samples a pixel (default 64; more: less noise, longer)"));
+        p.set("view", enumProp({"current", "iso", "front", "back", "left", "right", "top", "bottom"}, "Where it is seen from (default: the app's 3D view, headless iso)"));
+        p.set("floor", prop("boolean", "A floor under the bodies (default true)"));
+        tools.push(tool("render", "A photoreal, path-traced picture of the model: materials (metal, glass, plastic...), soft shadows and reflections.", p, {}));
+    }
+    {
+        Json p = Json::object();
         p.set("op", enumProp({"create", "reset", "step", "close", "list"}, "create a batch of robot copies, reset them, step them with actions, close it, or list the open ones"));
         p.set("robot", prop("string", "create: the robot (default: the scene's only one)"));
         p.set("count", prop("integer", "create: copies stepped together in parallel (default 1)"));
@@ -1804,6 +1821,27 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return runLine(line);
     }
     if (name == "export_file") return runLine("EXPORT " + quote(a["path"].asString()));
+    if (name == "render") {
+        std::string said;
+        if (a["body"].isString() && (a["material"].isString() || a["roughness"].isNumber() || a["metallic"].isNumber() || a["color"].isString())) {
+            std::string line = "MATERIAL " + quote(a["body"].asString());
+            if (a["material"].isString()) line += " " + a["material"].asString();
+            if (a["color"].isString()) line += " COLOR " + quote(a["color"].asString());
+            if (a["roughness"].isNumber()) line += " ROUGHNESS " + num(a["roughness"].asNumber());
+            if (a["metallic"].isNumber()) line += " METALLIC " + num(a["metallic"].asNumber());
+            const Json r = runLine(line);
+            if (r["isError"].asBool()) return r;
+        }
+        std::string line = "RENDER";
+        if (a["path"].isString()) line += " " + quote(a["path"].asString());
+        if (a["environment"].isString()) line += " ENV " + a["environment"].asString();
+        if (a["sun"].isArray() && a["sun"].size() == 2) line += " SUN " + num(a["sun"][0].asNumber()) + " " + num(a["sun"][1].asNumber());
+        if (a["size"].isArray() && a["size"].size() == 2) line += " SIZE " + num(a["size"][0].asNumber()) + " " + num(a["size"][1].asNumber());
+        if (a["samples"].isNumber()) line += " SAMPLES " + num(a["samples"].asNumber());
+        if (a["view"].isString()) line += " VIEW " + a["view"].asString();
+        if (a["floor"].isBool()) line += a["floor"].asBool() ? " FLOOR ON" : " FLOOR OFF";
+        return runLine(line);
+    }
     if (name == "robot_env") {
         const std::string op = a["op"].asString();
         auto flat = [](const std::vector<double>& v) {

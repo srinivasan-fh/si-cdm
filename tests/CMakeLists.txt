@@ -39,6 +39,7 @@ add_executable(sicdm_tests
     test_robotics.cpp
     test_undo.cpp
     test_translate.cpp
+    test_render.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 target_include_directories(sicdm_tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/stb) # reading back written images

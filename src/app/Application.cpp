@@ -12,6 +12,8 @@
 #include <imgui_impl_opengl3.h>
 
 #include "core/Command.hpp"
+#include "core/ImageWrite.hpp"
+#include "core/Render.hpp"
 #include "core/FileIO.hpp"
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
@@ -226,6 +228,9 @@ void Application::shutdown() {
     m_autosaver.clear(); // a clean exit: the recovery copies aren't needed
     m_splash.reset();
     m_mcpHttp.stop();
+    if (m_renderJob) m_renderJob->stop = true; // a picture being made: stopped, not waited for to the end
+    if (m_renderDone.valid()) m_renderDone.wait();
+    if (m_renderTexture) glDeleteTextures(1, &m_renderTexture), m_renderTexture = 0;
     m_renderer.reset();
     if (m_imguiReady) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -1516,6 +1521,7 @@ void Application::frame(float dt) {
     for (const DatumPlane& d : m_doc.state.datums) m_uiState.datums.push_back(d.name);
     const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
+    pollRender();
 
     // Unsaved changes: compare what would be saved with the last save.
     m_doc.dirty = contentSignature() != m_savedSignature;
@@ -3096,10 +3102,73 @@ bool Application::setBodyTexture(const std::string& body, bool checker, const st
     return true;
 }
 
+void Application::pollRender() {
+    UiState& st = m_uiState;
+    if (st.renderStart && !m_renderDone.valid()) {
+        st.renderStart = false;
+        // A copy of the scene as it is, the 3D view's camera at the picture's shape.
+        auto job = std::make_shared<RenderJob>();
+        const RenderSettings rs = m_doc.state.render;
+        job->width = rs.width, job->height = rs.height, job->samples = rs.samples;
+        OrbitCamera cam = m_cam3D;
+        cam.setAspect(static_cast<float>(rs.width) / static_cast<float>(rs.height));
+        const RenderCamera rc = renderCamera(cam);
+        auto scene = std::make_shared<Scene>(m_doc.scene);
+        m_renderJob = job;
+        m_renderDone = std::async(std::launch::async, [job, scene, rs, rc] {
+            return renderImage(*scene, rs, rc, job->pixels, &job->stats, &job->why, [job](float p) {
+                job->progress = p;
+                return !job->stop.load();
+            });
+        });
+        st.renderRunning = true;
+        st.renderProgress = 0;
+        st.renderInfo.clear();
+    }
+    if (m_renderDone.valid()) {
+        st.renderProgress = m_renderJob->progress;
+        if (st.renderCancel) m_renderJob->stop = true;
+        m_framesToRender = std::max(m_framesToRender, 2); // keep the progress moving
+        if (m_renderDone.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            const bool ok = m_renderDone.get();
+            st.renderRunning = false;
+            if (!ok) {
+                st.renderInfo = m_renderJob->why;
+            } else {
+                m_renderPixels = std::move(m_renderJob->pixels);
+                m_renderWidth = m_renderJob->width, m_renderHeight = m_renderJob->height;
+                if (!m_renderTexture) glGenTextures(1, &m_renderTexture);
+                glBindTexture(GL_TEXTURE_2D, m_renderTexture);
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, m_renderWidth, m_renderHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, m_renderPixels.data());
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                char info[160];
+                std::snprintf(info, sizeof(info), "%d x %d, %d samples, %.1f s%s", m_renderWidth, m_renderHeight, m_renderJob->samples,
+                              m_renderJob->stats.seconds, st.renderCancel ? " (stopped)" : "");
+                st.renderInfo = info;
+                st.renderTexture = m_renderTexture, st.renderWidth = m_renderWidth, st.renderHeight = m_renderHeight;
+            }
+            st.renderCancel = false;
+            m_renderJob.reset();
+        }
+    }
+    if (!st.renderSavePath.empty()) {
+        std::string err;
+        if (m_renderPixels.empty()) setStatus("Render a picture first");
+        else if (writeFile(st.renderSavePath, encodePngCompressed(m_renderWidth, m_renderHeight, 3, m_renderPixels), &err))
+            setStatus("Picture saved to " + st.renderSavePath);
+        else setStatus("Cannot save the picture: " + err);
+        st.renderSavePath.clear();
+    }
+}
+
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
 
 void Application::setPanelPage(int page) {
-    if (page == 7) m_uiState.showLicence = true;
+    if (page == 8 || page == 9) m_uiState.showRender = true, m_uiState.renderStart = m_uiState.renderStart || page == 9;
+    else if (page == 7) m_uiState.showLicence = true;
     else if (page == 6) m_uiState.showPreferences = true;
     else if (page == 5) m_uiState.showHelp = true;
     else if (page == 3) m_uiState.showCamTools = true;
@@ -3231,6 +3300,7 @@ int Application::run() {
         glFinish();
         m_uiState.frameMs = std::chrono::duration<float, std::milli>(clock::now() - t0).count();
 
+        if (m_uiState.renderRunning || m_uiState.renderStart) screenshotCountdown = std::max(screenshotCountdown, 5); // the picture first (and its window grown)
         if (!m_options.screenshotPath.empty() && --screenshotCountdown == 0) {
             const bool ok = saveScreenshot(m_options.screenshotPath);
             std::printf("%s screenshot: %s\n", ok ? "Saved" : "Failed to save", m_options.screenshotPath.c_str());
