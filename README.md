@@ -379,6 +379,25 @@ SHEET TOL 3 FIT H7      SHEET DATUM A ON Front -40,0,6      SHEET GDT position 0
 
 Details: [docs/drawing.md](docs/drawing.md).
 
+## Revisions and the team's vault
+
+*File → Product Data...* manages the project's product data:
+
+- **Properties:** a part number, a description and any others, on the project and on each part.
+  The drawing's title block and the parts list use them.
+- **Revisions:** A, B, C... through *in work → in review → released*. A released revision can't be
+  changed; `REVISION NEXT` starts the next one.
+- **COMPARE:** shows what changed between two versions.
+- **The vault:** a shared folder the team checks projects in and out of. One person at a time,
+  every revision kept, released ones never overwritten.
+
+```text
+PROPERTY NUMBER P-100      REVISION RELEASE NOTE first issue      COMPARE REV A
+VAULT FOLDER //server/cad/vault      VAULT CHECKIN      VAULT CHECKOUT P-100      VAULT HISTORY P-100
+```
+
+Details: [docs/pdm.md](docs/pdm.md).
+
 ## 3D printing
 
 *Manufacture → 3D Print* (or the command line) gets a part ready for a printer.

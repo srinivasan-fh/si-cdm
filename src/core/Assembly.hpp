@@ -93,6 +93,12 @@ std::vector<InterferenceVolume> findInterference(const Scene& scene, const std::
 std::vector<std::string> assemblyTree(const Scene& scene);
 // Parts list: each distinct part (name without its copy number) and how many there are.
 std::vector<std::pair<std::string, int>> billOfMaterials(const Scene& scene);
+// The same with the parts' properties (PROPERTY): bodies with one part NUMBER are one part.
+struct BomLine {
+    std::string part, number, description, material;
+    int quantity = 1;
+};
+std::vector<BomLine> partsList(const Scene& scene);
 
 class Json;
 Json assemblyToJson(const AssemblyState& st);

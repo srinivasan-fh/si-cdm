@@ -6,6 +6,7 @@
 #include "core/Drawing.hpp"
 #include "core/FileIO.hpp"
 #include "core/Lathe.hpp"
+#include "core/Pdm.hpp"
 #include "core/Scene.hpp"
 #include "render/Renderer.hpp"
 #include "ui/FileDialog.hpp"
@@ -60,6 +61,7 @@ struct UiState {
     // set (and stops when renderCancel is), and shows the picture (renderTexture, an OpenGL
     // texture); renderSavePath set: the app writes the picture there.
     bool showRender = false;
+    bool showProduct = false; // the Product data window: properties, revision, vault
     bool renderStart = false, renderCancel = false, renderRunning = false;
     float renderProgress = 0;
     unsigned renderTexture = 0;
@@ -211,6 +213,7 @@ public:
 private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawRenderWindow(UiCommands& cmd, UiState& st);
+    void drawProductWindow(UiCommands& cmd, UiState& st); // ProductWindow.cpp
     void drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawFileTabs(UiCommands& cmd, const UiState& st);
     void requestClose(UiCommands& cmd, const UiState& st, int index);
@@ -239,6 +242,9 @@ private:
     void drawAboutWindow(UiState& st);
     void drawMateWindow(UiCommands& cmd, UiState& st);
     const Scene* m_menuScene = nullptr; // the scene the menus name parts from (set each frame)
+    std::vector<VaultItem> m_vaultItems; // the vault as the Product data window last read it
+    std::string m_vaultWhy;
+    bool m_vaultDirty = false;
     void drawSheetWindow(UiCommands& cmd, UiState& st);
     // Drawing sheet window: zoom (pixels per mm), pan (mm at the canvas's top left), and
     // the dimension tool's first point.

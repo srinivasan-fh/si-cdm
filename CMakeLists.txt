@@ -81,6 +81,8 @@ add_library(sicdm_core STATIC
     src/core/UvMap.cpp
     src/core/Translate.cpp
     src/core/Render.cpp
+    src/core/Pdm.cpp
+    src/core/PdmCommand.cpp
     src/core/lang/German.cpp
     src/core/Library.cpp
     src/core/Lathe.cpp
@@ -184,6 +186,7 @@ if(SICDM_BUILD_APP)
         src/ui/CamPanel.cpp
         src/ui/HelpWindow.cpp
         src/ui/PreferencesWindow.cpp
+        src/ui/ProductWindow.cpp
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
         src/ui/ToolIcons.cpp

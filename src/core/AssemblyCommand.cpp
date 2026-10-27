@@ -134,16 +134,20 @@ CommandOutput runAssemblyCommand(Document& doc, const std::string& cmd, const st
             return out;
         }
         if (sub == "bom" || sub == "parts") {
-            const auto bom = billOfMaterials(doc.scene);
+            const auto bom = partsList(doc.scene);
             if (bom.empty()) {
                 out.say("No parts");
                 return out;
             }
-            out.say("Item  Qty  Part");
+            const bool numbers = std::any_of(bom.begin(), bom.end(), [](const BomLine& l) { return !l.number.empty() || !l.description.empty(); });
+            out.say(numbers ? "Item  Qty  Part number   Part  Description" : "Item  Qty  Part");
             int i = 1;
-            for (const auto& [name, n] : bom) {
-                char b[160];
-                std::snprintf(b, sizeof b, "%4d  %3d  %s", i++, n, name.c_str());
+            for (const BomLine& l : bom) {
+                char b[400];
+                if (numbers)
+                    std::snprintf(b, sizeof b, "%4d  %3d  %-12s  %s%s%s", i++, l.quantity, l.number.empty() ? "-" : l.number.c_str(), l.part.c_str(),
+                                  l.description.empty() ? "" : "  ", l.description.c_str());
+                else std::snprintf(b, sizeof b, "%4d  %3d  %s", i++, l.quantity, l.part.c_str());
                 out.say(b);
             }
             return out;

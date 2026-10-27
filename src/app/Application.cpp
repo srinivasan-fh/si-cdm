@@ -3168,6 +3168,7 @@ void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = o
 
 void Application::setPanelPage(int page) {
     if (page == 8 || page == 9) m_uiState.showRender = true, m_uiState.renderStart = m_uiState.renderStart || page == 9;
+    else if (page == 10) m_uiState.showProduct = true;
     else if (page == 7) m_uiState.showLicence = true;
     else if (page == 6) m_uiState.showPreferences = true;
     else if (page == 5) m_uiState.showHelp = true;
@@ -3218,10 +3219,11 @@ void Application::updateSheet() {
         m_uiState.sheet = nullptr;
         return;
     }
-    const std::string text = drawingToJson(m_doc.state.drawing).dump();
+    const Drawing shown = drawingWithProduct(m_doc.state.drawing, m_doc.state.product); // PART and REV from the project
+    const std::string text = drawingToJson(shown).dump();
     const std::uint64_t key = std::hash<std::string>{}(text) * 1000003u ^ m_doc.scene.revision();
     if (key != m_sheetKey || m_uiState.sheet == nullptr) {
-        m_sheet = renderDrawing(m_doc.state.drawing, m_doc.scene, 1);
+        m_sheet = renderDrawing(shown, m_doc.scene, 1);
         m_sheetKey = key;
     }
     m_uiState.sheet = &m_sheet;

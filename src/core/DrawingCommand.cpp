@@ -6,6 +6,7 @@
 #include "core/Document.hpp"
 #include "core/Drawing.hpp"
 #include "core/FileIO.hpp"
+#include "core/Pdm.hpp"
 #include "core/Tolerances.hpp"
 #include "core/Units.hpp"
 
@@ -834,7 +835,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         if (a.size() < 2) return out.fail("SHEET EXPORT file.pdf|.svg|.dxf");
         const std::string path = rest(1);
         std::string ext = lowerOf(std::filesystem::path(path).extension().string());
-        const SheetGraphics g = renderDrawing(d, doc.scene, 2);
+        const SheetGraphics g = renderDrawing(drawingWithProduct(d, doc.state.product), doc.scene, 2);
         std::string data;
         if (ext == ".pdf") data = sheetToPdf(g, d.title.count("TITLE") ? d.title.at("TITLE") : "Drawing");
         else if (ext == ".svg") data = sheetToSvg(g);

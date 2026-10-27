@@ -867,23 +867,52 @@ std::vector<std::string> assemblyTree(const Scene& scene) {
     return out;
 }
 
+namespace {
+
+// "Bolt 3", "Bolt (2)" and "Bolt" are the same part.
+std::string partName(std::string n) {
+    if (n.size() > 3 && n.back() == ')') {
+        const std::size_t open = n.rfind(" (");
+        if (open != std::string::npos && open + 3 < n.size() &&
+            std::all_of(n.begin() + static_cast<long>(open) + 2, n.end() - 1, [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }))
+            n = n.substr(0, open);
+    }
+    const std::size_t sp = n.find_last_of(' ');
+    if (sp != std::string::npos && sp + 1 < n.size() && std::all_of(n.begin() + static_cast<long>(sp) + 1, n.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }))
+        n = n.substr(0, sp);
+    return n;
+}
+
+} // namespace
+
 std::vector<std::pair<std::string, int>> billOfMaterials(const Scene& scene) {
     std::vector<std::pair<std::string, int>> out;
     for (const Body& b : scene.bodies()) {
-        // "Bolt 3", "Bolt (2)" and "Bolt" are the same part.
-        std::string n = b.name;
-        if (n.size() > 3 && n.back() == ')') {
-            const std::size_t open = n.rfind(" (");
-            if (open != std::string::npos && open + 3 < n.size() &&
-                std::all_of(n.begin() + static_cast<long>(open) + 2, n.end() - 1, [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }))
-                n = n.substr(0, open);
-        }
-        const std::size_t sp = n.find_last_of(' ');
-        if (sp != std::string::npos && sp + 1 < n.size() && std::all_of(n.begin() + static_cast<long>(sp) + 1, n.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)); }))
-            n = n.substr(0, sp);
+        const std::string n = partName(b.name);
         auto it = std::find_if(out.begin(), out.end(), [&](const auto& e) { return e.first == n; });
         if (it == out.end()) out.push_back({n, 1});
         else ++it->second;
+    }
+    return out;
+}
+
+std::vector<BomLine> partsList(const Scene& scene) {
+    std::vector<BomLine> out;
+    auto prop = [](const Body& b, const char* key) {
+        const auto it = b.properties.find(key);
+        return it == b.properties.end() ? std::string() : it->second;
+    };
+    for (const Body& b : scene.bodies()) {
+        // Bodies with the same part number are the same part, whatever they are called.
+        const std::string number = prop(b, "NUMBER"), name = partName(b.name);
+        auto it = std::find_if(out.begin(), out.end(), [&](const BomLine& e) { return number.empty() ? e.number.empty() && e.part == name : e.number == number; });
+        if (it != out.end()) {
+            ++it->quantity;
+            continue;
+        }
+        BomLine l;
+        l.part = name, l.number = number, l.description = prop(b, "DESCRIPTION"), l.material = prop(b, "MATERIAL");
+        out.push_back(std::move(l));
     }
     return out;
 }

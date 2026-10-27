@@ -538,6 +538,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             if (!m.normalMap.empty()) jm.set("normal_map", m.normalMap);
             jb.set("material", jm);
         }
+        if (!b.properties.empty()) {
+            Json jp = Json::object();
+            for (const auto& [k, v] : b.properties) jp.set(k, v);
+            jb.set("properties", jp);
+        }
         // A large shape already written for another body (pattern copies, repeated parts):
         // a reference to it.
         const std::uint64_t shapeKey = !isPrimitiveKind(b.kind) && b.mesh.vertices.size() >= kBinaryMeshVertices ? meshContentKey(b.mesh) : 0;
@@ -744,6 +749,23 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                               .set("samples", r.samples)
                               .set("bounces", r.bounces)
                               .set("denoise", r.denoise));
+    }
+    {
+        const ProductData& pd = state.product;
+        Json jp = Json::object().set("revision", pd.revision).set("state", releaseStateName(pd.state));
+        if (!pd.properties.empty()) {
+            Json props = Json::object();
+            for (const auto& [k, v] : pd.properties) props.set(k, v);
+            jp.set("properties", props);
+        }
+        if (!pd.history.empty()) {
+            Json hist = Json::array();
+            for (const RevisionRecord& r : pd.history)
+                hist.push(Json::object().set("revision", r.revision).set("state", releaseStateName(r.state)).set("date", r.date).set("author", r.author).set("note", r.note));
+            jp.set("history", hist);
+        }
+        if (!pd.vaultItem.empty()) jp.set("vault_item", pd.vaultItem);
+        doc.set("product", jp);
     }
     if (!scene.rigs().empty()) doc.set("robots", rigStateToJson(scene.rigs()));
     if (scene.terrain().active()) doc.set("terrain", terrainToJson(scene.terrain()));
@@ -1036,6 +1058,9 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             m.colorMap = jm["color_map"].asString();
             m.normalMap = jm["normal_map"].asString();
         }
+        if (const Json& jp = jb["properties"]; jp.isObject())
+            for (const auto& [k, v] : jp.members())
+                if (v.isString()) b.properties[k] = v.asString();
         loaded.add(std::move(b));
     }
 
@@ -1144,6 +1169,23 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         r.samples = std::clamp(rj["samples"].asInt(r.samples), 1, 65536);
         r.bounces = std::clamp(rj["bounces"].asInt(r.bounces), 1, 64);
         r.denoise = rj["denoise"].asBool(r.denoise);
+    }
+    if (const Json& pj = (*doc)["product"]; pj.isObject()) {
+        ProductData& pd = st.product;
+        pd.revision = pj["revision"].asString(pd.revision);
+        pd.state = parseReleaseState(pj["state"].asString()).value_or(ReleaseState::InWork);
+        for (const auto& [k, v] : pj["properties"].members())
+            if (v.isString()) pd.properties[k] = v.asString();
+        for (const Json& h : pj["history"].items()) {
+            RevisionRecord r;
+            r.revision = h["revision"].asString();
+            r.state = parseReleaseState(h["state"].asString()).value_or(ReleaseState::InWork);
+            r.date = h["date"].asString();
+            r.author = h["author"].asString();
+            r.note = h["note"].asString();
+            pd.history.push_back(std::move(r));
+        }
+        pd.vaultItem = pj["vault_item"].asString();
     }
     if (const Json& rj = (*doc)["robots"]; rj.isObject()) rigStateFromJson(rj, loaded.rigs());
     if (const Json& tj = (*doc)["terrain"]; tj.isObject()) terrainFromJson(tj, loaded.terrain());

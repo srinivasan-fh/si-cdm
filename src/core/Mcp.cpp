@@ -748,6 +748,24 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("op", enumProp({"properties", "set_property", "delete_property", "revision", "set_state", "next_revision", "compare", "vault_list",
+                              "vault_checkin", "vault_checkout", "vault_get", "vault_undo", "vault_history"},
+                             "properties: list them; set_property / delete_property: 'key' ('value'); revision: the revision and its history; "
+                             "set_state: 'state'; next_revision: start the next; compare: against 'path' (or 'revision' in the vault); "
+                             "vault_*: the team's vault (check in the saved project, check out or get 'item')"));
+        p.set("body", prop("string", "A part's properties instead of the project's"));
+        p.set("key", prop("string", "Property name: NUMBER, DESCRIPTION, MATERIAL, VENDOR..."));
+        p.set("value", prop("string", "Property value"));
+        p.set("state", enumProp({"in work", "in review", "released", "obsolete"}, "The revision's state (released: no more changes)"));
+        p.set("note", prop("string", "Why (kept in the revision history)"));
+        p.set("path", prop("string", "compare: the other project file; vault_checkout / vault_get: where to put the copy"));
+        p.set("item", prop("string", "The vault item (its part number, by default)"));
+        p.set("revision", prop("string", "compare / vault_get: a revision in the vault"));
+        tools.push(tool("product_data", "Product data management: part numbers and properties, revisions and release, comparing versions, and the team's vault (check in / check out).",
+                        p, {"op"}));
+    }
+    {
+        Json p = Json::object();
         p.set("op", enumProp({"create", "reset", "step", "close", "list"}, "create a batch of robot copies, reset them, step them with actions, close it, or list the open ones"));
         p.set("robot", prop("string", "create: the robot (default: the scene's only one)"));
         p.set("count", prop("integer", "create: copies stepped together in parallel (default 1)"));
@@ -1841,6 +1859,29 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["view"].isString()) line += " VIEW " + a["view"].asString();
         if (a["floor"].isBool()) line += a["floor"].asBool() ? " FLOOR ON" : " FLOOR OFF";
         return runLine(line);
+    }
+    if (name == "product_data") {
+        const std::string op = a["op"].asString();
+        const std::string body = a["body"].isString() ? " " + quote(a["body"].asString()) : std::string();
+        const std::string note = a["note"].isString() && !a["note"].asString().empty() ? " NOTE " + a["note"].asString() : std::string();
+        const std::string item = a["item"].isString() ? a["item"].asString() : std::string();
+        const std::string to = a["path"].isString() ? " TO " + quote(a["path"].asString()) : std::string();
+        if (op == "properties") return runLine("PROPERTY" + body + " LIST");
+        if (op == "set_property") return runLine("PROPERTY" + body + " " + a["key"].asString() + " " + a["value"].asString());
+        if (op == "delete_property") return runLine("PROPERTY" + body + " DELETE " + a["key"].asString());
+        if (op == "revision") return runLine("REVISION HISTORY");
+        if (op == "set_state") return runLine("REVISION STATE " + a["state"].asString() + note);
+        if (op == "next_revision") return runLine("REVISION NEXT" + note);
+        if (op == "compare")
+            return runLine(a["revision"].isString() ? "COMPARE REV " + a["revision"].asString() + (item.empty() ? "" : " " + item)
+                                                    : "COMPARE " + quote(a["path"].asString()));
+        if (op == "vault_list") return runLine("VAULT LIST");
+        if (op == "vault_checkin") return runLine("VAULT CHECKIN" + (item.empty() ? std::string() : " AS " + item) + note);
+        if (op == "vault_checkout") return runLine("VAULT CHECKOUT " + item + to);
+        if (op == "vault_get") return runLine("VAULT GET " + item + (a["revision"].isString() ? " REV " + a["revision"].asString() : std::string()) + to);
+        if (op == "vault_undo") return runLine("VAULT UNDO " + item);
+        if (op == "vault_history") return runLine("VAULT HISTORY " + item);
+        return textResult("Unknown op " + op, true);
     }
     if (name == "robot_env") {
         const std::string op = a["op"].asString();

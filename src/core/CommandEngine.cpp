@@ -18,6 +18,7 @@
 #include "core/AssemblyCommand.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/DrawingCommand.hpp"
+#include "core/PdmCommand.hpp"
 #include "core/FeatureCommand.hpp"
 #include "core/SketchCommand.hpp"
 #include "core/Iges.hpp"
@@ -719,7 +720,7 @@ bool sketchCommand(const std::string& cmd) {
 // Document::JobsUndo): around them that state is compared, and kept for UNDO when changed.
 bool sideCommand(const std::string& cmd) {
     static const char* const kSide[] = {"CAM",  "LATHE",  "MATE", "ASSEMBLY", "SHEET",   "VAR", "CONFIG", "PLANE", "REFAXIS",
-                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM"};
+                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM", "PROPERTY"};
     for (const char* k : kSide)
         if (cmd == k) return true;
     return false;
@@ -733,6 +734,7 @@ Document::JobsUndo sideState(const Document& doc) {
     s.variables = st.variables, s.configs = st.configs, s.config = st.config;
     s.datums = st.datums, s.refAxes = st.refAxes, s.refPoints = st.refPoints;
     s.rigs = doc.scene.rigs(), s.physics = doc.scene.physics(), s.terrain = doc.scene.terrain();
+    s.product = st.product;
     return s;
 }
 
@@ -760,6 +762,9 @@ std::string sideKey(const Document& doc) {
     num(ph.enabled), num(static_cast<double>(ph.gravity)), vec(ph.g), num(ph.bigG), num(ph.floor), num(ph.friction), num(ph.air), vec(ph.wind),
         vec(ph.electricField), vec(ph.magneticField), num(ph.ambient), num(ph.convection), num(ph.conductance), num(ph.relativity), num(ph.lightSpeed),
         num(ph.duration);
+    const ProductData& pd = st.product;
+    k += "|" + pd.revision + releaseStateName(pd.state) + pd.vaultItem + "#" + std::to_string(pd.history.size());
+    for (const auto& [n, v] : pd.properties) k += n + "=" + v + ";";
     return k;
 }
 
@@ -779,6 +784,7 @@ Document::JobsUndo swapSide(Document& doc, Document::JobsUndo s, std::size_t dep
     st.variables = std::move(s.variables), st.configs = std::move(s.configs), st.config = std::move(s.config);
     st.datums = std::move(s.datums), st.refAxes = std::move(s.refAxes), st.refPoints = std::move(s.refPoints);
     doc.scene.rigs() = std::move(s.rigs), doc.scene.physics() = s.physics, doc.scene.terrain() = std::move(s.terrain);
+    st.product = std::move(s.product);
     return cur;
 }
 
@@ -788,7 +794,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -804,10 +810,40 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
+}
+
+// Why a command can't run on a released or obsolete revision ("" when it can: it doesn't
+// change the design, or it only asks). CAM, lathe and simulation runs use a released design.
+std::string releasedRefusal(const Document& doc, const std::string& cmd, const ParsedCommand& pc) {
+    const ProductData& pd = doc.state.product;
+    if (!pd.locked()) return {};
+    static const char* const kFree[] = {"REVISION", "PROPERTY", "VAULT", "COMPARE", "SELECT", "CAM", "LATHE", "SIM", "ARM"};
+    for (const char* k : kFree)
+        if (cmd == k) return {};
+    const bool model = historyCommand(cmd) || bodyCommand(cmd) || sketchCommand(cmd) || sideCommand(cmd) || cmd == "HISTORY" || cmd == "UNDO" ||
+                       cmd == "REDO" || cmd == "SHEET";
+    if (!model) return {};
+    // Asking: no arguments (MATERIAL, VAR, HISTORY... then show what there is), or a word that only asks.
+    static const char* const kAskEmpty[] = {"MATERIAL", "VAR", "CONFIG", "MATE", "ASSEMBLY", "PHYSICS", "RIG", "TERRAIN", "SHEET", "LAYER", "POLYGROUP",
+                                            "UV", "MULTIRES", "HISTORY", "PLANE", "REFAXIS", "REFPOINT"};
+    // (Only names, like MATERIAL "Bracket", ask about those.)
+    const bool onlyNames = std::all_of(pc.quoted.begin(), pc.quoted.end(), [](bool q) { return q; }) && pc.quoted.size() == pc.args.size();
+    if (pc.args.empty() || onlyNames)
+        for (const char* k : kAskEmpty)
+            if (cmd == k) return {};
+    if (cmd == "PLANE" && pc.args.size() == 1) return {}; // only picks the sketch plane
+    static const char* const kAsk[] = {"list", "info", "show", "report", "tree", "bom", "parts", "interference", "export", "check", "status", "dof", "hide"};
+    for (std::size_t i = 0; i < pc.args.size(); ++i) {
+        if (i < pc.quoted.size() && pc.quoted[i]) continue;
+        const std::string w = lower(pc.args[i]);
+        for (const char* k : kAsk)
+            if (w == k) return {};
+    }
+    return "Revision " + pd.revision + " is " + releaseStateName(pd.state) + ": it can't be changed (REVISION NEXT starts revision " + nextRevision(pd.revision) + ")";
 }
 
 void recordHistory(Document& doc, std::string_view line, const CommandOutput& out, bool startedEmpty, const std::string& selBody,
@@ -905,7 +941,13 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     const std::uint64_t pushes = doc.scene.undoPushes();
     doc.pendingConstraint.clear();
     doc.historyRewritten = false;
-    const CommandSpec* spec = findCommand(tokenizeCommand(line).name);
+    const ParsedCommand parsed = tokenizeCommand(line);
+    const CommandSpec* spec = findCommand(parsed.name);
+    if (spec && !doc.replaying)
+        if (const std::string why = releasedRefusal(doc, spec->name, parsed); !why.empty()) {
+            CommandOutput refused;
+            return refused.fail(why);
+        }
     const bool sketchEdit = spec && sketchCommand(spec->name) && !doc.replaying;
     const std::uint64_t sketchBefore = doc.scene.sketch().revision();
     if (sketchEdit) doc.scene.pushSketchUndo(std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))));
@@ -2563,6 +2605,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "LATHE") return runLatheCommand(doc, a, pc.quoted);
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
     if (cmd == "RIG" || cmd == "TERRAIN" || cmd == "ARM") return runRobotCommand(doc, cmd, a, pc.quoted);
     if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET" || cmd == "DRAG" || cmd == "SKETCHFILLET" || cmd == "SKETCHCHAMFER" ||
         cmd == "SKETCHMIRROR" || cmd == "SKETCHPATTERN" || cmd == "PROJECT")
@@ -4790,10 +4833,11 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {
-        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE: open that page or window.
+        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT: open that page or window.
         const std::string page = toUpper(a[0]);
         const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5
-                    : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7 : -1;
+                    : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7
+                    : page == "PRODUCT" || page == "PDM" || page == "VAULT" ? 10 : -1;
         if (p >= 0) {
             if (auto o = needView(view, "PANEL"); !o.ok) return o;
             view->setPanelPage(p);

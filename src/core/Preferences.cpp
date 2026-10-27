@@ -63,6 +63,7 @@ Json preferencesToJson(const Preferences& p) {
     j.set("check_updates", p.checkUpdates);
     j.set("update_url", p.updateUrl);
     j.set("language", p.language);
+    j.set("vault", p.vault);
     return j;
 }
 
@@ -84,6 +85,7 @@ Preferences preferencesFromJson(const Json& j) {
     take("cam_machine", "machine");
     take("update_url", "update-url");
     take("language", "language");
+    take("vault", "vault");
     if (j["autosave_seconds"].isNumber()) p.autosaveSeconds = std::clamp(j["autosave_seconds"].asInt(), 0, 3600);
     p.checkUpdates = j["check_updates"].asBool(false);
     return p;
@@ -215,8 +217,11 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
             if (code.empty()) return fail("No translation for '" + value + "' (PREFERENCES LANGUAGES lists them)");
             p.language = code;
         }
+    } else if (k == "vault") {
+        if (clear) p.vault.clear();
+        else p.vault = value; // it may not be reachable yet (a network drive); VAULT says so
     } else {
-        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, update-url, language)");
+        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, update-url, language, vault)");
     }
     return true;
 }
@@ -232,6 +237,7 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         std::string("updates: ") + (p.checkUpdates ? "on" : "off"),
         "update-url: " + orDefault(p.updateUrl, "none"),
         "language: " + p.language,
+        "vault: " + orDefault(p.vault, "none"),
     };
 }
 

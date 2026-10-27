@@ -371,6 +371,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showHelp) drawHelpWindow(cmd, st);
     if (st.showPreferences) drawPreferencesWindow(cmd, st);
     if (st.showRender) drawRenderWindow(cmd, st);
+    if (st.showProduct) drawProductWindow(cmd, st);
     if (st.showLicence) drawLicenceWindow(cmd, st);
     if (st.showCamMachine && st.cam) drawCamMachineWindow(cmd, st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
@@ -540,6 +541,9 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Import STEP / IGES..."))) requestFile(FileImportStep, st);
         if (ImGui::MenuItem(tr("Export STEP / IGES..."))) requestFile(FileExportStep, st);
+        ImGui::Separator();
+        if (ImGui::MenuItem(tr("Product Data..."))) st.showProduct = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Part numbers and properties, the revision and its release, the team's vault"));
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Preferences..."), "Ctrl+,")) st.showPreferences = true;
         ImGui::Separator();

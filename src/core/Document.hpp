@@ -55,6 +55,7 @@ struct Document {
         RigState rigs;
         PhysicsSettings physics;
         TerrainSettings terrain;
+        ProductData product;
     };
     std::vector<JobsUndo> jobsUndo, jobsRedo;
     bool undoSkipsHistory = false; // the last UNDO / REDO took back only a non-history change
