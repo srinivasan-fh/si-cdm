@@ -27,6 +27,8 @@
 #include "core/Print.hpp"
 #include "core/Multires.hpp"
 #include "core/Retopo.hpp"
+#include "core/UvMap.hpp"
+#include "core/ImageWrite.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
 #include "core/Units.hpp"
@@ -728,7 +730,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -777,6 +779,8 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if ((cmd == "POLYGROUP" || cmd == "LAYER" || cmd == "MULTIRES") &&
         std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); }))
         return;
+    if (cmd == "UV" && std::none_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "unwrap") || iequal(w, "clear"); }))
+        return; // looks, pictures and the view: not the model
     if (cmd == "FEA" && std::none_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "plot") || iequal(w, "deform") || iequal(w, "mode"); }))
         return; // a report only: the history keeps analyses that leave a plot
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
@@ -2576,6 +2580,192 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         }
         doc.scene.touchBodies();
         markChanged(doc);
+        return out;
+    }
+    if (cmd == "UV") {
+        // UV [body] UNWRAP [ANGLE deg] [MARGIN m] [NOGROUPS] | CLEAR | INFO | LAYOUT file.png [SIZE n]
+        //    | SHOW CHECKER | SHOW [COLOR file.png] [NORMAL file.png] | HIDE
+        static const char* const kWords[] = {"unwrap", "clear", "info", "layout", "show", "hide"};
+        auto isWord = [&](std::size_t k) {
+            if (quotedArg(k)) return false;
+            const std::string w = lower(a[k]);
+            for (const char* q : kWords)
+                if (w == q) return true;
+            return false;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        while (i < a.size() && !isWord(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        if (i >= a.size()) return usage();
+        const std::string sub = lower(a[i++]);
+        const std::string name = doc.scene.bodies()[static_cast<std::size_t>(bi)].name;
+        if (sub == "info") {
+            const MeshData& m = doc.scene.bodies()[static_cast<std::size_t>(bi)].mesh;
+            if (!m.hasUvs()) {
+                out.say(name + " has no texture coordinates");
+                return out;
+            }
+            double used = 0;
+            for (std::size_t k = 0; k + 2 < m.uvs.size(); k += 3) {
+                const Vec2 p = m.uvs[k], q = m.uvs[k + 1], r = m.uvs[k + 2];
+                used += 0.5 * std::fabs(static_cast<double>((q.x - p.x) * (r.y - p.y) - (r.x - p.x) * (q.y - p.y)));
+            }
+            out.say(name + fmt(": texture coordinates on %g faces", static_cast<double>(m.indices.size() / 3)) + fmt(", %.0f%% of the square used", 100.0 * used));
+            return out;
+        }
+        if (sub == "show" || sub == "hide") { // the view only: not part of the model
+            bool checker = false;
+            std::string color, normal;
+            for (; sub == "show" && i < a.size(); ++i) {
+                const std::string w = lower(a[i]);
+                if (w == "checker") checker = true;
+                else if ((w == "color" || w == "colour") && i + 1 < a.size()) color = a[++i];
+                else if (w == "normal" && i + 1 < a.size()) normal = a[++i];
+                else return usage();
+            }
+            if (sub == "show" && !checker && color.empty() && normal.empty()) checker = true;
+            if (sub == "show" && !doc.scene.bodies()[static_cast<std::size_t>(bi)].mesh.hasUvs())
+                return out.fail(name + " has no texture coordinates (UV UNWRAP it first)");
+            std::string err;
+            if (!view || !view->setBodyTexture(name, checker, color, normal, &err)) return out.fail(err.empty() ? "Showing textures needs the app window" : err);
+            out.say(sub == "hide" ? name + " shown plain" : name + " shown with " + (checker ? std::string("a checker") : std::string()) +
+                                                               (!color.empty() ? std::string(checker ? ", " : "") + "colour " + color : std::string()) +
+                                                               (!normal.empty() ? std::string(checker || !color.empty() ? ", " : "") + "normals " + normal : std::string()));
+            return out;
+        }
+        if (sub == "layout") {
+            if (i >= a.size()) return out.fail("LAYOUT needs a file name (.png)");
+            const std::string path = a[i++];
+            int size = 1024;
+            if (i + 1 < a.size() && lower(a[i]) == "size") {
+                const auto n = parseNumber(a[i + 1]);
+                if (!n || *n < 16 || *n > 8192) return out.fail("SIZE is 16 to 8192 pixels");
+                size = static_cast<int>(*n);
+                i += 2;
+            }
+            if (i < a.size()) return usage();
+            const MeshData& m = doc.scene.bodies()[static_cast<std::size_t>(bi)].mesh;
+            if (!m.hasUvs()) return out.fail(name + " has no texture coordinates (UV UNWRAP it first)");
+            if (doc.replaying) return out;
+            std::string err;
+            if (!writeFile(path, encodePngCompressed(size, size, 3, uvLayoutImage(m, size)), &err)) return out.fail("Cannot write the layout: " + err);
+            out.say("UV layout of " + name + " written to " + path);
+            return out;
+        }
+        if (sub == "clear") {
+            if (i < a.size()) return usage();
+            if (!doc.scene.bodies()[static_cast<std::size_t>(bi)].mesh.hasUvs()) return out.fail(name + " has no texture coordinates");
+            doc.scene.pushUndo("UV CLEAR " + name);
+            Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            b.mesh.uvs.clear();
+            doc.scene.touchBodies();
+            out.say("Texture coordinates of " + name + " cleared");
+            return out;
+        }
+        if (sub != "unwrap") return usage();
+        UvOptions uo;
+        for (; i < a.size(); ++i) {
+            const std::string w = lower(a[i]);
+            const auto value = [&]() { return i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt; };
+            if (w == "angle") {
+                const auto n = value();
+                if (!n || *n < 5 || *n > 89) return out.fail("ANGLE is 5 to 89 degrees");
+                uo.angle = *n;
+            } else if (w == "margin") {
+                const auto n = value();
+                if (!n || *n < 0 || *n > 0.1f) return out.fail("MARGIN is 0 to 0.1 of the square");
+                uo.margin = *n;
+            } else if (w == "nogroups") uo.groups = false;
+            else return usage();
+        }
+        MeshData m = doc.scene.bodies()[static_cast<std::size_t>(bi)].mesh;
+        UvReport rep;
+        std::string why;
+        if (!unwrapUv(m, uo, &rep, &why)) return out.fail("Cannot unwrap " + name + ": " + why);
+        doc.scene.pushUndo("UV UNWRAP " + name);
+        Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        b.mesh.uvs = std::move(m.uvs);
+        doc.scene.touchBodies();
+        out.say(name + fmt(" unwrapped: %g charts", static_cast<double>(rep.charts)) + fmt(", %.0f%% of the square used", 100.0 * static_cast<double>(rep.fill)) +
+                fmt(", %.1f%% stretch", 100.0 * static_cast<double>(rep.stretch)) +
+                (rep.projected ? fmt(" (%g charts projected flat)", static_cast<double>(rep.projected)) : std::string()));
+        return out;
+    }
+    if (cmd == "BAKE") {
+        // BAKE [body] NORMAL|OBJECTNORMAL|HEIGHT|OCCLUSION|COLOR [FROM "source"] [SIZE n] [RAYS n] [DISTANCE d] [PADDING px] FILE path.png
+        auto isMap = [&](std::size_t k) {
+            BakeMap m;
+            return !quotedArg(k) && parseBakeMap(a[k], m);
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        while (i < a.size() && !isMap(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        if (i >= a.size()) return usage();
+        BakeOptions bo;
+        parseBakeMap(a[i++], bo.map);
+        int si = bi;
+        std::string path;
+        for (; i < a.size(); ++i) {
+            const std::string w = lower(a[i]);
+            const auto value = [&]() { return i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt; };
+            if (w == "from") {
+                if (i + 1 >= a.size()) return out.fail("FROM needs the body to bake from");
+                si = findBody(doc, a[++i]);
+                if (si < 0) return out.fail("No body named " + a[i]);
+            } else if (w == "size") {
+                const auto n = value();
+                if (!n || *n < 16 || *n > 8192) return out.fail("SIZE is 16 to 8192 pixels");
+                bo.size = static_cast<int>(*n);
+            } else if (w == "rays") {
+                const auto n = value();
+                if (!n || *n < 1 || *n > 1024) return out.fail("RAYS is 1 to 1024");
+                bo.rays = static_cast<int>(*n);
+            } else if (w == "distance") {
+                const auto n = i + 1 < a.size() ? parseLength(a[++i]) : std::nullopt;
+                if (!n || !(*n > 0)) return out.fail("DISTANCE needs a length");
+                bo.distance = static_cast<float>(*n);
+            } else if (w == "padding") {
+                const auto n = value();
+                if (!n || *n < 0 || *n > 64) return out.fail("PADDING is 0 to 64 pixels");
+                bo.padding = static_cast<int>(*n);
+            } else if (w == "file") {
+                if (i + 1 >= a.size()) return out.fail("FILE needs a file name (.png)");
+                path = a[++i];
+            } else return usage();
+        }
+        if (path.empty()) return out.fail("BAKE needs FILE path.png");
+        if (doc.replaying) return out; // regenerating the model doesn't write files
+        const Body& target = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const Body& source = doc.scene.bodies()[static_cast<std::size_t>(si)];
+        std::vector<std::uint8_t> px;
+        int channels = 3, bits = 8;
+        BakeReport rep;
+        std::string why;
+        if (!bakeMap(target, source, bo, px, channels, bits, &rep, &why)) return out.fail("Cannot bake: " + why);
+        std::string err;
+        bool written = false;
+        if (bits == 16) {
+            std::vector<std::uint16_t> wide(px.size() / 2);
+            for (std::size_t k = 0; k < wide.size(); ++k) wide[k] = static_cast<std::uint16_t>((px[k * 2] << 8) | px[k * 2 + 1]);
+            written = writePng16(path, bo.size, bo.size, 1, wide, &err);
+        } else {
+            written = writeFile(path, encodePngCompressed(bo.size, bo.size, channels, px), &err);
+        }
+        if (!written) return out.fail("Cannot write the map: " + err);
+        std::string what = bakeMapName(bo.map);
+        what[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(what[0])));
+        out.say(what + " map of " + target.name + (si != bi ? " from " + source.name : std::string()) +
+                fmt(", %g x ", static_cast<double>(bo.size)) + fmt("%g", static_cast<double>(bo.size)) + " -> " + path);
+        if (bo.map == BakeMap::Height) out.say(fmt("  heights %.3g", static_cast<double>(rep.low)) + fmt(" to %.3g mm (black to white)", static_cast<double>(rep.high)));
+        if (rep.missed > 0 && rep.texels > 0)
+            out.say(fmt("  %.1f%% of the texels found nothing within the cage (the nearest along the normal taken; DISTANCE widens it)",
+                        100.0 * static_cast<double>(rep.missed) / static_cast<double>(rep.texels)));
         return out;
     }
     if (cmd == "RETOPO") {

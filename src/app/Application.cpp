@@ -11,6 +11,7 @@
 #include <imgui_impl_opengl3.h>
 
 #include "core/Command.hpp"
+#include "core/FileIO.hpp"
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
 #include "core/Preferences.hpp"
@@ -3070,6 +3071,26 @@ void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.val
 
 bool Application::setPolygroups(std::optional<bool> on) {
     m_vp3D.showPolygroups = on.value_or(!m_vp3D.showPolygroups);
+    return true;
+}
+
+bool Application::setBodyTexture(const std::string& body, bool checker, const std::string& colorPath, const std::string& normalPath, std::string* error) {
+    ViewportSettings::BodyTexture t;
+    t.body = body;
+    t.checker = checker;
+    auto load = [&](const std::string& path, int& w, int& h, std::vector<unsigned char>& px) {
+        if (path.empty()) return true;
+        ImageRef img;
+        img.path = path;
+        if (!loadImagePixels(img, error)) return false;
+        w = img.pixelWidth, h = img.pixelHeight, px = std::move(img.pixels);
+        return true;
+    };
+    if (!load(colorPath, t.colorWidth, t.colorHeight, t.color) || !load(normalPath, t.normalWidth, t.normalHeight, t.normal)) return false;
+    auto& list = m_vp3D.textures;
+    list.erase(std::remove_if(list.begin(), list.end(), [&](const ViewportSettings::BodyTexture& x) { return x.body == body; }), list.end());
+    if (checker || !t.color.empty() || !t.normal.empty()) list.push_back(std::move(t));
+    ++m_vp3D.textureRevision;
     return true;
 }
 

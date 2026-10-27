@@ -221,6 +221,56 @@ RETOPO "Head" NOCURVATURE            smooth flow everywhere, ignoring the curvat
 - **Kept:** the quads are saved in the project, and OBJ export writes them as quad faces.
 - **MCP:** the sculpt tool's `retopo` operation (`faces`, `levels`, `replace`).
 
+## UV unwrapping and baking
+
+![From the left: a sculpt, its retopologised quads, the same quads with the normal map baked
+from the sculpt, and a UV checker; then the UV layout and the normal map](sculpt-bake.png)
+
+The usual end of a sculpt: a light quad mesh (`RETOPO`) whose textures carry the sculpted
+detail. `UV` gives a body texture coordinates and `BAKE` writes the maps.
+
+```text
+UV "Head retopo" UNWRAP                     charts, flattened and packed into the square
+UV "Head retopo" SHOW CHECKER               see the unwrap: even squares mean little stretch
+UV "Head retopo" LAYOUT head_uv.png         the layout as a picture
+BAKE "Head retopo" NORMAL FROM "Head" SIZE 2048 FILE head_normal.png
+BAKE "Head retopo" OCCLUSION FROM "Head" FILE head_ao.png
+UV "Head retopo" SHOW NORMAL head_normal.png      the low mesh, lit with the sculpt's detail
+```
+
+- **Unwrapping** (our own method):
+  - The faces are grown into charts that each face roughly one way (`ANGLE`, default 66°).
+    Polygroups are borders too (`NOGROUPS` ignores them), and a quad's two triangles stay
+    together.
+  - Ragged borders are smoothed and slivers merged into a neighbour.
+  - Each chart is flattened with least-squares conformal maps. If a map would fold, the
+    chart is projected instead.
+  - Every chart is scaled to the surface's own size (even texel density), turned to its
+    smallest box, and packed by its outline in whichever of four turns fits lowest, with
+    a gap (`MARGIN`) between charts.
+  - The report gives the chart count, how much of the square is used and the mean stretch.
+- **Baking:** each texel of the body is found on the source (`FROM`, often the hidden
+  original). The cage is the body's normal, out and back by `DISTANCE` (default 3% of
+  the size). The maps:
+
+  | Map | What it holds |
+  |---|---|
+  | `NORMAL` | The source's normals, tangent space (blue = straight out) |
+  | `OBJECTNORMAL` | The same normals in world directions |
+  | `HEIGHT` | The source above or below the body, 16-bit grey (range in the report) |
+  | `OCCLUSION` | How much sky each point sees (`RAYS`, default 32) |
+  | `COLOR` | The polypaint |
+
+  The charts are grown by `PADDING` texels so filtering doesn't bleed across seams.
+- **Kept:** sculpting keeps the texture coordinates (new corners from dynamic topology get
+  coordinates half way along their edge). Subdividing keeps them too. Projects save them,
+  and OBJ writes and reads them (`vt`), so they round-trip with ZBrush, Blender and the
+  rest. A remesh or a boolean drops them.
+- **In the app:** the sculpt options bar's *UV* popup unwraps, shows the checker, and bakes
+  any map from any body. Normal and colour maps are then shown on the body.
+- **MCP:** the sculpt tool's `uv_unwrap`, `uv_clear`, `uv_layout` and `bake` (`map`,
+  `from`, `size`, `file`) operations.
+
 ## Polypaint and polygroups
 
 ![A painted sphere, and a box shown in its polygroups](sculpt-paint.png)
@@ -433,6 +483,9 @@ POLYGROUP [body] AUTO [ANGLE deg] | ISLANDS | MASK | PAINT | CLEAR | LIST | SHOW
 LAYER   [body] NEW name [RECORD] | RECORD name | STOP | STRENGTH name s | ON name | OFF name | DELETE name | BAKE name|ALL | LIST
 MULTIRES [body] ADD [n] | LEVEL n | UP | DOWN | APPLY | DELETE LOWER|HIGHER | LIST
 RETOPO  [body] [FACES n] [ITERATIONS k] [NOCURVATURE] [DETAIL levels] [REPLACE]   all-quad remesh
+UV      [body] UNWRAP [ANGLE deg] [MARGIN m] [NOGROUPS] | CLEAR | INFO | LAYOUT file.png [SIZE n]
+        [body] SHOW CHECKER | SHOW [COLOR file] [NORMAL file] | HIDE                 texture coordinates
+BAKE    [body] NORMAL|OBJECTNORMAL|HEIGHT|OCCLUSION|COLOR [FROM "src"] [SIZE n] [RAYS n] [DISTANCE d] [PADDING px] FILE f.png
 SUBDIVIDE [body] [LEVELS n]                Loop subdivision
 SYMMETRIZE [body] [X|Y|Z] [-]              mirror the + side (or the - side) across the body's origin
 DECIMATE [body] TO n | RATIO r             reduce to about n triangles

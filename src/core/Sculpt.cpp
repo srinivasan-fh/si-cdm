@@ -292,6 +292,9 @@ float falloffOf(float d, float r, SculptFalloff f) {
 }
 
 
+Vec2 uvMid(const Vec2& a, const Vec2& b) { return {0.5f * (a.x + b.x), 0.5f * (a.y + b.y)}; }
+bool uvSame(const Vec2& a, const Vec2& b) { return std::fabs(a.x - b.x) < 1e-6f && std::fabs(a.y - b.y) < 1e-6f; }
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -312,12 +315,13 @@ SculptMesh::SculptMesh(const Body& body) {
     std::vector<D3> pts;
     const std::vector<std::uint32_t> id = weldCorners(corners, m_size, pts);
     m_t.reserve(idx.size() / 3);
-    const bool grouped = body.mesh.hasGroups();
+    const bool grouped = body.mesh.hasGroups(), mapped = body.mesh.hasUvs();
     for (std::size_t k = 0; k + 2 < id.size(); k += 3) {
         const std::array<std::uint32_t, 3> t{id[k], id[k + 1], id[k + 2]};
         if (t[0] == t[1] || t[1] == t[2] || t[2] == t[0]) continue;
         m_t.push_back(t);
         if (grouped) m_group.push_back(body.mesh.groups[k / 3]);
+        if (mapped) m_uv.push_back({body.mesh.uvs[k], body.mesh.uvs[k + 1], body.mesh.uvs[k + 2]});
     }
     m_p.reserve(pts.size());
     for (const D3& p : pts) m_p.push_back(p.f());
@@ -427,6 +431,7 @@ void SculptMesh::flipCaps() {
             if (!(dot(n1, nj) > 0) || !(dot(n2, nj) > 0)) continue;
             m_t[i] = {a, d, c};
             m_t[j] = {d, b, c};
+            m_uv.clear(); // rare (booleans' caps): the texture coordinates go
             changed[i] = changed[j] = 1;
             byEdge[edgeKey(c, d)] = {static_cast<std::uint32_t>(i), j};
             ++flips;
@@ -633,6 +638,7 @@ bool SculptMesh::splitEdges(const std::vector<std::uint64_t>& edges, std::size_t
     }
     if (mid.empty()) return false;
     const std::size_t count = m_t.size();
+    const bool mapped = m_uv.size() == count;
     constexpr std::uint32_t kNone = 0xFFFFFFFFu;
     for (std::size_t i = 0; i < count; ++i) {
         const auto tri = m_t[i];
@@ -645,25 +651,40 @@ bool SculptMesh::splitEdges(const std::vector<std::uint64_t>& edges, std::size_t
             if (m[e] != kNone) ++marked;
         }
         if (marked == 0) continue;
+        // Texture coordinates of the pieces: the corners' own, the new points' half way.
+        const std::array<Vec2, 3> tuv = mapped ? m_uv[i] : std::array<Vec2, 3>{};
+        auto uvOf = [&](std::uint32_t v) {
+            for (int k = 0; k < 3; ++k)
+                if (tri[static_cast<std::size_t>(k)] == v) return tuv[static_cast<std::size_t>(k)];
+            for (int k = 0; k < 3; ++k)
+                if (m[k] == v) return uvMid(tuv[static_cast<std::size_t>(k)], tuv[static_cast<std::size_t>((k + 1) % 3)]);
+            return Vec2{};
+        };
+        auto uvTri = [&](const std::array<std::uint32_t, 3>& t) { return std::array<Vec2, 3>{uvOf(t[0]), uvOf(t[1]), uvOf(t[2])}; };
+        auto put = [&](const std::array<std::uint32_t, 3>& t) {
+            m_t[i] = t;
+            if (mapped) m_uv[i] = uvTri(t);
+        };
         auto add = [&](const std::array<std::uint32_t, 3>& t) { // a new piece, in the split triangle's group
             m_t.push_back(t);
             if (!m_group.empty()) m_group.push_back(m_group[i]);
+            if (mapped) m_uv.push_back(uvTri(t));
         };
         if (marked == 3) {
-            m_t[i] = {tri[0], m[0], m[2]};
             add({m[0], tri[1], m[1]});
             add({m[2], m[1], tri[2]});
             add({m[0], m[1], m[2]});
+            put({tri[0], m[0], m[2]});
         } else if (marked == 1) {
             const int e = m[0] != kNone ? 0 : m[1] != kNone ? 1 : 2;
             const std::uint32_t a = tri[e], b = tri[(e + 1) % 3], c = tri[(e + 2) % 3], ab = m[e];
-            m_t[i] = {a, ab, c};
             add({ab, b, c});
+            put({a, ab, c});
         } else { // two edges: a corner triangle plus a quad split along its shorter diagonal
             const int e = m[0] == kNone ? 0 : m[1] == kNone ? 1 : 2; // the unsplit edge a-b
             const std::uint32_t a = tri[e], b = tri[(e + 1) % 3], c = tri[(e + 2) % 3];
             const std::uint32_t bc = m[(e + 1) % 3], ca = m[(e + 2) % 3];
-            m_t[i] = {ca, bc, c};
+            put({ca, bc, c});
             if (length(m_p[a] - m_p[bc]) < length(m_p[b] - m_p[ca])) {
                 add({a, b, bc});
                 add({a, bc, ca});
@@ -775,6 +796,16 @@ void SculptMesh::flipTowardsValence() {
         const Vec3 m0 = normalOf(n0), m1 = normalOf(n1);
         if (length(m0) < 1e-12f || length(m1) < 1e-12f) continue;
         if (dot(normalize(m0), o0 + o1) < 0.5f || dot(normalize(m1), o0 + o1) < 0.5f || dot(normalize(m0), normalize(m1)) < 0.5f) continue;
+        if (m_uv.size() == m_t.size()) { // the texture flips with it, unless the edge is a seam
+            auto uvIn = [&](std::uint32_t ti, std::uint32_t v) {
+                const auto& t = m_t[ti];
+                return m_uv[ti][t[0] == v ? 0 : t[1] == v ? 1 : 2];
+            };
+            if (!uvSame(uvIn(f[0], a), uvIn(f[1], a)) || !uvSame(uvIn(f[0], b), uvIn(f[1], b))) continue;
+            auto uvOf = [&](std::uint32_t v) { return v == d0 ? uvIn(f[1], v) : uvIn(f[0], v); };
+            const std::array<Vec2, 3> u0{uvOf(n0[0]), uvOf(n0[1]), uvOf(n0[2])}, u1{uvOf(n1[0]), uvOf(n1[1]), uvOf(n1[2])};
+            m_uv[f[0]] = u0, m_uv[f[1]] = u1;
+        }
         m_t[f[0]] = n0, m_t[f[1]] = n1;
         used[f[0]] = used[f[1]] = 1;
         --valence[a], --valence[b], ++valence[c0], ++valence[d0];
@@ -822,14 +853,14 @@ void SculptMesh::relaxOnto(const SurfaceIndex& target, float amount) {
     updateNormals();
 }
 
-void SculptMesh::remeshIsotropic(float L, int iterations, const SculptMesh& target, float creaseAngle) {
-    m_mask.clear(), m_layer.clear(), m_color.clear(), m_group.clear(), m_layers.clear(), m_start.clear(), m_ids.clear();
+void SculptMesh::remeshIsotropic(float L, int iterations, const SculptMesh& target, float creaseAngle, float creaseChain) {
+    m_mask.clear(), m_layer.clear(), m_color.clear(), m_group.clear(), m_layers.clear(), m_start.clear(), m_ids.clear(), m_uv.clear();
     m_record = -1;
     const SurfaceIndex index(target);
     // Creases are kept by keeping them made of edges: the target's own edges lie on them,
     // splits halve them, and nothing else may move a vertex off one.
     auto mark = [&] {
-        if (creaseAngle > 0) markCreases(creaseAngle);
+        if (creaseAngle > 0) markCreases(creaseAngle, creaseChain);
     };
     for (int it = 0; it < iterations; ++it) {
         mark();
@@ -843,7 +874,7 @@ void SculptMesh::remeshIsotropic(float L, int iterations, const SculptMesh& targ
     m_creaseEdges.clear(), m_crease.clear();
 }
 
-void SculptMesh::markCreases(float angle) {
+void SculptMesh::markCreases(float angle, float minChain) {
     m_creaseEdges.clear();
     std::unordered_map<std::uint64_t, std::array<Vec3, 2>> normals;
     std::unordered_map<std::uint64_t, int> count;
@@ -857,9 +888,22 @@ void SculptMesh::markCreases(float angle) {
         }
     }
     const float cosLimit = std::cos(angle * 3.14159265f / 180.0f);
+    std::vector<std::uint64_t> sharp;
+    for (const auto& [k, c] : count)
+        if (c == 2 && dot(normals[k][0], normals[k][1]) < cosLimit) sharp.push_back(k);
+    // Chains (sharp edges end to end) shorter than minChain are left out.
+    std::vector<std::uint32_t> parent(m_p.size());
+    for (std::size_t v = 0; v < parent.size(); ++v) parent[v] = static_cast<std::uint32_t>(v);
+    auto root = [&](std::uint32_t v) {
+        while (parent[v] != v) v = parent[v] = parent[parent[v]];
+        return v;
+    };
+    for (const std::uint64_t k : sharp) parent[root(static_cast<std::uint32_t>(k >> 32))] = root(static_cast<std::uint32_t>(k & 0xFFFFFFFFu));
+    std::unordered_map<std::uint32_t, float> chain;
+    for (const std::uint64_t k : sharp) chain[root(static_cast<std::uint32_t>(k >> 32))] += length(m_p[k >> 32] - m_p[k & 0xFFFFFFFFu]);
     std::vector<int> degree(m_p.size(), 0);
-    for (const auto& [k, c] : count) {
-        if (c != 2 || dot(normals[k][0], normals[k][1]) >= cosLimit) continue;
+    for (const std::uint64_t k : sharp) {
+        if (chain[root(static_cast<std::uint32_t>(k >> 32))] < minChain) continue;
         m_creaseEdges.insert(k);
         ++degree[static_cast<std::size_t>(k >> 32)], ++degree[static_cast<std::size_t>(k & 0xFFFFFFFFu)];
     }
@@ -1021,6 +1065,38 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
                 if (!ok) break;
             }
             if (!ok) continue;
+            if (m_uv.size() == m_t.size()) {
+                // Corners of a and b that were the edge's ends in either dying triangle's
+                // texture go half way (a seam's other sides keep theirs).
+                std::array<Vec2, 2> was[2];
+                Vec2 mid[2];
+                int dying = 0;
+                for (std::uint32_t v : {a, b})
+                    for (std::uint32_t ti : around[v]) {
+                        if (dead[ti] || dying == 2) continue;
+                        const auto& t = m_t[ti];
+                        const int ia = t[0] == a ? 0 : t[1] == a ? 1 : t[2] == a ? 2 : -1, ib = t[0] == b ? 0 : t[1] == b ? 1 : t[2] == b ? 2 : -1;
+                        if (ia < 0 || ib < 0) continue;
+                        const Vec2 ua = m_uv[ti][static_cast<std::size_t>(ia)], ub = m_uv[ti][static_cast<std::size_t>(ib)];
+                        if (dying == 1 && uvSame(was[0][0], ua) && uvSame(was[0][1], ub)) continue;
+                        was[dying] = {ua, ub}, mid[dying] = uvMid(ua, ub);
+                        ++dying;
+                    }
+                for (std::uint32_t v : {a, b})
+                    for (std::uint32_t ti : around[v]) {
+                        if (dead[ti]) continue;
+                        const auto& t = m_t[ti];
+                        for (int c = 0; c < 3; ++c) {
+                            if (t[static_cast<std::size_t>(c)] != a && t[static_cast<std::size_t>(c)] != b) continue;
+                            Vec2& u = m_uv[ti][static_cast<std::size_t>(c)];
+                            for (int d = 0; d < dying; ++d)
+                                if (uvSame(u, was[d][0]) || uvSame(u, was[d][1])) {
+                                    u = mid[d];
+                                    break;
+                                }
+                        }
+                    }
+            }
             for (std::uint32_t ti : around[b]) {
                 if (dead[ti]) continue;
                 auto& t = m_t[ti];
@@ -1051,8 +1127,11 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
         for (std::size_t i = 0; i < m_t.size(); ++i)
             if (!dead[i]) {
                 if (!m_group.empty()) m_group[n] = m_group[i];
+                if (m_uv.size() == m_t.size()) m_uv[n] = m_uv[i];
                 m_t[n++] = m_t[i];
             }
+        if (m_uv.size() == m_t.size()) m_uv.resize(n);
+        else m_uv.clear();
         m_t.resize(n);
         if (!m_group.empty()) m_group.resize(n);
         dropUnused();
@@ -1492,6 +1571,20 @@ bool SculptMesh::loopSubdivide(std::size_t maxTriangles) {
         tris.push_back({ca, bc, t[2]});
         tris.push_back({ab, bc, ca});
     }
+    if (m_uv.size() == m_t.size()) { // each quarter's corners: its triangle's, or half way
+        std::vector<std::array<Vec2, 3>> uv;
+        uv.reserve(m_uv.size() * 4);
+        for (const auto& u : m_uv) {
+            const Vec2 ab = uvMid(u[0], u[1]), bc = uvMid(u[1], u[2]), ca = uvMid(u[2], u[0]);
+            uv.push_back({u[0], ab, ca});
+            uv.push_back({ab, u[1], bc});
+            uv.push_back({ca, bc, u[2]});
+            uv.push_back({ab, bc, ca});
+        }
+        m_uv = std::move(uv);
+    } else {
+        m_uv.clear();
+    }
     m_t = std::move(tris);
     if (!m_group.empty()) { // each quarter in its triangle's group
         std::vector<std::uint32_t> g;
@@ -1577,6 +1670,11 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
     }
     if (featureEdges) out.computeFeatureEdges(40.0f, m_size * 0.006f, 75.0f); // fine sculpted detail: only its sharpest creases
     if (m_group.size() == m_t.size()) out.groups = m_group;
+    if (m_uv.size() == m_t.size()) {
+        out.uvs.resize(m_t.size() * 3);
+        for (std::size_t i = 0; i < m_t.size(); ++i)
+            for (std::size_t c = 0; c < 3; ++c) out.uvs[i * 3 + c] = m_uv[i][c];
+    }
     out.layers = m_layers;
     for (std::size_t k = 0; k < m_layers.size(); ++k) out.layers[k].offset = std::move(outLayers[k]);
     out.recordLayer = m_record;
@@ -1713,6 +1811,7 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
         }
         w.m_t.push_back(wt);
         if (!m_group.empty()) w.m_group.push_back(m_group[i]);
+        if (m_uv.size() == m_t.size()) w.m_uv.push_back(m_uv[i]);
     }
     w.m_pinned.assign(w.m_p.size(), 0);
     *longestCut = 0.0f;
@@ -1760,14 +1859,19 @@ void SculptMesh::stitch(const SculptMesh& w, const std::vector<std::uint32_t>& t
     for (std::size_t i = 0; i < m_t.size(); ++i)
         if (!gone[i]) {
             if (!m_group.empty()) m_group[n] = m_group[i];
+            if (m_uv.size() == m_t.size()) m_uv[n] = m_uv[i];
             m_t[n++] = m_t[i];
         }
+    const bool mapped = m_uv.size() == m_t.size() && w.m_uv.size() == w.m_t.size();
+    if (mapped) m_uv.resize(n);
+    else m_uv.clear();
     m_t.resize(n);
     if (!m_group.empty()) m_group.resize(n);
     for (std::size_t k = 0; k < w.m_t.size(); ++k) {
         const auto& t = w.m_t[k];
         m_t.push_back({toMesh[t[0]], toMesh[t[1]], toMesh[t[2]]});
         if (!m_group.empty()) m_group.push_back(k < w.m_group.size() ? w.m_group[k] : 0);
+        if (mapped) m_uv.push_back(w.m_uv[k]);
     }
     dropUnused(); // corners the window collapsed away
     updateNormals();

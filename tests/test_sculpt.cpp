@@ -7,6 +7,7 @@
 #include "core/ImageWrite.hpp"
 #include "core/Multires.hpp"
 #include "core/Sculpt.hpp"
+#include "core/UvMap.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1130,4 +1131,166 @@ TEST_CASE("retopology: an even all-quad mesh on the surface, corners kept, saved
     CHECK(d.scene.bodies()[0].mesh.indices.size() == tris);
     CHECK(!d.scene.bodies()[0].mesh.hasQuads());
     CHECK(!run(d, "RETOPO \"Sphere 1\" FACES 10").ok);
+}
+
+TEST_CASE("UV unwrap: charts flattened without folds, packed apart in the square, kept through sculpting and saving") {
+    Document d;
+    REQUIRE(run(d, "BOX 60 40 30 @0,0,0").ok);
+    REQUIRE(run(d, "UV \"Block 1\" UNWRAP").ok);
+    const MeshData& box = d.scene.bodies()[0].mesh;
+    REQUIRE(box.hasUvs());
+    // Every coordinate in the square, every face the right way round and at the surface's own scale.
+    double uvArea = 0, area = 0;
+    for (std::size_t f = 0; f * 3 + 2 < box.indices.size(); ++f) {
+        const Vec2 a = box.uvs[f * 3], b = box.uvs[f * 3 + 1], c = box.uvs[f * 3 + 2];
+        for (const Vec2& t : {a, b, c}) CHECK((t.x >= 0 && t.x <= 1 && t.y >= 0 && t.y <= 1));
+        const double s = static_cast<double>((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
+        CHECK(s > 0);
+        uvArea += 0.5 * s;
+        const Vec3 p = box.vertices[box.indices[f * 3]].position, q = box.vertices[box.indices[f * 3 + 1]].position,
+                   r = box.vertices[box.indices[f * 3 + 2]].position;
+        area += 0.5 * static_cast<double>(length(cross(q - p, r - p)));
+    }
+    CHECK(uvArea > 0.6); // six flat rectangles pack well
+    CHECK(uvArea < 1.0);
+    // Even scale: each face's share of the square is its share of the surface.
+    for (std::size_t f = 0; f * 3 + 2 < box.indices.size(); ++f) {
+        const Vec2 a = box.uvs[f * 3], b = box.uvs[f * 3 + 1], c = box.uvs[f * 3 + 2];
+        const Vec3 p = box.vertices[box.indices[f * 3]].position, q = box.vertices[box.indices[f * 3 + 1]].position,
+                   r = box.vertices[box.indices[f * 3 + 2]].position;
+        const double s = 0.5 * static_cast<double>((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
+        CHECK_NEAR(s / uvArea, 0.5 * static_cast<double>(length(cross(q - p, r - p))) / area, 1e-3);
+    }
+    // A curved surface: charts conformal enough, none overlapping (each texel of a fine
+    // raster covered by at most one face).
+    REQUIRE(run(d, "SPHERE 30 @100,0,0").ok);
+    REQUIRE(run(d, "RETOPO \"Sphere 2\" FACES 600").ok);
+    CommandOutput o = run(d, "UV \"Sphere 2 retopo\" UNWRAP");
+    REQUIRE(o.ok);
+    const Body& sp = d.scene.bodies().back();
+    REQUIRE(sp.mesh.hasUvs());
+    UvReport rep;
+    MeshData copy = sp.mesh;
+    REQUIRE(unwrapUv(copy, UvOptions{}, &rep));
+    CHECK(rep.charts >= 4);
+    CHECK(rep.charts <= 30);
+    CHECK(rep.stretch < 0.1f);
+    CHECK(rep.fill > 0.4f);
+    constexpr int N = 512;
+    std::vector<int> cover(N * N, 0);
+    for (std::size_t f = 0; f * 3 + 2 < sp.mesh.uvs.size(); ++f) {
+        const Vec2 a = sp.mesh.uvs[f * 3], b = sp.mesh.uvs[f * 3 + 1], c = sp.mesh.uvs[f * 3 + 2];
+        const float s = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+        CHECK(s > 0);
+        for (int y = 0; y < N; ++y)
+            for (int x = 0; x < N; ++x) {
+                const float px = (static_cast<float>(x) + 0.5f) / N, py = (static_cast<float>(y) + 0.5f) / N;
+                const float w0 = ((b.x - px) * (c.y - py) - (c.x - px) * (b.y - py)) / s, w1 = ((c.x - px) * (a.y - py) - (a.x - px) * (c.y - py)) / s;
+                if (w0 > 1e-3f && w1 > 1e-3f && 1.0f - w0 - w1 > 1e-3f) ++cover[static_cast<std::size_t>(y * N + x)];
+            }
+    }
+    CHECK(*std::max_element(cover.begin(), cover.end()) == 1);
+    // Sculpting keeps them (strokes split faces: the new corners half way), and so does saving.
+    const std::size_t before = sp.mesh.indices.size();
+    REQUIRE(run(d, "SCULPT \"Sphere 2 retopo\" DRAW AT 100,0,60 RADIUS 8 STRENGTH 1").ok);
+    const Body& sc = d.scene.bodies().back();
+    CHECK(sc.mesh.indices.size() > before);
+    CHECK(sc.mesh.hasUvs());
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_uv.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene scene;
+    ProjectState state;
+    REQUIRE(loadProject(scene, state, path, &err));
+    REQUIRE(scene.bodies().back().mesh.hasUvs());
+    CHECK(scene.bodies().back().mesh.uvs[5].x == sc.mesh.uvs[5].x);
+    std::filesystem::remove(path);
+    // OBJ: written with "vt" and read back with them.
+    const std::string obj = (std::filesystem::temp_directory_path() / "sicdm_uv.obj").string();
+    Scene one;
+    one.add(d.scene.bodies()[0]);
+    REQUIRE(exportObj(one, obj, &err));
+    const auto back = importMesh(obj, &err);
+    REQUIRE(back.has_value());
+    REQUIRE(back->mesh.hasUvs());
+    CHECK(back->mesh.uvs.size() == box.uvs.size());
+    CHECK(std::fabs(back->mesh.uvs[7].y - box.uvs[7].y) < 1e-5f);
+    std::error_code ec;
+    std::filesystem::remove(obj, ec);
+    // CLEAR, and undo brings them back.
+    REQUIRE(run(d, "UV \"Block 1\" CLEAR").ok);
+    CHECK(!d.scene.bodies()[0].mesh.hasUvs());
+    d.scene.undo();
+    CHECK(d.scene.bodies()[0].mesh.hasUvs());
+    CHECK(run(d, "UV \"Block 1\" INFO").ok);
+}
+
+TEST_CASE("map baking: a sculpt's normals, height, occlusion and colour onto its unwrapped quad mesh") {
+    Document d;
+    REQUIRE(run(d, "SPHERE 30 @0,0,0").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" DRAW AT 0,0,60 RADIUS 10 STRENGTH 1").ok);
+    REQUIRE(run(d, "SCULPT \"Sphere 1\" CLAY AT 30,0,30 RADIUS 10 STRENGTH 1 ALPHA scales").ok); // finer than the quads
+    REQUIRE(run(d, "PAINT \"Sphere 1\" FILL red").ok);
+    REQUIRE(run(d, "RETOPO \"Sphere 1\" FACES 300").ok); // coarse: the bump is mostly in the maps
+    REQUIRE(run(d, "UV \"Sphere 1 retopo\" UNWRAP").ok);
+    const Body& low = d.scene.bodies()[1];
+    const Body& high = d.scene.bodies()[0];
+    BakeOptions bo;
+    bo.size = 128;
+    std::vector<std::uint8_t> px;
+    int channels = 0, bits = 0;
+    BakeReport rep;
+    std::string why;
+    // Normals: mostly straight out (blue), tilted around the bump.
+    bo.map = BakeMap::Normal;
+    REQUIRE(bakeMap(low, high, bo, px, channels, bits, &rep, &why));
+    CHECK(channels == 3);
+    CHECK(bits == 8);
+    CHECK(rep.texels > 128 * 128 / 3);
+    CHECK(rep.missed < rep.texels / 50);
+    int straight = 0, tilted = 0;
+    for (std::size_t k = 0; k < px.size(); k += 3) {
+        const float z = px[k + 2] / 255.0f * 2 - 1;
+        if (z > 0.98f) ++straight;
+        else if (z < 0.95f) ++tilted;
+    }
+    CHECK(straight > 128 * 128 / 4);
+    CHECK(tilted > 10);
+    // The same body baked onto itself: flat.
+    REQUIRE(bakeMap(low, low, bo, px, channels, bits, &rep, &why));
+    int off = 0;
+    for (std::size_t k = 0; k < px.size(); k += 3) off += px[k + 2] < 245 ? 1 : 0;
+    CHECK(off < 64);
+    // Height: 16-bit, the bump above the quads.
+    bo.map = BakeMap::Height;
+    REQUIRE(bakeMap(low, high, bo, px, channels, bits, &rep, &why));
+    CHECK(channels == 1);
+    CHECK(bits == 16);
+    CHECK(rep.high > 0.5f);
+    // Colour: the paint.
+    bo.map = BakeMap::Color;
+    REQUIRE(bakeMap(low, high, bo, px, channels, bits, &rep, &why));
+    int red = 0;
+    for (std::size_t k = 0; k < px.size(); k += 3) red += px[k] > 200 && px[k + 1] < 80 ? 1 : 0;
+    CHECK(red > 128 * 128 / 3);
+    // Occlusion: a convex box sees the whole sky everywhere; inside a deep hole, little.
+    Document o;
+    REQUIRE(run(o, "BOX 40 40 20 @0,0,0").ok);
+    REQUIRE(run(o, "UV \"Block 1\" UNWRAP").ok);
+    bo.map = BakeMap::Occlusion;
+    bo.rays = 16;
+    REQUIRE(bakeMap(o.scene.bodies()[0], o.scene.bodies()[0], bo, px, channels, bits, &rep, &why));
+    CHECK(channels == 1);
+    CHECK(*std::min_element(px.begin(), px.end()) > 240);
+    REQUIRE(run(o, "HOLE \"Block 1\" AT 0,0,20 DIAMETER 6 DEPTH 15").ok);
+    REQUIRE(run(o, "UV \"Block 1\" UNWRAP").ok);
+    REQUIRE(bakeMap(o.scene.bodies()[0], o.scene.bodies()[0], bo, px, channels, bits, &rep, &why));
+    CHECK(*std::min_element(px.begin(), px.end()) < 100);
+    // Through the command, with a file; no texture coordinates: a clear refusal.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_bake_normal.png").string();
+    REQUIRE(run(d, "BAKE \"Sphere 1 retopo\" NORMAL FROM \"Sphere 1\" SIZE 64 FILE \"" + path + "\"").ok);
+    CHECK(std::filesystem::file_size(path) > 100);
+    std::filesystem::remove(path);
+    const CommandOutput bad = run(d, "BAKE \"Sphere 1\" NORMAL SIZE 64 FILE \"" + path + "\"");
+    CHECK(!bad.ok);
 }

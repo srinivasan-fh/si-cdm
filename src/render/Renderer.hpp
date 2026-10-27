@@ -26,6 +26,17 @@ struct ViewportSettings {
     bool sketchOnTop = false; // draw sketch curves over bodies (2D drawing view)
     std::vector<Vec3> sketchColors; // per curve, in place of sketchColor (constraint status); empty: all sketchColor
     bool showPolygroups = false; // bodies with polygroups drawn a colour per group
+    // Bodies drawn with textures on their texture coordinates: a checker (to see the
+    // unwrap), a colour map and a tangent-space normal map (RGBA8 pixels, rows from the
+    // top, v = 1). textureRevision changes when they do.
+    struct BodyTexture {
+        std::string body;
+        bool checker = false;
+        int colorWidth = 0, colorHeight = 0, normalWidth = 0, normalHeight = 0;
+        std::vector<unsigned char> color, normal;
+    };
+    std::vector<BodyTexture> textures;
+    std::uint64_t textureRevision = 0;
 };
 
 // GPU-side copy of one body.
@@ -35,6 +46,7 @@ struct GpuMesh {
     GLsizei indexCount = 0;
     GLsizei edgeVertexCount = 0;
     GLuint groupTbo = 0, groupTex = 0; // polygroups, per triangle (a texture buffer)
+    bool mapped = false;                // a vertex per triangle corner, with its texture coordinates
 };
 
 class Renderer {
@@ -78,6 +90,10 @@ private:
     Shader m_sketchShader;
     Shader m_imageShader;
     std::vector<GLuint> m_imageTextures; // parallel to scene.images(); 0 = no pixels
+    std::vector<std::pair<GLuint, GLuint>> m_bodyTextures; // parallel to settings.textures: colour, normal map
+    std::uint64_t m_bodyTextureRevision = ~std::uint64_t{0};
+    void uploadBodyTextures(const ViewportSettings& s);
+    void releaseBodyTextures();
     std::uint64_t m_imageRevision = ~std::uint64_t{0};
     GLuint m_outlineVao = 0, m_outlineVbo = 0;
 

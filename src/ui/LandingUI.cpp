@@ -36,6 +36,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdarg>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 
@@ -1055,6 +1056,60 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                 if (ImGui::Button("Retopologise")) {
                     cmd.commands.push_back("RETOPO \"" + lb.name + "\" FACES " + std::to_string(quads) + (detail > 0 ? " DETAIL " + std::to_string(detail) : std::string()));
                     ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            // Texture coordinates and baked maps.
+            ImGui::SameLine();
+            if (ImGui::Button("UV")) ImGui::OpenPopup("##uvbake");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unwrap texture coordinates, see them as a checker, bake maps from a sculpt");
+            if (ImGui::BeginPopup("##uvbake")) {
+                const std::string uq = "UV \"" + lb.name + "\" ";
+                if (ImGui::Button(lb.mesh.hasUvs() ? "Unwrap again" : "Unwrap")) cmd.commands.push_back(uq + "UNWRAP");
+                if (lb.mesh.hasUvs()) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Checker")) cmd.commands.push_back(uq + "SHOW CHECKER");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Plain")) cmd.commands.push_back(uq + "HIDE");
+                    ImGui::Separator();
+                    static int map = 0, sizeIdx = 1, from = -1;
+                    static char file[512] = "";
+                    static const char* const kMaps[] = {"Normal", "Object normal", "Height", "Occlusion", "Colour"};
+                    static const char* const kMapWords[] = {"NORMAL", "OBJECTNORMAL", "HEIGHT", "OCCLUSION", "COLOR"};
+                    static const char* const kSizes[] = {"512", "1024", "2048", "4096"};
+                    ImGui::SetNextItemWidth(160);
+                    ImGui::Combo("Map", &map, kMaps, 5);
+                    // From: the body this one was made from when there is one (its name before " retopo").
+                    const auto& bodies = m_menuScene->bodies();
+                    if (from < 0 || from >= static_cast<int>(bodies.size())) {
+                        from = st.selectedBody;
+                        const std::size_t cut = lb.name.find(" retopo");
+                        for (std::size_t k = 0; cut != std::string::npos && k < bodies.size(); ++k)
+                            if (bodies[k].name == lb.name.substr(0, cut)) from = static_cast<int>(k);
+                    }
+                    ImGui::SetNextItemWidth(160);
+                    if (ImGui::BeginCombo("From", bodies[static_cast<std::size_t>(from)].name.c_str())) {
+                        for (std::size_t k = 0; k < bodies.size(); ++k)
+                            if (ImGui::Selectable(bodies[k].name.c_str(), static_cast<int>(k) == from)) from = static_cast<int>(k);
+                        ImGui::EndCombo();
+                    }
+                    ImGui::SetNextItemWidth(160);
+                    ImGui::Combo("Size", &sizeIdx, kSizes, 4);
+                    if (!file[0] || ImGui::IsWindowAppearing()) {
+                        std::string def = lb.name + "_" + kMapWords[map] + ".png";
+                        for (char& c : def) c = c == ' ' ? '_' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        std::snprintf(file, sizeof(file), "%s", def.c_str());
+                    }
+                    ImGui::SetNextItemWidth(260);
+                    ImGui::InputText("File", file, sizeof(file));
+                    if (ImGui::Button("Bake")) {
+                        const std::string path = file;
+                        cmd.commands.push_back("BAKE \"" + lb.name + "\" " + kMapWords[map] + " FROM \"" + bodies[static_cast<std::size_t>(from)].name + "\" SIZE " +
+                                               kSizes[sizeIdx] + " FILE \"" + path + "\"");
+                        if (map == 0) cmd.commands.push_back(uq + "SHOW NORMAL \"" + path + "\""); // see it on the body
+                        else if (map == 4) cmd.commands.push_back(uq + "SHOW COLOR \"" + path + "\"");
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Writes the map (PNG); normal and colour maps are then shown on the body");
                 }
                 ImGui::EndPopup();
             }

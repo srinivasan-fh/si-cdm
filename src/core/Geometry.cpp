@@ -57,6 +57,9 @@ void MeshData::append(const MeshData& o) {
             for (std::uint32_t g : o.groups) groups.push_back(g + top);
         else groups.insert(groups.end(), o.indices.size() / 3, top);
     }
+    if (indices.empty() && o.hasUvs()) uvs = o.uvs;
+    else if (hasUvs() && o.hasUvs()) uvs.insert(uvs.end(), o.uvs.begin(), o.uvs.end());
+    else uvs.clear(); // only when both have them
     vertices.insert(vertices.end(), o.vertices.begin(), o.vertices.end());
     indices.reserve(indices.size() + o.indices.size());
     for (std::uint32_t i : o.indices) indices.push_back(base + i);
@@ -85,6 +88,7 @@ std::uint64_t meshContentKey(const MeshData& m) noexcept {
     if (!m.vertices.empty()) mix(m.vertices.data(), m.vertices.size() * sizeof(Vertex));
     if (!m.indices.empty()) mix(m.indices.data(), m.indices.size() * sizeof(std::uint32_t));
     if (!m.groups.empty()) mix(m.groups.data(), m.groups.size() * sizeof(std::uint32_t));
+    if (!m.uvs.empty()) mix(m.uvs.data(), m.uvs.size() * sizeof(Vec2));
     h ^= h >> 33;
     h *= P2;
     h ^= h >> 29;

@@ -200,8 +200,9 @@ public:
     // flipped towards six edges a vertex, and the vertices spread evenly over the surface
     // of `target` (kept on it). Paint, masks, groups and layers are dropped. With
     // `creaseAngle` > 0, edges where the faces turn more than that many degrees are kept:
-    // never flipped, their vertices sliding only along them, corners staying put.
-    void remeshIsotropic(float length, int iterations, const SculptMesh& target, float creaseAngle = 0.0f);
+    // never flipped, their vertices sliding only along them, corners staying put (chains
+    // of them shorter than `creaseChain` aren't: a sculpt's small creases).
+    void remeshIsotropic(float length, int iterations, const SculptMesh& target, float creaseAngle = 0.0f, float creaseChain = 0.0f);
     // Loose wrappers for the remesher's steps.
     void flipTowardsValence();
     void relaxOnto(const SurfaceIndex& target, float amount = 1.0f);
@@ -246,6 +247,7 @@ private:
     std::vector<float> m_layer; // Layer brush: how far each vertex has risen this stroke
     std::vector<std::uint32_t> m_color; // polypaint, per vertex, or empty
     std::vector<std::uint32_t> m_group; // polygroups, per triangle, or empty
+    std::vector<std::array<Vec2, 3>> m_uv; // texture coordinates, per triangle corner, or empty
     Vec3 m_base{0.72f, 0.75f, 0.80f};   // the body's own colour (unpainted)
     // Sculpt layers: names and strengths, each a per-vertex offset; the recording one,
     // and where each vertex was when the stroke began.
@@ -262,7 +264,7 @@ private:
     // crease) or 2 (a corner: where creases meet or one ends).
     std::unordered_set<std::uint64_t> m_creaseEdges;
     std::vector<char> m_crease;
-    void markCreases(float angle);
+    void markCreases(float angle, float minChain);
     // Grab in progress.
     struct GrabVert {
         std::uint32_t v;

@@ -571,6 +571,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 for (const auto& q : b.mesh.quads) putU32(qd, q[0]), putU32(qd, q[1]), putU32(qd, q[2]), putU32(qd, q[3]);
                 mesh.set("quads_b64", base64(qd));
             }
+            if (b.mesh.hasUvs()) {
+                std::vector<unsigned char> uv;
+                for (const Vec2& t : b.mesh.uvs) putF32(uv, t.x), putF32(uv, t.y);
+                mesh.set("uvs_b64", base64(uv));
+            }
             if (b.mesh.hasLayers()) {
                 Json layers = Json::array();
                 for (const SculptLayer& l : b.mesh.layers) {
@@ -612,6 +617,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 Json qd = Json::array(); // quad faces (their triangles are the indices, two each)
                 for (const auto& q : b.mesh.quads) qd.push(static_cast<double>(q[0])).push(static_cast<double>(q[1])).push(static_cast<double>(q[2])).push(static_cast<double>(q[3]));
                 mesh.set("quads", qd);
+            }
+            if (b.mesh.hasUvs()) {
+                Json uv = Json::array(); // texture coordinates, a pair per triangle corner
+                for (const Vec2& t : b.mesh.uvs) uv.push(t.x).push(t.y);
+                mesh.set("uvs", uv);
             }
             if (b.mesh.hasLayers()) {
                 Json layers = Json::array(); // sculpt layers: per vertex offsets
@@ -891,6 +901,15 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
                 if (fine)
                     for (std::size_t i = 0; i + 3 < qv.size(); i += 4) b.mesh.quads.push_back({qv[i], qv[i + 1], qv[i + 2], qv[i + 3]});
             }
+            {
+                std::vector<Vec2> uv;
+                raw.clear();
+                if (m["uvs_b64"].isString() && unbase64(m["uvs_b64"].asString(), raw))
+                    for (std::size_t i = 0; i + 8 <= raw.size(); i += 8) uv.push_back({getF32(&raw[i]), getF32(&raw[i + 4])});
+                const auto& ju = m["uvs"].items();
+                for (std::size_t i = 0; i + 1 < ju.size(); i += 2) uv.push_back({ju[i].asFloat(0), ju[i + 1].asFloat(0)});
+                if (uv.size() == b.mesh.indices.size()) b.mesh.uvs = std::move(uv);
+            }
             for (const Json& jl : m["layers"].items()) {
                 SculptLayer l;
                 l.name = jl["name"].asString("Layer");
@@ -1141,7 +1160,7 @@ bool exportStl(const Scene& scene, const std::string& path, std::string* error) 
 
 bool exportObj(const Scene& scene, const std::string& path, std::string* error) {
     std::string out = "# SI CDM OBJ export (mm)\n";
-    std::size_t base = 1, written = 0;
+    std::size_t base = 1, uvBase = 1, written = 0;
     char line[160];
     for (const Body& b : scene.bodies()) {
         if (!b.visible || b.mesh.indices.empty()) continue;
@@ -1168,13 +1187,31 @@ bool exportObj(const Scene& scene, const std::string& path, std::string* error) 
             out += line;
         }
         const auto& idx = b.mesh.indices;
-        if (b.mesh.hasQuads()) { // a quad mesh: its quads as they are
-            for (const auto& q : b.mesh.quads) {
-                const std::size_t q0 = base + q[0], q1 = base + q[1], q2 = base + q[2], q3 = base + q[3];
-                std::snprintf(line, sizeof(line), "f %zu//%zu %zu//%zu %zu//%zu %zu//%zu\n", q0, q0, q1, q1, q2, q2, q3, q3);
+        // Texture coordinates: one "vt" per triangle corner, numbered from uvBase.
+        const bool mapped = b.mesh.hasUvs();
+        if (mapped)
+            for (const Vec2& t : b.mesh.uvs) {
+                std::snprintf(line, sizeof(line), "vt %.6f %.6f\n", static_cast<double>(t.x), static_cast<double>(t.y));
                 out += line;
             }
+        auto corner = [&](std::size_t v, std::size_t c) { // "v/vt/vn" of vertex v at triangle corner c
+            if (mapped) std::snprintf(line, sizeof(line), " %zu/%zu/%zu", base + v, uvBase + c, base + v);
+            else std::snprintf(line, sizeof(line), " %zu//%zu", base + v, base + v);
+            return std::string(line);
+        };
+        if (b.mesh.hasQuads()) { // a quad mesh: its quads as they are
+            for (std::size_t qi = 0; qi < b.mesh.quads.size(); ++qi) {
+                const auto& q = b.mesh.quads[qi];
+                std::string f = "f";
+                for (std::uint32_t v : q) { // the corner of one of the quad's triangles at v
+                    std::size_t c = qi * 6;
+                    while (c + 1 < qi * 6 + 6 && idx[c] != v) ++c;
+                    f += corner(v, c);
+                }
+                out += f + "\n";
+            }
             base += b.mesh.vertices.size();
+            if (mapped) uvBase += b.mesh.uvs.size();
             ++written;
             continue;
         }
@@ -1185,11 +1222,10 @@ bool exportObj(const Scene& scene, const std::string& path, std::string* error) 
                 lastGroup = b.mesh.groups[i / 3];
                 out += "g " + name + "_" + std::to_string(lastGroup) + "\n";
             }
-            const std::size_t a = base + idx[i], c1 = base + idx[i + 1], c2 = base + idx[i + 2];
-            std::snprintf(line, sizeof(line), "f %zu//%zu %zu//%zu %zu//%zu\n", a, a, c1, c1, c2, c2);
-            out += line;
+            out += "f" + corner(idx[i], i) + corner(idx[i + 1], i + 1) + corner(idx[i + 2], i + 2) + "\n";
         }
         base += b.mesh.vertices.size();
+        if (mapped) uvBase += b.mesh.uvs.size();
         ++written;
     }
     if (written == 0) {
@@ -1206,6 +1242,8 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
     std::vector<Vec3> tri;
     std::vector<Vec3> triColor;          // OBJ: per corner (negative: none)
     std::vector<std::uint32_t> triGroup; // OBJ: per triangle
+    std::vector<Vec2> triTex;            // OBJ: per corner, when every face has them
+    bool allTextured = true;
     std::size_t groupCount = 0;
 
     if (kind == FileKind::Stl) {
@@ -1236,6 +1274,7 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
         }
     } else if (kind == FileKind::Obj) {
         std::vector<Vec3> pos, col;
+        std::vector<Vec2> tex;
         std::istringstream in(*data);
         std::string line;
         std::map<std::string, std::uint32_t> groupIds;
@@ -1250,6 +1289,9 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
                     pos.push_back(v);
                     if (ls >> c.x >> c.y >> c.z) col.resize(pos.size(), Vec3{-1, -1, -1}), col.back() = c; // a vertex colour
                 }
+            } else if (tag == "vt") {
+                Vec2 t;
+                if (ls >> t.x >> t.y) tex.push_back(t);
             } else if (tag == "g") {
                 std::string name;
                 std::getline(ls, name);
@@ -1257,21 +1299,33 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
             } else if (tag == "f") {
                 std::vector<Vec3> poly;
                 std::vector<Vec3> polyCol;
+                std::vector<Vec2> polyTex;
                 std::string tok;
+                bool textured = true;
                 while (ls >> tok) {
-                    const long k = std::strtol(tok.c_str(), nullptr, 10); // "a/b/c" -> a
+                    char* end = nullptr;
+                    const long k = std::strtol(tok.c_str(), &end, 10); // "a/b/c" -> a (b: the texture coordinate)
                     const long i = k < 0 ? static_cast<long>(pos.size()) + k : k - 1;
                     if (i < 0 || static_cast<std::size_t>(i) >= pos.size()) {
                         setError(error, "Bad face index in " + path);
                         return std::nullopt;
                     }
+                    long ti = -1;
+                    if (end && *end == '/' && end[1] != '/' && end[1] != '\0') {
+                        const long kt = std::strtol(end + 1, nullptr, 10);
+                        ti = kt < 0 ? static_cast<long>(tex.size()) + kt : kt - 1;
+                    }
+                    if (ti < 0 || static_cast<std::size_t>(ti) >= tex.size()) textured = false;
+                    else polyTex.push_back(tex[static_cast<std::size_t>(ti)]);
                     poly.push_back(pos[static_cast<std::size_t>(i)]);
                     polyCol.push_back(static_cast<std::size_t>(i) < col.size() ? col[static_cast<std::size_t>(i)] : Vec3{-1, -1, -1});
                 }
+                if (!textured) allTextured = false;
                 for (std::size_t j = 1; j + 1 < poly.size(); ++j) { // fan
                     tri.push_back(poly[0]);
                     tri.push_back(poly[j]);
                     tri.push_back(poly[j + 1]);
+                    if (textured) triTex.insert(triTex.end(), {polyTex[0], polyTex[j], polyTex[j + 1]});
                     triColor.push_back(polyCol[0]);
                     triColor.push_back(polyCol[j]);
                     triColor.push_back(polyCol[j + 1]);
@@ -1294,6 +1348,7 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
         for (std::size_t i = 0; i < triColor.size(); ++i)
             if (triColor[i].x >= 0) mesh.vertices[i].color = packColor(triColor[i]);
     if (groupCount > 1 && triGroup.size() * 3 == mesh.indices.size()) mesh.groups = std::move(triGroup);
+    if (allTextured && triTex.size() == mesh.indices.size()) mesh.uvs = std::move(triTex);
     return meshBody(stemOf(path), std::move(mesh));
 }
 

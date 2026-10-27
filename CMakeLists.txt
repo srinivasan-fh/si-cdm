@@ -78,6 +78,7 @@ add_library(sicdm_core STATIC
     src/core/FeaReport.cpp
     src/core/Multires.cpp
     src/core/Retopo.cpp
+    src/core/UvMap.cpp
     src/core/Library.cpp
     src/core/Lathe.cpp
     src/core/LatheCommand.cpp

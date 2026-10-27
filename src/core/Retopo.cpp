@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <unordered_map>
 
@@ -55,7 +56,7 @@ struct Features {
     }
 };
 
-Features featuresOf(const SculptMesh& m) {
+Features featuresOf(const SculptMesh& m, float minChain) {
     Features f;
     const auto& P = m.positions();
     const auto& T = m.triangles();
@@ -65,10 +66,25 @@ Features featuresOf(const SculptMesh& m) {
         for (int e = 0; e < 3; ++e) normals[keyOf(t[static_cast<std::size_t>(e)], t[static_cast<std::size_t>((e + 1) % 3)])].push_back(n);
     }
     const float cosLimit = std::cos(40.0f * kPiF / 180.0f);
-    std::unordered_map<std::uint32_t, int> degree;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> sharp;
     for (const auto& [k, ns] : normals) {
         if (ns.size() != 2 || dot(ns[0], ns[1]) >= cosLimit) continue;
-        const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+        sharp.push_back({static_cast<std::uint32_t>(k >> 32), static_cast<std::uint32_t>(k & 0xFFFFFFFFu)});
+    }
+    // Chains of sharp edges shorter than `minChain` are a sculpt's small creases, not edges
+    // to keep: dropped (each chain: the sharp edges joined end to end).
+    std::unordered_map<std::uint32_t, std::uint32_t> parent;
+    std::function<std::uint32_t(std::uint32_t)> root = [&](std::uint32_t v) {
+        auto it = parent.find(v);
+        if (it == parent.end()) return parent[v] = v;
+        return it->second == v ? v : it->second = root(it->second);
+    };
+    for (const auto& [a, b] : sharp) parent[root(a)] = root(b);
+    std::unordered_map<std::uint32_t, float> chain;
+    for (const auto& [a, b] : sharp) chain[root(a)] += length(P[a] - P[b]);
+    std::unordered_map<std::uint32_t, int> degree;
+    for (const auto& [a, b] : sharp) {
+        if (chain[root(a)] < minChain) continue;
         f.lines.push_back({P[a], P[b]});
         ++degree[a], ++degree[b];
     }
@@ -104,11 +120,11 @@ bool retopologize(const Body& source, const RetopoOptions& opt, MeshData& out, R
     const double tris = std::max(40.0, static_cast<double>(std::max(opt.faces, 20)) / 1.55); // pairs, then each face in quads
     const float L = static_cast<float>(std::sqrt(4.0 * area / (std::sqrt(3.0) * tris)));
     SculptMesh m = src;
-    m.remeshIsotropic(L, std::max(opt.iterations, 1), src, 40.0f);
+    m.remeshIsotropic(L, std::max(opt.iterations, 1), src, 40.0f, 3.0f * L);
     std::vector<Vec3> P = m.positions();
     const std::vector<std::array<std::uint32_t, 3>> T = m.triangles();
     // The original's sharp edges and corners: vertices near them go onto them.
-    const Features feat = featuresOf(src);
+    const Features feat = featuresOf(src, 3.0f * L);
     std::vector<int> onFeature(P.size(), 0);
     if (!feat.lines.empty())
         for (std::size_t v = 0; v < P.size(); ++v) {

@@ -53,6 +53,10 @@ struct MeshData {
     // indices 6q .. 6q+5; empty, or out of step with the triangles: none.
     std::vector<std::array<std::uint32_t, 4>> quads;
     bool hasQuads() const noexcept { return !quads.empty() && quads.size() * 6 == indices.size(); }
+    // Texture coordinates, one per triangle corner (indices.size()): seams are corners of a
+    // vertex with different coordinates. Empty, or out of step with the triangles: none.
+    std::vector<Vec2> uvs;
+    bool hasUvs() const noexcept { return !uvs.empty() && uvs.size() == indices.size(); }
     bool hasLayers() const noexcept {
         if (layers.empty()) return false;
         for (const SculptLayer& l : layers)

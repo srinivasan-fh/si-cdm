@@ -41,17 +41,20 @@ layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in float aMask;
 layout(location = 3) in vec4 aColor; // polypaint (alpha 0: unpainted)
+layout(location = 4) in vec2 aUV;    // texture coordinates (bodies that have them)
 uniform mat4 uViewProj;
 uniform mat4 uModel; // body offset and simulated motion (rigid)
 out vec3 vWorldPos;
 out vec3 vNormal;
 out float vMask;
 out vec4 vColor;
+out vec2 vTex;
 void main() {
     vWorldPos = (uModel * vec4(aPos, 1.0)).xyz;
     vNormal = mat3(uModel) * aNormal;
     vMask = aMask;
     vColor = aColor;
+    vTex = aUV;
     gl_Position = uViewProj * vec4(vWorldPos, 1.0);
 }
 )";
@@ -61,7 +64,13 @@ in vec3 vWorldPos;
 in vec3 vNormal;
 in float vMask;
 in vec4 vColor;
+in vec2 vTex;
 uniform vec3 uColor;
+uniform float uChecker;   // 1: a checker on the texture coordinates
+uniform float uColorMap;  // 1: colour from uColorTex
+uniform float uNormalMap; // 1: tangent-space normals from uNormalTex
+uniform sampler2D uColorTex;
+uniform sampler2D uNormalTex;
 uniform float uPolygroups; // 1: a colour per polygroup (from uGroups, per triangle)
 uniform usamplerBuffer uGroups;
 uniform vec3 uCamPos;
@@ -87,6 +96,17 @@ void main() {
     vec3 N = normalize(vNormal);
     vec3 V = uOrtho > 0.5 ? -uCamDir : normalize(uCamPos - vWorldPos);
     if (!gl_FrontFacing) N = -N;
+    if (uNormalMap > 0.5) {
+        // The tangent frame from how position and texture coordinates change across the
+        // pixel (no tangents stored): along u, along v, the normal.
+        vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+        vec2 dt1 = dFdx(vTex), dt2 = dFdy(vTex);
+        vec3 p2 = cross(dp2, N), p1 = cross(N, dp1);
+        vec3 T = p2 * dt1.x + p1 * dt2.x, B = p2 * dt1.y + p1 * dt2.y;
+        float s = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-30));
+        vec3 m = texture(uNormalTex, vTex).xyz * 2.0 - 1.0;
+        N = normalize(mat3(T * s, B * s, N) * m);
+    }
 
     if (uHiddenLine > 0.5) {
         // Faces become paper (hiding what is behind them); curved silhouettes
@@ -112,6 +132,14 @@ void main() {
     vec3 ambient = mix(vec3(0.16, 0.15, 0.14), vec3(0.24, 0.26, 0.30), hemi);
 
     vec3 own = vColor.a > 0.5 ? vColor.rgb : uColor;
+    if (uColorMap > 0.5) own = texture(uColorTex, vTex).rgb;
+    if (uChecker > 0.5) { // squares of a sixteenth, numbered rows to see turns and stretch
+        vec2 c = floor(vTex * 16.0);
+        float odd = mod(c.x + c.y, 2.0);
+        own = mix(vec3(0.85, 0.86, 0.88), vec3(0.25, 0.45, 0.80), odd);
+        vec2 f = fract(vTex * 16.0);
+        if (f.x < 0.06 && mod(c.y, 4.0) == 0.0) own = vec3(0.90, 0.35, 0.20);
+    }
     if (uPolygroups > 0.5) { // a steady, well spread colour per group
         uint g = texelFetch(uGroups, gl_PrimitiveID).r;
         uint h = g * 2654435761u;
@@ -263,23 +291,39 @@ GpuMesh uploadMesh(const MeshData& m) {
     glBindVertexArray(g.vao);
     glGenBuffers(1, &g.vbo);
     glBindBuffer(GL_ARRAY_BUFFER, g.vbo);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(m.vertices.size() * sizeof(Vertex)),
-                 m.vertices.data(), GL_STATIC_DRAW);
     glGenBuffers(1, &g.ibo);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g.ibo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(m.indices.size() * sizeof(std::uint32_t)),
-                 m.indices.data(), GL_STATIC_DRAW);
+    GLsizei stride = sizeof(Vertex);
+    if (m.hasUvs()) {
+        // Texture coordinates are per corner (seams): a vertex per corner, in order.
+        struct Corner {
+            Vertex v;
+            Vec2 uv;
+        };
+        std::vector<Corner> corners(m.indices.size());
+        std::vector<std::uint32_t> order(m.indices.size());
+        for (std::size_t k = 0; k < m.indices.size(); ++k) corners[k] = {m.vertices[m.indices[k]], m.uvs[k]}, order[k] = static_cast<std::uint32_t>(k);
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(corners.size() * sizeof(Corner)), corners.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(order.size() * sizeof(std::uint32_t)), order.data(), GL_STATIC_DRAW);
+        stride = sizeof(Corner);
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<const void*>(offsetof(Corner, uv)));
+        g.mapped = true;
+    } else {
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(m.vertices.size() * sizeof(Vertex)), m.vertices.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(m.indices.size() * sizeof(std::uint32_t)), m.indices.data(), GL_STATIC_DRAW);
+    }
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
                           reinterpret_cast<const void*>(offsetof(Vertex, position)));
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
                           reinterpret_cast<const void*>(offsetof(Vertex, normal)));
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex),
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride,
                           reinterpret_cast<const void*>(offsetof(Vertex, mask)));
     glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex),
+    glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
                           reinterpret_cast<const void*>(offsetof(Vertex, color)));
     g.indexCount = static_cast<GLsizei>(m.indices.size());
     if (m.hasGroups()) {
@@ -337,6 +381,7 @@ Renderer::Renderer()
 
 Renderer::~Renderer() {
     releaseMeshes();
+    releaseBodyTextures();
     if (m_emptyVao) glDeleteVertexArrays(1, &m_emptyVao);
     if (m_sketchVao) glDeleteVertexArrays(1, &m_sketchVao);
     if (m_sketchVbo) glDeleteBuffers(1, &m_sketchVbo);
@@ -473,6 +518,40 @@ void Renderer::releaseImages() {
     for (GLuint t : m_imageTextures)
         if (t) glDeleteTextures(1, &t);
     m_imageTextures.clear();
+}
+
+void Renderer::releaseBodyTextures() {
+    for (auto& [c, n] : m_bodyTextures) {
+        if (c) glDeleteTextures(1, &c);
+        if (n) glDeleteTextures(1, &n);
+    }
+    m_bodyTextures.clear();
+}
+
+void Renderer::uploadBodyTextures(const ViewportSettings& s) {
+    releaseBodyTextures();
+    auto make = [](int w, int h, const std::vector<unsigned char>& px) -> GLuint {
+        if (w <= 0 || h <= 0 || px.size() < static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4) return 0;
+        // Rows from the top in the image; OpenGL's first row is v = 0.
+        std::vector<unsigned char> flipped(px.size());
+        const std::size_t row = static_cast<std::size_t>(w) * 4;
+        for (int y = 0; y < h; ++y)
+            std::copy_n(px.begin() + static_cast<std::ptrdiff_t>(static_cast<std::size_t>(h - 1 - y) * row), row, flipped.begin() + static_cast<std::ptrdiff_t>(static_cast<std::size_t>(y) * row));
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, flipped.data());
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        return tex;
+    };
+    for (const auto& t : s.textures) m_bodyTextures.emplace_back(make(t.colorWidth, t.colorHeight, t.color), make(t.normalWidth, t.normalHeight, t.normal));
+    glBindTexture(GL_TEXTURE_2D, 0);
+    m_bodyTextureRevision = s.textureRevision;
 }
 
 void Renderer::uploadImages(const Scene& scene) {
@@ -739,6 +818,8 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                     if (cell * perUnit > kLodCellPixels) m_refine = true; // coarser than a still view takes
                 }
                 if (s.showPolygroups && e.full.groupTex) drawn[i] = &e.full; // the coarser copies have no groups
+                for (const auto& t : s.textures) // ... nor texture coordinates
+                    if (e.full.mapped && t.body == bodies[i].name) drawn[i] = &e.full;
                 if (drawn[i] != &e.full) ++m_stats.coarseBodies;
             }
         }
@@ -762,6 +843,9 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         m_mesh.set("uCamRight", cam.right());
         m_mesh.set("uCamUp", cam.up());
         glUniform1i(glGetUniformLocation(m_mesh.program(), "uGroups"), 1); // polygroups on texture unit 1
+        glUniform1i(glGetUniformLocation(m_mesh.program(), "uColorTex"), 2); // texture maps on units 2 and 3
+        glUniform1i(glGetUniformLocation(m_mesh.program(), "uNormalTex"), 3);
+        if (s.textureRevision != m_bodyTextureRevision) uploadBodyTextures(s);
         for (std::size_t i = 0; i < count; ++i) {
             if (!bodies[i].visible) continue;
             m_mesh.set("uColor", bodies[i].color);
@@ -775,6 +859,28 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                 glBindTexture(GL_TEXTURE_BUFFER, gpu(i).groupTex);
                 glActiveTexture(GL_TEXTURE0);
             }
+            // Texture maps shown on this body (it needs texture coordinates).
+            float checker = 0, colorMap = 0, normalMap = 0;
+            if (gpu(i).mapped && !hidden)
+                for (std::size_t t = 0; t < s.textures.size() && t < m_bodyTextures.size(); ++t) {
+                    if (s.textures[t].body != bodies[i].name) continue;
+                    checker = s.textures[t].checker ? 1.0f : 0.0f;
+                    if (m_bodyTextures[t].first) {
+                        glActiveTexture(GL_TEXTURE2);
+                        glBindTexture(GL_TEXTURE_2D, m_bodyTextures[t].first);
+                        colorMap = 1;
+                    }
+                    if (m_bodyTextures[t].second) {
+                        glActiveTexture(GL_TEXTURE3);
+                        glBindTexture(GL_TEXTURE_2D, m_bodyTextures[t].second);
+                        normalMap = 1;
+                    }
+                    glActiveTexture(GL_TEXTURE0);
+                    break;
+                }
+            m_mesh.set("uChecker", checker);
+            m_mesh.set("uColorMap", colorMap);
+            m_mesh.set("uNormalMap", normalMap);
             glBindVertexArray(gpu(i).vao);
             glDrawElements(GL_TRIANGLES, gpu(i).indexCount, GL_UNSIGNED_INT, nullptr);
         }

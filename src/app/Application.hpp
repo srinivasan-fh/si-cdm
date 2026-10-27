@@ -61,6 +61,7 @@ public:
     void setDisplay(int mode) override;
     void setGrid(std::optional<bool> on) override;
     bool setPolygroups(std::optional<bool> on) override;
+    bool setBodyTexture(const std::string& body, bool checker, const std::string& colorPath, const std::string& normalPath, std::string* error) override;
     void setPanel(std::optional<bool> on) override;
     void setPanelPage(int page) override;
     std::string describe() const override;
