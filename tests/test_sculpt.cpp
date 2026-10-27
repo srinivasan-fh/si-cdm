@@ -1062,7 +1062,7 @@ TEST_CASE("retopology: an even all-quad mesh on the surface, corners kept, saved
     REQUIRE(run(d, "RETOPO \"Sphere 1\" FACES 800").ok);
     REQUIRE(d.scene.bodies().size() == 3);
     CHECK(!d.scene.bodies()[0].visible);
-    const Body& s = d.scene.bodies()[2];
+    const Body s = d.scene.bodies()[2]; // a copy: bodies are added below
     CHECK(s.name == "Sphere 1 retopo");
     REQUIRE(s.mesh.hasQuads());
     CHECK(s.mesh.quads.size() > 600);
@@ -1137,7 +1137,7 @@ TEST_CASE("UV unwrap: charts flattened without folds, packed apart in the square
     Document d;
     REQUIRE(run(d, "BOX 60 40 30 @0,0,0").ok);
     REQUIRE(run(d, "UV \"Block 1\" UNWRAP").ok);
-    const MeshData& box = d.scene.bodies()[0].mesh;
+    const MeshData box = d.scene.bodies()[0].mesh; // a copy: bodies are added below
     REQUIRE(box.hasUvs());
     // Every coordinate in the square, every face the right way round and at the surface's own scale.
     double uvArea = 0, area = 0;
