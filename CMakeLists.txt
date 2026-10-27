@@ -75,6 +75,7 @@ add_library(sicdm_core STATIC
     src/core/Variables.cpp
     src/core/SheetMetal.cpp
     src/core/Fea.cpp
+    src/core/FeaReport.cpp
     src/core/Library.cpp
     src/core/Lathe.cpp
     src/core/LatheCommand.cpp

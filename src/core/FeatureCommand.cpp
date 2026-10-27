@@ -11,6 +11,7 @@
 #include "core/HoleWizard.hpp"
 #include "core/SheetMetal.hpp"
 #include "core/Fea.hpp"
+#include "core/FeaReport.hpp"
 #include "core/FileIO.hpp"
 #include "core/Sculpt.hpp"
 #include "core/SketchEdit.hpp"
@@ -1879,7 +1880,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         //     [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]
         //     FEA MATERIALS
         static const char* const kKeys[] = {"fix", "load", "force", "material", "e", "nu", "yield", "cell", "plot", "deform", "face", "near",
-                                            "pressure", "gravity", "bearing", "modes", "mode", "temp", "heat", "thermal", "ref"};
+                                            "pressure", "gravity", "bearing", "modes", "mode", "temp", "heat", "thermal", "ref", "report"};
         auto isKey = [](const std::string& w) {
             for (const char* k : kKeys)
                 if (w == k) return true;
@@ -1887,7 +1888,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         };
         const char* usage = "Usage: FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ... [LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz] "
                             "[PRESSURE FACE x,y,z MPA] [BEARING x,y,z r FORCE fx,fy,fz] [GRAVITY [x,y,z]] [TEMP FACE x,y,z C] [HEAT FACE x,y,z W] "
-                            "[THERMAL] [REF C] [MODES n] [MODE k] [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]  |  FEA MATERIALS";
+                            "[THERMAL] [REF C] [MODES n] [MODE k] [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale] [REPORT file.html]  |  FEA MATERIALS";
         if (a.size() == 1 && lower(a[0]) == "materials") {
             for (const FeaMaterial& m : feaMaterials())
                 out.say("  " + m.name + fmt3(":  E %g MPa", m.E) + fmt3(", nu %g", m.nu) + fmt3(", yield %g MPa", m.yield) + fmt3(", %g g/cm3", m.density));
@@ -1902,6 +1903,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         bool plot = false;
         float deform = 0;
         int showMode = 0;
+        std::string reportPath;
         auto selection = [&](FeaSelection& sel) -> bool { // FACE x,y,z | NEAR x,y,z r
             if (i + 1 >= a.size()) return false;
             const std::string k = lower(a[++i]);
@@ -1993,7 +1995,10 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 if (!x || !(*x > 0)) return out.fail("CELL needs the cubes' size");
                 setup.cell = static_cast<float>(*x);
             } else if (k == "plot") plot = true;
-            else if (k == "deform") {
+            else if (k == "report") {
+                if (i + 1 >= a.size()) return out.fail("REPORT needs a file name (.html)");
+                reportPath = a[++i];
+            } else if (k == "deform") {
                 const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
                 if (!x || *x < 0) return out.fail("DEFORM needs a scale (1: true size)");
                 deform = *x, plot = true;
@@ -2002,7 +2007,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         const Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
         MeshData world = worldMesh(body);
         if (openEdgeCount(world) != 0) return out.fail(body.name + " isn't closed: REPAIR it first");
-        if (plot) { // a plot needs vertices to show the stress between corners: finer surface triangles
+        if (plot || !reportPath.empty()) { // a plot needs vertices to show the stress between corners: finer surface triangles
             const AABB wb = world.bounds();
             const float detail = std::max({wb.max.x - wb.min.x, wb.max.y - wb.min.y, wb.max.z - wb.min.z}) / 80.0f;
             Body fine = meshBody("fine", world);
@@ -2030,6 +2035,13 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             out.say("  factor of safety " + fmt3("%.3g", r.safetyFactor) + (r.safetyFactor < 1 ? "  (yields!)" : r.safetyFactor < 1.5 ? "  (thin margin)" : ""));
         }
         if (!r.converged) out.say("  (the solver stopped after " + std::to_string(r.iterations) + " steps before converging: results are rough)");
+        if (!reportPath.empty() && !doc.replaying) { // regenerating the model doesn't write files
+            FeaReportData rd;
+            rd.title = doc.name, rd.body = body.name, rd.setup = setup, rd.result = r, rd.mesh = world;
+            std::string err;
+            if (!writeFile(reportPath, feaReportHtml(rd), &err)) return out.fail("Cannot write the report: " + err);
+            out.say("  report: " + reportPath);
+        }
         if (plot && (showMode > 0 || !statics)) { // a mode's shape, or the temperatures
             MeshData m = world;
             std::string field;

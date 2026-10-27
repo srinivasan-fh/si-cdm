@@ -29,6 +29,10 @@ struct HoleNote {
     float threadDia = 0, pitch = 0; // a tapped hole's thread (0: none)
     float threadDepth = 0;          // how deep it goes (0: through)
     bool threadModelled = false;    // THREAD cut it into the wall
+    // The hole itself, for drawing callouts (0: not known, an older project)
+    float diameter = 0, depth = 0;  // depth 0: through
+    float cboreDia = 0, cboreDepth = 0, csinkDia = 0, csinkAngle = 0;
+    std::string size;               // the standard size's name (M6, 1/4-20), if any
 };
 
 struct Body {

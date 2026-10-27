@@ -81,7 +81,8 @@ Vec3 sheetFolded(const SheetPart& part, int region, Vec2 q, float z);
 float jogFirstLength(const SheetPart& part, int parent, int edge, float offset, float angleDeg, bool down = false);
 
 // The flat pattern's outline (closed loops, plane coordinates) and its bend lines (the
-// middle of each bend zone), for drawings and DXF.
-void sheetFlatOutline(const SheetPart& part, std::vector<std::vector<Vec2>>& outline, std::vector<std::pair<Vec2, Vec2>>& bendLines);
+// middle of each bend zone), for drawings and DXF; `bendFlange` gets each bend line's flange.
+void sheetFlatOutline(const SheetPart& part, std::vector<std::vector<Vec2>>& outline, std::vector<std::pair<Vec2, Vec2>>& bendLines,
+                      std::vector<int>* bendFlange = nullptr);
 
 } // namespace sicdm

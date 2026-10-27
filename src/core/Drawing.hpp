@@ -17,6 +17,9 @@
 //               frames with their symbol, zone, material condition and datum
 //               references, datum feature symbols, surface finish marks (ISO 1302) and
 //               the general tolerance (ISO 2768) in the title block
+//   Callouts    hole callouts on a leader (ASME Y14.5 style): drill diameter, depth or THRU,
+//               counterbore, countersink and thread, "4X" for holes alike
+//   Flat views  a sheet metal part's flat pattern with its bend lines and bend notes
 //   Sheet       ISO and ANSI sizes, a border, a title block and the projection symbol
 //   Export      PDF, SVG and DXF (layers and line types for visible, hidden, centre,
 //               dimension and hatch lines)
@@ -32,8 +35,9 @@
 namespace sicdm {
 
 class Scene;
+struct HoleNote;
 
-enum class ViewKind { Front, Back, Top, Bottom, Left, Right, Iso, Section };
+enum class ViewKind { Front, Back, Top, Bottom, Left, Right, Iso, Section, Flat };
 const char* viewKindName(ViewKind k);
 // A standard view's axes: right and up on the sheet, and into the scene (away from the viewer).
 void viewAxes(ViewKind k, DVec3& right, DVec3& up, DVec3& into);
@@ -52,6 +56,10 @@ struct DrawingView {
     bool vertical = true;
     double cut = 0;
     bool flip = false;        // look the other way along the cut
+    // Flat views: the flat pattern of this sheet metal body, seen from the side the base's
+    // normal points to. Its model points are flat-pattern coordinates (x, y on the base's
+    // plane, z through the sheet).
+    std::string body;
 };
 
 // A size tolerance on a dimension.
@@ -117,6 +125,16 @@ struct DrawingFinish {
     double dx = 0, dy = 0;       // the mark's foot from the point (sheet mm)
 };
 
+// A hole callout: a leader from the hole's edge to its description, one line per '\n'
+// ("4X \xC3\x98" "6.6 THRU"). {DEPTH}, {CBORE} and {CSINK} in the text draw those symbols.
+struct DrawingCallout {
+    std::string view;
+    DVec3 at;              // the hole's axis where it opens (model)
+    double radius = 0;     // model mm: the leader starts on this circle
+    std::string text;
+    double dx = 0, dy = 0; // where the text starts from the hole's centre, sheet mm (0, 0: up and to the right)
+};
+
 struct DrawingNote {
     double x = 0, y = 0;
     double height = 3.5;
@@ -135,6 +153,7 @@ struct Drawing {
     std::vector<DrawingFrame> frames;
     std::vector<DrawingDatum> datums;
     std::vector<DrawingFinish> finishes;
+    std::vector<DrawingCallout> callouts;
     std::string generalTolerance; // "ISO 2768-mK": shown in the title block
     std::map<std::string, std::string> title; // TITLE, PART, MATERIAL, DRAWN, CHECKED, COMPANY, REV, DATE
     bool empty() const { return views.empty(); }
@@ -187,6 +206,16 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v);
 // Overall sizes of each orthographic view, and the diameters of round holes and bosses
 // seen end on. Returns how many were added.
 int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView = "");
+// Callouts for the holes seen end on in the front, top and side views: hole wizard holes
+// as they were made (drill, depth, counterbore, countersink, thread), other round holes
+// from the geometry (diameter, depth or THRU, counterbore). Holes alike in a view share
+// one callout ("4X"); their plain diameter dimensions go. Returns how many were added.
+int autoCallouts(Drawing& d, const Scene& scene, const std::string& onlyView = "");
+// A hole wizard hole's callout, line by line: "\xC3\x98" "5 {DEPTH}15\nM6x1 - 6H {DEPTH}12".
+std::string holeCalloutText(const HoleNote& h);
+// The sheet metal bodies a flat view can show (body kind "sheet").
+bool isSheetMetalBody(const Scene& scene, const std::string& body);
+
 // The measured value of a dimension (model mm).
 double dimensionValue(const Drawing& d, const DrawingDim& dim);
 // A dimension's text: its value (or text), with its tolerance. `stack` gets the upper and

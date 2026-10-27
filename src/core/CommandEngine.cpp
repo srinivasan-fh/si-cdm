@@ -2893,6 +2893,12 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 if (!offBody.empty()) return doc.scene.undo(), out.fail(offBody);
                 ok = drillHole(body, p, n, diameter, through ? 0.0f : depth, &error);
                 done = fmt("hole %g mm", diameter) + (through || depth <= 0 ? " through" : fmt(", %g deep", depth));
+                if (ok) { // its note, for callouts
+                    HoleNote note;
+                    note.at = p - body.offset, note.dir = -normalize(n), note.callout = fmt("dia %g", diameter) + (through || depth <= 0 ? " thru" : fmt(" x %g deep", depth));
+                    note.diameter = diameter, note.depth = through ? 0.0f : std::max(depth, 0.0f);
+                    body.holes.push_back(note);
+                }
             } else {
                 // The hole's shape from the standard size (or the sizes given).
                 HoleSpec h;
@@ -2934,7 +2940,11 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                         ok = false;
                         break;
                     }
-                    body.holes.push_back({p - body.offset, -normalize(n), holeCallout(h), h.threadDia, h.threadPitch, h.threadDepth});
+                    HoleNote& note = body.holes.emplace_back();
+                    note.at = p - body.offset, note.dir = -normalize(n), note.callout = holeCallout(h);
+                    note.threadDia = h.threadDia, note.pitch = h.threadPitch, note.threadDepth = h.threadDepth;
+                    note.diameter = h.diameter, note.depth = h.depth, note.size = h.size;
+                    note.cboreDia = h.cboreDia, note.cboreDepth = h.cboreDepth, note.csinkDia = h.csinkDia, note.csinkAngle = h.csinkAngle;
                 }
                 done = (at.size() > 1 ? std::to_string(at.size()) + " holes " : std::string("hole ")) + holeCallout(h);
             }

@@ -5,6 +5,7 @@
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Section.hpp"
+#include "core/SheetMetal.hpp"
 #include "core/Step.hpp"
 
 #include <algorithm>
@@ -33,7 +34,8 @@ ViewFrame frameOf(ViewKind k) {
     switch (k) {
     case ViewKind::Front: return {{1, 0, 0}, {0, 0, 1}, {0, 1, 0}};
     case ViewKind::Back: return {{-1, 0, 0}, {0, 0, 1}, {0, -1, 0}};
-    case ViewKind::Top: return {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}};
+    case ViewKind::Top:
+    case ViewKind::Flat: return {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}};
     case ViewKind::Bottom: return {{1, 0, 0}, {0, -1, 0}, {0, 0, 1}};
     case ViewKind::Right: return {{0, 1, 0}, {0, 0, 1}, {-1, 0, 0}};
     case ViewKind::Left: return {{0, -1, 0}, {0, 0, 1}, {1, 0, 0}};
@@ -77,6 +79,7 @@ struct Model {
         DVec3 o, axis;
         double r, h0, h1;
         bool full;
+        bool hole = false; // its face looks in at the axis
     };
     std::vector<Round> rounds;
     DVec3 lo{1e300, 1e300, 1e300}, hi{-1e300, -1e300, -1e300};
@@ -138,6 +141,12 @@ Model buildModel(const std::vector<const Body*>& bodies, double chord) {
                                 quad[static_cast<int>(std::floor((a + kPiD2) / (kPiD2 / 2))) & 3] = true;
                             }
                         rd.full = quad[0] && quad[1] && quad[2] && quad[3];
+                        { // which way the face looks: out from the axis (a boss) or in at it (a hole)
+                            const std::size_t i0 = mesh.indices[tri0 * 3], i1 = mesh.indices[tri0 * 3 + 1], i2 = mesh.indices[tri0 * 3 + 2];
+                            const DVec3 a(mesh.vertices[i0].position), bb(mesh.vertices[i1].position), c(mesh.vertices[i2].position);
+                            const DVec3 q = (a + bb + c) * (1.0 / 3), radial = q - S.f.o - S.f.z * ddot(q - S.f.o, S.f.z);
+                            rd.hole = ddot(dcross(bb - a, c - a), radial) < 0;
+                        }
                         if (rd.full) m.rounds.push_back(rd);
                     }
                     tri0 += nt;
@@ -175,6 +184,50 @@ Model buildModel(const std::vector<const Body*>& bodies, double chord) {
             } else if (m.edges[it->second].t1 < 0) {
                 m.edges[it->second].t1 = static_cast<int>(t);
             }
+        }
+    }
+    return m;
+}
+
+// --- flat patterns ---------------------------------------------------------------------------
+
+struct FlatBend { // a bend line in the flat, with what the bend does
+    DVec3 a, b;
+    double angle, radius;
+    bool down;
+};
+
+bool sheetPartOf(const Scene& scene, const std::string& name, SheetPart& part) {
+    for (const Body& b : scene.bodies())
+        if (upper(b.name) == upper(name) && b.kind == "sheet") return sheetFromParams(b.params, part);
+    return false;
+}
+
+// A sheet metal body's flat pattern as a model in flat coordinates (x, y on the base's
+// plane, z through the sheet), and its bends.
+Model flatModel(const Scene& scene, const DrawingView& v, std::vector<FlatBend>* bends) {
+    SheetPart part;
+    if (!sheetPartOf(scene, v.body, part)) return {};
+    MeshData mesh = buildSheet(part, true);
+    if (mesh.indices.empty()) return {};
+    const PlaneFrame& f = part.frame;
+    for (Vertex& vx : mesh.vertices) {
+        const Vec3 p = vx.position;
+        const Vec2 q = f.toPlane(p);
+        vx.position = {q.x, q.y, dot(p - f.origin, f.normal)};
+    }
+    Body flat;
+    flat.name = "flat";
+    flat.mesh = std::move(mesh);
+    Model m = buildModel({&flat}, 1.0);
+    if (bends) {
+        std::vector<std::vector<Vec2>> outline;
+        std::vector<std::pair<Vec2, Vec2>> lines;
+        std::vector<int> which;
+        sheetFlatOutline(part, outline, lines, &which);
+        for (std::size_t k = 0; k < lines.size() && k < which.size(); ++k) {
+            const SheetFlange& fl = part.flanges[static_cast<std::size_t>(which[k])];
+            bends->push_back({{lines[k].first.x, lines[k].first.y, 0}, {lines[k].second.x, lines[k].second.y, 0}, fl.angle, fl.radius >= 0 ? fl.radius : part.radius, fl.down});
         }
     }
     return m;
@@ -262,7 +315,7 @@ bool setupView(const Drawing& d, const DrawingView& v, ViewSetup& s) {
         return true;
     }
     const DrawingView* p = d.view(v.parent);
-    if (!p || p->kind == ViewKind::Section || p->kind == ViewKind::Iso) return false;
+    if (!p || p->kind == ViewKind::Section || p->kind == ViewKind::Iso || p->kind == ViewKind::Flat) return false;
     const ViewFrame pf = frameOf(p->kind);
     const double sg = v.flip ? -1.0 : 1.0;
     const DVec3 axis = v.vertical ? pf.r : pf.u;
@@ -818,6 +871,107 @@ void drawFinish(const Drawing& d, const DrawingFinish& f, const Model& m, SheetG
     g.texts.push_back({rx + 0.8, ry + 0.8, 2.5, 0, 0, text});
 }
 
+// --- hole callouts and bend notes -----------------------------------------------------------
+
+// A line of callout text with its symbols ({DEPTH}, {CBORE}, {CSINK}) drawn as glyphs,
+// starting at (x, y) on the baseline. Returns its width; with `measure` draws nothing.
+double calloutLine(SheetGraphics& g, double x, double y, double th, const std::string& line, bool measure) {
+    double at = x;
+    std::size_t i = 0;
+    const double gw = th * 0.9; // a glyph's width with its space
+    while (i < line.size()) {
+        const std::size_t open = line.find('{', i);
+        const std::string text = line.substr(i, open == std::string::npos ? std::string::npos : open - i);
+        if (!text.empty()) {
+            if (!measure) g.texts.push_back({at, y, th, 0, 0, text});
+            at += textWidth(text, th);
+        }
+        if (open == std::string::npos) break;
+        const std::size_t close = line.find('}', open);
+        if (close == std::string::npos) break;
+        const std::string sym = upper(line.substr(open + 1, close - open - 1));
+        if (!measure) {
+            const double x0 = at + th * 0.08, w = th * 0.7;
+            auto L = [&](double ax, double ay, double bx, double by) { g.lines.push_back({x0 + ax * w, y + ay * th, x0 + bx * w, y + by * th, SheetLine::Thin}); };
+            if (sym == "DEPTH") { // an arrow down onto a bar
+                L(0.5, 1, 0.5, 0);
+                L(0.2, 0.35, 0.5, 0);
+                L(0.8, 0.35, 0.5, 0);
+                L(0.05, 0, 0.95, 0);
+            } else if (sym == "CBORE") { // a square-bottomed cup
+                L(0, 1, 0, 0);
+                L(0, 0, 1, 0);
+                L(1, 0, 1, 1);
+            } else if (sym == "CSINK") { // a V
+                L(0, 1, 0.5, 0);
+                L(0.5, 0, 1, 1);
+            }
+        }
+        at += gw;
+        i = close + 1;
+    }
+    return at - x;
+}
+
+std::vector<std::string> splitLines(const std::string& s) {
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    for (;;) {
+        const std::size_t n = s.find('\n', i);
+        out.push_back(s.substr(i, n == std::string::npos ? std::string::npos : n - i));
+        if (n == std::string::npos) break;
+        i = n + 1;
+    }
+    return out;
+}
+
+void drawCallout(const Drawing& d, const DrawingCallout& c, const Model& m, SheetGraphics& g) {
+    double px, py;
+    if (!viewPoint(d, m, c.view, c.at, px, py)) return;
+    const DrawingView* v = d.view(c.view);
+    const double scale = v && v->scale > 0 ? v->scale : d.scale;
+    const double r = c.radius * scale, th = 3.5;
+    double dx = c.dx, dy = c.dy;
+    if (dx == 0 && dy == 0) dx = dy = r * std::sqrt(0.5) + 9;
+    const double l = std::hypot(dx, dy);
+    const double ux = dx / l, uy = dy / l;
+    const double ex = px + ux * r, ey = py + uy * r; // on the hole's edge
+    const double kx = px + dx, ky = py + dy;         // the elbow
+    g.lines.push_back({ex, ey, kx, ky, SheetLine::Thin});
+    addArrow(g, ex, ey, -ux, -uy);
+    const bool left = dx < 0;
+    const double shoulder = 3;
+    const double sx = kx + (left ? -shoulder : shoulder);
+    g.lines.push_back({kx, ky, sx, ky, SheetLine::Thin});
+    const std::vector<std::string> lines = splitLines(c.text);
+    double y = ky - th * 0.5;
+    for (const std::string& line : lines) {
+        const double w = calloutLine(g, 0, 0, th, line, true);
+        calloutLine(g, left ? sx - 1 - w : sx + 1, y, th, line, false);
+        y -= th * 1.7;
+    }
+}
+
+// Bend lines across a flat pattern (thin chain lines) and what each bend does beside it.
+void drawBends(const Drawing& d, const DrawingView& v, const Model& fm, const std::vector<FlatBend>& bends, SheetGraphics& g) {
+    const Projector P = projectorFor(d, v, frameOf(ViewKind::Flat), fm.centre());
+    for (const FlatBend& b : bends) {
+        auto A = P(b.a), B = P(b.b);
+        const double dx = B.first - A.first, dy = B.second - A.second, l = std::hypot(dx, dy);
+        if (l < 1e-9) continue;
+        const double ux = dx / l, uy = dy / l;
+        A.first -= ux * 3, A.second -= uy * 3, B.first += ux * 3, B.second += uy * 3;
+        g.lines.push_back({A.first, A.second, B.first, B.second, SheetLine::Center});
+        double angle = std::atan2(uy, ux) * 180 / kPiD2;
+        if (angle > 90.01) angle -= 180;
+        if (angle < -89.99) angle += 180;
+        const double ar = angle * kPiD2 / 180;
+        const std::string note = std::string(b.down ? "DOWN " : "UP ") + num(b.angle) + "\xC2\xB0 R" + num(b.radius);
+        const double mx = 0.5 * (A.first + B.first), my = 0.5 * (A.second + B.second);
+        g.texts.push_back({mx - std::sin(ar) * 1.2, my + std::cos(ar) * 1.2, 2.5, angle, 1, note});
+    }
+}
+
 void drawSectionLine(const Drawing& d, const DrawingView& sec, const Model& m, SheetGraphics& g) {
     const DrawingView* p = d.view(sec.parent);
     if (!p) return;
@@ -947,6 +1101,7 @@ const char* viewKindName(ViewKind k) {
     case ViewKind::Right: return "Right";
     case ViewKind::Iso: return "Isometric";
     case ViewKind::Section: return "Section";
+    case ViewKind::Flat: return "Flat";
     }
     return "Front";
 }
@@ -956,7 +1111,8 @@ bool viewKindFromName(const std::string& name, ViewKind* out) {
     static const std::pair<const char*, ViewKind> kNames[] = {{"FRONT", ViewKind::Front},   {"BACK", ViewKind::Back},  {"REAR", ViewKind::Back},
                                                               {"TOP", ViewKind::Top},       {"PLAN", ViewKind::Top},   {"BOTTOM", ViewKind::Bottom},
                                                               {"LEFT", ViewKind::Left},     {"RIGHT", ViewKind::Right}, {"ISO", ViewKind::Iso},
-                                                              {"ISOMETRIC", ViewKind::Iso}, {"SECTION", ViewKind::Section}};
+                                                              {"ISOMETRIC", ViewKind::Iso}, {"SECTION", ViewKind::Section},
+                                                              {"FLAT", ViewKind::Flat},     {"FLATPATTERN", ViewKind::Flat}};
     for (const auto& [s, k] : kNames)
         if (n == s) {
             *out = k;
@@ -1047,9 +1203,17 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v) {
     if (!sheetSize(d.sheet, W, H)) W = 420, H = 297;
     if (!d.landscape) std::swap(W, H);
     const Model m = modelFor(d, scene, 1e9);
+    std::map<std::string, Model> flats;
+    for (const DrawingView& o : d.views)
+        if (o.kind == ViewKind::Flat) flats[upper(o.name)] = flatModel(scene, o, nullptr);
+    if (v.kind == ViewKind::Flat && !flats.count(upper(v.name))) flats[upper(v.name)] = flatModel(scene, v, nullptr);
+    auto extentOf = [&](const DrawingView& o) {
+        const auto it = o.kind == ViewKind::Flat ? flats.find(upper(o.name)) : flats.end();
+        return viewExtent(d, it != flats.end() ? it->second : m, o);
+    };
     const DrawingView* front = d.view("Front");
     const double s = v.scale > 0 ? v.scale : d.scale, gap = 18;
-    const auto ext = viewExtent(d, m, v);
+    const auto ext = extentOf(v);
     if (!front) {
         v.x = W * 0.35, v.y = H * 0.55;
         return;
@@ -1065,7 +1229,7 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v) {
     case ViewKind::Right: v.x = front->x + sg * dx; break;
     case ViewKind::Left: v.x = front->x - sg * dx; break;
     case ViewKind::Back: {
-        const DrawingView side{"", d.thirdAngle ? ViewKind::Right : ViewKind::Left, 0, 0, 0, true, "", true, 0, false};
+        const DrawingView side{"", d.thirdAngle ? ViewKind::Right : ViewKind::Left, 0, 0, 0, true, "", true, 0, false, ""};
         const auto se = viewExtent(d, m, side);
         v.x = front->x + dx + s * se.first + gap;
         break;
@@ -1074,19 +1238,22 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v) {
         v.x = W - 10 - 20 - s * ext.first / 2;
         v.y = H - 10 - 20 - s * ext.second / 2;
         break;
-    case ViewKind::Section: {
-        // The free place nearest its parent: clear of the other views and the title block.
-        const DrawingView* p = d.view(v.parent);
+    case ViewKind::Section:
+    case ViewKind::Flat: {
+        // The free place nearest its parent (a flat pattern: the front view): clear of the
+        // other views and the title block.
+        const DrawingView* p = v.kind == ViewKind::Section ? d.view(v.parent) : nullptr;
         const DrawingView& base = p ? *p : *front;
         const double hw = s * ext.first / 2 + gap / 2, hh = s * ext.second / 2 + gap / 2 + 4; // + its label below
         // It reads best on the side the viewer of the cut stands, level with the parent.
         double px = 1, py = 0;
         ViewSetup ps, ss;
         if (p && setupView(d, *p, ps) && setupView(d, v, ss)) px = -ddot(ss.f.d, ps.f.r), py = -ddot(ss.f.d, ps.f.u);
+        const bool anyWay = v.kind == ViewKind::Flat;
         std::vector<std::array<double, 4>> taken; // x0 y0 x1 y1
         for (const DrawingView& o : d.views) {
             if (&o == &v) continue;
-            const auto oe = viewExtent(d, m, o);
+            const auto oe = extentOf(o);
             const double os = o.scale > 0 ? o.scale : d.scale;
             // Room for dimensions around the orthographic views.
             const double m2 = o.kind == ViewKind::Iso ? gap / 2 : gap;
@@ -1105,7 +1272,7 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v) {
             for (double x = 10 + hw; x <= W - 10 - hw; x += 2.5) {
                 const double ox = x - base.x, oy = y - base.y;
                 const double along = ox * px + oy * py, off = std::fabs(oy * px - ox * py);
-                const double cost = off * 4 + std::fabs(along) + (along < 0 ? 400 : 0);
+                const double cost = anyWay ? std::hypot(ox, oy) : off * 4 + std::fabs(along) + (along < 0 ? 400 : 0);
                 if (cost < best && freeAt(x, y)) best = cost, v.x = x, v.y = y;
             }
         if (best >= 1e300) v.x = base.x + s * ext.first + gap; // nowhere free: beside it
@@ -1127,7 +1294,7 @@ Drawing defaultDrawing(const Scene& scene, const std::vector<std::string>& bodie
     if (!landscape) std::swap(W, H);
     const Model m = modelFor(d, scene, 1e9);
     if (!m.valid()) return d;
-    auto extentOf = [&](ViewKind k) { return viewExtent(d, m, DrawingView{"", k, 0, 0, 0, true, "", true, 0, false}); };
+    auto extentOf = [&](ViewKind k) { return viewExtent(d, m, DrawingView{"", k, 0, 0, 0, true, "", true, 0, false, ""}); };
     const auto F = extentOf(ViewKind::Front), T = extentOf(ViewKind::Top), R = extentOf(ViewKind::Right), I = extentOf(ViewKind::Iso);
     // Front and right side by side, the top above or below the front, the isometric in
     // the corner above the title block: the largest standard scale that fits.
@@ -1143,10 +1310,10 @@ Drawing defaultDrawing(const Scene& scene, const std::vector<std::string>& bodie
     const double used = s * (R.first + F.first) + g;
     const double left = border + g + std::max(0.0, (room - used - g) / 2);
     const double topY = H - border - g;
-    DrawingView front{"Front", ViewKind::Front, 0, 0, 0, true, "", true, 0, false};
-    DrawingView right{"Right", ViewKind::Right, 0, 0, 0, true, "", true, 0, false};
-    DrawingView top{"Top", ViewKind::Top, 0, 0, 0, true, "", true, 0, false};
-    DrawingView iso{"Isometric", ViewKind::Iso, 0, 0, 0, false, "", true, 0, false};
+    DrawingView front{"Front", ViewKind::Front, 0, 0, 0, true, "", true, 0, false, ""};
+    DrawingView right{"Right", ViewKind::Right, 0, 0, 0, true, "", true, 0, false, ""};
+    DrawingView top{"Top", ViewKind::Top, 0, 0, 0, true, "", true, 0, false, ""};
+    DrawingView iso{"Isometric", ViewKind::Iso, 0, 0, 0, false, "", true, 0, false, ""};
     const double rowsH = s * (F.second + T.second) + g;
     const double y0 = std::min(topY, border + g + rowsH + std::max(0.0, (H - 2 * border - 2 * g - rowsH) / 2));
     if (thirdAngle) {
@@ -1201,6 +1368,20 @@ int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView) {
     bool depthDone = false;
     for (const DrawingView& v : d.views) {
         if (!onlyView.empty() && upper(v.name) != upper(onlyView)) continue;
+        if (v.kind == ViewKind::Flat) { // the flat pattern's overall sizes
+            const Model fm = flatModel(scene, v, nullptr);
+            if (!fm.valid()) continue;
+            DrawingDim h, vd;
+            h.kind = DrawingDim::Horizontal, h.view = v.name, h.offset = -12;
+            vd.kind = DrawingDim::Vertical, vd.view = v.name, vd.offset = -12;
+            // Across the top (the view's name goes below) and up the left of the blank's bounding box.
+            h.offset = 12;
+            h.a = {fm.lo.x, fm.hi.y, 0}, h.b = {fm.hi.x, fm.hi.y, 0};
+            vd.a = {fm.lo.x, fm.lo.y, 0}, vd.b = {fm.lo.x, fm.hi.y, 0};
+            add(h);
+            add(vd);
+            continue;
+        }
         if (v.kind == ViewKind::Iso || v.kind == ViewKind::Section) continue;
         const ViewFrame F = frameOf(v.kind);
         // The model points farthest along the view's axes.
@@ -1227,11 +1408,20 @@ int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView) {
             if (plan) depthDone = true;
         }
     }
-    // Round holes and bosses, dimensioned once where they are seen end on.
+    // Round holes and bosses, dimensioned once where they are seen end on (holes with a
+    // callout already say their size).
+    auto calledOut = [&](const Model::Round& rd) {
+        for (const DrawingCallout& c : d.callouts) {
+            const DVec3 off = c.at - rd.o;
+            if (dlength(off - rd.axis * ddot(off, rd.axis)) < 1e-6 * m.diag() + 1e-6) return true;
+        }
+        return false;
+    };
     for (const Model::Round& rd : m.rounds) {
+        if (calledOut(rd)) continue;
         for (const DrawingView& v : d.views) {
             if (!onlyView.empty() && upper(v.name) != upper(onlyView)) continue;
-            if (v.kind == ViewKind::Iso || v.kind == ViewKind::Section) continue;
+            if (v.kind == ViewKind::Iso || v.kind == ViewKind::Section || v.kind == ViewKind::Flat) continue;
             if (std::fabs(ddot(rd.axis, frameOf(v.kind).d)) < 0.999) continue;
             DrawingDim n;
             n.kind = DrawingDim::Diameter, n.view = v.name;
@@ -1243,6 +1433,226 @@ int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView) {
             add(n);
             break;
         }
+    }
+    return added;
+}
+
+bool isSheetMetalBody(const Scene& scene, const std::string& body) {
+    SheetPart part;
+    return sheetPartOf(scene, body, part);
+}
+
+std::string holeCalloutText(const HoleNote& h) {
+    if (!(h.diameter > 0)) return h.callout; // an older project: its words
+    const std::string dia = "\xC3\x98";
+    std::string s = dia + num(h.diameter) + (h.depth > 0 ? " {DEPTH}" + num(h.depth) : std::string(" THRU"));
+    if (h.threadDia > 0) {
+        std::string thread = h.size;
+        const bool metric = thread.empty() || thread[0] == 'M' || thread[0] == 'm';
+        if (thread.empty()) thread = "M" + num(h.threadDia);
+        if (metric && thread.find('x') == std::string::npos && h.pitch > 0) thread += "x" + num(h.pitch);
+        thread += metric ? " - 6H" : " - 2B";
+        s += "\n" + thread + (h.threadDepth > 0 ? " {DEPTH}" + num(h.threadDepth) : std::string(" THRU"));
+    }
+    if (h.cboreDia > 0) s += "\n{CBORE}" + dia + num(h.cboreDia) + " {DEPTH}" + num(h.cboreDepth);
+    if (h.csinkDia > 0) s += "\n{CSINK}" + dia + num(h.csinkDia) + " X " + num(h.csinkAngle > 0 ? h.csinkAngle : 90) + "\xC2\xB0";
+    return s;
+}
+
+namespace {
+
+// Whether p is inside the model's solids (a ray's crossings, odd inside).
+bool insideModel(const Model& m, const DVec3& p) {
+    const DVec3 dir = dnormalize({0.5773, 0.5779, 0.5767}); // off every axis and diagonal
+    int hits = 0;
+    for (const auto& t : m.tris) {
+        const DVec3 &a = m.p[static_cast<std::size_t>(t[0])], &b = m.p[static_cast<std::size_t>(t[1])], &c = m.p[static_cast<std::size_t>(t[2])];
+        const DVec3 e1 = b - a, e2 = c - a, h = dcross(dir, e2);
+        const double det = ddot(e1, h);
+        if (std::fabs(det) < 1e-14) continue;
+        const DVec3 sv = p - a;
+        const double u = ddot(sv, h) / det;
+        if (u < 0 || u > 1) continue;
+        const DVec3 q = dcross(sv, e1);
+        const double w = ddot(dir, q) / det;
+        if (w < 0 || u + w > 1) continue;
+        if (ddot(e2, q) / det > 0) ++hits;
+    }
+    return hits % 2 == 1;
+}
+
+// The orthographic view (front, top, sides) looking along `into`: into the hole when one
+// does, else out of it.
+const DrawingView* endOnView(const Drawing& d, const DVec3& into, const std::string& onlyView) {
+    const DrawingView* best = nullptr;
+    double bestDot = 0;
+    for (const DrawingView& v : d.views) {
+        if (v.kind == ViewKind::Iso || v.kind == ViewKind::Section || v.kind == ViewKind::Flat) continue;
+        if (!onlyView.empty() && upper(v.name) != upper(onlyView)) continue;
+        const double c = ddot(frameOf(v.kind).d, into);
+        if (std::fabs(c) < 0.999) continue;
+        if (!best || c > bestDot) best = &v, bestDot = c;
+    }
+    return best;
+}
+
+} // namespace
+
+int autoCallouts(Drawing& d, const Scene& scene, const std::string& onlyView) {
+    const std::vector<const Body*> bodies = drawnBodies(d, scene);
+    const Model m = buildModel(bodies, chordFor(d, bodies));
+    if (!m.valid()) return 0;
+    struct Found {
+        const DrawingView* view;
+        DVec3 at, axis;
+        double radius;
+        std::string text;
+    };
+    std::vector<Found> found;
+    const double tol = 1e-5 * m.diag() + 1e-6;
+    auto onAxis = [&](const DVec3& o, const DVec3& axis, const DVec3& p) {
+        const DVec3 off = p - o;
+        return dlength(off - axis * ddot(off, axis)) < std::max(tol, 1e-3);
+    };
+    // Hole wizard holes: as made.
+    for (const Body* b : bodies)
+        for (const HoleNote& h : b->holes) {
+            const DVec3 at = DVec3(h.at + b->offset), into = dnormalize(DVec3(h.dir));
+            const DrawingView* v = endOnView(d, into, onlyView);
+            if (!v) continue;
+            const double r = 0.5 * std::max({h.diameter, h.cboreDia, h.csinkDia, h.threadDia});
+            found.push_back({v, at, into, r > 0 ? r : 1.0, holeCalloutText(h)});
+        }
+    // Other round holes: from the geometry, coaxial cylinders together (a counterbore).
+    std::vector<bool> used(m.rounds.size(), false);
+    for (std::size_t i = 0; i < m.rounds.size(); ++i) {
+        const Model::Round& r0 = m.rounds[i];
+        if (used[i] || !r0.hole) continue;
+        std::vector<std::size_t> group;
+        for (std::size_t j = i; j < m.rounds.size(); ++j) {
+            const Model::Round& rj = m.rounds[j];
+            if (used[j] || !rj.hole || std::fabs(std::fabs(ddot(rj.axis, r0.axis)) - 1) > 1e-6 || !onAxis(r0.o, r0.axis, rj.o)) continue;
+            used[j] = true;
+            group.push_back(j);
+        }
+        // Along r0's axis: each cylinder's span, the narrowest the drilled hole.
+        const DVec3 ax = r0.axis;
+        struct Span {
+            double r, h0, h1;
+        };
+        std::vector<Span> spans;
+        for (std::size_t j : group) {
+            const Model::Round& rj = m.rounds[j];
+            const double base = ddot(rj.o - r0.o, ax), sg = ddot(rj.axis, ax) > 0 ? 1.0 : -1.0;
+            const double a = base + sg * rj.h0, b = base + sg * rj.h1;
+            spans.push_back({rj.r, std::min(a, b), std::max(a, b)});
+        }
+        std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) { return a.r < b.r; });
+        double lo = 1e300, hi = -1e300;
+        for (const Span& sp : spans) lo = std::min(lo, sp.h0), hi = std::max(hi, sp.h1);
+        const Span& drill = spans.front();
+        // Material just beyond an end (looking past a drill point's cone): that end is closed.
+        auto closedBeyond = [&](double h, double sg) {
+            for (int k = 1; k <= 8; ++k)
+                if (insideModel(m, r0.o + ax * (h + sg * drill.r * 0.1 * k))) return true;
+            return false;
+        };
+        const bool closedLo = closedBeyond(lo, -1), closedHi = closedBeyond(hi, 1);
+        if (closedLo && closedHi) continue; // a hollow inside: not a hole from outside
+        const bool thru = !closedLo && !closedHi;
+        // It opens at the high end unless that is the closed one (through: the end with the counterbore, if any).
+        bool mouthHi = !closedHi;
+        if (thru && spans.size() > 1) mouthHi = std::fabs(spans.back().h1 - hi) < std::fabs(spans.back().h0 - lo);
+        const double mouth = mouthHi ? hi : lo;
+        const DVec3 into = ax * (mouthHi ? -1.0 : 1.0);
+        const DVec3 at = r0.o + ax * mouth;
+        bool wizard = false;
+        for (const Found& f : found) wizard = wizard || (std::fabs(std::fabs(ddot(f.axis, ax)) - 1) < 1e-6 && onAxis(r0.o, ax, f.at));
+        if (wizard) continue;
+        const DrawingView* v = endOnView(d, into, onlyView);
+        if (!v) continue;
+        const std::string dia = "\xC3\x98";
+        const double drillDepth = mouthHi ? hi - drill.h0 : drill.h1 - lo;
+        std::string text = dia + num(2 * drill.r) + (thru ? std::string(" THRU") : " {DEPTH}" + num(drillDepth));
+        double outer = drill.r;
+        for (std::size_t k = 1; k < spans.size(); ++k) { // a counterbore: wider, from the mouth
+            const Span& c = spans[k];
+            const bool atMouth = mouthHi ? std::fabs(c.h1 - hi) < 1e-6 * m.diag() + 1e-6 : std::fabs(c.h0 - lo) < 1e-6 * m.diag() + 1e-6;
+            if (!atMouth) continue;
+            text += "\n{CBORE}" + dia + num(2 * c.r) + " {DEPTH}" + num(c.h1 - c.h0);
+            outer = std::max(outer, c.r);
+            break;
+        }
+        found.push_back({v, at, into, outer, text});
+    }
+    // Holes alike in a view share a callout ("4X"), on the one highest and furthest right.
+    int added = 0;
+    std::vector<bool> done(found.size(), false);
+    for (std::size_t i = 0; i < found.size(); ++i) {
+        if (done[i]) continue;
+        std::size_t lead = i;
+        int n = 0;
+        const ViewFrame F = frameOf(found[i].view->kind);
+        for (std::size_t j = i; j < found.size(); ++j) {
+            if (done[j] || found[j].view != found[i].view || found[j].text != found[i].text) continue;
+            done[j] = true;
+            ++n;
+            if (ddot(found[j].at, F.u) + ddot(found[j].at, F.r) > ddot(found[lead].at, F.u) + ddot(found[lead].at, F.r)) lead = j;
+        }
+        DrawingCallout c;
+        c.view = found[lead].view->name, c.at = found[lead].at, c.radius = found[lead].radius;
+        c.text = (n > 1 ? std::to_string(n) + "X " : std::string()) + found[lead].text;
+        bool exists = false;
+        for (DrawingCallout& o : d.callouts)
+            if (upper(o.view) == upper(c.view) && dlength(o.at - c.at) < tol) exists = true, o.text = c.text;
+        if (exists) continue;
+        d.callouts.push_back(c);
+        ++added;
+    }
+    // Their words outside the view, beside the nearer side, clear of each other.
+    std::map<std::string, std::vector<std::array<double, 2>>> taken; // per view and side: the text blocks' y ranges
+    for (DrawingCallout& c : d.callouts) {
+        if (c.dx != 0 || c.dy != 0) continue; // placed already (or by hand)
+        const DrawingView* v = d.view(c.view);
+        if (!v) continue;
+        const ViewFrame F = frameOf(v->kind);
+        const double s = v->scale > 0 ? v->scale : d.scale;
+        const auto ext = viewExtent(d, m, *v);
+        const Projector P = projectorFor(d, *v, F, m.centre());
+        const auto hp = P(c.at);
+        const bool right = hp.first >= v->x, up = hp.second >= v->y;
+        const double th = 3.5, lines = 1 + static_cast<double>(std::count(c.text.begin(), c.text.end(), '\n'));
+        const double blockH = th * 1.7 * lines;
+        const double kx = right ? v->x + s * ext.first / 2 + 8 : v->x - s * ext.first / 2 - 8;
+        double ky = hp.second + (up ? 1 : -1) * std::min(std::fabs(kx - hp.first) * 0.5, 12.0);
+        // The block runs from ky + th/2 down to ky - blockH + th/2: move it on until it is free.
+        auto& slots = taken[upper(c.view) + (right ? "R" : "L")];
+        for (int guard = 0; guard < 200; ++guard) {
+            bool clash = false;
+            for (const auto& sl : slots)
+                if (ky + th < sl[1] + 2 && ky - blockH + th > sl[0] - 2) clash = true;
+            if (!clash) break;
+            ky += up ? th : -th;
+        }
+        slots.push_back({ky - blockH + th, ky + th});
+        c.dx = kx - hp.first, c.dy = ky - hp.second;
+    }
+    // The plain diameter dimensions those holes had go (and frames under them).
+    std::vector<int> renumber(d.dims.size(), -1);
+    std::vector<DrawingDim> kept;
+    for (std::size_t k = 0; k < d.dims.size(); ++k) {
+        const DrawingDim& dm = d.dims[k];
+        bool gone = false;
+        if (dm.kind == DrawingDim::Diameter)
+            for (const Found& f : found) gone = gone || onAxis(f.at, f.axis, dm.a);
+        if (!gone) renumber[k] = static_cast<int>(kept.size()), kept.push_back(dm);
+    }
+    if (kept.size() != d.dims.size()) {
+        d.dims = std::move(kept);
+        std::erase_if(d.frames, [&](DrawingFrame& f) {
+            if (f.dim < 0) return false;
+            return (f.dim = f.dim < static_cast<int>(renumber.size()) ? renumber[static_cast<std::size_t>(f.dim)] : -1) < 0;
+        });
     }
     return added;
 }
@@ -1385,14 +1795,29 @@ SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
         return g;
     }
     const Model m = buildModel(bodies, chordFor(d, bodies));
+    // Flat views draw their own models: the flat patterns.
+    std::map<std::string, Model> flats;
+    std::map<std::string, std::vector<FlatBend>> flatBends;
+    for (const DrawingView& v : d.views)
+        if (v.kind == ViewKind::Flat) flats[upper(v.name)] = flatModel(scene, v, &flatBends[upper(v.name)]);
+    auto modelOf = [&](const std::string& view) -> const Model& {
+        const auto it = flats.find(upper(view));
+        return it != flats.end() ? it->second : m;
+    };
     std::vector<std::pair<std::string, std::array<double, 4>>> rects; // where each view landed
     for (const DrawingView& v : d.views) {
         std::map<std::string, double> ext;
-        drawView(d, v, m, g, std::max(1, quality), &ext);
+        const Model& vm = modelOf(v.name);
+        if (v.kind == ViewKind::Flat && !vm.valid()) {
+            g.warnings.push_back("View " + v.name + ": " + v.body + " isn't a sheet metal body with a flat pattern");
+            continue;
+        }
+        drawView(d, v, vm, g, std::max(1, quality), &ext);
+        if (v.kind == ViewKind::Flat) drawBends(d, v, vm, flatBends[upper(v.name)], g);
         if (!ext.empty()) rects.push_back({v.name, {ext["x0"], ext["y0"], ext["x1"], ext["y1"]}});
-        // The view's name under it (sections and the isometric; standard views go unlabelled in their places).
-        if (v.kind == ViewKind::Section || v.kind == ViewKind::Iso || (v.scale > 0 && std::fabs(v.scale - d.scale) > 1e-12)) {
-            std::string label = v.kind == ViewKind::Section ? upper(v.name) : upper(v.name);
+        // The view's name under it (sections, flat patterns and the isometric; standard views go unlabelled in their places).
+        if (v.kind == ViewKind::Section || v.kind == ViewKind::Iso || v.kind == ViewKind::Flat || (v.scale > 0 && std::fabs(v.scale - d.scale) > 1e-12)) {
+            std::string label = v.kind == ViewKind::Flat ? "FLAT PATTERN" : upper(v.name);
             if (v.kind == ViewKind::Section) {
                 const std::string l = v.name.rfind("Section ", 0) == 0 && v.name.size() > 8 ? v.name.substr(8, 1) : v.name.substr(0, 1);
                 label = "SECTION " + upper(l) + "-" + upper(l);
@@ -1403,10 +1828,11 @@ SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
         if (v.kind == ViewKind::Section) drawSectionLine(d, v, m, g);
     }
     std::vector<TextPlace> dimPlaces(d.dims.size());
-    for (std::size_t i = 0; i < d.dims.size(); ++i) drawDimension(d, d.dims[i], m, g, &dimPlaces[i]);
-    for (const DrawingFrame& f : d.frames) drawFrame(d, f, m, dimPlaces, g);
-    for (const DrawingDatum& dt : d.datums) drawDatum(d, dt, m, g);
-    for (const DrawingFinish& f : d.finishes) drawFinish(d, f, m, g);
+    for (std::size_t i = 0; i < d.dims.size(); ++i) drawDimension(d, d.dims[i], modelOf(d.dims[i].view), g, &dimPlaces[i]);
+    for (const DrawingFrame& f : d.frames) drawFrame(d, f, modelOf(f.view), dimPlaces, g);
+    for (const DrawingDatum& dt : d.datums) drawDatum(d, dt, modelOf(dt.view), g);
+    for (const DrawingFinish& f : d.finishes) drawFinish(d, f, modelOf(f.view), g);
+    for (const DrawingCallout& c : d.callouts) drawCallout(d, c, modelOf(c.view), g);
     for (const DrawingNote& n : d.notes) g.texts.push_back({n.x, n.y, n.height, 0, 0, n.text});
     // Views that do not fit: off the sheet, on the title block or on each other.
     const double W = g.width, H = g.height, tol = 0.5;
@@ -1738,6 +2164,7 @@ Json drawingToJson(const Drawing& d) {
         Json o = Json::object();
         o.set("name", v.name).set("kind", viewKindName(v.kind)).set("x", v.x).set("y", v.y).set("scale", v.scale).set("hidden", v.hidden);
         if (v.kind == ViewKind::Section) o.set("parent", v.parent).set("vertical", v.vertical).set("cut", v.cut).set("flip", v.flip);
+        if (v.kind == ViewKind::Flat) o.set("body", v.body);
         views.push(o);
     }
     j.set("views", views);
@@ -1780,6 +2207,12 @@ Json drawingToJson(const Drawing& d) {
     for (const DrawingFinish& f : d.finishes)
         finishes.push(Json::object().set("ra", f.ra).set("process", f.process).set("view", f.view).set("at", point(f.at)).set("dx", f.dx).set("dy", f.dy));
     j.set("finishes", finishes);
+    if (!d.callouts.empty()) {
+        Json callouts = Json::array();
+        for (const DrawingCallout& c : d.callouts)
+            callouts.push(Json::object().set("view", c.view).set("at", point(c.at)).set("radius", c.radius).set("text", c.text).set("dx", c.dx).set("dy", c.dy));
+        j.set("callouts", callouts);
+    }
     if (!d.generalTolerance.empty()) j.set("general_tolerance", d.generalTolerance);
     Json notes = Json::array();
     for (const DrawingNote& n : d.notes) notes.push(Json::object().set("x", n.x).set("y", n.y).set("height", n.height).set("text", n.text));
@@ -1804,6 +2237,7 @@ bool drawingFromJson(const Json& j, Drawing& d) {
         if (!viewKindFromName(o["kind"].asString("Front"), &v.kind)) v.kind = ViewKind::Front;
         v.x = o["x"].asNumber(0), v.y = o["y"].asNumber(0), v.scale = o["scale"].asNumber(0), v.hidden = o["hidden"].asBool(true);
         v.parent = o["parent"].asString(""), v.vertical = o["vertical"].asBool(true), v.cut = o["cut"].asNumber(0), v.flip = o["flip"].asBool(false);
+        v.body = o["body"].asString("");
         d.views.push_back(v);
     }
     static const char* kDims[] = {"horizontal", "vertical", "aligned", "diameter", "radius"};
@@ -1848,6 +2282,8 @@ bool drawingFromJson(const Json& j, Drawing& d) {
         d.datums.push_back({o["letter"].asString("A"), o["view"].asString(""), point(o["at"]), o["dx"].asNumber(0), o["dy"].asNumber(-12)});
     for (const Json& o : j["finishes"].items())
         d.finishes.push_back({o["ra"].asNumber(1.6), o["process"].asInt(0), o["view"].asString(""), point(o["at"]), o["dx"].asNumber(0), o["dy"].asNumber(0)});
+    for (const Json& o : j["callouts"].items())
+        d.callouts.push_back({o["view"].asString(""), point(o["at"]), o["radius"].asNumber(1), o["text"].asString(""), o["dx"].asNumber(0), o["dy"].asNumber(0)});
     d.generalTolerance = j["general_tolerance"].asString("");
     for (const Json& o : j["notes"].items()) d.notes.push_back({o["x"].asNumber(0), o["y"].asNumber(0), o["height"].asNumber(3.5), o["text"].asString("")});
     if (j["title"].isObject())

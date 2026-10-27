@@ -10,12 +10,14 @@ changes.
 SHEET NEW A3                     front, top, right and isometric views, at a scale that fits
 SHEET SECTION                    a section through the front view's middle
 SHEET AUTODIM                    overall sizes and hole diameters
+SHEET CALLOUTS                   hole callouts: 2X Ø6.6 THRU, ⌴ Ø11 ↧ 6.4, M8x1.25 - 6H ↧ 12.5
+SHEET FLAT                       a sheet metal part's flat pattern, bend lines and notes
 SHEET TITLE MATERIAL 6061-T6
 SHEET EXPORT bracket.pdf         (or .svg, .dxf)
 ```
 
 In the app, everything is in the **Drawing** menu: *New Drawing*, *Show Drawing*,
-*Dimension Automatically*, *Section Through Front / Top*, *Add View*, *Scale*,
+*Dimension Automatically*, *Call Out Holes*, *Add Flat Pattern View*, *Section Through Front / Top*, *Add View*, *Scale*,
 *Export...* and *Delete*. The drawing opens in its own window over the 3D view. The
 drawing is saved in the project file.
 
@@ -47,6 +49,7 @@ The front, top and right views line up with each other.
 | --- | --- |
 | `SHEET NEW [bodies] [A3] [PORTRAIT] [THIRD] [SCALE 1:2]` | A new drawing of the named bodies (default: every visible body) |
 | `SHEET VIEW ADD FRONT\|BACK\|TOP\|BOTTOM\|LEFT\|RIGHT\|ISO [AT x,y] [SCALE 2:1] [NOHIDDEN]` | Another view, placed where the projection puts it unless `AT` gives a place |
+| `SHEET FLAT [body] [AT x,y] [SCALE 1:2]` | The flat pattern of a sheet metal body (see [Flat patterns](#flat-patterns)) |
 | `SHEET VIEW MOVE name x,y` | Moves a view's centre (sheet mm from the bottom left corner) |
 | `SHEET VIEW SCALE name 2:1` | A view at its own scale, noted under it |
 | `SHEET VIEW HIDDEN name ON\|OFF` | Hidden lines dashed, or left out |
@@ -130,6 +133,63 @@ Running it again adds nothing twice.
    dimension.
 2. Click two points. They snap to vertices and edge ends.
 3. The dimension is horizontal, vertical or aligned, whichever the points suggest.
+
+## Hole callouts
+
+```text
+SHEET CALLOUTS [view]
+SHEET CALLOUT view x,y,z [TEXT words] [OFFSET dx,dy] [RADIUS r]
+SHEET CALLOUT DELETE n · SHEET CALLOUT CLEAR
+```
+
+`SHEET CALLOUTS` gives every hole seen end on in a front, top or side view its callout,
+on a leader from the hole's edge, in the ASME Y14.5 style:
+
+| Hole | Callout |
+| --- | --- |
+| Drilled through | `Ø6.6 THRU` |
+| Drilled blind | `Ø5 ↧ 8` (the depth symbol, then the depth to the drill's full diameter) |
+| Counterbored | a second line, `⌴ Ø11 ↧ 6.4` |
+| Countersunk | a second line, `⌵ Ø12 X 90°` |
+| Tapped | the tap drill, then `M8x1.25 - 6H ↧ 12.5` (`- 2B` for inch threads) |
+
+- **What a hole is:**
+  - Holes made with `HOLE` (and the hole wizard's sizes, counterbores, countersinks and
+    threads) are called out as they were made.
+  - Other round holes in exact geometry (STEP and IGES imports, cuts by extrusion) are
+    read from their cylinders: the diameter, THRU or the depth, and a counterbore when a
+    wider cylinder shares the axis at the mouth.
+- **Holes alike** in one view share one callout with a count, `4X Ø6.6 THRU`, on the hole
+  highest and furthest right.
+- **Placement:** each callout's words go outside the view on the hole's side, clear of the
+  others. `OFFSET dx,dy` (sheet mm from the hole's centre) places one by hand.
+- **Diameters:** a hole's plain diameter dimension gives way to its callout, and
+  `SHEET AUTODIM` doesn't add one again.
+- **By hand:** `SHEET CALLOUT view x,y,z` calls out the hole nearest the point, or, with
+  `TEXT`, says what you write (`\n` breaks the line; `{DEPTH}`, `{CBORE}` and `{CSINK}` draw
+  those symbols).
+- **Following the model:** the callouts are saved with the drawing. Running
+  `SHEET CALLOUTS` again updates their words and adds callouts for new holes.
+
+## Flat patterns
+
+```text
+SHEET FLAT ["Sheet 1"] [AT x,y] [SCALE 1:2]
+SHEET AUTODIM "Flat pattern"
+```
+
+A flat view shows a sheet metal body unfolded, the blank as it is cut, seen from the side
+the base's normal points to:
+
+- **The outline** is the flat pattern's, with the bend allowances the part was made with.
+- **Bend lines** run as thin chain lines across the middle of each bend zone.
+- **Bend notes** go beside each line: `UP 90° R1` or `DOWN 90° R1`. UP means towards you.
+- **Placement:** the view goes in the free space nearest the front view, labelled
+  FLAT PATTERN.
+- **Dimensions:** `SHEET AUTODIM` on it adds the blank's overall sizes. Dimensions by hand
+  take flat-pattern points: x and y on the base's plane, z through the sheet.
+
+![Hole callouts on a block, and a flat pattern with its bend notes](drawing-callouts.png)
 
 ## Tolerances and GD&T
 
@@ -238,6 +298,7 @@ The MCP tool `drawing` does all of this. Its operations are:
 - `new`, `list` and `delete`;
 - `view_add`, `view_move`, `view_delete`, `view_scale` and `view_hidden`;
 - `section`, `dim` (with `tolerance`), `dim_delete` and `autodim`;
+- `callouts`, `callout_delete` and `flat` (with `body`);
 - `tolerance`, `general_tolerance`, `gdt`, `gdt_delete`, `datum`, `datum_delete` and `finish`;
 - `title` and `note`;
 - `scale`, `size` and `projection`;

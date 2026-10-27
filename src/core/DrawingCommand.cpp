@@ -41,6 +41,7 @@ std::string describeView(const Drawing& d, const DrawingView& v) {
     std::string s = v.name + " (" + viewKindName(v.kind) + ") at " + mm(v.x) + ", " + mm(v.y) + " mm";
     if (v.scale > 0) s += ", scale " + scaleText(v.scale);
     if (v.kind == ViewKind::Section) s += ", cut through " + v.parent + (v.vertical ? " vertically at " : " horizontally at ") + mm(v.cut);
+    if (v.kind == ViewKind::Flat) s += ", the flat pattern of " + v.body;
     if (!v.hidden) s += ", no hidden lines";
     (void)d;
     return s;
@@ -192,6 +193,12 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
                     (d.frames[i].dim >= 0 ? " under dim " + std::to_string(d.frames[i].dim + 1) : " in " + d.frames[i].view));
         for (const DrawingDatum& dt : d.datums) out.say("  datum " + dt.letter + " in " + dt.view);
         for (std::size_t i = 0; i < d.finishes.size(); ++i) out.say("  finish " + std::to_string(i + 1) + ": Ra " + mm3(d.finishes[i].ra) + " in " + d.finishes[i].view);
+        for (std::size_t i = 0; i < d.callouts.size(); ++i) {
+            std::string t = d.callouts[i].text;
+            for (char& c : t)
+                if (c == '\n') c = ';';
+            out.say("  callout " + std::to_string(i + 1) + " in " + d.callouts[i].view + ": " + t);
+        }
         if (!d.generalTolerance.empty()) out.say("  general tolerances " + d.generalTolerance);
         for (const auto& [k, v] : d.title) out.say("  title " + k + ": " + v);
         return out;
@@ -262,12 +269,30 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         const std::string op = lowerOf(a[1]);
         if (op == "add") {
             ViewKind k;
-            if (!viewKindFromName(a[2], &k) || k == ViewKind::Section) return out.fail("Views: FRONT, BACK, TOP, BOTTOM, LEFT, RIGHT, ISO (SHEET SECTION cuts one)");
-            DrawingView v{viewKindName(k), k, 0, 0, 0, k != ViewKind::Iso, "", true, 0, false};
-            for (int n = 2; d.view(v.name); ++n) v.name = std::string(viewKindName(k)) + " " + std::to_string(n);
+            if (!viewKindFromName(a[2], &k) || k == ViewKind::Section)
+                return out.fail("Views: FRONT, BACK, TOP, BOTTOM, LEFT, RIGHT, ISO, FLAT [body] (SHEET SECTION cuts one)");
+            DrawingView v{viewKindName(k), k, 0, 0, 0, k != ViewKind::Iso && k != ViewKind::Flat, "", true, 0, false, ""};
+            if (k == ViewKind::Flat) { // FLAT [body]: the sheet metal body (the only one drawn, if not named)
+                std::size_t at = 3;
+                if (at < a.size() && lowerOf(a[at]) != "at" && lowerOf(a[at]) != "scale") v.body = a[at];
+                if (v.body.empty())
+                    for (const Body& b : doc.scene.bodies())
+                        if ((d.bodies.empty() ? b.visible : std::find(d.bodies.begin(), d.bodies.end(), b.name) != d.bodies.end()) && isSheetMetalBody(doc.scene, b.name)) {
+                            v.body = b.name;
+                            break;
+                        }
+                if (v.body.empty()) return out.fail("No sheet metal body to flatten: SHEET VIEW ADD FLAT body");
+                for (const Body& b : doc.scene.bodies())
+                    if (lowerOf(b.name) == lowerOf(v.body)) v.body = b.name;
+                if (!isSheetMetalBody(doc.scene, v.body)) return out.fail(v.body + " isn't a sheet metal body");
+                v.name = "Flat pattern";
+            }
+            const std::string stem = v.name;
+            for (int n = 2; d.view(v.name); ++n) v.name = stem + " " + std::to_string(n);
             bool placed = false;
             for (std::size_t i = 3; i < a.size(); ++i) {
                 const std::string w = lowerOf(a[i]);
+                if (k == ViewKind::Flat && lowerOf(a[i]) == lowerOf(v.body)) continue;
                 if (w == "at" && i + 1 < a.size()) {
                     const auto p = parseVec3(a[++i]);
                     if (!p) return out.fail("AT takes x,y on the sheet (mm)");
@@ -310,6 +335,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
             });
             std::erase_if(d.datums, [&](const DrawingDatum& x) { return lowerOf(x.view) == lowerOf(name); });
             std::erase_if(d.finishes, [&](const DrawingFinish& x) { return lowerOf(x.view) == lowerOf(name); });
+            std::erase_if(d.callouts, [&](const DrawingCallout& x) { return lowerOf(x.view) == lowerOf(name); });
             changed();
             out.say("Deleted view " + name + " and its dimensions and annotations");
             return out;
@@ -326,7 +352,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
 
     if (sub == "section") {
         // SHEET SECTION [parent] [VERTICAL|HORIZONTAL] [AT value] [FLIP] [LABEL B]
-        DrawingView v{"", ViewKind::Section, 0, 0, 0, false, "Front", true, 0, false};
+        DrawingView v{"", ViewKind::Section, 0, 0, 0, false, "Front", true, 0, false, ""};
         bool cutGiven = false;
         std::string label;
         for (std::size_t i = 1; i < a.size(); ++i) {
@@ -342,7 +368,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
             else return out.fail("No view named " + a[i]);
         }
         const DrawingView* p = d.view(v.parent);
-        if (!p || p->kind == ViewKind::Section || p->kind == ViewKind::Iso) return out.fail("Cut a front, top or side view");
+        if (!p || p->kind == ViewKind::Section || p->kind == ViewKind::Iso || p->kind == ViewKind::Flat) return out.fail("Cut a front, top or side view");
         if (!cutGiven) { // through the middle of the bodies
             DVec3 r, u, into;
             viewAxes(p->kind, r, u, into);
@@ -450,6 +476,90 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         if (n) changed();
         out.say(n ? "Added " + std::to_string(n) + " dimensions: overall sizes and hole diameters" : "Nothing new to dimension");
         return out;
+    }
+
+    if (sub == "callouts") {
+        // SHEET CALLOUTS [view]: every hole seen end on gets its callout
+        const int n = autoCallouts(d, doc.scene, a.size() > 1 ? a[1] : "");
+        if (n) changed();
+        out.say(n ? "Added " + std::to_string(n) + (n == 1 ? " hole callout" : " hole callouts") : "No holes without a callout (holes are called out where they are seen end on)");
+        return out;
+    }
+
+    if (sub == "callout") {
+        // SHEET CALLOUT view x,y,z [TEXT t] [OFFSET dx,dy] | DELETE n | CLEAR
+        if (a.size() >= 2 && lowerOf(a[1]) == "clear") {
+            d.callouts.clear();
+            changed();
+            out.say("All callouts removed");
+            return out;
+        }
+        if (a.size() >= 3 && (lowerOf(a[1]) == "delete" || lowerOf(a[1]) == "remove")) {
+            const auto n = parseNumber(a[2]);
+            if (!n || *n < 1 || *n > static_cast<float>(d.callouts.size())) return out.fail("No callout " + a[2] + " (SHEET lists them)");
+            d.callouts.erase(d.callouts.begin() + static_cast<std::ptrdiff_t>(*n) - 1);
+            changed();
+            out.say("Callout removed");
+            return out;
+        }
+        if (a.size() < 3) return out.fail("SHEET CALLOUT view x,y,z [TEXT t] [OFFSET dx,dy] | DELETE n | CLEAR | SHEET CALLOUTS [view]");
+        const DrawingView* v = d.view(a[1]);
+        if (!v) return out.fail("No view named " + a[1]);
+        const auto p = parseVec3(a[2]);
+        if (!p) return out.fail("The hole's point is model x,y,z (mm)");
+        // The hole nearest the point, as SHEET CALLOUTS would call it out (on its own).
+        Drawing probe = d;
+        probe.callouts.clear();
+        autoCallouts(probe, doc.scene, v->name);
+        DVec3 r, u, into;
+        viewAxes(v->kind, r, u, into);
+        const DrawingCallout* best = nullptr;
+        double bestD = 1e300;
+        for (const DrawingCallout& c : probe.callouts) {
+            const DVec3 e = c.at - DVec3(*p);
+            const double dd = std::hypot(ddot(e, r), ddot(e, u));
+            if (dd < bestD) bestD = dd, best = &c;
+        }
+        DrawingCallout c;
+        c.view = v->name, c.at = DVec3(*p);
+        if (best && bestD <= best->radius * 1.5 + 1e-6) {
+            c = *best;
+            if (const auto x = c.text.find("X "); x != std::string::npos && x < 4 && std::isdigit(static_cast<unsigned char>(c.text[0]))) c.text = c.text.substr(x + 2);
+        }
+        for (std::size_t i = 3; i < a.size(); ++i) {
+            const std::string w = lowerOf(a[i]);
+            if (w == "text" && i + 1 < a.size()) {
+                c.text = rest(i + 1);
+                for (std::size_t k = 0; k + 1 < c.text.size(); ++k)
+                    if (c.text[k] == '\\' && c.text[k + 1] == 'n') c.text.replace(k, 2, "\n");
+                break;
+            } else if ((w == "offset" || w == "at") && i + 1 < a.size()) {
+                const auto o = parseVec3(a[++i]);
+                if (!o) return out.fail("OFFSET takes dx,dy on the sheet (mm) from the hole's centre");
+                c.dx = o->x, c.dy = o->y;
+            } else if (w == "radius" && i + 1 < a.size()) {
+                const auto rr = parseLength(a[++i]);
+                if (!rr || !(*rr > 0)) return out.fail("RADIUS takes the hole's radius");
+                c.radius = *rr;
+            } else return out.fail("SHEET CALLOUT view x,y,z [TEXT t] [OFFSET dx,dy] [RADIUS r]");
+        }
+        if (c.text.empty()) return out.fail("No hole there seen end on in " + v->name + ": give the words with TEXT");
+        if (!(c.radius > 0)) c.radius = 1;
+        d.callouts.push_back(c);
+        changed();
+        std::string t = c.text;
+        for (char& ch : t)
+            if (ch == '\n') ch = ';';
+        out.say("Callout " + std::to_string(d.callouts.size()) + " in " + c.view + ": " + t);
+        return out;
+    }
+
+    if (sub == "flat") {
+        // SHEET FLAT [body] [AT x,y] [SCALE s]: the flat pattern view
+        std::vector<std::string> args{"VIEW", "ADD", "FLAT"};
+        std::vector<bool> q{false, false, false};
+        for (std::size_t i = 1; i < a.size(); ++i) args.push_back(a[i]), q.push_back(quotedArg(i));
+        return runSheetCommand(doc, args, q, view);
     }
 
     if (sub == "tol" || sub == "tolerance") {
@@ -737,7 +847,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         return out;
     }
 
-    return out.fail("SHEET NEW | VIEW | SECTION | DIM | AUTODIM | TOL | GDT | DATUM | FINISH | TOLERANCE | TITLE | NOTE | SCALE | SIZE | PROJECTION | "
+    return out.fail("SHEET NEW | VIEW | SECTION | FLAT | DIM | AUTODIM | CALLOUTS | CALLOUT | TOL | GDT | DATUM | FINISH | TOLERANCE | TITLE | NOTE | SCALE | SIZE | PROJECTION | "
                     "EXPORT | SHOW | HIDE | DELETE");
 }
 

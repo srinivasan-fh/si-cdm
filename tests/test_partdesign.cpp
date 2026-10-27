@@ -768,6 +768,32 @@ TEST_CASE("FEA: a cantilever's deflection and bending stress match beam theory")
     CHECK(!run(d, "FEA \"Block 1\" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 MATERIAL unobtainium").ok);
 }
 
+TEST_CASE("FEA: a report of the setup, the results and pictures of them") {
+    Document d;
+    REQUIRE(run(d, "BOX 100 10 10 @50,0,0").ok);
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_fea_report.html").string();
+    const CommandOutput o = run(d, "FEA \"Block 1\" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 MODES 2 CELL 2.5 REPORT \"" + path + "\"");
+    REQUIRE(o.ok);
+    CHECK(d.scene.bodies().size() == 1); // a report alone adds no plot
+    std::ifstream f(path, std::ios::binary);
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    const std::string h = ss.str();
+    CHECK(h.rfind("<!doctype html>", 0) == 0);
+    CHECK(h.find("</html>") != std::string::npos);
+    CHECK(h.find("Factor of safety") != std::string::npos);
+    CHECK(h.find("steel") != std::string::npos);
+    CHECK(h.find("Natural frequencies") != std::string::npos);
+    CHECK(h.find("von Mises stress") != std::string::npos);
+    CHECK(h.find("Mode 2 at") != std::string::npos);
+    std::size_t pictures = 0;
+    for (std::size_t at = h.find("data:image/png;base64,"); at != std::string::npos; at = h.find("data:image/png;base64,", at + 1)) ++pictures;
+    CHECK(pictures == 4); // stress, displacement and the two modes
+    CHECK(h.size() < 1500000);
+    std::filesystem::remove(path);
+    CHECK(!run(d, "FEA \"Block 1\" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 REPORT").ok);
+}
+
 TEST_CASE("Variable-radius fillets and full rounds") {
     // R2 to R8 along a 60 mm edge: the corner removed is (1 - pi/4) r^2, integrated along it.
     Document d;

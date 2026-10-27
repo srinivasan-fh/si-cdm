@@ -889,6 +889,21 @@ FEA "Block 1" FIX FACE 0,0,5 GRAVITY PRESSURE FACE 50,0,10 0.5
 FEA "Block 1" TEMP FACE 0,0,5 20 HEAT FACE 100,0,5 5 MATERIAL aluminium PLOT
 ```
 
+**Reports:** `REPORT file.html` writes the analysis up as one page. Open it in any browser,
+or print it to PDF. The page holds:
+
+- **Summary:** the verdict (the factor of safety, and whether the part holds, has a thin
+  margin or yields), the peak stress and displacement and where they are, the first natural
+  frequency, the mass and whether the solver converged.
+- **Inputs:** the material, the cubes, and every fixing and load.
+- **Results:** the frequencies, and pictures of the results on the part with their colour
+  scales. The pictures show the stress, the displacement (the shape exaggerated), the
+  temperatures, and the first three mode shapes.
+
+```text
+FEA "Block 1" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 MODES 2 REPORT bracket-analysis.html
+```
+
 ## Measure
 
 ```text

@@ -572,6 +572,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::Separator();
         if (ImGui::MenuItem("Show Drawing", nullptr, st.showSheet)) cmd.commands.push_back(st.showSheet ? "SHEET HIDE" : "SHEET SHOW");
         if (ImGui::MenuItem("Dimension Automatically")) cmd.commands.push_back("SHEET AUTODIM");
+        if (ImGui::MenuItem("Call Out Holes")) cmd.commands.push_back("SHEET CALLOUTS");
+        if (ImGui::MenuItem("Add Flat Pattern View")) cmd.commands.push_back("SHEET FLAT");
         if (ImGui::MenuItem("Section Through the Front View")) cmd.commands.push_back("SHEET SECTION FRONT VERTICAL");
         if (ImGui::MenuItem("Section Through the Top View")) cmd.commands.push_back("SHEET SECTION TOP HORIZONTAL");
         if (ImGui::BeginMenu("Add View")) {

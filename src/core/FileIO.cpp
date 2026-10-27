@@ -486,6 +486,12 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                     jh.set("thread", h.threadDia).set("pitch", h.pitch).set("thread_depth", h.threadDepth);
                     if (h.threadModelled) jh.set("modelled", true);
                 }
+                if (h.diameter > 0) {
+                    jh.set("diameter", h.diameter).set("depth", h.depth);
+                    if (h.cboreDia > 0) jh.set("cbore", h.cboreDia).set("cbore_depth", h.cboreDepth);
+                    if (h.csinkDia > 0) jh.set("csink", h.csinkDia).set("csink_angle", h.csinkAngle);
+                    if (!h.size.empty()) jh.set("size", h.size);
+                }
                 hs.push(jh);
             }
             jb.set("holes", hs);
@@ -825,9 +831,16 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         b.attachedTo = jb["attached_to"].asString();
         b.assembly = jb["assembly"].asString();
         b.field = jb["field"].asString();
-        for (const Json& jh : jb["holes"].items())
-            b.holes.push_back({jsonVec3(jh["at"]), jsonVec3(jh["dir"], {0, 0, -1}), jh["callout"].asString(), jh["thread"].asFloat(),
-                               jh["pitch"].asFloat(), jh["thread_depth"].asFloat(), jh["modelled"].asBool(false)});
+        for (const Json& jh : jb["holes"].items()) {
+            HoleNote& h = b.holes.emplace_back();
+            h.at = jsonVec3(jh["at"]), h.dir = jsonVec3(jh["dir"], {0, 0, -1}), h.callout = jh["callout"].asString();
+            h.threadDia = jh["thread"].asFloat(), h.pitch = jh["pitch"].asFloat(), h.threadDepth = jh["thread_depth"].asFloat();
+            h.threadModelled = jh["modelled"].asBool(false);
+            h.diameter = jh["diameter"].asFloat(), h.depth = jh["depth"].asFloat();
+            h.cboreDia = jh["cbore"].asFloat(), h.cboreDepth = jh["cbore_depth"].asFloat();
+            h.csinkDia = jh["csink"].asFloat(), h.csinkAngle = jh["csink_angle"].asFloat();
+            h.size = jh["size"].asString();
+        }
         b.offset = jsonVec3(jb["offset"]);
         b.color = jsonVec3(jb["color"], b.color);
         b.visible = jb["visible"].asBool(true);

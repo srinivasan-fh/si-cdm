@@ -113,8 +113,9 @@ bool surfaceDistance(const BSurface& s, const DVec3& p, double& d, DVec3& n) {
         const double h = ddot(q, s.f.z);
         const DVec3 rad = q - s.f.z * h;
         const double rho = dlength(rad);
-        if (rho < 1e-12) return false;
-        const DVec3 rd = rad / rho;
+        // On the axis: a cone's apex is on it (any way out will do for the distance).
+        if (rho < 1e-12 && s.kind != BSurfaceKind::Cone) return false;
+        const DVec3 rd = rho < 1e-12 ? s.f.x : rad / rho;
         if (s.kind == BSurfaceKind::Cylinder) {
             n = rd;
             d = rho - s.r1;

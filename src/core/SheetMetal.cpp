@@ -322,8 +322,10 @@ float jogFirstLength(const SheetPart& part, int parent, int edge, float offset, 
     return (offset - r0) / per;
 }
 
-void sheetFlatOutline(const SheetPart& part, std::vector<std::vector<Vec2>>& outline, std::vector<std::pair<Vec2, Vec2>>& bendLines) {
+void sheetFlatOutline(const SheetPart& part, std::vector<std::vector<Vec2>>& outline, std::vector<std::pair<Vec2, Vec2>>& bendLines,
+                      std::vector<int>* bendFlange) {
     outline.clear(), bendLines.clear();
+    if (bendFlange) bendFlange->clear();
     const std::vector<Layout> lay = layout(part, nullptr);
     if (lay.size() != part.flanges.size()) return;
     // The base and each flange's whole strip, counter-clockwise; edges used once are outline.
@@ -353,7 +355,10 @@ void sheetFlatOutline(const SheetPart& part, std::vector<std::vector<Vec2>>& out
         std::vector<Vec2> q{endA(0), endA(L.ba), endA(reach), endB(reach), endB(L.ba), endB(0)};
         if (signedArea(q) < 0) std::reverse(q.begin(), q.end());
         pieces.push_back(std::move(q));
-        if (L.theta > 0) bendLines.push_back({endA(L.ba * 0.5f), endB(L.ba * 0.5f)});
+        if (L.theta > 0) {
+            bendLines.push_back({endA(L.ba * 0.5f), endB(L.ba * 0.5f)});
+            if (bendFlange) bendFlange->push_back(static_cast<int>(i));
+        }
     }
     using Key = std::pair<long long, long long>;
     auto key = [](Vec2 q) { return Key{std::llround(q.x * 1e4), std::llround(q.y * 1e4)}; };

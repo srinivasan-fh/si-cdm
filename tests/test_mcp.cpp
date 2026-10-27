@@ -318,6 +318,10 @@ TEST_CASE("MCP drawing lays out views, dimensions them and exports the sheet") {
     CHECK(d.state.drawing.thirdAngle);
     CHECK(!tool(s, "drawing", R"({"operation":"section","view":"Front"})")["isError"].asBool());
     CHECK(!tool(s, "drawing", R"({"operation":"autodim"})")["isError"].asBool());
+    CHECK(!tool(s, "drawing", R"({"operation":"callouts"})")["isError"].asBool()); // no holes yet: nothing to add
+    CHECK(d.state.drawing.callouts.empty());
+    CHECK(tool(s, "drawing", R"({"operation":"flat"})")["isError"].asBool()); // no sheet metal
+    CHECK(tool(s, "drawing", R"({"operation":"callout_delete","index":1})")["isError"].asBool());
     CHECK(!tool(s, "drawing", R"({"operation":"dim","kind":"horizontal","view":"Front","from":[-30,0,0],"to":[0,0,0],"offset":-20})")["isError"].asBool());
     CHECK(!tool(s, "drawing", R"({"operation":"title","field":"MATERIAL","text":"Steel"})")["isError"].asBool());
     CHECK(!tool(s, "drawing", R"({"operation":"note","text":"DEBURR","at":[30,40]})")["isError"].asBool());

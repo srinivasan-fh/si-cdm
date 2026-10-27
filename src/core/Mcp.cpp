@@ -646,8 +646,8 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("operation", prop("string", "new | list | view_add | view_move | view_delete | view_scale | view_hidden | section | dim | dim_delete | "
-                                          "autodim | tolerance | gdt | gdt_delete | datum | datum_delete | finish | general_tolerance | title | note | "
-                                          "scale | size | projection | export | delete"));
+                                          "autodim | callouts | callout_delete | flat | tolerance | gdt | gdt_delete | datum | datum_delete | "
+                                          "finish | general_tolerance | title | note | scale | size | projection | export | delete"));
         p.set("bodies", prop("array", "new: the bodies to draw (default: every visible body)"));
         p.set("size", prop("string", "new / size: A4, A3, A2, A1, A0, LETTER, TABLOID, ANSI C, ANSI D (default A3)"));
         p.set("portrait", prop("boolean", "new / size: portrait instead of landscape"));
@@ -662,7 +662,7 @@ Json McpServer::toolDefinitions() {
         p.set("from", prop("array", "dim: the first model point [x, y, z] (diameter / radius: the centre)"));
         p.set("to", prop("array", "dim: the second model point [x, y, z] (diameter / radius: on the circle)"));
         p.set("offset", prop("number", "dim: sheet mm from the feature (negative: below / left)"));
-        p.set("index", prop("number", "dim_delete: the dimension's number (1-based)"));
+        p.set("index", prop("number", "dim_delete / callout_delete: the dimension's or callout's number (1-based)"));
         p.set("field", prop("string", "title: TITLE, PART, MATERIAL, DRAWN, CHECKED, DATE, REV, SHEET"));
         p.set("text", prop("string", "title / note / dim: the text"));
         p.set("path", prop("string", "export: the file (.pdf, .svg or .dxf)"));
@@ -679,10 +679,12 @@ Json McpServer::toolDefinitions() {
         p.set("point", prop("array", "gdt / datum / finish: the model point [x, y, z] in 'view' the leader goes to"));
         p.set("sheet_offset", prop("array", "gdt / datum / finish: where the symbol sits from the point, [dx, dy] sheet mm"));
         p.set("machined", prop("boolean", "finish: material removal required (false: not allowed; omit: any process)"));
+        p.set("body", prop("string", "flat: the sheet metal body (default: the drawing's only one)"));
         tools.push(tool("drawing",
                         "2D engineering drawings of the model: front, top, right and isometric views laid out on an ISO or ANSI sheet "
                         "(first or third angle) with hidden lines dashed, section views hatched, centre marks, dimensions (automatic overall "
-                        "sizes and hole diameters, or by hand) with size tolerances and ISO 286 fits, geometric tolerances (feature control frames, "
+                        "sizes and hole diameters, or by hand), hole callouts (drill, depth or THRU, counterbore, countersink, thread, 4X), "
+                        "sheet metal flat pattern views with bend lines and notes, size tolerances and ISO 286 fits, geometric tolerances (feature control frames, "
                         "datums), surface finish marks, the general tolerance, a title block and notes; exported to PDF, SVG or DXF.",
                         p, {"operation"}));
     }
@@ -1258,6 +1260,10 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (op == "list") return runLine("SHEET");
         if (op == "delete") return runLine("SHEET DELETE");
         if (op == "autodim") return runLine("SHEET AUTODIM" + view);
+        if (op == "callouts") return runLine("SHEET CALLOUTS" + view);
+        if (op == "callout_delete") return runLine("SHEET CALLOUT DELETE " + num(a["index"].asNumber()));
+        if (op == "flat") return runLine("SHEET FLAT" + text("body") + (a["at"].isArray() ? " AT " + vec(a["at"], 2) : std::string()) +
+                                         (a["scale"].isString() ? " SCALE " + a["scale"].asString() : std::string()));
         if (op == "new") {
             std::string line = "SHEET NEW";
             if (a["bodies"].isArray())
@@ -1354,7 +1360,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine("SHEET EXPORT " + quote(a["path"].asString()));
         }
         return textResult("operation is one of new, list, view_add, view_move, view_delete, view_scale, view_hidden, section, dim, dim_delete, "
-                          "autodim, tolerance, gdt, gdt_delete, datum, datum_delete, finish, general_tolerance, title, note, scale, size, "
+                          "autodim, callouts, callout_delete, flat, tolerance, gdt, gdt_delete, datum, datum_delete, finish, general_tolerance, title, note, scale, size, "
                           "projection, export, delete",
                           true);
     }

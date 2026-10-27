@@ -480,3 +480,114 @@ TEST_CASE("Drawing: dimension tolerances, feature control frames, datums and sur
     CHECK(dw.datums.size() == 1);
     CHECK(dw.finishes.empty());
 }
+
+namespace {
+const DrawingCallout* calloutWith(const Drawing& d, const std::string& part) {
+    for (const DrawingCallout& c : d.callouts)
+        if (c.text.find(part) != std::string::npos) return &c;
+    return nullptr;
+}
+} // namespace
+
+TEST_CASE("Drawing: hole callouts say what each hole is, holes alike once with a count") {
+    Document d;
+    REQUIRE(run(d, "BOX 80 50 20 @0,0,0").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT -25,-15,20 25,-15,20 SIZE M6 CBORE THROUGH").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT -25,15,20 25,15,20 SIZE M8 TAPPED DEPTH 15").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 0,0,20 DIAMETER 5 DEPTH 8").ok);
+    REQUIRE(run(d, "SHEET NEW A3").ok);
+    REQUIRE(run(d, "SHEET AUTODIM").ok);
+    REQUIRE(run(d, "SHEET CALLOUTS").ok);
+    const Drawing& dr = d.state.drawing;
+    REQUIRE(dr.callouts.size() == 3);
+    for (const DrawingCallout& c : dr.callouts) CHECK(c.view == "Top"); // seen end on, looking in
+    const DrawingCallout* cb = calloutWith(dr, "2X \xC3\x98");
+    REQUIRE(cb);
+    CHECK(cb->text.find("THRU\n{CBORE}\xC3\x98") != std::string::npos);
+    const DrawingCallout* tap = calloutWith(dr, "M8x1.25 - 6H {DEPTH}");
+    REQUIRE(tap);
+    CHECK(tap->text.rfind("2X \xC3\x98", 0) == 0); // the tap drill first
+    const DrawingCallout* plain = calloutWith(dr, "\xC3\x98" "5 {DEPTH}8");
+    REQUIRE(plain);
+    CHECK(plain->text.find("X ") == std::string::npos);
+    CHECK(std::fabs(plain->at.z - 20) < 1e-6);
+    // The holes' plain diameters gave way to the callouts.
+    for (const DrawingDim& dim : dr.dims) CHECK(dim.kind != DrawingDim::Diameter);
+    // Again: nothing new.
+    REQUIRE(run(d, "SHEET CALLOUTS").ok);
+    CHECK(dr.callouts.size() == 3);
+    // Drawn: the words, the symbols as lines, a leader with an arrow.
+    const SheetGraphics g = renderDrawing(dr, d.scene, 1);
+    CHECK(hasText(g, "M8x1.25 - 6H "));
+    bool thru = false;
+    for (const SheetText& t : g.texts) thru = thru || t.text.find("THRU") != std::string::npos;
+    CHECK(thru);
+    // Kept in the project.
+    const std::string before = drawingToJson(dr).dump();
+    Drawing back;
+    REQUIRE(drawingFromJson(*Json::parse(before), back));
+    CHECK(drawingToJson(back).dump() == before);
+    // By hand: the hole nearest the point, or words given.
+    REQUIRE(run(d, "SHEET CALLOUT Top 0,0,20 OFFSET -20,10").ok);
+    CHECK(dr.callouts.back().text == plain->text);
+    CHECK(dr.callouts.back().dx == -20);
+    REQUIRE(run(d, "SHEET CALLOUT Top 30,20,20 TEXT 2X SLOT").ok);
+    CHECK(dr.callouts.back().text == "2X SLOT");
+    CHECK(!run(d, "SHEET CALLOUT Top 39,24,20").ok); // no hole there, no words
+    REQUIRE(run(d, "SHEET CALLOUT DELETE 5").ok);
+    CHECK(dr.callouts.size() == 4);
+    REQUIRE(run(d, "SHEET VIEW DELETE Top").ok);
+    CHECK(dr.callouts.empty());
+}
+
+TEST_CASE("Drawing: holes without the wizard are called out from their geometry") {
+    Document d;
+    REQUIRE(run(d, "IMPORT \"" + stepPath("plate_holes") + "\"").ok);
+    REQUIRE(run(d, "SHEET NEW A4").ok);
+    REQUIRE(run(d, "SHEET AUTODIM").ok);
+    REQUIRE(run(d, "SHEET CALLOUTS").ok);
+    const Drawing& dr = d.state.drawing;
+    CHECK(dr.callouts.size() == 2);
+    CHECK(calloutWith(dr, "\xC3\x98" "8 "));
+    CHECK(calloutWith(dr, "\xC3\x98" "14 "));
+    for (const DrawingDim& dim : dr.dims) CHECK(dim.kind != DrawingDim::Diameter);
+}
+
+TEST_CASE("Drawing: a sheet metal part's flat pattern, its bend lines and notes") {
+    Document d;
+    REQUIRE(run(d, "RECT 0,0 100,60").ok);
+    REQUIRE(run(d, "SHEETMETAL BASE \"Rectangle 1\" THICKNESS 2 RADIUS 1 K 0.44").ok);
+    REQUIRE(run(d, "SHEETMETAL FLANGE \"Sheet 1\" EDGE 1 LENGTH 20").ok);
+    REQUIRE(run(d, "SHEETMETAL FLANGE \"Sheet 1\" NEAR 0,30,0 LENGTH 10 DOWN").ok);
+    REQUIRE(run(d, "SHEET NEW A3 SCALE 1:2").ok);
+    REQUIRE(run(d, "SHEET FLAT").ok);
+    const Drawing& dr = d.state.drawing;
+    const DrawingView* flat = dr.view("Flat pattern");
+    REQUIRE(flat);
+    CHECK(flat->kind == ViewKind::Flat);
+    CHECK(flat->body == "Sheet 1");
+    const SheetGraphics g = renderDrawing(dr, d.scene, 1);
+    CHECK(hasText(g, "FLAT PATTERN"));
+    CHECK(hasText(g, "UP 90\xC2\xB0 R1"));
+    CHECK(hasText(g, "DOWN 90\xC2\xB0 R1"));
+    CHECK(g.warnings.empty());
+    // Its overall sizes: the base and each flange's bend allowance and flat.
+    REQUIRE(run(d, "SHEET AUTODIM \"Flat pattern\"").ok);
+    const double ba = 3.14159265358979 / 2 * (1 + 0.44 * 2);
+    bool across = false, along = false;
+    for (const DrawingDim& dim : dr.dims) {
+        if (dim.view != "Flat pattern") continue;
+        across = across || std::fabs(dimensionValue(dr, dim) - (100 + ba + 10)) < 0.01;
+        along = along || std::fabs(dimensionValue(dr, dim) - (60 + ba + 20)) < 0.01;
+    }
+    CHECK(across);
+    CHECK(along);
+    // Kept in the project; refused for a part that isn't sheet metal.
+    Drawing back;
+    REQUIRE(drawingFromJson(drawingToJson(dr), back));
+    REQUIRE(back.view("Flat pattern"));
+    CHECK(back.view("Flat pattern")->body == "Sheet 1");
+    REQUIRE(run(d, "BOX 10 10 10 @200,0,0").ok);
+    CHECK(!run(d, "SHEET FLAT \"Block 1\"").ok);
+    CHECK(!run(d, "SHEET SECTION \"Flat pattern\"").ok);
+}
