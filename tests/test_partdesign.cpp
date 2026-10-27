@@ -775,10 +775,13 @@ TEST_CASE("FEA: a report of the setup, the results and pictures of them") {
     const CommandOutput o = run(d, "FEA \"Block 1\" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 MODES 2 CELL 2.5 REPORT \"" + path + "\"");
     REQUIRE(o.ok);
     CHECK(d.scene.bodies().size() == 1); // a report alone adds no plot
-    std::ifstream f(path, std::ios::binary);
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    const std::string h = ss.str();
+    std::string h;
+    { // closed before the file is removed (Windows keeps open files)
+        std::ifstream f(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        h = ss.str();
+    }
     CHECK(h.rfind("<!doctype html>", 0) == 0);
     CHECK(h.find("</html>") != std::string::npos);
     CHECK(h.find("Factor of safety") != std::string::npos);
@@ -790,7 +793,8 @@ TEST_CASE("FEA: a report of the setup, the results and pictures of them") {
     for (std::size_t at = h.find("data:image/png;base64,"); at != std::string::npos; at = h.find("data:image/png;base64,", at + 1)) ++pictures;
     CHECK(pictures == 4); // stress, displacement and the two modes
     CHECK(h.size() < 1500000);
-    std::filesystem::remove(path);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
     CHECK(!run(d, "FEA \"Block 1\" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 REPORT").ok);
 }
 

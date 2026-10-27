@@ -7,7 +7,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
+#include <map>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -43,6 +46,7 @@ constexpr BrushInfo kBrushes[] = {
     {SculptBrush::SnakeHook, "snakehook", "Snake Hook (pull out along the stroke)"},
     {SculptBrush::Nudge, "nudge", "Nudge (push along the surface)"},
     {SculptBrush::Mask, "mask", "Mask (hold the surface still)"},
+    {SculptBrush::Paint, "paint", "Paint (polypaint colour)"},
 };
 
 struct FalloffInfo {
@@ -307,13 +311,22 @@ SculptMesh::SculptMesh(const Body& body) {
     std::vector<D3> pts;
     const std::vector<std::uint32_t> id = weldCorners(corners, m_size, pts);
     m_t.reserve(idx.size() / 3);
+    const bool grouped = body.mesh.hasGroups();
     for (std::size_t k = 0; k + 2 < id.size(); k += 3) {
         const std::array<std::uint32_t, 3> t{id[k], id[k + 1], id[k + 2]};
         if (t[0] == t[1] || t[1] == t[2] || t[2] == t[0]) continue;
         m_t.push_back(t);
+        if (grouped) m_group.push_back(body.mesh.groups[k / 3]);
     }
     m_p.reserve(pts.size());
     for (const D3& p : pts) m_p.push_back(p.f());
+    m_base = body.color;
+    // Polypaint: a vertex welded from several corners takes a painted one's colour.
+    if (std::any_of(v.begin(), v.end(), [](const Vertex& c) { return painted(c.color); })) {
+        m_color.assign(m_p.size(), packColor(m_base));
+        for (std::size_t k = 0; k < id.size() && k < idx.size(); ++k)
+            if (painted(v[idx[k]].color)) m_color[id[k]] = v[idx[k]].color;
+    }
     // A vertex welded from several corners is as masked as the most masked of them.
     if (std::any_of(v.begin(), v.end(), [](const Vertex& c) { return c.mask > 0.0f; })) {
         m_mask.assign(m_p.size(), 0.0f);
@@ -616,27 +629,31 @@ bool SculptMesh::splitEdges(const std::vector<std::uint64_t>& edges, std::size_t
             if (m[e] != kNone) ++marked;
         }
         if (marked == 0) continue;
+        auto add = [&](const std::array<std::uint32_t, 3>& t) { // a new piece, in the split triangle's group
+            m_t.push_back(t);
+            if (!m_group.empty()) m_group.push_back(m_group[i]);
+        };
         if (marked == 3) {
             m_t[i] = {tri[0], m[0], m[2]};
-            m_t.push_back({m[0], tri[1], m[1]});
-            m_t.push_back({m[2], m[1], tri[2]});
-            m_t.push_back({m[0], m[1], m[2]});
+            add({m[0], tri[1], m[1]});
+            add({m[2], m[1], tri[2]});
+            add({m[0], m[1], m[2]});
         } else if (marked == 1) {
             const int e = m[0] != kNone ? 0 : m[1] != kNone ? 1 : 2;
             const std::uint32_t a = tri[e], b = tri[(e + 1) % 3], c = tri[(e + 2) % 3], ab = m[e];
             m_t[i] = {a, ab, c};
-            m_t.push_back({ab, b, c});
+            add({ab, b, c});
         } else { // two edges: a corner triangle plus a quad split along its shorter diagonal
             const int e = m[0] == kNone ? 0 : m[1] == kNone ? 1 : 2; // the unsplit edge a-b
             const std::uint32_t a = tri[e], b = tri[(e + 1) % 3], c = tri[(e + 2) % 3];
             const std::uint32_t bc = m[(e + 1) % 3], ca = m[(e + 2) % 3];
             m_t[i] = {ca, bc, c};
             if (length(m_p[a] - m_p[bc]) < length(m_p[b] - m_p[ca])) {
-                m_t.push_back({a, b, bc});
-                m_t.push_back({a, bc, ca});
+                add({a, b, bc});
+                add({a, bc, ca});
             } else {
-                m_t.push_back({a, b, ca});
-                m_t.push_back({b, bc, ca});
+                add({a, b, ca});
+                add({b, bc, ca});
             }
         }
     }
@@ -856,6 +873,7 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
             m_p[a] = m;
             if (!m_mask.empty()) m_mask[a] = std::max(m_mask[a], m_mask[b]);
             if (!m_layer.empty()) m_layer[a] = 0.5f * (m_layer[a] + m_layer[b]);
+            if (!m_color.empty()) m_color[a] = packColor((unpackColor(m_color[a]) + unpackColor(m_color[b])) * 0.5f);
             locked[a] = locked[b] = 1;
             for (std::uint32_t w : ringA) locked[w] = 1;
             for (std::uint32_t w : ringB) locked[w] = 1;
@@ -867,8 +885,12 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
     if (total > 0) {
         std::size_t n = 0;
         for (std::size_t i = 0; i < m_t.size(); ++i)
-            if (!dead[i]) m_t[n++] = m_t[i];
+            if (!dead[i]) {
+                if (!m_group.empty()) m_group[n] = m_group[i];
+                m_t[n++] = m_t[i];
+            }
         m_t.resize(n);
+        if (!m_group.empty()) m_group.resize(n);
         dropUnused();
         m_n.resize(m_p.size()); // stale: the caller updates the normals
     }
@@ -883,6 +905,7 @@ void SculptMesh::dropUnused() {
     std::vector<std::uint32_t> from;
     std::vector<char> pins;
     std::vector<float> mask, layer;
+    std::vector<std::uint32_t> color;
     for (auto& t : m_t)
         for (auto& v : t) {
             if (remap[v] == 0xFFFFFFFFu) {
@@ -894,6 +917,7 @@ void SculptMesh::dropUnused() {
                 }
                 if (!m_mask.empty()) mask.push_back(m_mask[v]);
                 if (!m_layer.empty()) layer.push_back(m_layer[v]);
+                if (!m_color.empty()) color.push_back(m_color[v]);
             }
             v = remap[v];
         }
@@ -904,6 +928,7 @@ void SculptMesh::dropUnused() {
     }
     if (!m_mask.empty()) m_mask = std::move(mask);
     if (!m_layer.empty()) m_layer = std::move(layer);
+    if (!m_color.empty()) m_color = std::move(color);
 }
 
 void SculptMesh::addVertexExtras(std::uint32_t a, std::uint32_t b) {
@@ -913,6 +938,7 @@ void SculptMesh::addVertexExtras(std::uint32_t a, std::uint32_t b) {
     }
     if (!m_mask.empty()) m_mask.push_back(0.5f * (m_mask[a] + m_mask[b]));
     if (!m_layer.empty()) m_layer.push_back(0.5f * (m_layer[a] + m_layer[b]));
+    if (!m_color.empty()) m_color.push_back(packColor((unpackColor(m_color[a]) + unpackColor(m_color[b])) * 0.5f));
 }
 
 std::vector<SculptMesh::Image> SculptMesh::images(const Vec3& centre, const SculptSettings& s, float R) const {
@@ -984,6 +1010,16 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s, const Vec
     if (s.brush == SculptBrush::Mask) { // paints the mask (inverted: wipes it)
         if (m_mask.empty()) m_mask.assign(m_p.size(), 0.0f);
         for (const auto& [i, f] : region) m_mask[i] = std::clamp(m_mask[i] + sign * st * f, 0.0f, 1.0f);
+        return;
+    }
+    if (s.brush == SculptBrush::Paint) { // lays colour on (inverted: back to the body's own); the mask holds it off
+        if (m_color.empty()) m_color.assign(m_p.size(), packColor(m_base));
+        const Vec3 to = s.invert ? m_base : Vec3{std::clamp(s.color.x, 0.0f, 1.0f), std::clamp(s.color.y, 0.0f, 1.0f), std::clamp(s.color.z, 0.0f, 1.0f)};
+        for (const auto& [i, f] : region) {
+            const float w = std::clamp(st * f * (1.0f - held(i)) * 2.0f, 0.0f, 1.0f);
+            const Vec3 c = unpackColor(m_color[i]);
+            m_color[i] = packColor(c + (to - c) * w);
+        }
         return;
     }
 
@@ -1102,7 +1138,8 @@ void SculptMesh::applyDab(const Vec3& centre, const SculptSettings& s, const Vec
         }
         case SculptBrush::Nudge: p += along * (heading ? length(dir - N * dot(dir, N)) * st * f : 0.0f); break;
         case SculptBrush::Grab:
-        case SculptBrush::Mask: break;
+        case SculptBrush::Mask:
+        case SculptBrush::Paint: break;
         }
     }
 }
@@ -1114,7 +1151,8 @@ void SculptMesh::dab(const Vec3& centre, const SculptSettings& s, const Vec3& di
     const float R = std::max({s.radius, m_size * 2e-3f, 1e-3f});
     const float detail = std::max(s.detail > 0 ? s.detail : R * 0.25f, m_size * 2e-4f);
     const std::vector<Image> copies = images(centre, s, R);
-    const bool topology = s.refine && s.brush != SculptBrush::Mask; // a mask needs no new triangles
+    // A mask or paint needs no new triangles (paint as finely as the surface is divided).
+    const bool topology = s.refine && s.brush != SculptBrush::Mask && s.brush != SculptBrush::Paint;
     if (topology) {
         for (const Image& c : copies) refineRegion(c.centre, R, detail);
         updateNormals();
@@ -1255,6 +1293,12 @@ bool SculptMesh::loopSubdivide(std::size_t maxTriangles) {
         tris.push_back({ab, bc, ca});
     }
     m_t = std::move(tris);
+    if (!m_group.empty()) { // each quarter in its triangle's group
+        std::vector<std::uint32_t> g;
+        g.reserve(m_group.size() * 4);
+        for (std::uint32_t x : m_group) g.insert(g.end(), 4, x);
+        m_group = std::move(g);
+    }
     updateNormals();
     return true;
 }
@@ -1320,7 +1364,7 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
                 }
             if (out_i == 0xFFFFFFFFu) {
                 out_i = static_cast<std::uint32_t>(out.vertices.size());
-                out.vertices.push_back({m_p[v] - body.offset, n, held(static_cast<std::uint32_t>(v))});
+                out.vertices.push_back({m_p[v] - body.offset, n, held(static_cast<std::uint32_t>(v)), m_color.empty() ? 0u : m_color[v]});
                 clusters.emplace_back(n, out_i);
             }
             const auto& t = m_t[g];
@@ -1329,6 +1373,7 @@ void SculptMesh::writeTo(Body& body, bool featureEdges, float smoothAngle) const
         }
     }
     if (featureEdges) out.computeFeatureEdges(40.0f);
+    if (m_group.size() == m_t.size()) out.groups = m_group;
     body.mesh = std::move(out);
     body.kind = "mesh";
     body.params.clear();
@@ -1424,6 +1469,7 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
     w.m_size = m_size;
     w.m_mirrorX = m_mirrorX;
     w.m_centre = m_centre;
+    w.m_base = m_base;
     constexpr std::uint32_t kNone = 0xFFFFFFFFu;
     std::vector<std::uint32_t> toWindow(m_p.size(), kNone);
     std::vector<char> in(m_t.size(), 0);
@@ -1447,10 +1493,12 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
                 w.m_n.push_back(m_n[v]);
                 w.m_from.push_back(v);
                 if (!m_mask.empty()) w.m_mask.push_back(m_mask[v]);
+                if (!m_color.empty()) w.m_color.push_back(m_color[v]);
             }
             wt[static_cast<std::size_t>(c)] = toWindow[v];
         }
         w.m_t.push_back(wt);
+        if (!m_group.empty()) w.m_group.push_back(m_group[i]);
     }
     w.m_pinned.assign(w.m_p.size(), 0);
     *longestCut = 0.0f;
@@ -1471,24 +1519,35 @@ SculptMesh SculptMesh::window(const std::vector<AABB>& boxes, std::vector<std::u
 void SculptMesh::stitch(const SculptMesh& w, const std::vector<std::uint32_t>& taken) {
     std::vector<std::uint32_t> toMesh(w.m_p.size());
     if (!w.m_mask.empty() && m_mask.empty()) m_mask.assign(m_p.size(), 0.0f); // the window painted the first mask
+    if (!w.m_color.empty() && m_color.empty()) m_color.assign(m_p.size(), packColor(m_base)); // ... or the first paint
     for (std::size_t i = 0; i < w.m_p.size(); ++i) {
         if (w.m_from[i] != 0xFFFFFFFFu) {
             toMesh[i] = w.m_from[i];
             m_p[w.m_from[i]] = w.m_p[i];
             if (!m_mask.empty()) m_mask[w.m_from[i]] = w.m_mask[i];
+            if (!m_color.empty()) m_color[w.m_from[i]] = w.m_color[i];
         } else {
             toMesh[i] = static_cast<std::uint32_t>(m_p.size());
             m_p.push_back(w.m_p[i]);
             if (!m_mask.empty()) m_mask.push_back(w.m_mask[i]);
+            if (!m_color.empty()) m_color.push_back(w.m_color[i]);
         }
     }
     std::vector<char> gone(m_t.size(), 0);
     for (const std::uint32_t i : taken) gone[i] = 1;
     std::size_t n = 0;
     for (std::size_t i = 0; i < m_t.size(); ++i)
-        if (!gone[i]) m_t[n++] = m_t[i];
+        if (!gone[i]) {
+            if (!m_group.empty()) m_group[n] = m_group[i];
+            m_t[n++] = m_t[i];
+        }
     m_t.resize(n);
-    for (const auto& t : w.m_t) m_t.push_back({toMesh[t[0]], toMesh[t[1]], toMesh[t[2]]});
+    if (!m_group.empty()) m_group.resize(n);
+    for (std::size_t k = 0; k < w.m_t.size(); ++k) {
+        const auto& t = w.m_t[k];
+        m_t.push_back({toMesh[t[0]], toMesh[t[1]], toMesh[t[2]]});
+        if (!m_group.empty()) m_group.push_back(k < w.m_group.size() ? w.m_group[k] : 0);
+    }
     dropUnused(); // corners the window collapsed away
     updateNormals();
 }
@@ -1534,6 +1593,218 @@ float maskedFraction(const Body& body) {
     double sum = 0;
     for (const Vertex& c : v) sum += c.mask;
     return static_cast<float>(sum / static_cast<double>(v.size()));
+}
+
+namespace {
+
+// A parametric body painted or grouped becomes a mesh body: its mesh is saved as it is.
+void keepMesh(Body& body) {
+    if (body.kind == "mesh" || !isPrimitiveKind(body.kind)) return;
+    body.kind = "mesh";
+    body.params.clear();
+}
+
+// The mesh's corners welded by position: an id per vertex, and the edges' triangles.
+struct Welded {
+    std::vector<std::uint32_t> id;                               // per vertex
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> edgeTris;
+};
+Welded weldMesh(const MeshData& m) {
+    Welded w;
+    std::map<std::tuple<float, float, float>, std::uint32_t> at;
+    w.id.resize(m.vertices.size());
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+        const Vec3& p = m.vertices[i].position;
+        w.id[i] = at.try_emplace({p.x, p.y, p.z}, static_cast<std::uint32_t>(at.size())).first->second;
+    }
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3)
+        for (int e = 0; e < 3; ++e) {
+            const std::uint32_t a = w.id[m.indices[t + static_cast<std::size_t>(e)]], b = w.id[m.indices[t + static_cast<std::size_t>((e + 1) % 3)]];
+            if (a != b) w.edgeTris[edgeKey(a, b)].push_back(static_cast<std::uint32_t>(t / 3));
+        }
+    return w;
+}
+
+struct NamedColour {
+    const char* name;
+    float r, g, b;
+};
+constexpr NamedColour kColours[] = {
+    {"red", 0.85f, 0.15f, 0.12f},   {"green", 0.20f, 0.70f, 0.25f},  {"blue", 0.15f, 0.35f, 0.85f},   {"yellow", 0.95f, 0.85f, 0.15f},
+    {"orange", 0.95f, 0.50f, 0.10f}, {"purple", 0.55f, 0.25f, 0.70f}, {"pink", 0.95f, 0.55f, 0.70f},   {"cyan", 0.15f, 0.80f, 0.85f},
+    {"magenta", 0.85f, 0.20f, 0.70f}, {"white", 0.95f, 0.95f, 0.95f}, {"black", 0.05f, 0.05f, 0.05f},  {"grey", 0.50f, 0.50f, 0.50f},
+    {"gray", 0.50f, 0.50f, 0.50f},   {"brown", 0.45f, 0.28f, 0.15f},  {"skin", 0.90f, 0.70f, 0.58f},   {"flesh", 0.90f, 0.70f, 0.58f},
+    {"bone", 0.89f, 0.85f, 0.75f},   {"gold", 0.85f, 0.68f, 0.25f},   {"silver", 0.75f, 0.76f, 0.78f}, {"steel", 0.60f, 0.63f, 0.67f},
+    {"copper", 0.72f, 0.45f, 0.20f}, {"clay", 0.70f, 0.48f, 0.38f}};
+
+} // namespace
+
+bool parseColorText(const std::string& text, Vec3& rgb) {
+    const std::string t = lower(text);
+    for (const NamedColour& c : kColours)
+        if (t == c.name) return rgb = {c.r, c.g, c.b}, true;
+    if (t.size() == 7 && t[0] == '#') {
+        unsigned v = 0;
+        for (std::size_t i = 1; i < 7; ++i) {
+            const char c = t[i];
+            if (!std::isxdigit(static_cast<unsigned char>(c))) return false;
+            v = v * 16 + static_cast<unsigned>(std::isdigit(static_cast<unsigned char>(c)) ? c - '0' : c - 'a' + 10);
+        }
+        rgb = {static_cast<float>((v >> 16) & 0xFF) / 255.0f, static_cast<float>((v >> 8) & 0xFF) / 255.0f, static_cast<float>(v & 0xFF) / 255.0f};
+        return true;
+    }
+    float c[3];
+    std::size_t at = 0;
+    for (int k = 0; k < 3; ++k) {
+        const std::size_t comma = t.find(',', at);
+        if ((k < 2) != (comma != std::string::npos)) return false;
+        const std::string part = t.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+        char* end = nullptr;
+        c[k] = std::strtof(part.c_str(), &end);
+        if (part.empty() || !end || *end || !std::isfinite(c[k]) || c[k] < 0) return false;
+        at = comma + 1;
+    }
+    const float scale = c[0] > 1 || c[1] > 1 || c[2] > 1 ? 1.0f / 255.0f : 1.0f;
+    rgb = {std::min(c[0] * scale, 1.0f), std::min(c[1] * scale, 1.0f), std::min(c[2] * scale, 1.0f)};
+    return true;
+}
+
+bool paintBody(Body& body, const Vec3& rgb, int group) {
+    MeshData& m = body.mesh;
+    if (m.indices.empty() || (group >= 0 && !m.hasGroups())) return false;
+    std::vector<char> in(m.vertices.size(), static_cast<char>(group < 0 ? 1 : 0));
+    if (group >= 0)
+        for (std::size_t t = 0; t < m.groups.size(); ++t)
+            if (m.groups[t] == static_cast<std::uint32_t>(group))
+                for (int c = 0; c < 3; ++c) in[m.indices[t * 3 + static_cast<std::size_t>(c)]] = 1;
+    if (std::none_of(in.begin(), in.end(), [](char x) { return x != 0; })) return false;
+    keepMesh(body);
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+        Vertex& v = m.vertices[i];
+        const float w = 1.0f - std::clamp(v.mask, 0.0f, 1.0f);
+        if (!in[i] || w <= 0.0f) continue; // left as it was (unpainted stays so)
+        const Vec3 old = painted(v.color) ? unpackColor(v.color) : body.color;
+        v.color = packColor(old + (rgb - old) * w);
+    }
+    return true;
+}
+
+void clearPaint(Body& body) {
+    for (Vertex& v : body.mesh.vertices) v.color = 0;
+}
+
+float paintedFraction(const Body& body) {
+    const auto& v = body.mesh.vertices;
+    if (v.empty()) return 0.0f;
+    std::size_t n = 0;
+    for (const Vertex& c : v) n += painted(c.color) ? 1 : 0;
+    return static_cast<float>(n) / static_cast<float>(v.size());
+}
+
+int groupBody(Body& body, GroupBy how, float angleDeg) {
+    MeshData& m = body.mesh;
+    const std::size_t T = m.indices.size() / 3;
+    if (T == 0) return 0;
+    keepMesh(body);
+    if (how == GroupBy::Mask) { // the masked faces: one new group
+        std::vector<std::uint32_t> g = m.hasGroups() ? m.groups : std::vector<std::uint32_t>(T, 0);
+        std::uint32_t top = 0;
+        for (std::uint32_t x : g) top = std::max(top, x + 1);
+        bool any = false;
+        for (std::size_t t = 0; t < T; ++t) {
+            float w = 0;
+            for (int c = 0; c < 3; ++c) w += m.vertices[m.indices[t * 3 + static_cast<std::size_t>(c)]].mask;
+            if (w >= 1.5f) g[t] = top, any = true; // most of the face masked
+        }
+        if (!any) return static_cast<int>(groupSizes(body).size());
+        m.groups = std::move(g);
+        return static_cast<int>(groupSizes(body).size());
+    }
+    const Welded w = weldMesh(m);
+    std::vector<Vec3> fn(T);
+    std::vector<std::uint32_t> col(T, 0);
+    for (std::size_t t = 0; t < T; ++t) {
+        const Vec3 &a = m.vertices[m.indices[t * 3]].position, &b = m.vertices[m.indices[t * 3 + 1]].position, &c = m.vertices[m.indices[t * 3 + 2]].position;
+        fn[t] = normalize(cross(b - a, c - a));
+        if (how == GroupBy::Paint) { // the face's colour: its corners' most common (quantised a little)
+            std::uint32_t q[3];
+            for (int k = 0; k < 3; ++k) {
+                const std::uint32_t cc = m.vertices[m.indices[t * 3 + static_cast<std::size_t>(k)]].color;
+                q[k] = painted(cc) ? (cc & 0xF0F0F0u) | 1u : 0u;
+            }
+            col[t] = q[1] == q[2] ? q[1] : q[0];
+        }
+    }
+    const float cosLimit = std::cos(radians(std::clamp(angleDeg, 0.1f, 179.0f)));
+    std::vector<std::uint32_t> g(T, 0xFFFFFFFFu);
+    std::uint32_t next = 0;
+    std::vector<std::uint32_t> stack;
+    for (std::size_t s0 = 0; s0 < T; ++s0) {
+        if (g[s0] != 0xFFFFFFFFu) continue;
+        g[s0] = next;
+        stack.assign(1, static_cast<std::uint32_t>(s0));
+        while (!stack.empty()) {
+            const std::uint32_t t = stack.back();
+            stack.pop_back();
+            for (int e = 0; e < 3; ++e) {
+                const std::uint32_t a = w.id[m.indices[t * 3 + static_cast<std::size_t>(e)]], b = w.id[m.indices[t * 3 + static_cast<std::size_t>((e + 1) % 3)]];
+                const auto it = w.edgeTris.find(edgeKey(a, b));
+                if (it == w.edgeTris.end()) continue;
+                for (std::uint32_t o : it->second) {
+                    if (g[o] != 0xFFFFFFFFu) continue;
+                    if (how == GroupBy::Normals && dot(fn[o], fn[t]) < cosLimit) continue;
+                    if (how == GroupBy::Paint && col[o] != col[t]) continue;
+                    g[o] = next;
+                    stack.push_back(o);
+                }
+            }
+        }
+        ++next;
+    }
+    m.groups = std::move(g);
+    return static_cast<int>(next);
+}
+
+void clearGroups(Body& body) { body.mesh.groups.clear(); }
+
+int groupNear(const Body& body, const Vec3& q) {
+    const MeshData& m = body.mesh;
+    if (!m.hasGroups()) return -1;
+    float best = 1e30f;
+    int g = -1;
+    for (std::size_t t = 0; t < m.groups.size(); ++t) {
+        const Vec3 a = m.vertices[m.indices[t * 3]].position + body.offset, b = m.vertices[m.indices[t * 3 + 1]].position + body.offset,
+                   c = m.vertices[m.indices[t * 3 + 2]].position + body.offset;
+        const Vec3 p = closestOnTriangle(q, a, b, c);
+        const float d = dot(p - q, p - q);
+        if (d < best) best = d, g = static_cast<int>(m.groups[t]);
+    }
+    return g;
+}
+
+std::vector<std::pair<std::uint32_t, std::size_t>> groupSizes(const Body& body) {
+    std::map<std::uint32_t, std::size_t> n;
+    if (body.mesh.hasGroups())
+        for (std::uint32_t g : body.mesh.groups) ++n[g];
+    return {n.begin(), n.end()};
+}
+
+bool maskGroup(Body& body, std::uint32_t group, bool invert) {
+    MeshData& m = body.mesh;
+    if (!m.hasGroups()) return false;
+    // A vertex is in the group when any face of the group uses its position (the
+    // border ring belongs to both sides, as a welded mesh has it).
+    const Welded w = weldMesh(m);
+    std::vector<char> in(m.vertices.size(), 0);
+    std::vector<char> idIn(w.id.empty() ? 0 : *std::max_element(w.id.begin(), w.id.end()) + 1, 0);
+    bool any = false;
+    for (std::size_t t = 0; t < m.groups.size(); ++t)
+        if (m.groups[t] == group)
+            for (int c = 0; c < 3; ++c) idIn[w.id[m.indices[t * 3 + static_cast<std::size_t>(c)]]] = 1, any = true;
+    if (!any) return false;
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) m.vertices[i].mask = (idIn[w.id[i]] != 0) != invert ? 1.0f : 0.0f;
+    keepMesh(body);
+    return true;
 }
 
 bool subdivideBody(Body& body, int levels, std::size_t maxTriangles, std::string* error) {

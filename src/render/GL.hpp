@@ -51,6 +51,7 @@
     X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation) \
     X(PFNGLLINKPROGRAMPROC, glLinkProgram) \
     X(PFNGLSHADERSOURCEPROC, glShaderSource) \
+    X(PFNGLTEXBUFFERPROC, glTexBuffer) \
     X(PFNGLUNIFORM1FPROC, glUniform1f) \
     X(PFNGLUNIFORM1IPROC, glUniform1i) \
     X(PFNGLUNIFORM2FPROC, glUniform2f) \
@@ -73,6 +74,7 @@ SICDM_GL_FUNCTIONS(SICDM_GL_DECLARE)
 #  define glBindVertexArray sicdm::gl::p_glBindVertexArray
 #  define glBufferData sicdm::gl::p_glBufferData
 #  define glBufferSubData sicdm::gl::p_glBufferSubData
+#  define glTexBuffer sicdm::gl::p_glTexBuffer
 #  define glCompileShader sicdm::gl::p_glCompileShader
 #  define glCreateProgram sicdm::gl::p_glCreateProgram
 #  define glCreateShader sicdm::gl::p_glCreateShader

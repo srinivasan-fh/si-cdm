@@ -40,15 +40,18 @@ constexpr const char* kMeshVS = R"(#version 410 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in float aMask;
+layout(location = 3) in vec4 aColor; // polypaint (alpha 0: unpainted)
 uniform mat4 uViewProj;
 uniform mat4 uModel; // body offset and simulated motion (rigid)
 out vec3 vWorldPos;
 out vec3 vNormal;
 out float vMask;
+out vec4 vColor;
 void main() {
     vWorldPos = (uModel * vec4(aPos, 1.0)).xyz;
     vNormal = mat3(uModel) * aNormal;
     vMask = aMask;
+    vColor = aColor;
     gl_Position = uViewProj * vec4(vWorldPos, 1.0);
 }
 )";
@@ -57,7 +60,10 @@ constexpr const char* kMeshFS = R"(#version 410 core
 in vec3 vWorldPos;
 in vec3 vNormal;
 in float vMask;
+in vec4 vColor;
 uniform vec3 uColor;
+uniform float uPolygroups; // 1: a colour per polygroup (from uGroups, per triangle)
+uniform usamplerBuffer uGroups;
 uniform vec3 uCamPos;
 uniform vec3 uCamRight;
 uniform vec3 uCamUp;
@@ -105,7 +111,13 @@ void main() {
     float hemi = 0.5 + 0.5 * N.z;
     vec3 ambient = mix(vec3(0.16, 0.15, 0.14), vec3(0.24, 0.26, 0.30), hemi);
 
-    vec3 base = mix(uColor, vec3(0.30, 0.65, 1.00), uHighlight * 0.55);
+    vec3 own = vColor.a > 0.5 ? vColor.rgb : uColor;
+    if (uPolygroups > 0.5) { // a steady, well spread colour per group
+        uint g = texelFetch(uGroups, gl_PrimitiveID).r;
+        uint h = g * 2654435761u;
+        own = vec3(float((h >> 8) & 255u), float((h >> 16) & 255u), float((h >> 24) & 255u)) / 255.0 * 0.65 + 0.3;
+    }
+    vec3 base = mix(own, vec3(0.30, 0.65, 1.00), uHighlight * 0.55);
     if (uField > 1.5) { // zebra: stripes of the reflected view, smooth where the surface is
         vec3 R = reflect(-V, N);
         float f = fract(R.z * 5.0);
@@ -266,7 +278,20 @@ GpuMesh uploadMesh(const MeshData& m) {
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex),
                           reinterpret_cast<const void*>(offsetof(Vertex, mask)));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex),
+                          reinterpret_cast<const void*>(offsetof(Vertex, color)));
     g.indexCount = static_cast<GLsizei>(m.indices.size());
+    if (m.hasGroups()) {
+        glGenBuffers(1, &g.groupTbo);
+        glBindBuffer(GL_TEXTURE_BUFFER, g.groupTbo);
+        glBufferData(GL_TEXTURE_BUFFER, static_cast<GLsizeiptr>(m.groups.size() * sizeof(std::uint32_t)), m.groups.data(), GL_STATIC_DRAW);
+        glGenTextures(1, &g.groupTex);
+        glBindTexture(GL_TEXTURE_BUFFER, g.groupTex);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, g.groupTbo);
+        glBindTexture(GL_TEXTURE_BUFFER, 0);
+        glBindBuffer(GL_TEXTURE_BUFFER, 0);
+    }
 
     if (!m.edgeVertices.empty()) {
         glGenVertexArrays(1, &g.edgeVao);
@@ -332,6 +357,8 @@ void releaseMesh(GpuMesh& g) {
     if (g.ibo) glDeleteBuffers(1, &g.ibo);
     if (g.vao) glDeleteVertexArrays(1, &g.vao);
     if (g.edgeVbo) glDeleteBuffers(1, &g.edgeVbo);
+    if (g.groupTex) glDeleteTextures(1, &g.groupTex);
+    if (g.groupTbo) glDeleteBuffers(1, &g.groupTbo);
     if (g.edgeVao) glDeleteVertexArrays(1, &g.edgeVao);
     g = GpuMesh{};
 }
@@ -711,6 +738,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                     drawn[i] = &g;
                     if (cell * perUnit > kLodCellPixels) m_refine = true; // coarser than a still view takes
                 }
+                if (s.showPolygroups && e.full.groupTex) drawn[i] = &e.full; // the coarser copies have no groups
                 if (drawn[i] != &e.full) ++m_stats.coarseBodies;
             }
         }
@@ -733,12 +761,20 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         m_mesh.set("uCamPos", cam.position());
         m_mesh.set("uCamRight", cam.right());
         m_mesh.set("uCamUp", cam.up());
+        glUniform1i(glGetUniformLocation(m_mesh.program(), "uGroups"), 1); // polygroups on texture unit 1
         for (std::size_t i = 0; i < count; ++i) {
             if (!bodies[i].visible) continue;
             m_mesh.set("uColor", bodies[i].color);
             m_mesh.set("uField", bodies[i].field.empty() ? 0.0f : bodies[i].field.rfind("zebra", 0) == 0 ? 2.0f : 1.0f);
             m_mesh.set("uModel", model(i));
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
+            const bool groups = s.showPolygroups && gpu(i).groupTex;
+            m_mesh.set("uPolygroups", groups ? 1.0f : 0.0f);
+            if (groups) {
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_BUFFER, gpu(i).groupTex);
+                glActiveTexture(GL_TEXTURE0);
+            }
             glBindVertexArray(gpu(i).vao);
             glDrawElements(GL_TRIANGLES, gpu(i).indexCount, GL_UNSIGNED_INT, nullptr);
         }

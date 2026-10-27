@@ -546,6 +546,11 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
         g.line(0, -0.7f, 0, -0.2f);
         arrowHead(g, 0, -0.15f, 0, 1, 0.2f);
         break;
+    case ToolId::SculptPaint: // a brush laying a stroke
+        g.bezier(-0.85f, -0.65f, -0.4f, -0.2f, 0.0f, -0.75f, 0.45f, -0.35f);
+        g.poly({{0.05f, -0.05f}, {0.3f, -0.3f}, {0.85f, 0.25f}, {0.6f, 0.5f}}, true, true);
+        g.line(0.6f, 0.5f, 0.85f, 0.85f);
+        break;
     case ToolId::SculptMask:
         g.circle(0, 0, 0.7f, false);
         g.poly({{-0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, -0.5f}, {-0.5f, -0.5f}}, true, false);

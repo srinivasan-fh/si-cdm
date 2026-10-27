@@ -8,6 +8,7 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <map>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -543,6 +544,16 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 for (const Vertex& v : b.mesh.vertices) putF32(mask, v.mask);
                 mesh.set("mask_b64", base64(mask));
             }
+            if (std::any_of(b.mesh.vertices.begin(), b.mesh.vertices.end(), [](const Vertex& v) { return painted(v.color); })) {
+                std::vector<unsigned char> col;
+                for (const Vertex& v : b.mesh.vertices) putU32(col, v.color);
+                mesh.set("colors_b64", base64(col));
+            }
+            if (b.mesh.hasGroups()) {
+                std::vector<unsigned char> grp;
+                for (std::uint32_t g : b.mesh.groups) putU32(grp, g);
+                mesh.set("groups_b64", base64(grp));
+            }
             jb.set("mesh", mesh);
             binaryMeshes = true;
             if (b.exact()) jb.set("brep_step", writeStep({StepPart{b.name, std::const_pointer_cast<Brep>(b.brep), ""}}, b.name + ".step"));
@@ -560,6 +571,16 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 Json mask = Json::array(); // the sculpt mask, only when there is one
                 for (const Vertex& v : b.mesh.vertices) mask.push(v.mask);
                 mesh.set("mask", mask);
+            }
+            if (std::any_of(b.mesh.vertices.begin(), b.mesh.vertices.end(), [](const Vertex& v) { return painted(v.color); })) {
+                Json col = Json::array(); // polypaint, 0xAABBGGRR per vertex
+                for (const Vertex& v : b.mesh.vertices) col.push(static_cast<double>(v.color));
+                mesh.set("colors", col);
+            }
+            if (b.mesh.hasGroups()) {
+                Json grp = Json::array(); // polygroups, per triangle
+                for (std::uint32_t g : b.mesh.groups) grp.push(static_cast<double>(g));
+                mesh.set("groups", grp);
             }
             jb.set("mesh", mesh);
             // Exact geometry kept with the mesh it belongs to (as a STEP record).
@@ -806,6 +827,19 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             const auto& e = m["edges"].items();
             for (std::size_t i = 0; i + 2 < e.size(); i += 3)
                 b.mesh.edgeVertices.push_back({e[i].asFloat(), e[i + 1].asFloat(), e[i + 2].asFloat()});
+            // Polypaint and polygroups (either encoding); ones that don't fit the mesh are dropped.
+            std::vector<std::uint32_t> colors, groups;
+            std::vector<unsigned char> raw;
+            if (m["colors_b64"].isString() && unbase64(m["colors_b64"].asString(), raw))
+                for (std::size_t i = 0; i + 4 <= raw.size(); i += 4) colors.push_back(getU32(&raw[i]));
+            for (const Json& c : m["colors"].items()) colors.push_back(static_cast<std::uint32_t>(c.asNumber(0)));
+            raw.clear();
+            if (m["groups_b64"].isString() && unbase64(m["groups_b64"].asString(), raw))
+                for (std::size_t i = 0; i + 4 <= raw.size(); i += 4) groups.push_back(getU32(&raw[i]));
+            for (const Json& g : m["groups"].items()) groups.push_back(static_cast<std::uint32_t>(g.asNumber(0)));
+            if (colors.size() == b.mesh.vertices.size())
+                for (std::size_t i = 0; i < colors.size(); ++i) b.mesh.vertices[i].color = colors[i];
+            if (groups.size() * 3 == b.mesh.indices.size()) b.mesh.groups = std::move(groups);
             b.name = jb["name"].asString("Mesh");
             b.kind = "mesh";
             if (jb["brep_step"].isString()) {
@@ -1025,10 +1059,18 @@ bool exportObj(const Scene& scene, const std::string& path, std::string* error) 
         std::string name = b.name;
         std::replace(name.begin(), name.end(), ' ', '_');
         out += "o " + name + "\n";
+        // Polypaint as vertex colours after the position (read by ZBrush, Blender, MeshLab).
+        const bool paint = std::any_of(b.mesh.vertices.begin(), b.mesh.vertices.end(), [](const Vertex& v) { return painted(v.color); });
         for (const Vertex& v : b.mesh.vertices) {
             const Vec3 p = v.position + b.offset;
-            std::snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", static_cast<double>(p.x), static_cast<double>(p.y),
-                          static_cast<double>(p.z));
+            if (paint) {
+                const Vec3 c = painted(v.color) ? unpackColor(v.color) : b.color;
+                std::snprintf(line, sizeof(line), "v %.6f %.6f %.6f %.4f %.4f %.4f\n", static_cast<double>(p.x), static_cast<double>(p.y),
+                              static_cast<double>(p.z), static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(c.z));
+            } else {
+                std::snprintf(line, sizeof(line), "v %.6f %.6f %.6f\n", static_cast<double>(p.x), static_cast<double>(p.y),
+                              static_cast<double>(p.z));
+            }
             out += line;
         }
         for (const Vertex& v : b.mesh.vertices) {
@@ -1037,7 +1079,13 @@ bool exportObj(const Scene& scene, const std::string& path, std::string* error) 
             out += line;
         }
         const auto& idx = b.mesh.indices;
+        const bool grouped = b.mesh.hasGroups();
+        std::uint32_t lastGroup = 0xFFFFFFFFu;
         for (std::size_t i = 0; i + 2 < idx.size(); i += 3) {
+            if (grouped && b.mesh.groups[i / 3] != lastGroup) { // polygroups as OBJ groups (ZBrush reads them back as polygroups)
+                lastGroup = b.mesh.groups[i / 3];
+                out += "g " + name + "_" + std::to_string(lastGroup) + "\n";
+            }
             const std::size_t a = base + idx[i], c1 = base + idx[i + 1], c2 = base + idx[i + 2];
             std::snprintf(line, sizeof(line), "f %zu//%zu %zu//%zu %zu//%zu\n", a, a, c1, c1, c2, c2);
             out += line;
@@ -1057,6 +1105,9 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
     const auto data = readFile(path, error);
     if (!data) return std::nullopt;
     std::vector<Vec3> tri;
+    std::vector<Vec3> triColor;          // OBJ: per corner (negative: none)
+    std::vector<std::uint32_t> triGroup; // OBJ: per triangle
+    std::size_t groupCount = 0;
 
     if (kind == FileKind::Stl) {
         const std::string& d = *data;
@@ -1085,18 +1136,28 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
             tri.resize(tri.size() / 3 * 3);
         }
     } else if (kind == FileKind::Obj) {
-        std::vector<Vec3> pos;
+        std::vector<Vec3> pos, col;
         std::istringstream in(*data);
         std::string line;
+        std::map<std::string, std::uint32_t> groupIds;
+        std::uint32_t group = 0;
         while (std::getline(in, line)) {
             std::istringstream ls(line);
             std::string tag;
             ls >> tag;
             if (tag == "v") {
-                Vec3 v;
-                if (ls >> v.x >> v.y >> v.z) pos.push_back(v);
+                Vec3 v, c{-1, -1, -1};
+                if (ls >> v.x >> v.y >> v.z) {
+                    pos.push_back(v);
+                    if (ls >> c.x >> c.y >> c.z) col.resize(pos.size(), Vec3{-1, -1, -1}), col.back() = c; // a vertex colour
+                }
+            } else if (tag == "g") {
+                std::string name;
+                std::getline(ls, name);
+                group = groupIds.try_emplace(name, static_cast<std::uint32_t>(groupIds.size())).first->second;
             } else if (tag == "f") {
                 std::vector<Vec3> poly;
+                std::vector<Vec3> polyCol;
                 std::string tok;
                 while (ls >> tok) {
                     const long k = std::strtol(tok.c_str(), nullptr, 10); // "a/b/c" -> a
@@ -1106,14 +1167,20 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
                         return std::nullopt;
                     }
                     poly.push_back(pos[static_cast<std::size_t>(i)]);
+                    polyCol.push_back(static_cast<std::size_t>(i) < col.size() ? col[static_cast<std::size_t>(i)] : Vec3{-1, -1, -1});
                 }
                 for (std::size_t j = 1; j + 1 < poly.size(); ++j) { // fan
                     tri.push_back(poly[0]);
                     tri.push_back(poly[j]);
                     tri.push_back(poly[j + 1]);
+                    triColor.push_back(polyCol[0]);
+                    triColor.push_back(polyCol[j]);
+                    triColor.push_back(polyCol[j + 1]);
+                    triGroup.push_back(group);
                 }
             }
         }
+        groupCount = groupIds.size();
     } else {
         setError(error, "Unsupported mesh format: " + lowerExt(path));
         return std::nullopt;
@@ -1123,7 +1190,12 @@ std::optional<Body> importMesh(const std::string& path, std::string* error) {
         setError(error, "No triangles found in " + path);
         return std::nullopt;
     }
-    return meshBody(stemOf(path), meshFromTriangles(tri));
+    MeshData mesh = meshFromTriangles(tri); // a vertex per corner, in order
+    if (triColor.size() == mesh.vertices.size())
+        for (std::size_t i = 0; i < triColor.size(); ++i)
+            if (triColor[i].x >= 0) mesh.vertices[i].color = packColor(triColor[i]);
+    if (groupCount > 1 && triGroup.size() * 3 == mesh.indices.size()) mesh.groups = std::move(triGroup);
+    return meshBody(stemOf(path), std::move(mesh));
 }
 
 // ---------------------------------------------------------------------------

@@ -457,6 +457,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::Separator();
             for (DisplayMode m : kDisplayModes)
                 if (ImGui::MenuItem(displayModeLabel(m), nullptr, vp.displayMode == m)) vp.displayMode = m;
+            if (ImGui::MenuItem("Polygroups", nullptr, vp.showPolygroups)) vp.showPolygroups = !vp.showPolygroups;
         }
         ImGui::Separator();
         if (ImGui::BeginMenu("Units")) {
@@ -964,6 +965,21 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             ImGui::Combo("##falloff", &st.sculptFalloff, kFalloffs, 5);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush falloff from its centre to its rim");
         }
+        if (tool.id == ToolId::SculptPaint) {
+            ImGui::SameLine();
+            ImGui::ColorEdit3("##paintcolour", st.sculptColor, ImGuiColorEditFlags_NoInputs);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The colour the brush lays on");
+            char rgb[64];
+            std::snprintf(rgb, sizeof rgb, "%.3f,%.3f,%.3f", static_cast<double>(st.sculptColor[0]), static_cast<double>(st.sculptColor[1]),
+                          static_cast<double>(st.sculptColor[2]));
+            ImGui::SameLine();
+            if (ImGui::Button("Fill")) cmd.commands.push_back(std::string("PAINT FILL ") + rgb);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paint the whole selected body (the mask holds it off)");
+            ImGui::SameLine();
+            if (ImGui::Button("Clear paint")) cmd.commands.push_back("PAINT CLEAR");
+            ImGui::SameLine();
+            if (ImGui::Button("Groups by paint")) cmd.commands.push_back("POLYGROUP PAINT");
+        }
         if (tool.id == ToolId::SculptMask) {
             ImGui::SameLine();
             if (ImGui::Button("Clear mask")) cmd.commands.push_back("MASK CLEAR");
@@ -971,6 +987,12 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             if (ImGui::Button("Invert")) cmd.commands.push_back("MASK INVERT");
             ImGui::SameLine();
             if (ImGui::Button("Blur")) cmd.commands.push_back("MASK SMOOTH");
+            ImGui::SameLine();
+            if (ImGui::Button("To group")) cmd.commands.push_back("POLYGROUP MASK");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the masked faces a polygroup of their own");
+            ImGui::SameLine();
+            if (ImGui::Button("Auto groups")) cmd.commands.push_back("POLYGROUP AUTO");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Polygroups from the faces' angles (View > Polygroups shows them)");
         }
         ImGui::SameLine();
         ImGui::Checkbox("Dyntopo", &st.sculptRefine);

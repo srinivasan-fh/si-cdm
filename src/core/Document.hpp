@@ -66,6 +66,7 @@ public:
     virtual void setProjection(Projection p) = 0;
     virtual void setDisplay(int mode) = 0; // 0 shaded, 1 shaded+edges, 2 wireframe, 3 hidden line
     virtual void setGrid(std::optional<bool> on) = 0;  // nullopt toggles
+    virtual bool setPolygroups(std::optional<bool> on) { (void)on; return false; } // polygroup colours; nullopt toggles
     virtual void setPanel(std::optional<bool> on) = 0; // Model panel
     // Open the panel on a page (0 Model, 1 Library, 2 CAM), or a window (3 CAM tools, 4 machine,
     // 5 user guide, 6 preferences, 7 licence).

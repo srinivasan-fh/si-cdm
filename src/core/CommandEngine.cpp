@@ -725,7 +725,8 @@ bool historyCommand(const std::string& cmd) {
                                          "PLANE",    "IMPORT",  "MOTION",  "POSE",     "GESTURE",   "PHYSICS", "CONSTRAIN", "DIM",
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
-                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE"};
+                                         "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
+                                         "PAINT", "POLYGROUP"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -771,6 +772,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (!historyCommand(cmd)) return;
     if ((cmd == "PLANE" || cmd == "REFAXIS" || cmd == "REFPOINT") && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (cmd == "SHEETMETAL" && !pc.args.empty() && (iequal(pc.args[0], "edges") || iequal(pc.args[0], "info"))) return;
+    if (cmd == "POLYGROUP" && std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); })) return;
     if (cmd == "FEA" && std::none_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "plot") || iequal(w, "deform") || iequal(w, "mode"); }))
         return; // a report only: the history keeps analyses that leave a plot
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
@@ -2572,10 +2574,97 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         markChanged(doc);
         return out;
     }
+    if (cmd == "PAINT" || cmd == "POLYGROUP") {
+        // PAINT [body] FILL colour [GROUP n] | CLEAR      (the PAINT brush: SCULPT [body] PAINT AT ... COLOR c)
+        // POLYGROUP [body] AUTO [ANGLE deg] | ISLANDS | MASK | PAINT | CLEAR | LIST
+        if (cmd == "POLYGROUP" && a.size() == 1 && (iequal(a[0], "show") || iequal(a[0], "hide"))) { // the view's group colours
+            if (!view || !view->setPolygroups(iequal(a[0], "show"))) return out.fail("Showing polygroups needs the app window");
+            out.say(iequal(a[0], "show") ? "Polygroups shown (a colour per group)" : "Polygroups hidden");
+            return out;
+        }
+        static const char* const kWords[] = {"fill", "clear", "group", "auto", "normals", "angle", "islands", "mask", "masked", "paint", "list", "at"};
+        auto isWord = [&](std::size_t k) {
+            if (quotedArg(k)) return false;
+            const std::string w = lower(a[k]);
+            for (const char* q : kWords)
+                if (w == q) return true;
+            return false;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        if (!a.empty() && quotedArg(0)) nameWords.push_back(a[i++]);
+        else
+            while (i < a.size() && !isWord(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (body.mesh.indices.empty()) return out.fail(body.name + " has no surface");
+        if (i >= a.size()) return usage();
+        const std::string op = lower(a[i++]);
+        if (cmd == "POLYGROUP" && op == "list") {
+            const auto sizes = groupSizes(body);
+            if (sizes.empty()) out.say(body.name + " has no polygroups (POLYGROUP AUTO makes them)");
+            else out.say(body.name + fmt(": %g polygroups", static_cast<double>(sizes.size())));
+            for (const auto& [g, n] : sizes) out.say(fmt("  group %g: ", static_cast<double>(g)) + fmt("%g faces", static_cast<double>(n)));
+            return out;
+        }
+        doc.scene.pushUndo(cmd + " " + body.name);
+        std::string done;
+        if (cmd == "PAINT") {
+            if (op == "clear") {
+                clearPaint(body);
+                done = "paint cleared";
+            } else if (op == "fill") {
+                Vec3 rgb;
+                if (i >= a.size() || !parseColorText(a[i], rgb)) return doc.scene.undo(), out.fail("FILL needs a colour: a name (red, skin...), #RRGGBB or r,g,b");
+                ++i;
+                int group = -1;
+                if (i + 1 < a.size() && iequal(a[i], "group")) {
+                    if (iequal(a[i + 1], "at") && i + 2 < a.size()) {
+                        const auto p = parseVec3(a[i + 2]);
+                        if (!p) return doc.scene.undo(), out.fail("GROUP AT needs x,y,z");
+                        group = groupNear(body, *p);
+                    } else if (const auto n = parseNumber(a[i + 1])) group = static_cast<int>(*n);
+                    if (group < 0) return doc.scene.undo(), out.fail("No such polygroup");
+                }
+                if (!paintBody(body, rgb, group)) return doc.scene.undo(), out.fail(group >= 0 ? "No faces in that polygroup" : "Nothing to paint");
+                done = "painted" + (group >= 0 ? fmt(" polygroup %g", static_cast<double>(group)) : std::string());
+            } else return doc.scene.undo(), usage();
+            done += fmt(", %.0f%% of the surface painted", 100.0 * paintedFraction(body));
+        } else {
+            int n = 0;
+            if (op == "auto" || op == "normals") {
+                float angle = 20.0f;
+                if (i + 1 < a.size() && iequal(a[i], "angle"))
+                    if (const auto v = parseNumber(a[i + 1])) angle = static_cast<float>(*v);
+                n = groupBody(body, GroupBy::Normals, angle);
+                done = fmt("grouped by faces turning less than %g degrees", angle);
+            } else if (op == "islands") {
+                n = groupBody(body, GroupBy::Islands);
+                done = "grouped by connected pieces";
+            } else if (op == "mask" || op == "masked") {
+                n = groupBody(body, GroupBy::Mask);
+                done = "the masked faces made a group";
+            } else if (op == "paint") {
+                n = groupBody(body, GroupBy::Paint);
+                done = "grouped by paint colour";
+            } else if (op == "clear") {
+                clearGroups(body);
+                done = "polygroups cleared";
+            } else return doc.scene.undo(), usage();
+            if (op != "clear") done += fmt(": %g polygroups", static_cast<double>(n));
+            if (op != "clear" && view) view->setPolygroups(true); // show what was made
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        out.say(body.name + ": " + done);
+        return out;
+    }
     if (cmd == "MASK" || cmd == "SUBDIVIDE" || cmd == "SYMMETRIZE" || cmd == "DECIMATE") {
         // MASK [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]   SUBDIVIDE [body] [LEVELS n]
         // SYMMETRIZE [body] [X|Y|Z] [-]                          DECIMATE [body] TO n | RATIO r
-        static const char* const kWords[] = {"clear", "invert", "smooth", "blur", "grow", "shrink", "all", "levels", "level",
+        static const char* const kWords[] = {"clear", "invert", "smooth", "blur", "grow", "shrink", "all", "levels", "level", "group",
                                              "to", "ratio", "x", "y", "z", "+x", "-x", "+y", "-y", "+z", "-z", "-", "+"};
         auto isWord = [&](std::size_t k) {
             if (quotedArg(k)) return false;
@@ -2601,7 +2690,24 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         std::string error, done;
         doc.scene.pushUndo(cmd + " " + body.name);
         bool ok = true;
-        if (cmd == "MASK") {
+        if (cmd == "MASK" && !rest.empty() && rest[0] == "group") { // MASK [body] GROUP n | GROUP AT x,y,z [INVERT]
+            int g = -1;
+            bool inv = false;
+            for (std::size_t k = 1; k < rest.size(); ++k) {
+                if (rest[k] == "invert") inv = true;
+                else if (rest[k] == "at" && k + 1 < rest.size()) {
+                    const auto p = parseVec3(rest[++k]);
+                    if (!p) return doc.scene.undo(), out.fail("AT needs x,y,z");
+                    g = groupNear(body, *p);
+                } else if (const auto n = parseNumber(rest[k])) g = static_cast<int>(*n);
+            }
+            if (g < 0 || !maskGroup(body, static_cast<std::uint32_t>(g), inv)) {
+                const std::string why = body.mesh.hasGroups() ? "No such polygroup (POLYGROUP LIST)" : body.name + " has no polygroups (POLYGROUP AUTO makes them)";
+                doc.scene.undo(); // (body is gone with it)
+                return out.fail(why);
+            }
+            done = fmt("polygroup %g masked", static_cast<double>(g)) + (inv ? " (the rest)" : "") + fmt(", %.0f%% masked", 100.0 * maskedFraction(body));
+        } else if (cmd == "MASK") {
             if (rest.empty()) return doc.scene.undo(), usage();
             const std::string& w = rest[0];
             const MaskOp op = w == "clear" ? MaskOp::Clear : w == "invert" ? MaskOp::Invert : w == "smooth" || w == "blur" ? MaskOp::Smooth
@@ -2695,7 +2801,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                                             "norefine", "move", "refine", "diameter", "d", "depth", "through", "box",
                                             "round", "ball", "width", "length", "angle", "path", "plane", "normal",
                                             "smaller", "cylinder", "height", "size", "fit", "cbore", "counterbore", "csink",
-                                            "countersink", "tapped", "tap", "thread", "flat"};
+                                            "countersink", "tapped", "tap", "thread", "flat", "color", "colour"};
         auto isKey = [&](const std::string& w) {
             const std::string k = lower(w);
             if (cmd == "SCULPT" && sculptBrushFromKey(k)) return true;
@@ -2790,6 +2896,8 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 ss.falloff = *f;
             } else if (k == "detail") {
                 if (!lengthArg(ss.detail, "DETAIL")) return out.fail("DETAIL needs a length");
+            } else if (k == "color" || k == "colour") {
+                if (i + 1 >= a.size() || !parseColorText(a[++i], ss.color)) return out.fail("COLOR is a name (red, skin...), #RRGGBB or r,g,b");
             } else if (k == "norefine") {
                 ss.refine = false;
             } else if (k == "move" || k == "dir" || k == "normal") {

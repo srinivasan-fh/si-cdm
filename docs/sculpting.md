@@ -7,10 +7,11 @@ redone (`UNDO`, `REDO`, or the buttons in the options bar).
 The toolset follows the common ground of the professional sculpting tools: ZBrush, Blender,
 3DCoat, Mudbox and Nomad Sculpt. It covers:
 
-- seventeen brushes;
+- eighteen brushes;
 - falloff curves;
 - mirror and radial symmetry;
 - masking;
+- polypaint and polygroups;
 - dynamic topology;
 - voxel remesh;
 - subdivision, symmetrize and decimation;
@@ -43,6 +44,7 @@ Drag over a body. **Ctrl** inverts the brush, **Shift** smooths with any brush, 
 | **Nudge** | Pushes the surface along itself in the stroke's direction | |
 | **Fill** | Raises the low spots up to the plane under the brush | Scrapes |
 | **Mask** | Paints a mask; masked surface (shown darker) holds still under every other brush | Unmasks |
+| **Paint** | Polypaint: lays colour on the surface; the mask holds it off | Paints the body's own colour back |
 
 ![A mask (the dark band) holds the surface still under a Draw stroke across it; a Snake Hook pulls out a strand](sculpt-tools.png)
 
@@ -96,6 +98,44 @@ scan.
 - Dabs are spaced a quarter radius apart along the stroke, each snapped to the surface.
 
 Hard CAD edges stay crisp in the shading: normals are smoothed only across edges that turn less than 40°.
+
+## Polypaint and polygroups
+
+![A painted sphere, and a box shown in its polygroups](sculpt-paint.png)
+
+**Polypaint** colours the surface vertex by vertex. A painted model carries its colour into
+renders, OBJ files and 3D printers that print in colour.
+
+- **The Paint brush** (the brush beside Mask, with a colour box in the options bar) lays its
+  colour on, blending by strength and falloff. **Ctrl** paints the body's own colour back.
+- **Fill:** `PAINT [body] FILL colour` paints the whole body, or one polygroup with
+  `GROUP n` or `GROUP AT x,y,z`. `PAINT CLEAR` takes the paint off.
+- **The mask holds paint off,** as far as it is masked, under the brush and under a fill.
+- **Colours** are names (red, green, blue, yellow, orange, purple, pink, cyan, white, black,
+  grey, brown, skin, bone, gold, silver, steel, copper, clay), `#RRGGBB`, or `r,g,b` (0 to 1,
+  or 0 to 255).
+- **Resolution:** paint is as fine as the surface is divided. Refine or subdivide a coarse
+  body before painting detail; dynamic topology carries the paint with the surface as you
+  sculpt on.
+
+**Polygroups** give each face a group number: a way to pick out parts of a surface.
+
+- `POLYGROUP AUTO [ANGLE 20]` groups faces that meet at less than the angle: a box gets six
+  groups, a cylinder three.
+- `POLYGROUP ISLANDS` groups each connected piece, `POLYGROUP MASK` makes the masked faces a
+  group of their own, and `POLYGROUP PAINT` groups regions of one colour.
+- `MASK GROUP n` (or `MASK GROUP AT x,y,z`) masks exactly one group, ready to sculpt the rest
+  or that group alone (`INVERT`).
+- **View > Polygroups** (or `POLYGROUP SHOW` / `HIDE`) draws each group in its own colour.
+- Groups follow the faces through dynamic topology, subdivision and decimation.
+
+**Kept and exchanged:**
+
+- Paint, groups and masks are saved in the project.
+- OBJ export writes paint as vertex colours (`v x y z r g b`) and groups as OBJ groups
+  (`g`). ZBrush, Blender and MeshLab read both, and OBJ import reads them back.
+- A painted or grouped CAD body becomes a mesh body of the same shape. It keeps its exact
+  geometry for STEP.
 
 ## Voxel remesh
 
@@ -248,8 +288,9 @@ printing, or to CAM for CNC machining.
 ```text
 SCULPT [body] brush [AT] x,y,z [x,y,z...] [RADIUS r] [STRENGTH 0-1] [INVERT] [SYMMETRY [X|Y|Z...]]
        [RADIAL n [X|Y|Z]] [FALLOFF smooth|sphere|sharp|linear|constant] [DETAIL d] [NOREFINE] [MOVE dx,dy,dz]
+       [COLOR colour]
        brushes: DRAW CLAY CLAYSTRIPS LAYER CARVE INFLATE BLOB GRAB SNAKEHOOK NUDGE PINCH CREASE
-                SMOOTH FLATTEN SCRAPE FILL MASK
+                SMOOTH FLATTEN SCRAPE FILL MASK PAINT
 SCULPT [body] REFINE edge-length           refine the whole body before sculpting
 SCULPT LIST
 HOLE    [body] [AT] x,y,z [DIR x,y,z] DIAMETER d [DEPTH h | THROUGH]
@@ -263,6 +304,9 @@ REMESH  [body ["other"...]] [VOXEL v] [BLEND b] [SMOOTH s]   voxel remesh: fuse 
 SCALE   body sx,sy,sz                      stretch along x, y, z (about the body's origin)
 ROTATE  body rx,ry,rz                      orient: degrees about X, then Y, then Z
 MASK    [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]   edit the mask (the MASK brush paints it)
+MASK    [body] GROUP n | GROUP AT x,y,z [INVERT]       mask one polygroup
+PAINT   [body] FILL colour [GROUP n | GROUP AT x,y,z] | CLEAR    polypaint (the PAINT brush paints strokes)
+POLYGROUP [body] AUTO [ANGLE deg] | ISLANDS | MASK | PAINT | CLEAR | LIST | SHOW | HIDE
 SUBDIVIDE [body] [LEVELS n]                Loop subdivision
 SYMMETRIZE [body] [X|Y|Z] [-]              mirror the + side (or the - side) across the body's origin
 DECIMATE [body] TO n | RATIO r             reduce to about n triangles
@@ -277,4 +321,6 @@ whether the result is closed.
 
 Over MCP: the `sculpt` tool (`operation` = a brush name, `hole`, `pocket`, `channel`, `trim`, `boss`,
 `boolean`, `refine`, `remesh`, `subdivide`, `symmetrize`, `decimate`, `mask_clear`, `mask_invert`,
-`mask_smooth`, `undo` or `redo`; `symmetry_axes`, `radial` and `falloff` for the brushes).
+`mask_smooth`, `mask_group`, `paint_fill`, `paint_clear`, `polygroup_auto`, `polygroup_islands`,
+`polygroup_mask`, `polygroup_paint`, `polygroup_clear`, `undo` or `redo`; `symmetry_axes`, `radial`,
+`falloff` and `color` for the brushes).

@@ -705,6 +705,7 @@ SculptBrush brushOf(ToolId t) {
     case ToolId::SculptSnakeHook: return SculptBrush::SnakeHook;
     case ToolId::SculptNudge: return SculptBrush::Nudge;
     case ToolId::SculptMask: return SculptBrush::Mask;
+    case ToolId::SculptPaint: return SculptBrush::Paint;
     default: return SculptBrush::Draw;
     }
 }
@@ -754,6 +755,7 @@ bool Application::beginSculpt(float x, float y) {
     s.falloff = static_cast<SculptFalloff>(std::clamp(m_uiState.sculptFalloff, 0, 4));
     s.refine = m_uiState.sculptRefine;
     s.detail = std::max(m_uiState.sculptDetail, 0.0f);
+    s.color = {m_uiState.sculptColor[0], m_uiState.sculptColor[1], m_uiState.sculptColor[2]};
     m_sculptSettings = s;
     m_sculptBody = hit->body;
     m_sculptName = body.name;
@@ -3035,6 +3037,11 @@ void Application::setProjection(Projection p) { m_cam3D.setProjection(p); }
 void Application::setDisplay(int mode) { m_vp3D.displayMode = static_cast<DisplayMode>(std::clamp(mode, 0, 3)); }
 
 void Application::setGrid(std::optional<bool> on) { viewport().showGrid = on.value_or(!viewport().showGrid); }
+
+bool Application::setPolygroups(std::optional<bool> on) {
+    m_vp3D.showPolygroups = on.value_or(!m_vp3D.showPolygroups);
+    return true;
+}
 
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
 

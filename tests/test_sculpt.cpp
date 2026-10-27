@@ -128,12 +128,13 @@ TEST_CASE("brushes add, remove, push, pinch and smooth clay") {
         case SculptBrush::Carve:
         case SculptBrush::Crease: CHECK(v < v0 - 100); break;
         case SculptBrush::Grab: CHECK(b.bounds().max.z > 101.0f); break;
-        case SculptBrush::Mask: CHECK_NEAR(v, v0, 1e-3); break; // paints the mask, moves nothing
+        case SculptBrush::Mask:
+        case SculptBrush::Paint: CHECK_NEAR(v, v0, 1e-3); break; // paints the mask or colour, moves nothing
         default: CHECK(std::fabs(v - v0) < v0 * 0.01); break; // reshapes without much volume change
         }
         // The flat 12-triangle block was refined under the brush (except a grab of no
-        // vertices, and the mask, which needs no new triangles).
-        if (brush != SculptBrush::Grab && brush != SculptBrush::Mask) CHECK(b.mesh.indices.size() / 3 > 100);
+        // vertices, and the mask and paint, which need no new triangles).
+        if (brush != SculptBrush::Grab && brush != SculptBrush::Mask && brush != SculptBrush::Paint) CHECK(b.mesh.indices.size() / 3 > 100);
     }
 
     // Inverting a brush reverses it.
@@ -729,4 +730,133 @@ TEST_CASE("undo takes back primitives, imports and moves; a command that changes
     CHECK(e.state.history.size() == steps - 1);
     REQUIRE(run(e, "REDO").ok);
     CHECK(e.state.history.size() == steps);
+}
+
+TEST_CASE("polypaint: the brush, fills, the mask holding it off, kept through dyntopo, saved and exported") {
+    Vec3 c;
+    CHECK(parseColorText("red", c) && c.x > 0.8f && c.y < 0.2f);
+    CHECK(parseColorText("#00FF80", c) && c.x == 0.0f && c.y == 1.0f && std::fabs(c.z - 128.0f / 255.0f) < 1e-6f);
+    CHECK(parseColorText("0.5,0.25,1", c) && c.y == 0.25f);
+    CHECK(parseColorText("255,0,0", c) && c.x == 1.0f);
+    CHECK(!parseColorText("nonsense", c));
+    CHECK(!parseColorText("1,2", c));
+    CHECK(unpackColor(packColor({1, 0.5f, 0})).y > 0.49f);
+
+    Document d;
+    REQUIRE(run(d, "SPHERE 20 @0,0,0").ok);
+    const std::string name = d.scene.bodies().back().name;
+    REQUIRE(run(d, "SCULPT \"" + name + "\" REFINE 3").ok);
+    // A stroke of red across the top: painted there, not on the far side.
+    REQUIRE(run(d, "SCULPT \"" + name + "\" PAINT AT -10,0,40 10,0,40 RADIUS 8 STRENGTH 1 COLOR red").ok);
+    const Body* b = &d.scene.bodies().back();
+    CHECK(b->kind == "mesh");
+    int red = 0, plain = 0;
+    for (const Vertex& v : b->mesh.vertices) {
+        const Vec3 q = unpackColor(v.color);
+        if (v.position.z > 38 && std::fabs(v.position.x) < 6) red += q.x > 0.7f && q.y < 0.3f;
+        if (v.position.z < 5) plain += std::fabs(q.x - b->color.x) < 0.02f && std::fabs(q.z - b->color.z) < 0.02f;
+    }
+    CHECK(red > 5);
+    CHECK(plain > 5);
+    // Dynamic topology under a clay stroke keeps the paint where it was.
+    REQUIRE(run(d, "SCULPT \"" + name + "\" CLAY AT 0,0,40 RADIUS 6 STRENGTH 0.5").ok);
+    b = &d.scene.bodies().back();
+    int stillRed = 0;
+    for (const Vertex& v : b->mesh.vertices)
+        if (v.position.z > 38 && std::fabs(v.position.x) < 4) stillRed += unpackColor(v.color).x > 0.6f && unpackColor(v.color).y < 0.4f;
+    CHECK(stillRed > 5);
+    // A fill held off by the mask: the masked top keeps its red.
+    REQUIRE(run(d, "MASK \"" + name + "\" CLEAR").ok);
+    REQUIRE(run(d, "SCULPT \"" + name + "\" MASK AT 0,0,40 RADIUS 6 STRENGTH 1").ok);
+    REQUIRE(run(d, "PAINT \"" + name + "\" FILL blue").ok);
+    b = &d.scene.bodies().back();
+    int blue = 0, kept = 0;
+    for (const Vertex& v : b->mesh.vertices) {
+        const Vec3 q = unpackColor(v.color);
+        if (v.mask >= 0.99f) kept += q.z < 0.5f;
+        if (v.mask == 0.0f) blue += q.z > 0.8f;
+    }
+    CHECK(kept > 0);
+    CHECK(blue > 100);
+    // Saved with the project and read back.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_paint.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene scene;
+    ProjectState state;
+    REQUIRE(loadProject(scene, state, path, &err));
+    REQUIRE(scene.bodies().back().mesh.vertices.size() == b->mesh.vertices.size());
+    bool same = true;
+    for (std::size_t i = 0; i < b->mesh.vertices.size(); ++i) same = same && scene.bodies().back().mesh.vertices[i].color == b->mesh.vertices[i].color;
+    CHECK(same);
+    std::filesystem::remove(path);
+    // OBJ: vertex colours after the positions, read back.
+    const std::string obj = (std::filesystem::temp_directory_path() / "sicdm_paint.obj").string();
+    REQUIRE(run(d, "EXPORT \"" + obj + "\"").ok);
+    REQUIRE(run(d, "IMPORT \"" + obj + "\"").ok);
+    int blueBack = 0;
+    for (const Vertex& v : d.scene.bodies().back().mesh.vertices) blueBack += painted(v.color) && unpackColor(v.color).z > 0.8f;
+    CHECK(blueBack > 100);
+    std::filesystem::remove(obj);
+    REQUIRE(run(d, "PAINT \"" + name + "\" CLEAR").ok);
+    CHECK(paintedFraction(d.scene.bodies()[0]) == 0.0f);
+    CHECK(!run(d, "PAINT \"" + name + "\" FILL notacolour").ok);
+}
+
+TEST_CASE("polygroups: by angle, pieces, mask and paint; masking a group; kept through sculpting, saved and exported") {
+    Document d;
+    REQUIRE(run(d, "BOX 40 30 20 @0,0,0").ok);
+    const std::string name = d.scene.bodies().back().name;
+    REQUIRE(run(d, "POLYGROUP \"" + name + "\" AUTO").ok);
+    CHECK(groupSizes(d.scene.bodies().back()).size() == 6); // a box: six faces
+    CHECK(d.scene.bodies().back().exact());                 // the same shape, still exact
+    // Mask a group: the top (z = 20) and only it.
+    const int top = groupNear(d.scene.bodies().back(), {0, 0, 20});
+    REQUIRE(top >= 0);
+    REQUIRE(run(d, "MASK \"" + name + "\" GROUP AT 0,0,20").ok);
+    for (const Vertex& v : d.scene.bodies().back().mesh.vertices) CHECK((v.mask > 0.5f) == (v.position.z > 19.99f));
+    // Groups follow the faces through dynamic topology.
+    REQUIRE(run(d, "MASK \"" + name + "\" CLEAR").ok);
+    REQUIRE(run(d, "SCULPT \"" + name + "\" DRAW AT 0,0,20 RADIUS 8 STRENGTH 0.5").ok);
+    const Body& b = d.scene.bodies().back();
+    REQUIRE(b.mesh.hasGroups());
+    CHECK(groupSizes(b).size() == 6);
+    CHECK(b.mesh.indices.size() / 3 > 12);
+    for (std::size_t t = 0; t < b.mesh.groups.size(); ++t) { // a face low on the sides is never in the top's group
+        float z = 0;
+        for (int k = 0; k < 3; ++k) z += b.mesh.vertices[b.mesh.indices[t * 3 + static_cast<std::size_t>(k)]].position.z / 3;
+        if (z < 10) CHECK(b.mesh.groups[t] != static_cast<std::uint32_t>(top));
+    }
+    // The masked faces as one new group; paint regions; connected pieces.
+    REQUIRE(run(d, "SCULPT \"" + name + "\" REFINE 3").ok);
+    REQUIRE(run(d, "SCULPT \"" + name + "\" MASK AT 20,0,10 RADIUS 6 STRENGTH 1").ok);
+    REQUIRE(run(d, "POLYGROUP \"" + name + "\" MASK").ok);
+    CHECK(groupSizes(d.scene.bodies().back()).size() == 7);
+    REQUIRE(run(d, "PAINT \"" + name + "\" FILL red GROUP AT 0,0,-0.0").ok);
+    REQUIRE(run(d, "POLYGROUP \"" + name + "\" PAINT").ok);
+    CHECK(groupSizes(d.scene.bodies().back()).size() >= 2);
+    REQUIRE(run(d, "POLYGROUP \"" + name + "\" ISLANDS").ok);
+    CHECK(groupSizes(d.scene.bodies().back()).size() == 1);
+    REQUIRE(run(d, "POLYGROUP \"" + name + "\" AUTO ANGLE 30").ok);
+    const std::size_t groups = groupSizes(d.scene.bodies().back()).size();
+    CHECK(groups >= 6);
+    // Saved and read back; OBJ groups come back as polygroups.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_groups.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene scene;
+    ProjectState state;
+    REQUIRE(loadProject(scene, state, path, &err));
+    CHECK(scene.bodies().back().mesh.groups == d.scene.bodies().back().mesh.groups);
+    std::filesystem::remove(path);
+    const std::string obj = (std::filesystem::temp_directory_path() / "sicdm_groups.obj").string();
+    REQUIRE(run(d, "EXPORT \"" + obj + "\"").ok);
+    REQUIRE(run(d, "IMPORT \"" + obj + "\"").ok);
+    CHECK(groupSizes(d.scene.bodies().back()).size() == groups);
+    std::filesystem::remove(obj);
+    CHECK(run(d, "POLYGROUP \"" + name + "\" LIST").ok);
+    REQUIRE(run(d, "POLYGROUP \"" + name + "\" CLEAR").ok);
+    CHECK(!d.scene.bodies()[0].mesh.hasGroups());
+    CHECK(!run(d, "MASK \"" + name + "\" GROUP 0").ok); // no groups left
+    CHECK(!run(d, "POLYGROUP SHOW").ok);                // headless
 }

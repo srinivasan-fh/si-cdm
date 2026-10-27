@@ -60,6 +60,7 @@ public:
     void setProjection(Projection p) override;
     void setDisplay(int mode) override;
     void setGrid(std::optional<bool> on) override;
+    bool setPolygroups(std::optional<bool> on) override;
     void setPanel(std::optional<bool> on) override;
     void setPanelPage(int page) override;
     std::string describe() const override;

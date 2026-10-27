@@ -4,6 +4,7 @@
 #include "core/Mcp.hpp"
 #include "core/Motion.hpp"
 #include "core/Physics.hpp"
+#include "core/Sculpt.hpp"
 
 #include <filesystem>
 
@@ -377,4 +378,23 @@ TEST_CASE("MCP cad revolves, patterns, fillets, weighs and edits the history") {
     CHECK(r["content"][0]["text"].asString().find("REVOLVE") != std::string::npos);
     CHECK(tool(s, "cad", R"({"operation":"fillet"})")["isError"].asBool()); // no radius
     CHECK(tool(s, "cad", R"({"operation":"bend"})")["isError"].asBool());
+}
+
+TEST_CASE("MCP sculpt paints and groups a body") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "create_solid", R"({"kind":"box","width":40,"depth":30,"height":20,"name":"Clay"})")["isError"].asBool());
+    CHECK(!tool(s, "sculpt", R"({"operation":"refine","body":"Clay","detail":4})")["isError"].asBool());
+    CHECK(!tool(s, "sculpt", R"({"operation":"polygroup_auto","body":"Clay","angle":30})")["isError"].asBool());
+    CHECK(groupSizes(d.scene.bodies().back()).size() == 6);
+    CHECK(!tool(s, "sculpt", R"({"operation":"paint_fill","body":"Clay","color":"#ff0000","points":[[0,0,20]]})")["isError"].asBool());
+    CHECK(paintedFraction(d.scene.bodies().back()) > 0.05f);
+    CHECK(!tool(s, "sculpt", R"({"operation":"paint","body":"Clay","points":[[20,0,10]],"radius":5,"strength":1,"color":"blue"})")["isError"].asBool());
+    CHECK(!tool(s, "sculpt", R"({"operation":"mask_group","body":"Clay","group":0})")["isError"].asBool());
+    CHECK(maskedFraction(d.scene.bodies().back()) > 0.0f);
+    CHECK(tool(s, "sculpt", R"({"operation":"paint_fill","body":"Clay"})")["isError"].asBool()); // no colour
+    CHECK(!tool(s, "sculpt", R"({"operation":"paint_clear","body":"Clay"})")["isError"].asBool());
+    CHECK(paintedFraction(d.scene.bodies().back()) == 0.0f);
+    CHECK(!tool(s, "sculpt", R"({"operation":"polygroup_clear","body":"Clay"})")["isError"].asBool());
+    CHECK(!d.scene.bodies().back().mesh.hasGroups());
 }

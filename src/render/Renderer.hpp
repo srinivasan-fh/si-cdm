@@ -25,6 +25,7 @@ struct ViewportSettings {
     float gridStrength = 1.0f;
     bool sketchOnTop = false; // draw sketch curves over bodies (2D drawing view)
     std::vector<Vec3> sketchColors; // per curve, in place of sketchColor (constraint status); empty: all sketchColor
+    bool showPolygroups = false; // bodies with polygroups drawn a colour per group
 };
 
 // GPU-side copy of one body.
@@ -33,6 +34,7 @@ struct GpuMesh {
     GLuint edgeVao = 0, edgeVbo = 0;
     GLsizei indexCount = 0;
     GLsizei edgeVertexCount = 0;
+    GLuint groupTbo = 0, groupTex = 0; // polygroups, per triangle (a texture buffer)
 };
 
 class Renderer {

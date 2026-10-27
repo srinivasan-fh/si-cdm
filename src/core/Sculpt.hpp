@@ -37,7 +37,7 @@ struct Body;
 class Scene;
 
 enum class SculptBrush { Draw, Clay, Carve, Inflate, Grab, Pinch, Crease, Smooth, Flatten, Scrape,
-                         Layer, ClayStrips, Fill, Blob, SnakeHook, Nudge, Mask };
+                         Layer, ClayStrips, Fill, Blob, SnakeHook, Nudge, Mask, Paint };
 
 // How a brush's effect falls off from its centre to its rim.
 enum class SculptFalloff { Smooth, Sphere, Sharp, Linear, Constant };
@@ -62,6 +62,7 @@ struct SculptSettings {
     SculptFalloff falloff = SculptFalloff::Smooth;
     bool refine = true;      // dynamic topology: split long edges under the brush
     float detail = 0.0f;     // mm, longest edge left under the brush; 0 = radius / 4
+    Vec3 color{0.8f, 0.2f, 0.2f}; // Paint: the colour laid on (inverted: back to the body's own)
 };
 
 enum class MaskOp { Clear, Invert, Smooth, Grow, Shrink, All };
@@ -70,6 +71,33 @@ enum class MaskOp { Clear, Invert, Smooth, Grow, Shrink, All };
 void maskBody(Body& body, MaskOp op);
 // Fraction of the surface's vertices masked (0..1, weighted by the mask).
 float maskedFraction(const Body& body);
+
+// --- polypaint and polygroups -------------------------------------------------------------
+// They are kept on the body's mesh (a parametric body becomes a mesh body of the same
+// shape; its exact geometry stays).
+
+// A colour from words: a name (red, skin, steel...), #RRGGBB, or r,g,b (0..1, or 0..255
+// when any is above 1).
+bool parseColorText(const std::string& text, Vec3& rgb);
+// Fills the paint (held off by the mask, as far as it is masked); `group` >= 0: that
+// polygroup's faces only. False when there is nothing to paint.
+bool paintBody(Body& body, const Vec3& rgb, int group = -1);
+void clearPaint(Body& body);
+// The share of the surface's vertices painted (0..1).
+float paintedFraction(const Body& body);
+
+enum class GroupBy { Normals, Islands, Mask, Paint };
+// New polygroups: faces meeting at less than `angleDeg` (Normals), connected pieces
+// (Islands), the masked faces as one new group (Mask), or regions of one colour (Paint).
+// Returns how many groups there are.
+int groupBody(Body& body, GroupBy how, float angleDeg = 20.0f);
+void clearGroups(Body& body);
+// The polygroup of the face nearest a world point (-1: no groups).
+int groupNear(const Body& body, const Vec3& worldPoint);
+// The groups and how many faces each has.
+std::vector<std::pair<std::uint32_t, std::size_t>> groupSizes(const Body& body);
+// Masks exactly the faces of `group` (the rest unmasked; `invert`: the other way round).
+bool maskGroup(Body& body, std::uint32_t group, bool invert = false);
 
 // A welded, editable copy of a body's surface (world coordinates).
 class SculptMesh {
@@ -110,6 +138,10 @@ public:
     // Masks (per vertex, 0..1; empty: none).
     const std::vector<float>& mask() const noexcept { return m_mask; }
     void maskEdit(MaskOp op);
+    // Polypaint (per vertex, packed as Vertex::color; empty: none) and polygroups (per
+    // triangle; empty: none). They follow the surface through dynamic topology.
+    const std::vector<std::uint32_t>& colors() const noexcept { return m_color; }
+    const std::vector<std::uint32_t>& groups() const noexcept { return m_group; }
 
     // A stroke (dabs along the points, snapped to the surface) or a grab from
     // points[0] by `grabDelta`, run on the part of the surface it can reach.
@@ -159,6 +191,9 @@ private:
     float m_size = 1.0f; // bounding diagonal
     std::vector<float> m_mask;  // per vertex, or empty
     std::vector<float> m_layer; // Layer brush: how far each vertex has risen this stroke
+    std::vector<std::uint32_t> m_color; // polypaint, per vertex, or empty
+    std::vector<std::uint32_t> m_group; // polygroups, per triangle, or empty
+    Vec3 m_base{0.72f, 0.75f, 0.80f};   // the body's own colour (unpainted)
     // A window on a larger mesh: where each vertex came from there (kFresh: made
     // here), and the vertices on the cut border, which nothing may move or split.
     std::vector<std::uint32_t> m_from;

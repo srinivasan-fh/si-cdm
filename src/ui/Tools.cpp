@@ -89,6 +89,7 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::SculptSnakeHook, C::Sculpt, "Snake Hook", "", "Pull the surface out along the stroke, for horns, tentacles and strands.", true},
     {T::SculptNudge, C::Sculpt, "Nudge", "", "Push the surface along itself in the stroke's direction.", true},
     {T::SculptMask, C::Sculpt, "Mask", "", "Paint a mask: masked surface holds still under the other brushes. Ctrl unmasks.", true},
+    {T::SculptPaint, C::Sculpt, "Paint", "", "Polypaint: paint colour onto the surface (the mask holds it off). Ctrl paints the body's own colour back.", true},
 
     {T::CutHole, C::Cut, "Drill Hole", "", "Click a surface to drill a hole along its normal: through, or blind with a 118 deg tip.", true},
     {T::CutPocket, C::Cut, "Pocket", "", "Click a surface to hollow a rectangular, round or ball-end pocket.", true},
@@ -133,7 +134,7 @@ constexpr ToolId gSculptAdd[] = {T::SculptDraw, T::SculptClay, T::SculptClayStri
 constexpr ToolId gSculptGrab[] = {T::SculptGrab, T::SculptSnakeHook, T::SculptNudge};
 constexpr ToolId gSculptPinch[] = {T::SculptPinch, T::SculptCrease};
 constexpr ToolId gSculptSmooth[] = {T::SculptSmooth, T::SculptFlatten, T::SculptScrape, T::SculptFill};
-constexpr ToolId gSculptMask[] = {T::SculptMask};
+constexpr ToolId gSculptMask[] = {T::SculptMask, T::SculptPaint};
 constexpr ToolId gCutHole[] = {T::CutHole, T::CutPocket, T::CutChannel};
 constexpr ToolId gCutKnife[] = {T::CutKnife};
 constexpr ToolId gBoss[] = {T::AddBoss};

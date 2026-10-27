@@ -249,9 +249,10 @@ In the app: *Motion Study → Robots*. Details: [docs/robotics.md](docs/robotics
 
 Two sections at the bottom of the tool rail turn any body into digital clay and cut it like a CAD solid.
 
-- **Digital Sculpting:** 17 brushes: Draw, Clay, Clay Strips, Layer, Carve, Inflate, Blob, Grab, Snake
-  Hook, Nudge, Pinch, Crease, Smooth, Flatten, Scrape, Fill and Mask. Drag over a body; Ctrl inverts,
-  Shift smooths, `[` `]` resize. There are falloff curves, X / Y / Z and radial symmetry, and masking.
+- **Digital Sculpting:** 18 brushes: Draw, Clay, Clay Strips, Layer, Carve, Inflate, Blob, Grab, Snake
+  Hook, Nudge, Pinch, Crease, Smooth, Flatten, Scrape, Fill, Mask and Paint. Drag over a body; Ctrl inverts,
+  Shift smooths, `[` `]` resize. There are falloff curves, X / Y / Z and radial symmetry, masking,
+  polypaint and polygroups.
   The mesh refines itself under the brush (dynamic topology). Also: voxel remesh, Loop subdivision,
   symmetrize, decimate, undo and redo.
 - **Cuts & Booleans:** Drill Hole (through, or blind with a drill point), Pocket (box, round, ball end),

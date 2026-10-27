@@ -362,9 +362,14 @@ Json McpServer::toolDefinitions() {
         Json p = Json::object();
         p.set("operation", prop("string",
                                 "A brush: draw (pull; invert pushes), clay, claystrips, layer, carve, inflate, blob, grab, "
-                                "snakehook, nudge, pinch, crease, smooth, flatten, scrape, fill, mask -- or hole, pocket, "
+                                "snakehook, nudge, pinch, crease, smooth, flatten, scrape, fill, mask, paint (polypaint 'color') -- or hole, pocket, "
                                 "channel, trim (knife), boss (add volume), boolean, refine, remesh (voxel: fuse 'body' with "
-                                "'others'), subdivide, symmetrize, decimate, mask_clear, mask_invert, mask_smooth, undo, redo"));
+                                "'others'), subdivide, symmetrize, decimate, mask_clear, mask_invert, mask_smooth, mask_group, "
+                                "paint_fill, paint_clear, polygroup_auto, polygroup_islands, polygroup_mask, polygroup_paint, "
+                                "polygroup_clear, undo, redo"));
+        p.set("color", prop("string", "paint / paint_fill: a colour name (red, skin...), #RRGGBB or \"r,g,b\""));
+        p.set("group", prop("number", "paint_fill / mask_group: the polygroup (or give 'points' [[x,y,z]] near it)"));
+        p.set("angle", prop("number", "polygroup_auto: faces turning less than this many degrees share a group (default 20)"));
         p.set("body", prop("string", "Body to work on (default: the selection)"));
         p.set("points", prop("array", "Points [[x,y,z], ...] in mm on the surface: the stroke, the hole / pocket / boss "
                                       "position, the channel path or a point of the knife plane"));
@@ -1560,6 +1565,20 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             line = "DECIMATE " + body + " TO " + num(a["target"].asNumber(10000));
         } else if (op == "mask_clear" || op == "mask_invert" || op == "mask_smooth") {
             line = "MASK " + body + " " + op.substr(5);
+        } else if (op == "mask_group" || op == "paint_fill") {
+            const std::string which = a["group"].isNumber() ? " GROUP " + num(a["group"].asNumber())
+                                      : a["points"].isArray() && a["points"].size() > 0 ? " GROUP AT " + vec(a["points"][0]) : std::string();
+            if (op == "mask_group") {
+                if (which.empty()) return textResult("mask_group needs 'group' or 'points'", true);
+                line = "MASK " + body + which + (a["invert"].asBool() ? " INVERT" : "");
+            } else {
+                if (!a["color"].isString()) return textResult("paint_fill needs 'color'", true);
+                line = "PAINT " + body + " FILL " + a["color"].asString() + which;
+            }
+        } else if (op == "paint_clear") {
+            line = "PAINT " + body + " CLEAR";
+        } else if (op.rfind("polygroup_", 0) == 0) {
+            line = "POLYGROUP " + body + " " + op.substr(10) + (op == "polygroup_auto" && a["angle"].isNumber() ? " ANGLE " + num(a["angle"].asNumber()) : "");
         } else if (op == "remesh") {
             line = "REMESH " + body;
             if (a["others"].isArray())
@@ -1586,7 +1605,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                    (a["symmetry_axes"].isString() ? " SYMMETRY " + a["symmetry_axes"].asString() : a["symmetry"].asBool() ? " SYMMETRY" : "") +
                    (a["radial"].isNumber() ? " RADIAL " + num(a["radial"].asNumber()) + " " + a["radial_axis"].asString("z") : "") +
                    (a["falloff"].isString() ? " FALLOFF " + a["falloff"].asString() : "") +
-                   (a["move"].isArray() ? " MOVE " + vec(a["move"]) : "");
+                   (a["move"].isArray() ? " MOVE " + vec(a["move"]) : "") + (a["color"].isString() ? " COLOR " + a["color"].asString() : "");
         }
         if (a["direction"].isArray() && (op == "hole" || op == "pocket" || op == "boss" || op == "channel"))
             line += " DIR " + vec(a["direction"]);

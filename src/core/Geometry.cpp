@@ -37,8 +37,26 @@ void MeshData::transform(const Mat4& m) {
     for (Vec3& p : edgeVertices) p = m.transformPoint(p);
 }
 
+std::uint32_t packColor(const Vec3& rgb) noexcept {
+    auto byte = [](float v) { return static_cast<std::uint32_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f); };
+    return byte(rgb.x) | (byte(rgb.y) << 8) | (byte(rgb.z) << 16) | 0xFF000000u;
+}
+
+Vec3 unpackColor(std::uint32_t c) noexcept {
+    return {static_cast<float>(c & 0xFF) / 255.0f, static_cast<float>((c >> 8) & 0xFF) / 255.0f, static_cast<float>((c >> 16) & 0xFF) / 255.0f};
+}
+
 void MeshData::append(const MeshData& o) {
     const auto base = static_cast<std::uint32_t>(vertices.size());
+    if (hasGroups() || o.hasGroups()) { // groups kept, the other's numbered after ours
+        std::uint32_t top = 0;
+        if (hasGroups())
+            for (std::uint32_t g : groups) top = std::max(top, g + 1);
+        else groups.assign(indices.size() / 3, 0), top = indices.empty() ? 0 : 1;
+        if (o.hasGroups())
+            for (std::uint32_t g : o.groups) groups.push_back(g + top);
+        else groups.insert(groups.end(), o.indices.size() / 3, top);
+    }
     vertices.insert(vertices.end(), o.vertices.begin(), o.vertices.end());
     indices.reserve(indices.size() + o.indices.size());
     for (std::uint32_t i : o.indices) indices.push_back(base + i);
@@ -66,6 +84,7 @@ std::uint64_t meshContentKey(const MeshData& m) noexcept {
     };
     if (!m.vertices.empty()) mix(m.vertices.data(), m.vertices.size() * sizeof(Vertex));
     if (!m.indices.empty()) mix(m.indices.data(), m.indices.size() * sizeof(std::uint32_t));
+    if (!m.groups.empty()) mix(m.groups.data(), m.groups.size() * sizeof(std::uint32_t));
     h ^= h >> 33;
     h *= P2;
     h ^= h >> 29;
@@ -106,6 +125,8 @@ MeshData clusterMesh(const MeshData& m, float cell) {
         out.vertices[c].position = sumP[c] / count[c];
         out.vertices[c].normal = normalize(sumN[c]);
     }
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) // the paint: a painted corner's colour
+        if (painted(m.vertices[i].color)) out.vertices[id[i]].color = m.vertices[i].color;
     struct Tri3 {
         std::uint32_t a, b, c;
         bool operator==(const Tri3& o) const { return a == o.a && b == o.b && c == o.c; }

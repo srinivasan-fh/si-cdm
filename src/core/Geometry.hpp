@@ -12,7 +12,15 @@ struct Vertex {
     Vec3 position;
     Vec3 normal;
     float mask = 0.0f; // sculpt mask: 1 holds the surface still under the brushes
+    // Polypaint: red, green, blue and alpha bytes, red lowest (alpha 0: unpainted, the
+    // body's own colour shows).
+    std::uint32_t color = 0;
 };
+
+// Packs and unpacks a polypaint colour (components 0..1).
+std::uint32_t packColor(const Vec3& rgb) noexcept;
+Vec3 unpackColor(std::uint32_t c) noexcept;
+inline bool painted(std::uint32_t c) noexcept { return (c >> 24) != 0; }
 
 // Renderable tessellation of a body: shaded triangles plus the
 // feature edges drawn on top (the classic "shaded with edges" CAD look).
@@ -20,6 +28,10 @@ struct MeshData {
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;  // triangle list
     std::vector<Vec3> edgeVertices;      // line list, pairs of points
+    // Polygroups: a group number per triangle (empty, or out of step with the
+    // triangles after an edit that didn't keep them: none).
+    std::vector<std::uint32_t> groups;
+    bool hasGroups() const noexcept { return !groups.empty() && groups.size() * 3 == indices.size(); }
 
     AABB bounds() const noexcept;
     void transform(const Mat4& m);
