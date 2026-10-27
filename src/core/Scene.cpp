@@ -153,7 +153,7 @@ void Scene::pushSketchUndo(std::string label) {
 void Scene::beginBodyEdit(std::string label) {
     PendingEdit p;
     p.revision = m_revision;
-    for (const Body& b : m_bodies) p.bodies.push_back({b.name, b.offset, b.color, b.visible});
+    for (const Body& b : m_bodies) p.bodies.push_back({b.name, b.offset, b.color, b.visible}), p.physics.push_back(b.physics);
     p.motions = motionsKey(m_motions);
     p.programs = m_motions;
     p.redo = m_redo; // pushUndo drops it; put back if nothing comes of this
@@ -161,6 +161,19 @@ void Scene::beginBodyEdit(std::string label) {
     p.id = m_undoPushes;
     m_pending.push_back(std::move(p));
 }
+
+namespace {
+
+bool sameVec(const Vec3& a, const Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+bool samePhysics(const PhysicsProps& a, const PhysicsProps& b) {
+    return a.enabled == b.enabled && a.fixed == b.fixed && a.mass == b.mass && a.density == b.density && sameVec(a.velocity, b.velocity) &&
+           sameVec(a.spin, b.spin) && a.charge == b.charge && a.temperature == b.temperature && a.specificHeat == b.specificHeat &&
+           a.restitution == b.restitution && sameVec(a.force, b.force) && a.wave == b.wave && a.waveFrequency == b.waveFrequency &&
+           a.waveSpeed == b.waveSpeed;
+}
+
+} // namespace
 
 void Scene::endBodyEdit() {
     if (m_pending.empty()) return;
@@ -177,7 +190,7 @@ void Scene::endBodyEdit() {
         const Body& b = m_bodies[i];
         const BodyState& w = p.bodies[i];
         changed = b.name != w.name || b.visible != w.visible || b.offset.x != w.offset.x || b.offset.y != w.offset.y || b.offset.z != w.offset.z ||
-                  b.color.x != w.color.x || b.color.y != w.color.y || b.color.z != w.color.z;
+                  b.color.x != w.color.x || b.color.y != w.color.y || b.color.z != w.color.z || !samePhysics(b.physics, p.physics[i]);
     }
     if (changed && !innerKept) return; // an undo step: sealed by the caller
     for (std::size_t i = m_undo.size(); i-- > 0;)

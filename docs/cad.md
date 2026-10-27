@@ -233,6 +233,20 @@ macOS), or `UNDO` / `REDO` and the File menu:
 - constraints and dimensions;
 - drags.
 
+The same UNDO and REDO cover the rest of the model, one command at a time, in the order the
+changes were made:
+
+- bodies (made, cut, moved, sculpted) and their parameters (`PARAM`, `REGEN`);
+- mates, together with the move each one made;
+- the drawing sheet;
+- variables, configurations, datum planes, reference axes and points;
+- motions, poses and physics (a body's and the world's settings);
+- robot rigs and terrain;
+- CAM and lathe jobs.
+
+Undoing a change that isn't a history step (the sheet, a CAM job) leaves the feature
+history as it is.
+
 ### Constraint status
 
 The solver works out how free each curve still is.

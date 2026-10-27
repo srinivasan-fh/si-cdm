@@ -35,6 +35,10 @@
 #include "core/Features.hpp"
 #include "core/HoleWizard.hpp"
 #include "core/Variables.hpp"
+#include "core/Assembly.hpp"
+#include "core/Drawing.hpp"
+#include "core/Rig.hpp"
+#include "core/Terrain.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -709,12 +713,80 @@ bool sketchCommand(const std::string& cmd) {
 
 // Commands that add, remove, rebuild or move bodies. Those whose edit keeps no undo
 // snapshot of its own get one around them (Scene::beginBodyEdit), so UNDO takes them back.
+// Commands that may change what the scene's undo snapshots don't hold (see
+// Document::JobsUndo): around them that state is compared, and kept for UNDO when changed.
+bool sideCommand(const std::string& cmd) {
+    static const char* const kSide[] = {"CAM",  "LATHE",  "MATE", "ASSEMBLY", "SHEET",   "VAR", "CONFIG", "PLANE", "REFAXIS",
+                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM"};
+    for (const char* k : kSide)
+        if (cmd == k) return true;
+    return false;
+}
+
+Document::JobsUndo sideState(const Document& doc) {
+    Document::JobsUndo s;
+    const ProjectState& st = doc.state;
+    s.cam = camToJson(st.cam).dump(), s.lathe = latheToJson(st.lathe).dump();
+    s.assembly = st.assembly, s.drawing = st.drawing;
+    s.variables = st.variables, s.configs = st.configs, s.config = st.config;
+    s.datums = st.datums, s.refAxes = st.refAxes, s.refPoints = st.refPoints;
+    s.rigs = doc.scene.rigs(), s.physics = doc.scene.physics(), s.terrain = doc.scene.terrain();
+    return s;
+}
+
+// The same state as one string, to tell whether a command changed it.
+std::string sideKey(const Document& doc) {
+    const ProjectState& st = doc.state;
+    std::string k = camToJson(st.cam).dump() + latheToJson(st.lathe).dump() + assemblyToJson(st.assembly).dump() + drawingToJson(st.drawing).dump() +
+                    rigStateToJson(doc.scene.rigs()).dump() + terrainToJson(doc.scene.terrain()).dump() + "|" + st.config;
+    char buf[160];
+    auto num = [&](double v) {
+        std::snprintf(buf, sizeof buf, "%.9g,", v);
+        k += buf;
+    };
+    auto vec = [&](const Vec3& v) { num(v.x), num(v.y), num(v.z); };
+    for (const Variable& v : st.variables) k += v.name + "=" + v.expr + ";";
+    for (const Configuration& c : st.configs) {
+        k += c.name + "{";
+        for (const auto& [n, e] : c.values) k += n + "=" + e + ";";
+        k += "}";
+    }
+    for (const DatumPlane& d : st.datums) k += d.name, vec(d.frame.origin), vec(d.frame.normal), vec(d.frame.u);
+    for (const DatumAxis& a : st.refAxes) k += a.name, vec(a.origin), vec(a.dir);
+    for (const DatumPoint& p : st.refPoints) k += p.name, vec(p.at);
+    const PhysicsSettings& ph = doc.scene.physics();
+    num(ph.enabled), num(static_cast<double>(ph.gravity)), vec(ph.g), num(ph.bigG), num(ph.floor), num(ph.friction), num(ph.air), vec(ph.wind),
+        vec(ph.electricField), vec(ph.magneticField), num(ph.ambient), num(ph.convection), num(ph.conductance), num(ph.relativity), num(ph.lightSpeed),
+        num(ph.duration);
+    return k;
+}
+
+// Puts back a kept state; returns what was there (to go the other way), with the entry's
+// label and flags and the given scene depth.
+Document::JobsUndo swapSide(Document& doc, Document::JobsUndo s, std::size_t depth, bool* ok) {
+    Document::JobsUndo cur = sideState(doc);
+    cur.label = s.label, cur.sceneDepth = depth, cur.withScene = s.withScene, cur.history = s.history;
+    const auto cj = Json::parse(s.cam), lj = Json::parse(s.lathe);
+    CamJob c;
+    LatheJob l;
+    *ok = cj && lj && camFromJson(*cj, c) && latheFromJson(*lj, l);
+    if (!*ok) return cur;
+    ProjectState& st = doc.state;
+    st.cam = std::move(c), st.lathe = std::move(l);
+    st.assembly = std::move(s.assembly), st.drawing = std::move(s.drawing);
+    st.variables = std::move(s.variables), st.configs = std::move(s.configs), st.config = std::move(s.config);
+    st.datums = std::move(s.datums), st.refAxes = std::move(s.refAxes), st.refPoints = std::move(s.refPoints);
+    doc.scene.rigs() = std::move(s.rigs), doc.scene.physics() = s.physics, doc.scene.terrain() = std::move(s.terrain);
+    return cur;
+}
+
 bool bodyCommand(const std::string& cmd) {
     static const char* const kBody[] = {"BOX",     "CYLINDER", "CONE",   "SPHERE", "TORUS",   "WEDGE",      "PYRAMID",  "PRISM",
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
-                                        "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE"};
+                                        "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -755,6 +827,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
         st.rollback = -1;
         return;
     }
+    if ((cmd == "UNDO" || cmd == "REDO") && doc.undoSkipsHistory) return; // a CAM job, the sheet...: not a history step
     if (cmd == "UNDO") { // the last step an UNDO takes back goes to the redo list
         for (std::size_t i = end; i-- > 0;)
             if (st.history[i].undoable && !st.history[i].suppressed) {
@@ -834,10 +907,13 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     const bool sketchEdit = spec && sketchCommand(spec->name) && !doc.replaying;
     const std::uint64_t sketchBefore = doc.scene.sketch().revision();
     if (sketchEdit) doc.scene.pushSketchUndo(std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))));
-    // A CAM or LATHE command: the jobs as they were, for UNDO.
-    const bool jobCommand = spec && (std::string(spec->name) == "CAM" || std::string(spec->name) == "LATHE") && !doc.replaying;
-    std::string camBefore, latheBefore;
-    if (jobCommand) camBefore = camToJson(doc.state.cam).dump(), latheBefore = latheToJson(doc.state.lathe).dump();
+    // What the scene's snapshots don't hold (jobs, mates, sheet, variables, rigs...): as it
+    // was, for UNDO.
+    const bool sideEdit = spec && sideCommand(spec->name) && !doc.replaying;
+    std::string sideBefore;
+    Document::JobsUndo sideSnapshot;
+    if (sideEdit) sideBefore = sideKey(doc), sideSnapshot = sideState(doc);
+    doc.undoSkipsHistory = false;
     const bool bodyEdit = spec && bodyCommand(spec->name) && !doc.replaying;
     if (bodyEdit) doc.scene.beginBodyEdit(std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))));
     CommandOutput out = runCommand(doc, line, view);
@@ -848,18 +924,21 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     }
     // An edit that kept an undo snapshot and succeeded: record the state it left.
     doc.scene.sealUndo();
-    if (jobCommand && out.ok) {
-        std::string camAfter = camToJson(doc.state.cam).dump(), latheAfter = latheToJson(doc.state.lathe).dump();
-        if (camAfter != camBefore || latheAfter != latheBefore) {
-            doc.jobsUndo.push_back({std::move(camBefore), std::move(latheBefore), std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))),
-                                    doc.scene.undoDepth()});
-            if (doc.jobsUndo.size() > 64) doc.jobsUndo.erase(doc.jobsUndo.begin());
-            doc.jobsRedo.clear();
-            doc.scene.clearRedo(); // one history: a new edit drops what could be redone
-        }
+    bool sidePushed = false;
+    if (sideEdit && out.ok && sideKey(doc) != sideBefore) {
+        sideSnapshot.label = std::string(line.substr(0, std::min<std::size_t>(line.size(), 48)));
+        sideSnapshot.sceneDepth = doc.scene.undoDepth();
+        sideSnapshot.withScene = doc.scene.undoPushes() != pushes;
+        sideSnapshot.history = historyCommand(spec->name);
+        doc.jobsUndo.push_back(std::move(sideSnapshot));
+        if (doc.jobsUndo.size() > 64) doc.jobsUndo.erase(doc.jobsUndo.begin());
+        doc.jobsRedo.clear();
+        doc.scene.clearRedo(); // one history: a new edit drops what could be redone
+        sidePushed = true;
     }
     if (out.ok && doc.scene.undoPushes() != pushes) doc.jobsRedo.clear(); // a new edit: nothing to redo
-    if (!doc.replaying && !doc.historyRewritten) recordHistory(doc, line, out, empty, selBody, selCurve, doc.scene.undoPushes() != pushes);
+    if (!doc.replaying && !doc.historyRewritten)
+        recordHistory(doc, line, out, empty, selBody, selCurve, doc.scene.undoPushes() != pushes || sidePushed);
     doc.historyRewritten = false;
     // A new constraint remembers the history step that made it (CONSTRAINT EDIT rewrites it).
     if (out.ok && !doc.pendingConstraint.empty())
@@ -2405,29 +2484,36 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         out.say("Updated " + b.name + ": " + changed);
         return out;
     }
-    // The jobs from a snapshot; the ones replaced go to `back` (with the scene's depth there).
-    auto swapJobs = [&](std::vector<Document::JobsUndo>& from, std::vector<Document::JobsUndo>& back, std::size_t depth) {
+    // A kept side state put back; what it replaces goes to `back` (with the scene's depth
+    // there). Its scene step too, when the same command left one.
+    auto swapJobs = [&](std::vector<Document::JobsUndo>& from, std::vector<Document::JobsUndo>& back, bool undo) {
         Document::JobsUndo j = std::move(from.back());
         from.pop_back();
-        const auto cj = Json::parse(j.cam), lj = Json::parse(j.lathe);
-        CamJob c;
-        LatheJob l;
-        if (!cj || !lj || !camFromJson(*cj, c) || !latheFromJson(*lj, l)) return std::string();
-        back.push_back({camToJson(doc.state.cam).dump(), latheToJson(doc.state.lathe).dump(), j.label, depth});
-        doc.state.cam = std::move(c);
-        doc.state.lathe = std::move(l);
+        if (j.withScene && (undo ? doc.scene.undoDepth() : doc.scene.redoDepth()) == j.sceneDepth) {
+            std::string why;
+            if ((undo ? doc.scene.undo(&why) : doc.scene.redo(&why)).empty()) j.withScene = false; // the bodies changed since: the rest only
+            if (doc.selectedBody >= static_cast<int>(doc.scene.bodies().size())) doc.selectedBody = -1;
+        } else {
+            j.withScene = false;
+        }
+        const std::string label = j.label;
+        doc.undoSkipsHistory = !j.history;
+        bool ok = false;
+        Document::JobsUndo cur = swapSide(doc, std::move(j), undo ? doc.scene.redoDepth() : doc.scene.undoDepth(), &ok);
+        if (!ok) return std::string();
+        back.push_back(std::move(cur));
         markChanged(doc);
-        return j.label;
+        return label;
     };
     if (cmd == "UNDO" && !doc.jobsUndo.empty() && doc.scene.undoDepth() <= doc.jobsUndo.back().sceneDepth) {
-        const std::string what = swapJobs(doc.jobsUndo, doc.jobsRedo, doc.scene.redoDepth());
-        if (what.empty()) return out.fail("Can't undo the CAM change");
+        const std::string what = swapJobs(doc.jobsUndo, doc.jobsRedo, true);
+        if (what.empty()) return out.fail("Can't undo that change");
         out.say("Undid " + what);
         return out;
     }
     if (cmd == "REDO" && !doc.jobsRedo.empty() && doc.scene.redoDepth() <= doc.jobsRedo.back().sceneDepth) {
-        const std::string what = swapJobs(doc.jobsRedo, doc.jobsUndo, doc.scene.undoDepth());
-        if (what.empty()) return out.fail("Can't redo the CAM change");
+        const std::string what = swapJobs(doc.jobsRedo, doc.jobsUndo, false);
+        if (what.empty()) return out.fail("Can't redo that change");
         out.say("Redid " + what);
         return out;
     }

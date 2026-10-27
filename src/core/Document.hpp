@@ -33,14 +33,31 @@ struct Document {
     std::string pendingConstraint;  // a constraint just made: it learns its history step
     bool historyRewritten = false;  // the command changed the history itself: it isn't recorded
 
-    // Undo for the manufacturing jobs (the scene keeps its own): each CAM / LATHE command
-    // that changed a job keeps them as they were (as saved: toolpaths are made again), with
-    // the scene's undo depth then, so UNDO takes back whichever of the two came last.
+    // Undo for what the scene's snapshots don't hold (the scene keeps its own): the
+    // manufacturing jobs (as saved: toolpaths are made again), the mates, the drawing sheet,
+    // variables and configurations, datums, robot rigs, physics settings and terrain. A
+    // command that changed any of them keeps them as they were, with the scene's undo depth
+    // then, so UNDO takes back whichever came last; both together when the same command
+    // also left a scene step (a mate that moved a part, a variable that rebuilt one).
     struct JobsUndo {
         std::string cam, lathe, label;
         std::size_t sceneDepth = 0;
+        bool withScene = false; // the command also left a scene undo step
+        bool history = false;   // the command is a step of the feature history
+        AssemblyState assembly;
+        Drawing drawing;
+        std::vector<Variable> variables;
+        std::vector<Configuration> configs;
+        std::string config;
+        std::vector<DatumPlane> datums;
+        std::vector<DatumAxis> refAxes;
+        std::vector<DatumPoint> refPoints;
+        RigState rigs;
+        PhysicsSettings physics;
+        TerrainSettings terrain;
     };
     std::vector<JobsUndo> jobsUndo, jobsRedo;
+    bool undoSkipsHistory = false; // the last UNDO / REDO took back only a non-history change
 
     bool snapGrid = true;
     bool snapPoints = true;
