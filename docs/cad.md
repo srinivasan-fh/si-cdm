@@ -810,11 +810,17 @@ Block 1 (steel, 7.85 g/cm3)
   magnesium, gold, silver, ABS, PLA, PETG, nylon, POM, acrylic, carbon, wood, glass, concrete,
   water.
 
-## Stress analysis (FEA)
+## Analysis (FEA): stress, vibration, heat
 
 ```text
 FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ...
            LOAD FACE x,y,z | LOAD NEAR x,y,z r  FORCE fx,fy,fz ...
+           PRESSURE FACE x,y,z MPa                 a pressure on a face (N/mm2)
+           BEARING x,y,z r FORCE fx,fy,fz          a pin pushing on a hole
+           GRAVITY [x,y,z]                         the body's own weight (in g; down by default)
+           TEMP FACE x,y,z C   HEAT FACE x,y,z W   faces held at a temperature, heat flowing in
+           THERMAL [REF C]                         stress from the heat's expansion
+           MODES n   MODE k                        natural frequencies; plot mode k's shape
            [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]
 FEA MATERIALS
 ```
@@ -843,6 +849,44 @@ analysis (small displacements, linear elastic, isotropic material).
 BOX 100 10 10 @50,0,0
 HOLE "Block 1" AT 30,0,10 DIAMETER 4 THROUGH
 FEA "Block 1" FIX FACE 0,0,5 LOAD FACE 100,0,5 FORCE 0,0,-100 CELL 1 DEFORM 50
+```
+
+**More loads:**
+
+- **PRESSURE** pushes on every cube face of the face picked (`p` times its area). A negative
+  pressure pulls.
+- **BEARING** spreads a pin's push over the side of a hole facing the push, most where it
+  faces it squarely (a cosine spread). Give the hole's centre, its radius and the force.
+- **GRAVITY** loads every cube with its weight (the material's density).
+- Loads of all kinds add up in one analysis. On the cantilever above:
+  - Its own weight sags its tip 0.000576 mm. Beam theory gives `w L^4 / (8 E I)` = 0.000578.
+  - 1 MPa on its top face bends it 0.748 mm, against 0.750.
+
+**Natural frequencies:**
+
+- `MODES n` finds the lowest `n` (up to 12), with the body held as fixed. The method is
+  block inverse iteration with Rayleigh-Ritz on the stiffness and lumped mass.
+- `MODE k` plots mode `k`'s shape: the body bent along it, coloured by how far each point
+  moves.
+- On the cantilever, the first bending mode comes out at 827.7 Hz with the default 2.5 mm
+  cubes, and 815.3 Hz with `CELL 1`. Beam theory gives 815 Hz. There are two such modes,
+  one each way across the square section. The second bending mode is 6 times higher.
+- A body that isn't held has no frequencies here: FIX it as it is mounted.
+
+**Heat:**
+
+- `TEMP FACE x,y,z C` holds a face at a temperature, and `HEAT FACE x,y,z W` puts heat in
+  (negative takes it out). The steady temperatures follow from the material's conductivity.
+  They are reported, and with `PLOT`, coloured on the body.
+- With **THERMAL** the static analysis adds the stress of the body's expansion, from
+  `REF` (20 C by default) to those temperatures.
+- A steel bar 100 mm long, warmed by 100 C and held at one end, grows 0.12 mm (alpha dT L),
+  free of stress.
+
+```text
+FEA "Block 1" FIX FACE 0,0,5 MODES 3
+FEA "Block 1" FIX FACE 0,0,5 GRAVITY PRESSURE FACE 50,0,10 0.5
+FEA "Block 1" TEMP FACE 0,0,5 20 HEAT FACE 100,0,5 5 MATERIAL aluminium PLOT
 ```
 
 ## Measure

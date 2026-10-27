@@ -146,9 +146,10 @@ constexpr CommandSpec kCommands[] = {
      "SHEETMETAL EDGES | FLAT [SKETCH] | INFO [body]",
      "Sheet metal: a base plate, flanges bent on its edges, and the flat pattern (bend allowance from the K factor)"},
     {"FEA", "STRESS",
-     "FEA [body] FIX FACE x,y,z | NEAR x,y,z r ... LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ... [MATERIAL m] [E MPa] [NU v] [YIELD MPa] [CELL size] "
+     "FEA [body] FIX FACE x,y,z | NEAR x,y,z r ... [LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz] [PRESSURE FACE x,y,z MPa] [BEARING x,y,z r FORCE f] "
+     "[GRAVITY [x,y,z]] [TEMP FACE x,y,z C] [HEAT FACE x,y,z W] [THERMAL] [REF C] [MODES n] [MODE k] [MATERIAL m] [E MPa] [NU v] [YIELD MPa] [CELL size] "
      "[PLOT] [DEFORM scale] | FEA MATERIALS",
-     "Linear static stress analysis: von Mises stress, displacement and factor of safety; PLOT colours the body by stress"},
+     "Analysis: stress (forces, pressures, bearing loads, weight, heat), natural frequencies, heat flow; PLOT colours the body"},
     {"RIB", "", "RIB [curve] THICKNESS t [BODY name] [FLIP] [KEEP]", "A thin wall from an open sketch curve down to the body, centred on the sketch plane"},
     {"EMBOSS", "", "EMBOSS [body] TEXT \"words\" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]",
      "Raised lettering on a face, flat or curved (\\n starts a new line)"},

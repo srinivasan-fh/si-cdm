@@ -1878,14 +1878,16 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         // FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ...  LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ...
         //     [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]
         //     FEA MATERIALS
-        static const char* const kKeys[] = {"fix", "load", "force", "material", "e", "nu", "yield", "cell", "plot", "deform", "face", "near"};
+        static const char* const kKeys[] = {"fix", "load", "force", "material", "e", "nu", "yield", "cell", "plot", "deform", "face", "near",
+                                            "pressure", "gravity", "bearing", "modes", "mode", "temp", "heat", "thermal", "ref"};
         auto isKey = [](const std::string& w) {
             for (const char* k : kKeys)
                 if (w == k) return true;
             return w.find(',') != std::string::npos;
         };
-        const char* usage = "Usage: FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ... LOAD FACE x,y,z | LOAD NEAR x,y,z r FORCE fx,fy,fz ... "
-                            "[MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]  |  FEA MATERIALS";
+        const char* usage = "Usage: FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ... [LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz] "
+                            "[PRESSURE FACE x,y,z MPA] [BEARING x,y,z r FORCE fx,fy,fz] [GRAVITY [x,y,z]] [TEMP FACE x,y,z C] [HEAT FACE x,y,z W] "
+                            "[THERMAL] [REF C] [MODES n] [MODE k] [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]  |  FEA MATERIALS";
         if (a.size() == 1 && lower(a[0]) == "materials") {
             for (const FeaMaterial& m : feaMaterials())
                 out.say("  " + m.name + fmt3(":  E %g MPa", m.E) + fmt3(", nu %g", m.nu) + fmt3(", yield %g MPa", m.yield) + fmt3(", %g g/cm3", m.density));
@@ -1899,6 +1901,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         setup.material = *feaMaterial("steel");
         bool plot = false;
         float deform = 0;
+        int showMode = 0;
         auto selection = [&](FeaSelection& sel) -> bool { // FACE x,y,z | NEAR x,y,z r
             if (i + 1 >= a.size()) return false;
             const std::string k = lower(a[++i]);
@@ -1936,6 +1939,44 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 if (!fv || !(length(*fv) > 0)) return out.fail("FORCE needs fx,fy,fz in newtons");
                 l.force = *fv;
                 setup.loads.push_back(l);
+            } else if (k == "pressure") {
+                FeaPressure pr;
+                if (!selection(pr.where)) return out.fail("PRESSURE takes FACE x,y,z (or NEAR x,y,z r), then the pressure in MPa");
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x || *x == 0) return out.fail("PRESSURE ... needs the pressure in MPa (N/mm2; negative pulls)");
+                pr.mpa = *x;
+                setup.pressures.push_back(pr);
+            } else if (k == "bearing") {
+                FeaBearing br;
+                const auto c = i + 1 < a.size() ? parseVec3(a[i + 1]) : std::nullopt;
+                const auto r = i + 2 < a.size() ? parseLength(a[i + 2]) : std::nullopt;
+                if (!c || !r || !(*r > 0) || i + 4 >= a.size() || lower(a[i + 3]) != "force") return out.fail("BEARING x,y,z r FORCE fx,fy,fz: the hole's centre, its radius, the pin's push");
+                const auto fv = parseVec3(a[i + 4]);
+                if (!fv || !(length(*fv) > 0)) return out.fail("FORCE needs fx,fy,fz in newtons");
+                br.center = *c, br.radius = static_cast<float>(*r), br.force = *fv;
+                setup.bearings.push_back(br);
+                i += 4;
+            } else if (k == "gravity") {
+                setup.gravity = {0, 0, -1};
+                if (i + 1 < a.size())
+                    if (const auto gv = parseVec3(a[i + 1])) setup.gravity = *gv, ++i;
+            } else if (k == "temp" || k == "heat") {
+                FeaSelection sel;
+                if (!selection(sel)) return out.fail(toUpper(k) + " takes FACE x,y,z (or NEAR x,y,z r), then " + (k == "temp" ? "degrees C" : "watts"));
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x) return out.fail(toUpper(k) + " ... needs " + (k == "temp" ? "the temperature in C" : "the heat in watts"));
+                if (k == "temp") setup.temperatures.push_back({sel, *x});
+                else setup.heats.push_back({sel, *x});
+            } else if (k == "thermal") setup.thermalStress = true;
+            else if (k == "ref") {
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x) return out.fail("REF needs the stress-free temperature in C");
+                setup.reference = *x;
+            } else if (k == "modes" || k == "mode") {
+                const auto x = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!x || *x < 1 || *x > 12) return out.fail(toUpper(k) + " is 1 to 12");
+                if (k == "modes") setup.modes = static_cast<int>(*x);
+                else showMode = static_cast<int>(*x), plot = true;
             } else if (k == "material") {
                 const auto m = i + 1 < a.size() ? feaMaterial(a[++i]) : std::nullopt;
                 if (!m) return out.fail("No such material (FEA MATERIALS lists them)");
@@ -1968,17 +2009,54 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             sculptRefine(fine, setup.cell > 0 ? std::min(detail, setup.cell) : detail);
             world = worldMesh(fine);
         }
+        if (showMode > 0 && setup.modes < showMode) setup.modes = showMode;
         FeaResult r;
         std::string why;
         if (!runFea(world, setup, r, &why)) return out.fail("Cannot analyse " + body.name + ": " + why);
-        out.say("Stress analysis of " + body.name + " (" + setup.material.name + ", E " + fmt3("%g", setup.material.E) + " MPa, yield " +
+        const bool statics = !setup.loads.empty() || !setup.pressures.empty() || !setup.bearings.empty() || length(setup.gravity) > 0 ||
+                             (setup.thermalStress && !setup.temperatures.empty());
+        out.say("Analysis of " + body.name + " (" + setup.material.name + ", E " + fmt3("%g", setup.material.E) + " MPa, yield " +
                 fmt3("%g", setup.material.yield) + " MPa): " + std::to_string(r.cells) + " cubes of " + lengthText(r.cell) + ", " +
-                std::to_string(r.fixedNodes) + " nodes fixed, " + std::to_string(r.loadedNodes) + " loaded");
-        out.say("  max von Mises stress " + fmt3("%.4g", r.maxStress) + " MPa at " + pointText(r.maxStressAt));
-        out.say("  max displacement " + fmt3("%.4g", r.maxDisplacement) + " mm at " + pointText(r.maxDisplacementAt));
-        out.say("  factor of safety " + fmt3("%.3g", r.safetyFactor) + (r.safetyFactor < 1 ? "  (yields!)" : r.safetyFactor < 1.5 ? "  (thin margin)" : ""));
+                fmt3("%.4g", r.mass) + " kg" + (r.fixedNodes ? ", " + std::to_string(r.fixedNodes) + " nodes fixed" : std::string()) +
+                (r.loadedNodes ? ", " + std::to_string(r.loadedNodes) + " loaded" : std::string()));
+        if (!setup.temperatures.empty())
+            out.say("  temperatures " + fmt3("%.4g", r.minTemperature) + " C (at " + pointText(r.minTemperatureAt) + ") to " + fmt3("%.4g", r.maxTemperature) +
+                    " C (at " + pointText(r.maxTemperatureAt) + ")");
+        for (std::size_t m = 0; m < r.frequencies.size(); ++m)
+            out.say("  mode " + std::to_string(m + 1) + ": " + fmt3("%.5g", r.frequencies[m]) + " Hz");
+        if (statics) {
+            out.say("  max von Mises stress " + fmt3("%.4g", r.maxStress) + " MPa at " + pointText(r.maxStressAt));
+            out.say("  max displacement " + fmt3("%.4g", r.maxDisplacement) + " mm at " + pointText(r.maxDisplacementAt));
+            out.say("  factor of safety " + fmt3("%.3g", r.safetyFactor) + (r.safetyFactor < 1 ? "  (yields!)" : r.safetyFactor < 1.5 ? "  (thin margin)" : ""));
+        }
         if (!r.converged) out.say("  (the solver stopped after " + std::to_string(r.iterations) + " steps before converging: results are rough)");
-        if (plot) {
+        if (plot && (showMode > 0 || !statics)) { // a mode's shape, or the temperatures
+            MeshData m = world;
+            std::string field;
+            if (showMode > 0 && static_cast<std::size_t>(showMode) <= r.modeShapes.size()) {
+                const std::vector<Vec3>& shape = r.modeShapes[static_cast<std::size_t>(showMode - 1)];
+                const AABB wb = world.bounds();
+                const float amp = (deform > 0 ? deform : 0.08f) * std::max({wb.max.x - wb.min.x, wb.max.y - wb.min.y, wb.max.z - wb.min.z});
+                for (std::size_t v = 0; v < m.vertices.size(); ++v) {
+                    m.vertices[v].mask = std::clamp(length(shape[v]), 0.0f, 1.0f);
+                    m.vertices[v].position = m.vertices[v].position + shape[v] * amp;
+                }
+                field = "mode " + std::to_string(showMode) + " at " + fmt3("%.5g", r.frequencies[static_cast<std::size_t>(showMode - 1)]) + " Hz: motion 0 (blue) to most (red)";
+            } else {
+                const double lo = r.minTemperature, span = std::max(1e-9, r.maxTemperature - r.minTemperature);
+                for (std::size_t v = 0; v < m.vertices.size(); ++v) m.vertices[v].mask = static_cast<float>(std::clamp((r.surfaceTemperature[v] - lo) / span, 0.0, 1.0));
+                field = "temperature, C: " + fmt3("%.4g", r.minTemperature) + " (blue) to " + fmt3("%.4g", r.maxTemperature) + " (red)";
+            }
+            int k = 1;
+            const std::string base = body.name + (showMode > 0 ? " mode" : " heat");
+            while (bodyNamed(doc, base + (k > 1 ? " " + std::to_string(k) : "")) >= 0) ++k;
+            Body res = meshBody(base + (k > 1 ? " " + std::to_string(k) : ""), std::move(m), body.color);
+            res.field = field;
+            doc.scene.pushUndo("FEA " + body.name);
+            doc.scene.bodies()[static_cast<std::size_t>(bi)].visible = false;
+            out.say("  plot: " + res.name + " (" + res.field + ")");
+            addBody(doc, std::move(res));
+        } else if (plot) {
             MeshData m = world;
             const double top = r.maxStress > 0 ? r.maxStress : 1.0;
             for (std::size_t v = 0; v < m.vertices.size(); ++v) {

@@ -771,7 +771,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (!historyCommand(cmd)) return;
     if ((cmd == "PLANE" || cmd == "REFAXIS" || cmd == "REFPOINT") && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (cmd == "SHEETMETAL" && !pc.args.empty() && (iequal(pc.args[0], "edges") || iequal(pc.args[0], "info"))) return;
-    if (cmd == "FEA" && std::none_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "plot") || iequal(w, "deform"); }))
+    if (cmd == "FEA" && std::none_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "plot") || iequal(w, "deform") || iequal(w, "mode"); }))
         return; // a report only: the history keeps analyses that leave a plot
     if (st.history.empty() && !startedEmpty) st.historyComplete = false; // it began on a model REGEN can't rebuild
     if (st.history.empty() && st.plane != SketchPlane::Top && cmd != "PLANE") { // the plane the history starts on

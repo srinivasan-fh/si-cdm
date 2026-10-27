@@ -8,6 +8,7 @@
 #include "core/Variables.hpp"
 #include "core/SheetMetal.hpp"
 #include "core/Fea.hpp"
+#include "core/Geometry.hpp"
 #include "core/Json.hpp"
 #include "core/Brep.hpp"
 #include "core/Scene.hpp"
@@ -1059,4 +1060,95 @@ TEST_CASE("Sheet metal: miters, hems, jogs, insets, reliefs and converting a she
     CHECK_NEAR(box.max.z - box.min.z, 20.0f, 0.02);
     REQUIRE(run(c, "SHEETMETAL FLAT \"Block 1\"").ok);
     CHECK(!run(c, "SHEETMETAL CONVERT \"Block 1 flat\" FACE 0,0,0").ok);
+}
+
+TEST_CASE("FEA: natural frequencies, own weight, pressure, bearing loads and heat") {
+    // A 100 x 10 x 10 steel cantilever. Its first bending mode (Euler-Bernoulli):
+    // f = 1.875^2 / (2 pi) sqrt(E I / (rho A L^4)) = 815 Hz; the cubes of 2.5 mm are a
+    // little stiff, so a little above; two of them (a square section).
+    const MeshData bar = buildPrimitive("box", {0, -5, 0, 100, 5, 10});
+    FeaSetup s;
+    s.material = *feaMaterial("steel");
+    s.fixed.push_back({FeaSelection::Kind::Face, {0, 0, 5}, 0});
+    s.modes = 3;
+    s.cell = 2.5f;
+    FeaResult r;
+    std::string why;
+    REQUIRE(runFea(bar, s, r, &why));
+    REQUIRE(r.frequencies.size() == 3);
+    CHECK_NEAR(r.frequencies[0], 815.0, 815.0 * 0.03);
+    CHECK_NEAR(r.frequencies[1], r.frequencies[0], 1e-3 * r.frequencies[0]);
+    CHECK(r.frequencies[2] > 5 * r.frequencies[0]); // the second bending mode: (4.694 / 1.875)^2 = 6.3 times, less shear
+    CHECK_NEAR(r.mass, 0.0785, 1e-4);
+    // The mode's shape: the free end moves most, the held end not at all.
+    float tip = 0, root = 1;
+    for (std::size_t v = 0; v < bar.vertices.size(); ++v) {
+        if (bar.vertices[v].position.x > 99) tip = std::max(tip, length(r.modeShapes[0][v]));
+        if (bar.vertices[v].position.x < 1) root = std::min(root, length(r.modeShapes[0][v]));
+    }
+    CHECK_NEAR(tip, 1.0f, 0.05);
+    CHECK(root < 1e-3f);
+    s.fixed.clear();
+    CHECK(!runFea(bar, s, r, &why)); // free to float: no modes asked of a loose body
+
+    // Its own weight: w L^4 / (8 E I), w = rho A g.
+    FeaSetup gs;
+    gs.material = *feaMaterial("steel");
+    gs.fixed.push_back({FeaSelection::Kind::Face, {0, 0, 5}, 0});
+    gs.gravity = {0, 0, -1};
+    gs.cell = 2;
+    REQUIRE(runFea(bar, gs, r, &why));
+    const double w = 7.85e-9 * 100 * 9810, EI = 200000.0 * 10 * 1000 / 12;
+    CHECK_NEAR(r.maxDisplacement, w * 1e8 / (8 * EI), 0.03 * w * 1e8 / (8 * EI));
+    // 1 MPa on the top: 10 N/mm along it, q L^4 / (8 E I) = 0.75 mm.
+    FeaSetup ps = gs;
+    ps.gravity = {};
+    ps.pressures.push_back({{FeaSelection::Kind::Face, {50, 0, 10}, 0}, 1.0});
+    REQUIRE(runFea(bar, ps, r, &why));
+    CHECK_NEAR(r.maxDisplacement, 0.75, 0.75 * 0.03);
+
+    // A pin pushing on a hole: the stress peaks on the side it pushes.
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 10 @0,0,0").ok);
+    REQUIRE(run(d, "HOLE \"Block 1\" AT 0,0,10 DIAMETER 10 THROUGH").ok);
+    FeaSetup bs;
+    bs.material = *feaMaterial("steel");
+    bs.fixed.push_back({FeaSelection::Kind::Face, {-20, 0, 5}, 0});
+    bs.bearings.push_back({{0, 0, 5}, 5, {500, 0, 0}});
+    bs.cell = 2;
+    REQUIRE(runFea(worldMesh(last(d)), bs, r, &why));
+    CHECK(r.maxStressAt.x > 0);
+    CHECK(r.loadedNodes > 0);
+
+    // Heat: 0 C at one end, 100 C at the other: a straight run between.
+    FeaSetup hs;
+    hs.material = *feaMaterial("aluminium");
+    hs.temperatures.push_back({{FeaSelection::Kind::Face, {0, 0, 5}, 0}, 0});
+    hs.temperatures.push_back({{FeaSelection::Kind::Face, {100, 0, 5}, 0}, 100});
+    hs.cell = 2;
+    REQUIRE(runFea(bar, hs, r, &why));
+    CHECK_NEAR(r.minTemperature, 0.0, 1e-6);
+    CHECK_NEAR(r.maxTemperature, 100.0, 1e-6);
+    for (std::size_t v = 0; v < bar.vertices.size(); ++v) CHECK_NEAR(r.surfaceTemperature[v], bar.vertices[v].position.x, 0.5);
+    // Warmed by 100 C everywhere and held at one end: it grows alpha dT L = 0.12 mm, unstressed.
+    FeaSetup ts;
+    ts.material = *feaMaterial("steel");
+    ts.temperatures.push_back({{FeaSelection::Kind::Face, {0, 0, 5}, 0}, 120});
+    ts.temperatures.push_back({{FeaSelection::Kind::Face, {100, 0, 5}, 0}, 120});
+    ts.thermalStress = true;
+    ts.reference = 20;
+    ts.fixed.push_back({FeaSelection::Kind::Face, {0, 0, 5}, 0});
+    ts.cell = 2;
+    REQUIRE(runFea(bar, ts, r, &why));
+    CHECK_NEAR(r.maxDisplacement, 0.12, 0.004);
+
+    // The command: frequencies listed, a mode shape plotted.
+    const CommandOutput o = run(d, "FEA \"Block 1\" FIX FACE -20,0,5 MODES 2 CELL 4");
+    REQUIRE(o.ok);
+    bool listed = false;
+    for (const std::string& l : o.lines) listed = listed || l.find("mode 2:") != std::string::npos;
+    CHECK(listed);
+    REQUIRE(run(d, "FEA \"Block 1\" FIX FACE -20,0,5 MODE 1 CELL 4").ok);
+    CHECK(last(d).field.find("mode 1") == 0);
+    CHECK(!run(d, "FEA \"Block 1\" HEAT FACE 20,0,5 10").ok); // heat in, nowhere held
 }
