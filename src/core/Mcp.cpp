@@ -367,7 +367,7 @@ Json McpServer::toolDefinitions() {
                                 "'others'), subdivide, symmetrize, decimate, mask_clear, mask_invert, mask_smooth, mask_group, "
                                 "paint_fill, paint_clear, polygroup_auto, polygroup_islands, polygroup_mask, polygroup_paint, "
                                 "polygroup_clear, layer_new, layer_record, layer_stop, layer_strength, layer_on, layer_off, layer_delete, "
-                                "layer_bake, layer_list, multires_add, multires_level, multires_up, multires_down, multires_apply, undo, redo"));
+                                "layer_bake, layer_list, multires_add, multires_level, multires_up, multires_down, multires_apply, retopo (an even all-quad mesh: 'faces', 'levels' of detail, 'replace'), undo, redo"));
         p.set("layer", prop("string", "layer_*: the sculpt layer's name (layer_bake without one bakes them all)"));
         p.set("value", prop("number", "layer_strength: the strength (1: as sculpted, 0: off, 2: twice)"));
         p.set("color", prop("string", "paint / paint_fill: a colour name (red, skin...), #RRGGBB or \"r,g,b\""));
@@ -393,7 +393,9 @@ Json McpServer::toolDefinitions() {
         p.set("radial", prop("number", "Radial symmetry: copies around the body's axis (radial_axis, default z)"));
         p.set("radial_axis", prop("string", "x | y | z"));
         p.set("falloff", prop("string", "smooth | sphere | sharp | linear | constant"));
-        p.set("levels", prop("number", "subdivide: levels (default 1)"));
+        p.set("levels", prop("number", "subdivide: levels (default 1); multires_add: levels to add; retopo: multiresolution levels over the quads carrying the original's detail"));
+        p.set("faces", prop("number", "retopo: about this many quads (default 2000)"));
+        p.set("replace", prop("boolean", "retopo: give the body itself the quads (default: a new body, the original hidden)"));
         p.set("axis", prop("string", "symmetrize: x | y | z, with a leading - to keep the negative side"));
         p.set("target", prop("number", "decimate: triangles to keep"));
         p.set("detail", prop("number", "Longest edge left under the brush, mm (refine: the target edge length)"));
@@ -1592,6 +1594,10 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                 if (!a["value"].isNumber()) return textResult("multires_level needs 'value' (0: the cage)", true);
                 line += " " + num(a["value"].asNumber());
             }
+        } else if (op == "retopo") {
+            line = "RETOPO " + body + " FACES " + num(a["faces"].asNumber(2000));
+            if (a["levels"].isNumber()) line += " DETAIL " + num(a["levels"].asNumber());
+            if (a["replace"].asBool()) line += " REPLACE";
         } else if (op.rfind("layer_", 0) == 0) {
             const std::string what = op.substr(6);
             const std::string layer = a["layer"].isString() ? quote(a["layer"].asString()) : "";

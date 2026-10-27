@@ -64,6 +64,8 @@ constexpr CommandSpec kCommands[] = {
      "Edit the sculpt mask (the MASK brush paints it; masked surface holds still under the brushes), or mask a polygroup"},
     {"PAINT", "POLYPAINT", "PAINT [body] FILL colour [GROUP n|AT x,y,z] | CLEAR",
      "Polypaint: fill a body (or a polygroup) with a colour, the mask holding it off; the PAINT brush paints strokes"},
+    {"RETOPO", "RETOPOLOGY QUADREMESH ZREMESH", "RETOPO [body] [FACES n] [ITERATIONS k] [NOCURVATURE] [DETAIL levels] [REPLACE]",
+     "Retopology: an even all-quad mesh over the body, its edges along the curvature (DETAIL: levels taking the original's detail)"},
     {"MULTIRES", "MULTIRESOLUTION SUBDLEVEL", "MULTIRES [body] ADD [n] | LEVEL n | UP | DOWN | APPLY | DELETE LOWER|HIGHER | LIST",
      "Multiresolution: subdivision levels kept together; sculpt big forms low, detail high, and the detail follows"},
     {"LAYER", "LAYERS", "LAYER [body] NEW name [RECORD] | RECORD name | STOP | STRENGTH name s | ON name | OFF name | DELETE name | BAKE name|ALL | LIST",

@@ -26,6 +26,7 @@
 #include "core/Brep.hpp"
 #include "core/Print.hpp"
 #include "core/Multires.hpp"
+#include "core/Retopo.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Wearable.hpp"
 #include "core/Units.hpp"
@@ -727,7 +728,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -2572,6 +2573,81 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             double before = 0;
             const double after = orientForPrint(body, ps, &before);
             out.say(body.name + fmt(": oriented for printing, support %.1f cm2", after / 100.0) + fmt(" (was %.1f cm2), on the bed", before / 100.0));
+        }
+        doc.scene.touchBodies();
+        markChanged(doc);
+        return out;
+    }
+    if (cmd == "RETOPO") {
+        // RETOPO [body] [FACES n] [ITERATIONS k] [NOCURVATURE] [DETAIL levels] [REPLACE]
+        static const char* const kWords[] = {"faces", "iterations", "nocurvature", "detail", "replace"};
+        auto isWord = [&](std::size_t k) {
+            if (quotedArg(k)) return false;
+            const std::string w = lower(a[k]);
+            for (const char* q : kWords)
+                if (w == q) return true;
+            return false;
+        };
+        std::size_t i = 0;
+        std::vector<std::string> nameWords;
+        while (i < a.size() && !isWord(i)) nameWords.push_back(a[i++]);
+        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
+        RetopoOptions ro;
+        int detail = 0;
+        bool replace = false;
+        for (; i < a.size(); ++i) {
+            const std::string w = lower(a[i]);
+            auto count = [&](int lo, int hi, int& v) {
+                const auto n = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!n || *n < static_cast<float>(lo) || *n > static_cast<float>(hi)) return false;
+                v = static_cast<int>(*n);
+                return true;
+            };
+            if (w == "faces") {
+                if (!count(50, 500000, ro.faces)) return out.fail("FACES is 50 to 500000 quads");
+            } else if (w == "iterations") {
+                if (!count(1, 30, ro.iterations)) return out.fail("ITERATIONS is 1 to 30");
+            } else if (w == "nocurvature") ro.curvature = false;
+            else if (w == "detail") {
+                if (!count(1, 5, detail)) return out.fail("DETAIL is 1 to 5 levels");
+            } else if (w == "replace") replace = true;
+            else return usage();
+        }
+        const Body& src = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        MeshData mesh;
+        RetopoReport rep;
+        std::string why;
+        if (!retopologize(src, ro, mesh, &rep, &why)) return out.fail("Cannot retopologise " + src.name + ": " + why);
+        doc.scene.pushUndo("RETOPO " + src.name);
+        Body made = meshBody(src.name + " retopo", std::move(mesh), src.color);
+        made.offset = doc.scene.bodies()[static_cast<std::size_t>(bi)].offset;
+        for (int k = 2; findBody(doc, made.name) >= 0; ++k) made.name = src.name + " retopo " + std::to_string(k);
+        if (detail > 0) { // levels over the quads, each laid on the original: its detail at the top
+            std::string err;
+            if (!multiresAdd(made, detail, &err)) return doc.scene.undo(), out.fail(err);
+            projectLevelsOnto(made, doc.scene.bodies()[static_cast<std::size_t>(bi)]);
+        }
+        const std::string sourceName = doc.scene.bodies()[static_cast<std::size_t>(bi)].name;
+        out.say(sourceName + fmt(" retopologised: %g quads", static_cast<double>(rep.quads)) + fmt(", edges about %.3g mm", static_cast<double>(rep.edge)) +
+                fmt(", %.0f%% square", 100.0 * static_cast<double>(rep.quality)) + fmt(", %g vertices not on four quads", static_cast<double>(rep.irregular)) +
+                (detail > 0 ? fmt(", %g levels of detail from the original", static_cast<double>(detail)) : std::string()));
+        if (replace) {
+            Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            const std::string keep = b.name;
+            b.mesh = std::move(made.mesh);
+            b.multires = std::move(made.multires);
+            b.kind = "mesh";
+            b.params.clear();
+            b.brep.reset();
+            out.say("  " + keep + " now has the quads");
+        } else {
+            doc.scene.bodies()[static_cast<std::size_t>(bi)].visible = false; // the new mesh in its place
+            const std::string nm = made.name;
+            doc.scene.add(std::move(made));
+            doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+            out.say("  -> " + nm + " (the original hidden)");
         }
         doc.scene.touchBodies();
         markChanged(doc);

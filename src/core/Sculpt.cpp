@@ -725,6 +725,148 @@ void SculptMesh::refineRegion(const Vec3& centre, float radius, float detail) {
     }
 }
 
+void SculptMesh::flipTowardsValence() {
+    std::vector<int> valence(m_p.size(), 0);
+    std::unordered_map<std::uint64_t, std::array<std::uint32_t, 2>> faces; // an edge's two triangles
+    std::unordered_map<std::uint64_t, int> count;
+    for (std::size_t i = 0; i < m_t.size(); ++i)
+        for (int e = 0; e < 3; ++e) {
+            const std::uint64_t k = edgeKey(m_t[i][static_cast<std::size_t>(e)], m_t[i][static_cast<std::size_t>((e + 1) % 3)]);
+            int& c = count[k];
+            if (c < 2) faces[k][static_cast<std::size_t>(c)] = static_cast<std::uint32_t>(i);
+            ++c;
+        }
+    std::vector<char> border(m_p.size(), 0);
+    for (const auto& [k, c] : count) {
+        const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+        ++valence[a], ++valence[b];
+        if (c != 2) border[a] = border[b] = 1;
+    }
+    auto ideal = [&](std::uint32_t v) { return border[v] ? 4 : 6; };
+    std::vector<char> used(m_t.size(), 0);
+    for (const auto& [k, c] : count) {
+        if (c != 2) continue;
+        const auto& f = faces[k];
+        if (used[f[0]] || used[f[1]] || m_creaseEdges.count(k)) continue;
+        const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+        auto opposite = [&](const std::array<std::uint32_t, 3>& t) {
+            for (std::uint32_t v : t)
+                if (v != a && v != b) return v;
+            return a;
+        };
+        const std::uint32_t c0 = opposite(m_t[f[0]]), d0 = opposite(m_t[f[1]]);
+        if (c0 == d0 || count.count(edgeKey(c0, d0))) continue;
+        auto dev = [&](int va, int vb, int vc, int vd) {
+            auto sq = [](int x) { return x * x; };
+            return sq(va - ideal(a)) + sq(vb - ideal(b)) + sq(vc - ideal(c0)) + sq(vd - ideal(d0));
+        };
+        const int before = dev(valence[a], valence[b], valence[c0], valence[d0]);
+        const int after = dev(valence[a] - 1, valence[b] - 1, valence[c0] + 1, valence[d0] + 1);
+        if (after >= before || valence[a] <= 3 || valence[b] <= 3) continue;
+        // The new triangles (c, d, ...) keep the old faces' side and don't fold.
+        const std::array<std::uint32_t, 3>& t0 = m_t[f[0]];
+        int ia = 0;
+        while (t0[static_cast<std::size_t>(ia)] != a) ++ia;
+        const bool abInOrder = t0[static_cast<std::size_t>((ia + 1) % 3)] == b; // t0 = (a, b, c)
+        const std::array<std::uint32_t, 3> n0 = abInOrder ? std::array<std::uint32_t, 3>{c0, a, d0} : std::array<std::uint32_t, 3>{c0, d0, a};
+        const std::array<std::uint32_t, 3> n1 = abInOrder ? std::array<std::uint32_t, 3>{d0, b, c0} : std::array<std::uint32_t, 3>{d0, c0, b};
+        auto normalOf = [&](const std::array<std::uint32_t, 3>& t) { return cross(m_p[t[1]] - m_p[t[0]], m_p[t[2]] - m_p[t[0]]); };
+        const Vec3 o0 = normalize(normalOf(m_t[f[0]])), o1 = normalize(normalOf(m_t[f[1]]));
+        const Vec3 m0 = normalOf(n0), m1 = normalOf(n1);
+        if (length(m0) < 1e-12f || length(m1) < 1e-12f) continue;
+        if (dot(normalize(m0), o0 + o1) < 0.5f || dot(normalize(m1), o0 + o1) < 0.5f || dot(normalize(m0), normalize(m1)) < 0.5f) continue;
+        m_t[f[0]] = n0, m_t[f[1]] = n1;
+        used[f[0]] = used[f[1]] = 1;
+        --valence[a], --valence[b], ++valence[c0], ++valence[d0];
+    }
+}
+
+void SculptMesh::relaxOnto(const SurfaceIndex& target, float amount) {
+    // Each vertex towards the average of its neighbours, along the surface only, then back
+    // onto the target surface. Border vertices stay.
+    std::vector<Vec3> sum(m_p.size(), Vec3{});
+    std::vector<int> n(m_p.size(), 0);
+    std::unordered_map<std::uint64_t, int> count;
+    for (const auto& t : m_t)
+        for (int e = 0; e < 3; ++e) ++count[edgeKey(t[static_cast<std::size_t>(e)], t[static_cast<std::size_t>((e + 1) % 3)])];
+    std::vector<char> border(m_p.size(), 0);
+    for (const auto& [k, c] : count) {
+        const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+        sum[a] += m_p[b], sum[b] += m_p[a];
+        ++n[a], ++n[b];
+        if (c != 2) border[a] = border[b] = 1;
+    }
+    // Kept creases: a crease vertex towards the middle of its two crease neighbours.
+    const bool creases = m_crease.size() == m_p.size();
+    std::vector<Vec3> along;
+    if (creases) {
+        along.assign(m_p.size(), Vec3{});
+        for (const std::uint64_t k : m_creaseEdges) {
+            const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
+            along[a] += m_p[b] * 0.5f, along[b] += m_p[a] * 0.5f;
+        }
+    }
+    updateNormals();
+    const std::vector<Vec3> before = creases ? m_p : std::vector<Vec3>{};
+    for (std::size_t v = 0; v < m_p.size(); ++v) {
+        if (border[v] || n[v] == 0) continue;
+        if (creases && m_crease[v] == 2) continue;
+        if (creases && m_crease[v] == 1) {
+            m_p[v] = before[v] + (along[v] - before[v]) * amount;
+            continue;
+        }
+        Vec3 d = sum[v] * (1.0f / static_cast<float>(n[v])) - m_p[v];
+        d -= m_n[v] * dot(d, m_n[v]);
+        m_p[v] = target.closestPoint(m_p[v] + d * amount);
+    }
+    updateNormals();
+}
+
+void SculptMesh::remeshIsotropic(float L, int iterations, const SculptMesh& target, float creaseAngle) {
+    m_mask.clear(), m_layer.clear(), m_color.clear(), m_group.clear(), m_layers.clear(), m_start.clear(), m_ids.clear();
+    m_record = -1;
+    const SurfaceIndex index(target);
+    // Creases are kept by keeping them made of edges: the target's own edges lie on them,
+    // splits halve them, and nothing else may move a vertex off one.
+    auto mark = [&] {
+        if (creaseAngle > 0) markCreases(creaseAngle);
+    };
+    for (int it = 0; it < iterations; ++it) {
+        mark();
+        refineAll(L * 4.0f / 3.0f, 8000000);
+        mark();
+        collapseShort(L * 0.8f, {}, 0.0f, true);
+        mark();
+        for (int f = 0; f < 3; ++f) flipTowardsValence();
+        for (int r = 0; r < 3; ++r) relaxOnto(index, 0.8f);
+    }
+    m_creaseEdges.clear(), m_crease.clear();
+}
+
+void SculptMesh::markCreases(float angle) {
+    m_creaseEdges.clear();
+    std::unordered_map<std::uint64_t, std::array<Vec3, 2>> normals;
+    std::unordered_map<std::uint64_t, int> count;
+    for (const auto& t : m_t) {
+        const Vec3 n = normalize(cross(m_p[t[1]] - m_p[t[0]], m_p[t[2]] - m_p[t[0]]));
+        for (int e = 0; e < 3; ++e) {
+            const std::uint64_t k = edgeKey(t[static_cast<std::size_t>(e)], t[static_cast<std::size_t>((e + 1) % 3)]);
+            int& c = count[k];
+            if (c < 2) normals[k][static_cast<std::size_t>(c)] = n;
+            ++c;
+        }
+    }
+    const float cosLimit = std::cos(angle * 3.14159265f / 180.0f);
+    std::vector<int> degree(m_p.size(), 0);
+    for (const auto& [k, c] : count) {
+        if (c != 2 || dot(normals[k][0], normals[k][1]) >= cosLimit) continue;
+        m_creaseEdges.insert(k);
+        ++degree[static_cast<std::size_t>(k >> 32)], ++degree[static_cast<std::size_t>(k & 0xFFFFFFFFu)];
+    }
+    m_crease.assign(m_p.size(), 0);
+    for (std::size_t v = 0; v < m_p.size(); ++v) m_crease[v] = static_cast<char>(degree[v] == 0 ? 0 : degree[v] == 2 ? 1 : 2);
+}
+
 void SculptMesh::refineAll(float detail, std::size_t maxTriangles) {
     const float d2 = detail * detail;
     for (int pass = 0; pass < 16; ++pass) {
@@ -836,6 +978,10 @@ std::size_t SculptMesh::collapseLocal(std::vector<std::uint32_t> local, float mi
         for (const auto& [l2, k] : edges) {
             const auto a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xFFFFFFFFu);
             if (locked[a] || locked[b] || border[a] || border[b] || pinned(a) || pinned(b)) continue;
+            // Kept creases: corners stay, and a crease vertex goes only along its crease.
+            if (!m_crease.empty() && a < m_crease.size() && b < m_crease.size() &&
+                (m_crease[a] == 2 || m_crease[b] == 2 || ((m_crease[a] || m_crease[b]) && !m_creaseEdges.count(k))))
+                continue;
             // Link condition: the edge's two opposite vertices are the only shared neighbours.
             ring(a, ringA);
             ring(b, ringB);

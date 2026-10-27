@@ -134,6 +134,8 @@ bool layerDelete(Body& body, const std::string& name, std::string* why = nullptr
 bool layerBake(Body& body, const std::string& name, std::string* why = nullptr);    // the shape kept, the layer dropped ("": all)
 
 
+class SurfaceIndex;
+
 // A welded, editable copy of a body's surface (world coordinates).
 class SculptMesh {
 public:
@@ -194,6 +196,16 @@ public:
     // everywhere when radius <= 0), keeping the surface closed and unfolded.
     std::size_t collapseShort(float minEdge, const Vec3& centre = {}, float radius = 0.0f, bool keepShape = true);
 
+    // Isotropic remeshing: edges brought near `length` (split the long, collapse the short),
+    // flipped towards six edges a vertex, and the vertices spread evenly over the surface
+    // of `target` (kept on it). Paint, masks, groups and layers are dropped. With
+    // `creaseAngle` > 0, edges where the faces turn more than that many degrees are kept:
+    // never flipped, their vertices sliding only along them, corners staying put.
+    void remeshIsotropic(float length, int iterations, const SculptMesh& target, float creaseAngle = 0.0f);
+    // Loose wrappers for the remesher's steps.
+    void flipTowardsValence();
+    void relaxOnto(const SurfaceIndex& target, float amount = 1.0f);
+
     // Writes back: kind "mesh", normals smoothed across edges turning less than
     // `smoothAngle` degrees, feature edges if asked.
     void writeTo(Body& body, bool featureEdges = true, float smoothAngle = 40.0f) const;
@@ -246,6 +258,11 @@ private:
     std::vector<std::uint32_t> m_from;
     std::vector<char> m_pinned;
     std::unordered_set<std::uint64_t> m_cut; // edges shared with triangles outside the window
+    // While remeshing with creases kept: the crease edges, and per vertex 0 (none), 1 (on a
+    // crease) or 2 (a corner: where creases meet or one ends).
+    std::unordered_set<std::uint64_t> m_creaseEdges;
+    std::vector<char> m_crease;
+    void markCreases(float angle);
     // Grab in progress.
     struct GrabVert {
         std::uint32_t v;

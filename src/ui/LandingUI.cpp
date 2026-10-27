@@ -1043,6 +1043,22 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             if (ImGui::Button("+ Level")) cmd.commands.push_back(mq + "ADD 1");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiresolution: add a subdivision level (keeps the levels below to sculpt at)");
             ImGui::SameLine();
+            if (ImGui::Button("Retopo")) ImGui::OpenPopup("##retopo");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("An even all-quad mesh over this body (a new body; the original hidden)");
+            if (ImGui::BeginPopup("##retopo")) {
+                static int quads = 2000, detail = 0;
+                ImGui::SetNextItemWidth(160);
+                ImGui::DragInt("Quads", &quads, 20.0f, 50, 200000);
+                ImGui::SetNextItemWidth(160);
+                ImGui::SliderInt("Detail levels", &detail, 0, 5);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiresolution levels over the quads, laid on the original: its detail kept");
+                if (ImGui::Button("Retopologise")) {
+                    cmd.commands.push_back("RETOPO \"" + lb.name + "\" FACES " + std::to_string(quads) + (detail > 0 ? " DETAIL " + std::to_string(detail) : std::string()));
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::SameLine();
             if (ImGui::Button(has ? "Layers..." : "Layers")) ImGui::OpenPopup("##sculptlayers");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sculpt layers: record strokes into a layer, then dial it in or out");
             if (ImGui::BeginPopup("##sculptlayers")) {

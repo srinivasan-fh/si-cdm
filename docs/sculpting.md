@@ -195,6 +195,32 @@ MULTIRES "Head" DELETE LOWER    drop the levels below the one shown (or HIGHER: 
 - **In the app:** the sculpt options bar shows *Level n/N* with arrows to step, and
   *+ Level*.
 
+## Retopology
+
+![A sphere, a block and a torus retopologised into even quads](sculpt-retopo.png)
+
+`RETOPO` lays an even, all-quad mesh over a body: ready to subdivide, animate, unwrap or
+hand to another program. The edges follow the surface's principal curvature where it is
+clearly curved, and run straight along sharp edges, which are kept with their corners.
+
+```text
+RETOPO "Head" FACES 3000             about 3000 quads: a new body "Head retopo", the original hidden
+RETOPO "Head" FACES 1500 DETAIL 3    quads plus three levels of detail laid on the original
+RETOPO "Block" FACES 600 REPLACE     the body itself gets the quads
+RETOPO "Head" NOCURVATURE            smooth flow everywhere, ignoring the curvature
+```
+
+- **How it is made** (our own method): an even triangle remesh, a four-way direction field
+  over it (from the curvature and the sharp edges, smoothed), triangles paired into quads
+  along the field, every face split once into quads, then relaxed while held on the
+  original surface.
+- **The report** gives the quad count, the mean edge, how square the corners are and how
+  many vertices are not on four quads (the poles).
+- **With DETAIL** the quads become level 0 of a multiresolution body, and each level above
+  is moved onto the original surface, so the sculpted detail is kept on a clean base.
+- **Kept:** the quads are saved in the project, and OBJ export writes them as quad faces.
+- **MCP:** the sculpt tool's `retopo` operation (`faces`, `levels`, `replace`).
+
 ## Polypaint and polygroups
 
 ![A painted sphere, and a box shown in its polygroups](sculpt-paint.png)
@@ -406,6 +432,7 @@ PAINT   [body] FILL colour [GROUP n | GROUP AT x,y,z] | CLEAR    polypaint (the 
 POLYGROUP [body] AUTO [ANGLE deg] | ISLANDS | MASK | PAINT | CLEAR | LIST | SHOW | HIDE
 LAYER   [body] NEW name [RECORD] | RECORD name | STOP | STRENGTH name s | ON name | OFF name | DELETE name | BAKE name|ALL | LIST
 MULTIRES [body] ADD [n] | LEVEL n | UP | DOWN | APPLY | DELETE LOWER|HIGHER | LIST
+RETOPO  [body] [FACES n] [ITERATIONS k] [NOCURVATURE] [DETAIL levels] [REPLACE]   all-quad remesh
 SUBDIVIDE [body] [LEVELS n]                Loop subdivision
 SYMMETRIZE [body] [X|Y|Z] [-]              mirror the + side (or the - side) across the body's origin
 DECIMATE [body] TO n | RATIO r             reduce to about n triangles

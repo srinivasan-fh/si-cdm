@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace sicdm;
@@ -1051,4 +1052,82 @@ TEST_CASE("multiresolution: detail sculpted high rides along when the form is mo
     CHECK(!b.scene.bodies()[0].multires); // one level left: none
     CHECK(!run(b, "MULTIRES \"Block 1\" APPLY").ok);
     CHECK(run(b, "MULTIRES \"Block 1\" LIST").ok);
+}
+
+TEST_CASE("retopology: an even all-quad mesh on the surface, corners kept, saved and given levels") {
+    Document d;
+    REQUIRE(run(d, "SPHERE 30 @0,0,0").ok);
+    REQUIRE(run(d, "BOX 60 40 30 @100,0,0").ok);
+    REQUIRE(run(d, "RETOPO \"Sphere 1\" FACES 800").ok);
+    REQUIRE(d.scene.bodies().size() == 3);
+    CHECK(!d.scene.bodies()[0].visible);
+    const Body& s = d.scene.bodies()[2];
+    CHECK(s.name == "Sphere 1 retopo");
+    REQUIRE(s.mesh.hasQuads());
+    CHECK(s.mesh.quads.size() > 600);
+    CHECK(s.mesh.quads.size() < 1100);
+    CHECK(s.mesh.indices.size() == s.mesh.quads.size() * 6);
+    CHECK(openEdgeCount(s.mesh) == 0);
+    const SculptMesh original(d.scene.bodies()[0]);
+    float worst = 0;
+    for (const auto& q : s.mesh.quads)
+        for (std::uint32_t v : q) {
+            REQUIRE(v < s.mesh.vertices.size());
+            const Vec3 p = s.mesh.vertices[v].position + s.offset;
+            worst = std::max(worst, length(original.closestPoint(p) - p));
+        }
+    CHECK(worst < 0.01f); // on the original surface
+    // Valence: most vertices on four quads.
+    std::vector<int> val(s.mesh.vertices.size(), 0);
+    for (const auto& q : s.mesh.quads)
+        for (std::uint32_t v : q) ++val[v];
+    const auto regular = std::count(val.begin(), val.end(), 4);
+    CHECK(static_cast<double>(regular) > 0.8 * static_cast<double>(val.size()));
+    // The box keeps its sharp edges and corners.
+    REQUIRE(run(d, "RETOPO \"Block 2\" FACES 600").ok);
+    const Body& b = d.scene.bodies()[3];
+    const AABB bb = b.bounds(), ob = d.scene.bodies()[1].bounds();
+    CHECK(length(bb.min - ob.min) < 0.05f);
+    CHECK(length(bb.max - ob.max) < 0.05f);
+    CHECK(openEdgeCount(b.mesh) == 0);
+    // Saved and read back with the quads; OBJ writes quad faces.
+    const auto dir = std::filesystem::temp_directory_path();
+    const std::string path = (dir / "sicdm_retopo.sicdm").string(), obj = (dir / "sicdm_retopo.obj").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Scene scene;
+    ProjectState state;
+    REQUIRE(loadProject(scene, state, path, &err));
+    CHECK(scene.bodies()[2].mesh.quads == s.mesh.quads);
+    std::filesystem::remove(path);
+    Scene one;
+    one.add(d.scene.bodies()[2]);
+    REQUIRE(exportObj(one, obj, &err));
+    {
+        std::ifstream in(obj);
+        std::string line;
+        int quadFaces = 0;
+        while (std::getline(in, line))
+            if (line.rfind("f ", 0) == 0 && std::count(line.begin(), line.end(), ' ') == 4) ++quadFaces;
+        CHECK(quadFaces == static_cast<int>(s.mesh.quads.size()));
+    }
+    std::error_code ec;
+    std::filesystem::remove(obj, ec);
+    // DETAIL: levels over the quads, the top one on the original surface.
+    REQUIRE(run(d, "RETOPO \"Sphere 1\" FACES 300 DETAIL 2").ok);
+    const Body& m = d.scene.bodies().back();
+    REQUIRE(m.multires != nullptr);
+    CHECK(m.multires->levels.size() == 3);
+    float far = 0;
+    for (const Vec3& p : m.multires->levels.back().p) far = std::max(far, length(original.closestPoint(p + m.offset) - (p + m.offset)));
+    CHECK(far < 0.01f);
+    // REPLACE swaps the body's own mesh; undo brings the original back.
+    const std::size_t count = d.scene.bodies().size(), tris = d.scene.bodies()[0].mesh.indices.size();
+    REQUIRE(run(d, "RETOPO \"Sphere 1\" FACES 400 REPLACE").ok);
+    CHECK(d.scene.bodies().size() == count);
+    CHECK(d.scene.bodies()[0].mesh.hasQuads());
+    d.scene.undo();
+    CHECK(d.scene.bodies()[0].mesh.indices.size() == tris);
+    CHECK(!d.scene.bodies()[0].mesh.hasQuads());
+    CHECK(!run(d, "RETOPO \"Sphere 1\" FACES 10").ok);
 }

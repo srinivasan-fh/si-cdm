@@ -566,6 +566,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 for (std::uint32_t g : b.mesh.groups) putU32(grp, g);
                 mesh.set("groups_b64", base64(grp));
             }
+            if (b.mesh.hasQuads()) {
+                std::vector<unsigned char> qd;
+                for (const auto& q : b.mesh.quads) putU32(qd, q[0]), putU32(qd, q[1]), putU32(qd, q[2]), putU32(qd, q[3]);
+                mesh.set("quads_b64", base64(qd));
+            }
             if (b.mesh.hasLayers()) {
                 Json layers = Json::array();
                 for (const SculptLayer& l : b.mesh.layers) {
@@ -602,6 +607,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 Json grp = Json::array(); // polygroups, per triangle
                 for (std::uint32_t g : b.mesh.groups) grp.push(static_cast<double>(g));
                 mesh.set("groups", grp);
+            }
+            if (b.mesh.hasQuads()) {
+                Json qd = Json::array(); // quad faces (their triangles are the indices, two each)
+                for (const auto& q : b.mesh.quads) qd.push(static_cast<double>(q[0])).push(static_cast<double>(q[1])).push(static_cast<double>(q[2])).push(static_cast<double>(q[3]));
+                mesh.set("quads", qd);
             }
             if (b.mesh.hasLayers()) {
                 Json layers = Json::array(); // sculpt layers: per vertex offsets
@@ -870,6 +880,17 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             if (colors.size() == b.mesh.vertices.size())
                 for (std::size_t i = 0; i < colors.size(); ++i) b.mesh.vertices[i].color = colors[i];
             if (groups.size() * 3 == b.mesh.indices.size()) b.mesh.groups = std::move(groups);
+            {
+                std::vector<std::uint32_t> qv;
+                raw.clear();
+                if (m["quads_b64"].isString() && unbase64(m["quads_b64"].asString(), raw))
+                    for (std::size_t i = 0; i + 4 <= raw.size(); i += 4) qv.push_back(getU32(&raw[i]));
+                for (const Json& x : m["quads"].items()) qv.push_back(static_cast<std::uint32_t>(x.asNumber(0)));
+                bool fine = qv.size() % 4 == 0 && qv.size() / 4 * 6 == b.mesh.indices.size();
+                for (std::uint32_t v : qv) fine = fine && v < b.mesh.vertices.size();
+                if (fine)
+                    for (std::size_t i = 0; i + 3 < qv.size(); i += 4) b.mesh.quads.push_back({qv[i], qv[i + 1], qv[i + 2], qv[i + 3]});
+            }
             for (const Json& jl : m["layers"].items()) {
                 SculptLayer l;
                 l.name = jl["name"].asString("Layer");
@@ -1147,6 +1168,16 @@ bool exportObj(const Scene& scene, const std::string& path, std::string* error) 
             out += line;
         }
         const auto& idx = b.mesh.indices;
+        if (b.mesh.hasQuads()) { // a quad mesh: its quads as they are
+            for (const auto& q : b.mesh.quads) {
+                const std::size_t q0 = base + q[0], q1 = base + q[1], q2 = base + q[2], q3 = base + q[3];
+                std::snprintf(line, sizeof(line), "f %zu//%zu %zu//%zu %zu//%zu %zu//%zu\n", q0, q0, q1, q1, q2, q2, q3, q3);
+                out += line;
+            }
+            base += b.mesh.vertices.size();
+            ++written;
+            continue;
+        }
         const bool grouped = b.mesh.hasGroups();
         std::uint32_t lastGroup = 0xFFFFFFFFu;
         for (std::size_t i = 0; i + 2 < idx.size(); i += 3) {

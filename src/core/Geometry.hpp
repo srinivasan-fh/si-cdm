@@ -2,6 +2,7 @@
 
 #include "core/Math.hpp"
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -48,6 +49,10 @@ struct MeshData {
     // Who each vertex is (multiresolution levels match their vertices by it); empty: none.
     std::vector<std::uint32_t> ids;
     bool hasIds() const noexcept { return !ids.empty() && ids.size() == vertices.size(); }
+    // Quad faces (a retopologised mesh): each quad's corners, its two triangles being the
+    // indices 6q .. 6q+5; empty, or out of step with the triangles: none.
+    std::vector<std::array<std::uint32_t, 4>> quads;
+    bool hasQuads() const noexcept { return !quads.empty() && quads.size() * 6 == indices.size(); }
     bool hasLayers() const noexcept {
         if (layers.empty()) return false;
         for (const SculptLayer& l : layers)
