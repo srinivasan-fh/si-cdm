@@ -2,6 +2,7 @@
 // the picked one on the right, with links between them; and the sample projects.
 
 #include "core/HelpDocs.hpp"
+#include "core/Translate.hpp"
 #include "ui/LandingUI.hpp"
 #include "ui/Theme.hpp"
 
@@ -65,7 +66,7 @@ void LandingUI::runSample(UiCommands& cmd, const std::string& file) {
 
 void LandingUI::drawHelpWindow(UiCommands& cmd, UiState& st) {
     ImGui::SetNextWindowSize({1000, 720}, ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("User Guide", &st.showHelp)) {
+    if (!ImGui::Begin(tr("User Guide"), &st.showHelp)) {
         ImGui::End();
         return;
     }
@@ -91,7 +92,7 @@ void LandingUI::drawHelpWindow(UiCommands& cmd, UiState& st) {
     ImGui::InputTextWithHint("##helpsearch", "Search the guide", m_helpSearch, sizeof m_helpSearch);
     const std::string q = lowered(m_helpSearch);
     ImGui::BeginDisabled(m_helpBack.empty());
-    if (ImGui::SmallButton("< Back")) {
+    if (ImGui::SmallButton(tr("< Back"))) {
         const std::string back = m_helpBack.back();
         m_helpBack.pop_back();
         m_helpShown = back;
@@ -109,13 +110,13 @@ void LandingUI::drawHelpWindow(UiCommands& cmd, UiState& st) {
         const std::string label = q.empty() ? d.title : d.title + "  (" + std::to_string(hits) + ")";
         if (ImGui::Selectable((label + "##" + d.file).c_str(), d.file == m_helpShown)) go(d.file);
     }
-    if (!q.empty()) ImGui::TextDisabled("Pages with \"%s\"", m_helpSearch);
+    if (!q.empty()) ImGui::TextDisabled(tr("Pages with \"%s\""), m_helpSearch);
     ImGui::Spacing();
-    ImGui::SeparatorText("Sample projects");
+    ImGui::SeparatorText(tr("Sample projects"));
     for (const HelpExample& e : helpExamples()) {
         ImGui::PushID(e.file.c_str());
         if (ImGui::Selectable(e.title.c_str())) runSample(cmd, e.file);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Builds it in a new tab (%s)", e.file.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("Builds it in a new tab (%s)"), e.file.c_str());
         ImGui::PopID();
     }
     ImGui::EndChild();
@@ -125,7 +126,7 @@ void LandingUI::drawHelpWindow(UiCommands& cmd, UiState& st) {
     ImGui::BeginChild("##helppage", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
     const HelpDoc* doc = helpDoc(m_helpShown);
     if (!doc) {
-        ImGui::TextDisabled("The guide isn't built into this copy.");
+        ImGui::TextDisabled("%s", tr("The guide isn't built into this copy."));
         ImGui::EndChild();
         ImGui::End();
         return;
@@ -204,9 +205,9 @@ void LandingUI::drawHelpWindow(UiCommands& cmd, UiState& st) {
             ImGui::PopTextWrapPos();
             ImGui::EndChild();
             ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click to copy");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Right-click to copy"));
             if (ImGui::BeginPopupContextItem("##copy")) {
-                if (ImGui::MenuItem("Copy")) ImGui::SetClipboardText(b.text.c_str());
+                if (ImGui::MenuItem(tr("Copy"))) ImGui::SetClipboardText(b.text.c_str());
                 ImGui::EndPopup();
             }
             ImGui::Spacing();
@@ -233,7 +234,7 @@ void LandingUI::drawHelpWindow(UiCommands& cmd, UiState& st) {
             break;
         }
         case MdBlock::Image:
-            ImGui::TextColored(theme::vec(theme::kTextDim), "[Picture: %s]", markdownPlain(b.text).c_str());
+            ImGui::TextColored(theme::vec(theme::kTextDim), tr("[Picture: %s]"), markdownPlain(b.text).c_str());
             ImGui::Spacing();
             break;
         case MdBlock::Rule: ImGui::Separator(); break;

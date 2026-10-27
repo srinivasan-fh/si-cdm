@@ -1,4 +1,5 @@
 #include "ui/ViewCube.hpp"
+#include "core/Translate.hpp"
 
 #include <algorithm>
 #include <array>
@@ -215,9 +216,9 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
     if (hoverDir && !ImGui::IsPopupOpen("cubemenu")) {
         const int axes = (hoverDir->x != 0) + (hoverDir->y != 0) + (hoverDir->z != 0);
         if (drawing2D && axes == 1)
-            ImGui::SetTooltip("%s drawing plane", regionName(*hoverDir).c_str());
+            ImGui::SetTooltip(tr("%s drawing plane"), regionName(*hoverDir).c_str());
         else
-            ImGui::SetTooltip("%s view%s", regionName(*hoverDir).c_str(), drawing2D ? "  (opens 3D window)" : "");
+            ImGui::SetTooltip(tr("%s view%s"), regionName(*hoverDir).c_str(), drawing2D ? "  (opens 3D window)" : "");
     }
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("cubemenu");
 
@@ -306,22 +307,22 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
 
     // Right-click menu: extra views.
     if (ImGui::BeginPopup("cubemenu")) {
-        if (ImGui::MenuItem("Home View")) res.home = true;
-        if (ImGui::MenuItem("Zoom to Fit", "F")) res.fit = true;
+        if (ImGui::MenuItem(tr("Home View"))) res.home = true;
+        if (ImGui::MenuItem(tr("Zoom to Fit"), "F")) res.fit = true;
         if (!drawing2D) {
-            if (ImGui::MenuItem("Orthographic", "P", cam.projection() == Projection::Orthographic))
+            if (ImGui::MenuItem(tr("Orthographic"), "P", cam.projection() == Projection::Orthographic))
                 res.toggleProjection = true;
             ImGui::Separator();
-            if (ImGui::MenuItem("Roll 90° Counter-clockwise")) res.roll = kPi * 0.5f;
-            if (ImGui::MenuItem("Roll 90° Clockwise")) res.roll = -kPi * 0.5f;
-            if (ImGui::MenuItem("Level View (reset roll)", nullptr, false, cam.roll() != 0.0f)) res.resetRoll = true;
+            if (ImGui::MenuItem(tr("Roll 90° Counter-clockwise"))) res.roll = kPi * 0.5f;
+            if (ImGui::MenuItem(tr("Roll 90° Clockwise"))) res.roll = -kPi * 0.5f;
+            if (ImGui::MenuItem(tr("Level View (reset roll)"), nullptr, false, cam.roll() != 0.0f)) res.resetRoll = true;
         }
         ImGui::Separator();
-        ImGui::TextDisabled("2D Drawing window");
+        ImGui::TextDisabled("%s", tr("2D Drawing window"));
         for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right})
             if (ImGui::MenuItem(planeName(p))) res.drawingPlane = p;
         ImGui::Separator();
-        if (ImGui::MenuItem("3D Model window", "Tab", !drawing2D)) res.open3D = true;
+        if (ImGui::MenuItem(tr("3D Model window"), "Tab", !drawing2D)) res.open3D = true;
         ImGui::EndPopup();
     }
 

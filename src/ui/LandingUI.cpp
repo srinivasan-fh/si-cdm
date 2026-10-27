@@ -1,4 +1,5 @@
 #include "ui/LandingUI.hpp"
+#include "core/Translate.hpp"
 
 #include "core/HelpDocs.hpp"
 
@@ -49,10 +50,10 @@ constexpr ImU32 kAccent = theme::kAccent;
 
 const char* displayModeLabel(DisplayMode m) {
     switch (m) {
-    case DisplayMode::Shaded: return "Shaded";
-    case DisplayMode::ShadedWithEdges: return "Shaded + Edges";
-    case DisplayMode::Wireframe: return "Wireframe";
-    case DisplayMode::HiddenLine: return "Hidden Line";
+    case DisplayMode::Shaded: return tr("Shaded");
+    case DisplayMode::ShadedWithEdges: return tr("Shaded + Edges");
+    case DisplayMode::Wireframe: return tr("Wireframe");
+    case DisplayMode::HiddenLine: return tr("Hidden Line");
     }
     return "";
 }
@@ -169,7 +170,7 @@ bool lengthField(const char* id, float* mm, float minMm = -1e7f, float maxMm = 1
         s_editing.erase(wid);
     }
     if (ImGui::IsItemHovered() && !s_editing.count(wid))
-        ImGui::SetTooltip("%s\nType a length in any unit: 12.5  3in  5'6-1/2\"  1/8\"  10pt  1m+25mm",
+        ImGui::SetTooltip(tr("%s\nType a length in any unit: 12.5  3in  5'6-1/2\"  1/8\"  10pt  1m+25mm"),
                           error ? "Not a length" : lengthText(*mm, {true, false}).c_str());
     return changed;
 }
@@ -178,7 +179,7 @@ bool lengthField(const char* id, float* mm, float minMm = -1e7f, float maxMm = 1
 // a UNITS command, so it is logged, marks the file changed and saves with it.
 void unitsMenu(UiCommands& cmd) {
     const UnitSettings& u = activeUnits();
-    ImGui::TextDisabled("Lengths stay exact in mm; this sets typing and display");
+    ImGui::TextDisabled("%s", tr("Lengths stay exact in mm; this sets typing and display"));
     ImGui::Separator();
     struct Choice {
         LengthUnit unit;
@@ -193,13 +194,13 @@ void unitsMenu(UiCommands& cmd) {
     for (const Choice& c : kChoices)
         if (ImGui::MenuItem(c.label, unitInfo(c.unit).symbol, u.unit == c.unit && !(u.fractional())))
             cmd.commands.push_back(std::string("UNITS ") + c.word + " FRACTION OFF");
-    if (ImGui::MenuItem("Feet-Inches (5'-6 1/2\")", nullptr, u.unit == LengthUnit::Foot && u.fractional()))
+    if (ImGui::MenuItem(tr("Feet-Inches (5'-6 1/2\")"), nullptr, u.unit == LengthUnit::Foot && u.fractional()))
         cmd.commands.push_back("UNITS FT FRACTION 1/" + std::to_string(u.denominator));
-    if (ImGui::MenuItem("Fractional Inches (3-1/2\")", nullptr, u.unit == LengthUnit::Inch && u.fractional()))
+    if (ImGui::MenuItem(tr("Fractional Inches (3-1/2\")"), nullptr, u.unit == LengthUnit::Inch && u.fractional()))
         cmd.commands.push_back("UNITS IN FRACTION 1/" + std::to_string(u.denominator));
     ImGui::Separator();
-    if (ImGui::BeginMenu("Precision", !u.fractional())) {
-        if (ImGui::MenuItem("Auto", nullptr, u.precision < 0)) cmd.commands.push_back("UNITS PRECISION AUTO");
+    if (ImGui::BeginMenu(tr("Precision"), !u.fractional())) {
+        if (ImGui::MenuItem(tr("Auto"), nullptr, u.precision < 0)) cmd.commands.push_back("UNITS PRECISION AUTO");
         for (int d = 0; d <= 8; ++d) {
             char label[32];
             std::snprintf(label, sizeof(label), "%s", formatDecimal(0.0, d, false).c_str());
@@ -207,7 +208,7 @@ void unitsMenu(UiCommands& cmd) {
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Fraction Precision", u.unit == LengthUnit::Inch || u.unit == LengthUnit::Foot)) {
+    if (ImGui::BeginMenu(tr("Fraction Precision"), u.unit == LengthUnit::Inch || u.unit == LengthUnit::Foot)) {
         for (int den = 2; den <= 256; den *= 2) {
             const std::string label = "1/" + std::to_string(den) + " in";
             if (ImGui::MenuItem(label.c_str(), nullptr, u.fractional() && u.denominator == den))
@@ -216,7 +217,7 @@ void unitsMenu(UiCommands& cmd) {
         ImGui::EndMenu();
     }
     ImGui::Separator();
-    ImGui::TextDisabled("Resolution  %s", formatLength(u.resolutionMm(), UnitSettings{LengthUnit::Millimeter, 6}).c_str());
+    ImGui::TextDisabled(tr("Resolution  %s"), formatLength(u.resolutionMm(), UnitSettings{LengthUnit::Millimeter, 6}).c_str());
 }
 
 bool paramEditor(const LibraryParam& p, float& value) {
@@ -389,11 +390,11 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
     m_menuHeight = ImGui::GetWindowSize().y;
     const bool is2D = st.mode == ViewMode::Drawing2D;
 
-    if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Project", "Ctrl+N")) requestFile(-1, st);
-        if (ImGui::MenuItem("Open Project...", "Ctrl+O")) requestFile(FileOpen, st);
+    if (ImGui::BeginMenu(tr("File"))) {
+        if (ImGui::MenuItem(tr("New Project"), "Ctrl+N")) requestFile(-1, st);
+        if (ImGui::MenuItem(tr("Open Project..."), "Ctrl+O")) requestFile(FileOpen, st);
         const std::vector<std::string>& recent = preferences().recent;
-        if (ImGui::BeginMenu("Open Recent", !recent.empty())) {
+        if (ImGui::BeginMenu(tr("Open Recent"), !recent.empty())) {
             for (std::size_t i = 0; i < recent.size(); ++i) {
                 std::error_code ec;
                 const std::filesystem::path f(recent[i]);
@@ -404,36 +405,36 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                     ImGui::SetTooltip("%s%s", recent[i].c_str(), there ? "" : "\n(no longer there)");
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Clear the List")) cmd.commands.push_back("RECENT CLEAR");
+            if (ImGui::MenuItem(tr("Clear the List"))) cmd.commands.push_back("RECENT CLEAR");
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Close", "Ctrl+W")) requestClose(cmd, st, st.activeFile);
+        if (ImGui::MenuItem(tr("Close"), "Ctrl+W")) requestClose(cmd, st, st.activeFile);
         ImGui::Separator();
-        if (ImGui::MenuItem("Undo", "Ctrl+Z")) cmd.commands.push_back("UNDO");
-        if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z")) cmd.commands.push_back("REDO");
+        if (ImGui::MenuItem(tr("Undo"), "Ctrl+Z")) cmd.commands.push_back("UNDO");
+        if (ImGui::MenuItem(tr("Redo"), "Ctrl+Shift+Z")) cmd.commands.push_back("REDO");
         ImGui::Separator();
-        if (ImGui::MenuItem("Save", "Ctrl+S")) {
+        if (ImGui::MenuItem(tr("Save"), "Ctrl+S")) {
             if (st.projectPath.empty()) requestFile(FileSaveAs, st);
             else cmd.commands.push_back("SAVE");
         }
-        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) requestFile(FileSaveAs, st);
+        if (ImGui::MenuItem(tr("Save As..."), "Ctrl+Shift+S")) requestFile(FileSaveAs, st);
         ImGui::Separator();
-        if (ImGui::MenuItem("Import...", "Ctrl+I")) requestFile(FileImport, st);
-        if (ImGui::MenuItem("Import Image...")) requestFile(FileImportImage, st);
-        if (ImGui::MenuItem("Export...", "Ctrl+E")) requestFile(FileExport, st);
+        if (ImGui::MenuItem(tr("Import..."), "Ctrl+I")) requestFile(FileImport, st);
+        if (ImGui::MenuItem(tr("Import Image..."))) requestFile(FileImportImage, st);
+        if (ImGui::MenuItem(tr("Export..."), "Ctrl+E")) requestFile(FileExport, st);
         ImGui::Separator();
-        if (ImGui::MenuItem("Import STEP / IGES...")) requestFile(FileImportStep, st);
-        if (ImGui::MenuItem("Export STEP / IGES...")) requestFile(FileExportStep, st);
+        if (ImGui::MenuItem(tr("Import STEP / IGES..."))) requestFile(FileImportStep, st);
+        if (ImGui::MenuItem(tr("Export STEP / IGES..."))) requestFile(FileExportStep, st);
         ImGui::Separator();
-        if (ImGui::MenuItem("Preferences...", "Ctrl+,")) st.showPreferences = true;
+        if (ImGui::MenuItem(tr("Preferences..."), "Ctrl+,")) st.showPreferences = true;
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit", "Ctrl+Q")) cmd.quit = true;
+        if (ImGui::MenuItem(tr("Quit"), "Ctrl+Q")) cmd.quit = true;
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("View")) {
-        if (ImGui::MenuItem("3D Model Window", "Tab", st.mode == ViewMode::Model3D)) cmd.mode = ViewMode::Model3D;
-        if (ImGui::MenuItem("Simulation Window", "Shift+Tab", st.mode == ViewMode::Simulation)) cmd.mode = ViewMode::Simulation;
-        if (ImGui::BeginMenu("2D Drawing Window")) {
+    if (ImGui::BeginMenu(tr("View"))) {
+        if (ImGui::MenuItem(tr("3D Model Window"), "Tab", st.mode == ViewMode::Model3D)) cmd.mode = ViewMode::Model3D;
+        if (ImGui::MenuItem(tr("Simulation Window"), "Shift+Tab", st.mode == ViewMode::Simulation)) cmd.mode = ViewMode::Simulation;
+        if (ImGui::BeginMenu(tr("2D Drawing Window"))) {
             for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right})
                 if (ImGui::MenuItem(planeName(p), nullptr, is2D && st.plane == p)) {
                     cmd.mode = ViewMode::Drawing2D;
@@ -453,100 +454,100 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                 if (ImGui::MenuItem(v.label, v.shortcut)) cmd.view = v.view;
             ImGui::Separator();
         }
-        if (ImGui::MenuItem("Zoom to Fit", "F")) cmd.fit = true;
+        if (ImGui::MenuItem(tr("Zoom to Fit"), "F")) cmd.fit = true;
         if (!is2D) {
-            if (ImGui::MenuItem("Orthographic", "P", cam.projection() == Projection::Orthographic))
+            if (ImGui::MenuItem(tr("Orthographic"), "P", cam.projection() == Projection::Orthographic))
                 cmd.toggleProjection = true;
             ImGui::Separator();
             for (DisplayMode m : kDisplayModes)
                 if (ImGui::MenuItem(displayModeLabel(m), nullptr, vp.displayMode == m)) vp.displayMode = m;
-            if (ImGui::MenuItem("Polygroups", nullptr, vp.showPolygroups)) vp.showPolygroups = !vp.showPolygroups;
+            if (ImGui::MenuItem(tr("Polygroups"), nullptr, vp.showPolygroups)) vp.showPolygroups = !vp.showPolygroups;
         }
         ImGui::Separator();
-        if (ImGui::BeginMenu("Units")) {
+        if (ImGui::BeginMenu(tr("Units"))) {
             unitsMenu(cmd);
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        ImGui::MenuItem("Grid", "G", &vp.showGrid);
-        if (ImGui::MenuItem("Model Panel", "M", st.showModelTree && st.dockTab == 0)) {
+        ImGui::MenuItem(tr("Grid"), "G", &vp.showGrid);
+        if (ImGui::MenuItem(tr("Model Panel"), "M", st.showModelTree && st.dockTab == 0)) {
             st.showModelTree = !(st.showModelTree && st.dockTab == 0);
             st.dockTab = 0;
         }
-        if (ImGui::MenuItem("Library", "K", st.showModelTree && st.dockTab == 1)) {
+        if (ImGui::MenuItem(tr("Library"), "K", st.showModelTree && st.dockTab == 1)) {
             st.showModelTree = !(st.showModelTree && st.dockTab == 1);
             st.dockTab = 1;
         }
-        if (ImGui::MenuItem("CAM Panel", "J", st.showModelTree && st.dockTab == 2)) {
+        if (ImGui::MenuItem(tr("CAM Panel"), "J", st.showModelTree && st.dockTab == 2)) {
             st.showModelTree = !(st.showModelTree && st.dockTab == 2);
             st.dockTab = 2;
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Design")) {
+    if (ImGui::BeginMenu(tr("Design"))) {
         const bool curve = st.selectedCurve >= 0, body = st.selectedBody >= 0;
         auto fmtNum = [](float v) {
             char b[32];
             std::snprintf(b, sizeof(b), "%g", static_cast<double>(v));
             return std::string(b);
         };
-        ImGui::TextDisabled("Sketch features (select a closed curve)");
-        if (ImGui::MenuItem("Extrude 20", nullptr, false, curve)) cmd.commands.push_back("EXTRUDE 20");
-        if (ImGui::BeginMenu("Revolve", curve)) {
+        ImGui::TextDisabled("%s", tr("Sketch features (select a closed curve)"));
+        if (ImGui::MenuItem(tr("Extrude 20"), nullptr, false, curve)) cmd.commands.push_back("EXTRUDE 20");
+        if (ImGui::BeginMenu(tr("Revolve"), curve)) {
             ImGui::SetNextItemWidth(120);
-            ImGui::InputFloat("degrees", &m_revolveAngle, 15.0f, 90.0f, "%.0f");
+            ImGui::InputFloat(tr("degrees"), &m_revolveAngle, 15.0f, 90.0f, "%.0f");
             m_revolveAngle = std::clamp(m_revolveAngle, 1.0f, 360.0f);
-            if (ImGui::MenuItem("About the Vertical Axis")) cmd.commands.push_back("REVOLVE ANGLE " + fmtNum(m_revolveAngle) + " AXIS V");
-            if (ImGui::MenuItem("About the Horizontal Axis")) cmd.commands.push_back("REVOLVE ANGLE " + fmtNum(m_revolveAngle) + " AXIS U");
+            if (ImGui::MenuItem(tr("About the Vertical Axis"))) cmd.commands.push_back("REVOLVE ANGLE " + fmtNum(m_revolveAngle) + " AXIS V");
+            if (ImGui::MenuItem(tr("About the Horizontal Axis"))) cmd.commands.push_back("REVOLVE ANGLE " + fmtNum(m_revolveAngle) + " AXIS U");
             ImGui::EndMenu();
         }
-        ImGui::TextDisabled("Sweep and loft: SWEEP profile ALONG path, LOFT a b AT d");
-        if (ImGui::MenuItem("Sketch Constraints and Dimensions")) cmd.commands.push_back("CONSTRAINTS");
-        ImGui::TextDisabled("CONSTRAIN TANGENT a b, DIM curve SIDE 1 60, CONSTRAINT EDIT D1 80");
+        ImGui::TextDisabled("%s", tr("Sweep and loft: SWEEP profile ALONG path, LOFT a b AT d"));
+        if (ImGui::MenuItem(tr("Sketch Constraints and Dimensions"))) cmd.commands.push_back("CONSTRAINTS");
+        ImGui::TextDisabled("%s", tr("CONSTRAIN TANGENT a b, DIM curve SIDE 1 60, CONSTRAINT EDIT D1 80"));
         ImGui::Separator();
-        ImGui::TextDisabled("Body features (select a body)");
-        if (ImGui::BeginMenu("Fillet (Round Edges)", body)) {
+        ImGui::TextDisabled("%s", tr("Body features (select a body)"));
+        if (ImGui::BeginMenu(tr("Fillet (Round Edges)"), body)) {
             ImGui::SetNextItemWidth(120);
-            ImGui::InputFloat("radius / chamfer mm", &m_filletRadius, 0.5f, 1.0f, "%.2f");
+            ImGui::InputFloat(tr("radius / chamfer mm"), &m_filletRadius, 0.5f, 1.0f, "%.2f");
             m_filletRadius = std::max(m_filletRadius, 0.1f);
-            if (ImGui::MenuItem("Round the Outside Edges")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius));
-            if (ImGui::MenuItem("Fill the Inside Corners")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius) + " CONCAVE");
-            if (ImGui::MenuItem("Both")) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius) + " BOTH");
+            if (ImGui::MenuItem(tr("Round the Outside Edges"))) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius));
+            if (ImGui::MenuItem(tr("Fill the Inside Corners"))) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius) + " CONCAVE");
+            if (ImGui::MenuItem(tr("Both"))) cmd.commands.push_back("FILLET RADIUS " + fmtNum(m_filletRadius) + " BOTH");
             ImGui::Separator();
-            ImGui::TextDisabled("Exact, on chosen edges");
+            ImGui::TextDisabled("%s", tr("Exact, on chosen edges"));
             const std::string r = "FILLET RADIUS " + fmtNum(m_filletRadius) + " EDGES ";
-            if (ImGui::MenuItem("Top Edges")) cmd.commands.push_back(r + "TOP");
-            if (ImGui::MenuItem("Vertical Edges")) cmd.commands.push_back(r + "VERTICAL");
-            if (ImGui::MenuItem("Every Edge (Ball Corners)")) cmd.commands.push_back(r + "ALL");
-            if (ImGui::MenuItem("Inside Corners")) cmd.commands.push_back(r + "CONCAVE");
+            if (ImGui::MenuItem(tr("Top Edges"))) cmd.commands.push_back(r + "TOP");
+            if (ImGui::MenuItem(tr("Vertical Edges"))) cmd.commands.push_back(r + "VERTICAL");
+            if (ImGui::MenuItem(tr("Every Edge (Ball Corners)"))) cmd.commands.push_back(r + "ALL");
+            if (ImGui::MenuItem(tr("Inside Corners"))) cmd.commands.push_back(r + "CONCAVE");
             ImGui::Separator();
             const std::string c = "CHAMFER DISTANCE " + fmtNum(m_filletRadius) + " EDGES ";
-            if (ImGui::MenuItem("Chamfer the Top Edges")) cmd.commands.push_back(c + "TOP");
-            if (ImGui::MenuItem("Chamfer the Vertical Edges")) cmd.commands.push_back(c + "VERTICAL");
-            if (ImGui::MenuItem("Chamfer the Outside Edges")) cmd.commands.push_back(c + "CONVEX");
-            if (ImGui::MenuItem("List the Edges")) cmd.commands.push_back("EDGES");
-            ImGui::TextDisabled("Others by number: FILLET RADIUS r EDGES 1 4");
+            if (ImGui::MenuItem(tr("Chamfer the Top Edges"))) cmd.commands.push_back(c + "TOP");
+            if (ImGui::MenuItem(tr("Chamfer the Vertical Edges"))) cmd.commands.push_back(c + "VERTICAL");
+            if (ImGui::MenuItem(tr("Chamfer the Outside Edges"))) cmd.commands.push_back(c + "CONVEX");
+            if (ImGui::MenuItem(tr("List the Edges"))) cmd.commands.push_back("EDGES");
+            ImGui::TextDisabled("%s", tr("Others by number: FILLET RADIUS r EDGES 1 4"));
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Pattern", body)) {
+        if (ImGui::BeginMenu(tr("Pattern"), body)) {
             static const char* const kAxes[] = {"X", "Y", "Z"};
             ImGui::SetNextItemWidth(120);
-            ImGui::InputInt("count", &m_patternCount);
+            ImGui::InputInt(tr("count"), &m_patternCount);
             m_patternCount = std::clamp(m_patternCount, 2, 500);
             ImGui::SetNextItemWidth(120);
-            ImGui::Combo("axis", &m_patternAxis, kAxes, 3);
+            ImGui::Combo(tr("axis"), &m_patternAxis, kAxes, 3);
             ImGui::SetNextItemWidth(120);
-            ImGui::InputFloat("spacing mm", &m_patternSpacing, 1.0f, 10.0f, "%.2f");
+            ImGui::InputFloat(tr("spacing mm"), &m_patternSpacing, 1.0f, 10.0f, "%.2f");
             ImGui::SetNextItemWidth(120);
-            ImGui::InputFloat("total degrees", &m_patternAngle, 15.0f, 90.0f, "%.0f");
+            ImGui::InputFloat(tr("total degrees"), &m_patternAngle, 15.0f, 90.0f, "%.0f");
             m_patternAngle = std::clamp(m_patternAngle, 1.0f, 360.0f);
             const std::string n = std::to_string(m_patternCount), ax = kAxes[m_patternAxis];
-            if (ImGui::MenuItem("Linear")) cmd.commands.push_back("PATTERN LINEAR " + n + " SPACING " + fmtNum(m_patternSpacing) + " DIR " + ax);
-            if (ImGui::MenuItem("Circular (about the origin)"))
+            if (ImGui::MenuItem(tr("Linear"))) cmd.commands.push_back("PATTERN LINEAR " + n + " SPACING " + fmtNum(m_patternSpacing) + " DIR " + ax);
+            if (ImGui::MenuItem(tr("Circular (about the origin)")))
                 cmd.commands.push_back("PATTERN CIRCULAR " + n + " ANGLE " + fmtNum(m_patternAngle) + " AXIS " + ax);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Mirror", body)) {
+        if (ImGui::BeginMenu(tr("Mirror"), body)) {
             for (const char* p : {"YZ", "XZ", "XY"}) {
                 if (ImGui::MenuItem((std::string("Copy across ") + p).c_str())) cmd.commands.push_back(std::string("MIRROR PLANE ") + p);
                 if (ImGui::MenuItem((std::string("Join across ") + p + " (symmetric)").c_str()))
@@ -554,70 +555,70 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Mass Properties", body)) {
+        if (ImGui::BeginMenu(tr("Mass Properties"), body)) {
             for (const char* m : {"steel", "aluminium", "brass", "titanium", "abs", "pla", "wood"})
                 if (ImGui::MenuItem(m)) cmd.commands.push_back(std::string("MASSPROPS MATERIAL ") + m);
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Feature History")) cmd.commands.push_back("HISTORY");
-        if (ImGui::MenuItem("Regenerate")) cmd.commands.push_back("REGEN");
+        if (ImGui::MenuItem(tr("Feature History"))) cmd.commands.push_back("HISTORY");
+        if (ImGui::MenuItem(tr("Regenerate"))) cmd.commands.push_back("REGEN");
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Drawing")) {
-        if (ImGui::MenuItem("New Drawing (A3)")) cmd.commands.push_back("SHEET NEW A3");
-        if (ImGui::BeginMenu("New Drawing On")) {
+    if (ImGui::BeginMenu(tr("Drawing"))) {
+        if (ImGui::MenuItem(tr("New Drawing (A3)"))) cmd.commands.push_back("SHEET NEW A3");
+        if (ImGui::BeginMenu(tr("New Drawing On"))) {
             for (const char* sz : {"A4", "A3", "A2", "A1", "A0", "LETTER", "TABLOID"})
                 if (ImGui::MenuItem(sz)) cmd.commands.push_back(std::string("SHEET NEW ") + sz);
             ImGui::Separator();
-            if (ImGui::MenuItem("A3, Third-Angle (ASME)")) cmd.commands.push_back("SHEET NEW A3 THIRD");
+            if (ImGui::MenuItem(tr("A3, Third-Angle (ASME)"))) cmd.commands.push_back("SHEET NEW A3 THIRD");
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Show Drawing", nullptr, st.showSheet)) cmd.commands.push_back(st.showSheet ? "SHEET HIDE" : "SHEET SHOW");
-        if (ImGui::MenuItem("Dimension Automatically")) cmd.commands.push_back("SHEET AUTODIM");
-        if (ImGui::MenuItem("Call Out Holes")) cmd.commands.push_back("SHEET CALLOUTS");
-        if (ImGui::MenuItem("Add Flat Pattern View")) cmd.commands.push_back("SHEET FLAT");
-        if (ImGui::MenuItem("Section Through the Front View")) cmd.commands.push_back("SHEET SECTION FRONT VERTICAL");
-        if (ImGui::MenuItem("Section Through the Top View")) cmd.commands.push_back("SHEET SECTION TOP HORIZONTAL");
-        if (ImGui::BeginMenu("Add View")) {
+        if (ImGui::MenuItem(tr("Show Drawing"), nullptr, st.showSheet)) cmd.commands.push_back(st.showSheet ? "SHEET HIDE" : "SHEET SHOW");
+        if (ImGui::MenuItem(tr("Dimension Automatically"))) cmd.commands.push_back("SHEET AUTODIM");
+        if (ImGui::MenuItem(tr("Call Out Holes"))) cmd.commands.push_back("SHEET CALLOUTS");
+        if (ImGui::MenuItem(tr("Add Flat Pattern View"))) cmd.commands.push_back("SHEET FLAT");
+        if (ImGui::MenuItem(tr("Section Through the Front View"))) cmd.commands.push_back("SHEET SECTION FRONT VERTICAL");
+        if (ImGui::MenuItem(tr("Section Through the Top View"))) cmd.commands.push_back("SHEET SECTION TOP HORIZONTAL");
+        if (ImGui::BeginMenu(tr("Add View"))) {
             for (const char* v : {"Front", "Back", "Top", "Bottom", "Left", "Right", "Iso"})
                 if (ImGui::MenuItem(v)) cmd.commands.push_back(std::string("SHEET VIEW ADD ") + v);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Scale")) {
+        if (ImGui::BeginMenu(tr("Scale"))) {
             for (const char* sc : {"5:1", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20"})
                 if (ImGui::MenuItem(sc)) cmd.commands.push_back(std::string("SHEET SCALE ") + sc);
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Export Drawing (PDF, SVG, DXF)...")) requestFile(FileSheetExport, st);
-        if (ImGui::MenuItem("Delete Drawing")) cmd.commands.push_back("SHEET DELETE");
+        if (ImGui::MenuItem(tr("Export Drawing (PDF, SVG, DXF)..."))) requestFile(FileSheetExport, st);
+        if (ImGui::MenuItem(tr("Delete Drawing"))) cmd.commands.push_back("SHEET DELETE");
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Assembly")) {
+    if (ImGui::BeginMenu(tr("Assembly"))) {
         const Scene& scene = *m_menuScene;
         auto startMate = [&](const char* type) {
             st.mateTool = type;
             st.mateFirst.clear();
             if (st.mode != ViewMode::Model3D) cmd.mode = ViewMode::Model3D;
         };
-        ImGui::TextDisabled("Mate two faces (click one on each part)");
-        if (ImGui::MenuItem("Coincident (Face to Face)")) startMate("COINCIDENT");
-        if (ImGui::MenuItem("Flush (Faces the Same Way)")) startMate("FLUSH");
-        if (ImGui::MenuItem("Concentric (Round Faces)")) startMate("CONCENTRIC");
-        if (ImGui::MenuItem("Distance...")) startMate("DISTANCE");
-        if (ImGui::MenuItem("Angle...")) startMate("ANGLE");
-        if (ImGui::MenuItem("Parallel")) startMate("PARALLEL");
-        if (ImGui::MenuItem("Perpendicular")) startMate("PERPENDICULAR");
+        ImGui::TextDisabled("%s", tr("Mate two faces (click one on each part)"));
+        if (ImGui::MenuItem(tr("Coincident (Face to Face)"))) startMate("COINCIDENT");
+        if (ImGui::MenuItem(tr("Flush (Faces the Same Way)"))) startMate("FLUSH");
+        if (ImGui::MenuItem(tr("Concentric (Round Faces)"))) startMate("CONCENTRIC");
+        if (ImGui::MenuItem(tr("Distance..."))) startMate("DISTANCE");
+        if (ImGui::MenuItem(tr("Angle..."))) startMate("ANGLE");
+        if (ImGui::MenuItem(tr("Parallel"))) startMate("PARALLEL");
+        if (ImGui::MenuItem(tr("Perpendicular"))) startMate("PERPENDICULAR");
         ImGui::Separator();
         const bool body = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size());
         const std::string selName = body ? "\"" + scene.bodies()[static_cast<std::size_t>(st.selectedBody)].name + "\"" : std::string();
-        if (ImGui::MenuItem("Fix the Selected Part", nullptr, false, body)) cmd.commands.push_back("MATE FIX " + selName);
-        if (ImGui::MenuItem("Solve Mates", nullptr, false, st.assembly && !st.assembly->empty())) cmd.commands.push_back("MATE SOLVE");
-        if (ImGui::MenuItem("List Mates")) cmd.commands.push_back("MATE");
+        if (ImGui::MenuItem(tr("Fix the Selected Part"), nullptr, false, body)) cmd.commands.push_back("MATE FIX " + selName);
+        if (ImGui::MenuItem(tr("Solve Mates"), nullptr, false, st.assembly && !st.assembly->empty())) cmd.commands.push_back("MATE SOLVE");
+        if (ImGui::MenuItem(tr("List Mates"))) cmd.commands.push_back("MATE");
         ImGui::Separator();
-        if (ImGui::MenuItem("Put the Selected Part in a Sub-assembly", nullptr, false, body)) {
+        if (ImGui::MenuItem(tr("Put the Selected Part in a Sub-assembly"), nullptr, false, body)) {
             int n = 1;
             for (bool taken = true; taken; ++n) {
                 taken = false;
@@ -626,146 +627,146 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             }
             cmd.commands.push_back("ASSEMBLY GROUP \"Sub-assembly " + std::to_string(n) + "\" " + selName);
         }
-        if (ImGui::MenuItem("Take the Selected Part Out", nullptr, false, body)) cmd.commands.push_back("ASSEMBLY UNGROUP " + selName);
+        if (ImGui::MenuItem(tr("Take the Selected Part Out"), nullptr, false, body)) cmd.commands.push_back("ASSEMBLY UNGROUP " + selName);
         ImGui::Separator();
-        if (ImGui::MenuItem("Check Interference")) cmd.commands.push_back("ASSEMBLY INTERFERENCE");
-        if (ImGui::MenuItem("Assembly Tree")) cmd.commands.push_back("ASSEMBLY");
-        if (ImGui::MenuItem("Parts List (BOM)")) cmd.commands.push_back("ASSEMBLY BOM");
+        if (ImGui::MenuItem(tr("Check Interference"))) cmd.commands.push_back("ASSEMBLY INTERFERENCE");
+        if (ImGui::MenuItem(tr("Assembly Tree"))) cmd.commands.push_back("ASSEMBLY");
+        if (ImGui::MenuItem(tr("Parts List (BOM)"))) cmd.commands.push_back("ASSEMBLY BOM");
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Manufacture")) {
-        if (ImGui::MenuItem("CAM Panel (operations, tools, post)", "J")) {
+    if (ImGui::BeginMenu(tr("Manufacture"))) {
+        if (ImGui::MenuItem(tr("CAM Panel (operations, tools, post)"), "J")) {
             st.showModelTree = true;
             st.dockTab = 2;
         }
         ImGui::Separator();
-        if (ImGui::BeginMenu("3D Print")) {
+        if (ImGui::BeginMenu(tr("3D Print"))) {
             const bool body = st.selectedBody >= 0;
-            if (ImGui::MenuItem("Check Printability", nullptr, false, body)) cmd.commands.push_back("PRINTCHECK");
-            if (ImGui::MenuItem("Repair Mesh", nullptr, false, body)) cmd.commands.push_back("REPAIR");
-            if (ImGui::MenuItem("Orient for Least Support", nullptr, false, body)) cmd.commands.push_back("ORIENT");
-            if (ImGui::MenuItem("Slice to G-code...", nullptr, false, body)) requestFile(FileSlice, st);
-            if (ImGui::MenuItem("Export 3MF...")) requestFile(File3mf, st);
+            if (ImGui::MenuItem(tr("Check Printability"), nullptr, false, body)) cmd.commands.push_back("PRINTCHECK");
+            if (ImGui::MenuItem(tr("Repair Mesh"), nullptr, false, body)) cmd.commands.push_back("REPAIR");
+            if (ImGui::MenuItem(tr("Orient for Least Support"), nullptr, false, body)) cmd.commands.push_back("ORIENT");
+            if (ImGui::MenuItem(tr("Slice to G-code..."), nullptr, false, body)) requestFile(FileSlice, st);
+            if (ImGui::MenuItem(tr("Export 3MF..."))) requestFile(File3mf, st);
             ImGui::EndMenu();
         }
         ImGui::Separator();
         // Milling. Material and post name the part set up (else the selection), and sizes
         // carry mm (a plain number is read in the document's units).
-        ImGui::TextDisabled("CNC milling (CAM)");
+        ImGui::TextDisabled("%s", tr("CNC milling (CAM)"));
         const CamJob* job = st.cam;
         const bool camSet = job && job->setup.hasStock;
         const std::string camSetup = camSet ? "CAM SETUP \"" + job->setup.body + "\"" : std::string("CAM SETUP");
-        if (ImGui::MenuItem("Set Up the Selected Part", nullptr, false, st.selectedBody >= 0)) cmd.commands.push_back("CAM SETUP");
-        if (ImGui::BeginMenu("Material", camSet || st.selectedBody >= 0)) {
+        if (ImGui::MenuItem(tr("Set Up the Selected Part"), nullptr, false, st.selectedBody >= 0)) cmd.commands.push_back("CAM SETUP");
+        if (ImGui::BeginMenu(tr("Material"), camSet || st.selectedBody >= 0)) {
             for (const CamMaterial& m : camMaterials())
                 if (ImGui::MenuItem(m.name.c_str(), nullptr, job && job->setup.material == m.key)) cmd.commands.push_back(camSetup + " MATERIAL " + m.key);
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Tools...")) st.showCamTools = true;
-        if (ImGui::BeginMenu("Tool Files")) {
-            if (ImGui::MenuItem("Add a Starter Set (10 tools)")) {
+        if (ImGui::MenuItem(tr("Tools..."))) st.showCamTools = true;
+        if (ImGui::BeginMenu(tr("Tool Files"))) {
+            if (ImGui::MenuItem(tr("Add a Starter Set (10 tools)"))) {
                 for (const char* t : {"CAM TOOL 1 FLAT 6mm", "CAM TOOL 2 FLAT 3mm", "CAM TOOL 3 BALL 6mm", "CAM TOOL 4 BALL 3mm", "CAM TOOL 5 BULL 10mm CORNER 1mm",
                                       "CAM TOOL 6 FACE 50mm", "CAM TOOL 7 SPOT 10mm", "CAM TOOL 8 DRILL 5mm", "CAM TOOL 9 DRILL 6mm", "CAM TOOL 10 TAP 6mm"})
                     cmd.commands.push_back(t);
                 cmd.commands.push_back("CAM TOOLS");
             }
-            if (ImGui::MenuItem("Load Tools from File...")) requestFile(FileToolsImport, st);
-            if (ImGui::MenuItem("Save the Job's Tools to File...", nullptr, false, job && !job->tools.empty())) requestFile(FileToolsExport, st);
-            if (ImGui::MenuItem("Store the Job's Tools in My Library", nullptr, false, job && !job->tools.empty())) cmd.commands.push_back("CAM LIBRARY STORE ALL");
-            if (ImGui::MenuItem("List My Library")) cmd.commands.push_back("CAM LIBRARY LIST");
+            if (ImGui::MenuItem(tr("Load Tools from File..."))) requestFile(FileToolsImport, st);
+            if (ImGui::MenuItem(tr("Save the Job's Tools to File..."), nullptr, false, job && !job->tools.empty())) requestFile(FileToolsExport, st);
+            if (ImGui::MenuItem(tr("Store the Job's Tools in My Library"), nullptr, false, job && !job->tools.empty())) cmd.commands.push_back("CAM LIBRARY STORE ALL");
+            if (ImGui::MenuItem(tr("List My Library"))) cmd.commands.push_back("CAM LIBRARY LIST");
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Machine...")) st.showCamMachine = true;
-        if (ImGui::BeginMenu("Machine Preset")) {
+        if (ImGui::MenuItem(tr("Machine..."))) st.showCamMachine = true;
+        if (ImGui::BeginMenu(tr("Machine Preset"))) {
             for (const CamMachine& m : camMachinePresets())
                 if (ImGui::MenuItem(m.name.c_str(), nullptr, job && job->setup.machine.name == m.name)) cmd.commands.push_back("CAM MACHINE PRESET " + m.name);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Post Processor", camSet || st.selectedBody >= 0)) {
+        if (ImGui::BeginMenu(tr("Post Processor"), camSet || st.selectedBody >= 0)) {
             for (const std::string& p : camPosts())
                 if (ImGui::MenuItem(p.c_str(), nullptr, job && job->setup.post == p)) cmd.commands.push_back(camSetup + " POST " + p);
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Add Operation", camSet)) {
-            ImGui::TextDisabled("Roughing");
-            if (ImGui::MenuItem("Face")) cmd.commands.push_back("CAM FACE");
-            if (ImGui::MenuItem("3D Rough (offset clearing)")) cmd.commands.push_back("CAM ROUGH LEAVE 0.3mm");
-            if (ImGui::MenuItem("Adaptive Rough (trochoidal, deep cuts)")) cmd.commands.push_back("CAM ROUGH ADAPTIVE LEAVE 0.3mm");
-            if (ImGui::MenuItem("Rest Rough (what the tools before left)")) cmd.commands.push_back("CAM ROUGH REST LEAVE 0.3mm");
-            if (ImGui::MenuItem("Pocket")) cmd.commands.push_back("CAM POCKET");
-            if (ImGui::MenuItem("Adaptive Pocket")) cmd.commands.push_back("CAM POCKET ADAPTIVE");
+        if (ImGui::BeginMenu(tr("Add Operation"), camSet)) {
+            ImGui::TextDisabled("%s", tr("Roughing"));
+            if (ImGui::MenuItem(tr("Face"))) cmd.commands.push_back("CAM FACE");
+            if (ImGui::MenuItem(tr("3D Rough (offset clearing)"))) cmd.commands.push_back("CAM ROUGH LEAVE 0.3mm");
+            if (ImGui::MenuItem(tr("Adaptive Rough (trochoidal, deep cuts)"))) cmd.commands.push_back("CAM ROUGH ADAPTIVE LEAVE 0.3mm");
+            if (ImGui::MenuItem(tr("Rest Rough (what the tools before left)"))) cmd.commands.push_back("CAM ROUGH REST LEAVE 0.3mm");
+            if (ImGui::MenuItem(tr("Pocket"))) cmd.commands.push_back("CAM POCKET");
+            if (ImGui::MenuItem(tr("Adaptive Pocket"))) cmd.commands.push_back("CAM POCKET ADAPTIVE");
             ImGui::Separator();
-            ImGui::TextDisabled("Finishing");
-            if (ImGui::MenuItem("2D Contour (with tabs)")) cmd.commands.push_back("CAM CONTOUR TABS 4");
-            if (ImGui::MenuItem("Parallel Finish (shallow areas)")) cmd.commands.push_back("CAM PARALLEL SHALLOW");
-            if (ImGui::MenuItem("Waterline Finish (steep walls)")) cmd.commands.push_back("CAM WATERLINE STEEP");
+            ImGui::TextDisabled("%s", tr("Finishing"));
+            if (ImGui::MenuItem(tr("2D Contour (with tabs)"))) cmd.commands.push_back("CAM CONTOUR TABS 4");
+            if (ImGui::MenuItem(tr("Parallel Finish (shallow areas)"))) cmd.commands.push_back("CAM PARALLEL SHALLOW");
+            if (ImGui::MenuItem(tr("Waterline Finish (steep walls)"))) cmd.commands.push_back("CAM WATERLINE STEEP");
             ImGui::Separator();
-            ImGui::TextDisabled("Holes");
-            if (ImGui::MenuItem("Spot Drill Holes")) cmd.commands.push_back("CAM SPOT");
-            if (ImGui::MenuItem("Drill Holes (peck)")) cmd.commands.push_back("CAM DRILL CYCLE PECK");
-            if (ImGui::MenuItem("Tap Holes")) cmd.commands.push_back("CAM TAP");
-            if (ImGui::MenuItem("Helical Bore Big Holes")) cmd.commands.push_back("CAM BORE");
+            ImGui::TextDisabled("%s", tr("Holes"));
+            if (ImGui::MenuItem(tr("Spot Drill Holes"))) cmd.commands.push_back("CAM SPOT");
+            if (ImGui::MenuItem(tr("Drill Holes (peck)"))) cmd.commands.push_back("CAM DRILL CYCLE PECK");
+            if (ImGui::MenuItem(tr("Tap Holes"))) cmd.commands.push_back("CAM TAP");
+            if (ImGui::MenuItem(tr("Helical Bore Big Holes"))) cmd.commands.push_back("CAM BORE");
             ImGui::Separator();
-            ImGui::TextDisabled("Multi-axis");
-            if (ImGui::MenuItem("Pocket the Front Face (3+2, A -90)")) cmd.commands.push_back("CAM POCKET INDEX -90 0");
-            if (ImGui::MenuItem("Drill the Right Face (3+2, A -90 C -90)")) cmd.commands.push_back("CAM DRILL INDEX -90 -90");
-            if (ImGui::MenuItem("Rotary Wrap Finish (4-axis, helical)")) cmd.commands.push_back("CAM ROTARY");
-            if (ImGui::MenuItem("Rotary Rough (4-axis, 3 mm levels)")) cmd.commands.push_back("CAM ROTARY STEPDOWN 3mm LEAVE 0.3mm");
-            if (ImGui::MenuItem("5-axis Surface Finish (ball, leaning 10 deg)")) cmd.commands.push_back("CAM 5AXIS");
-            if (ImGui::MenuItem("Swarf: Leaning Walls with the Side (5-axis)")) cmd.commands.push_back("CAM SWARF");
-            ImGui::TextDisabled("Change any of them on the CAM panel");
+            ImGui::TextDisabled("%s", tr("Multi-axis"));
+            if (ImGui::MenuItem(tr("Pocket the Front Face (3+2, A -90)"))) cmd.commands.push_back("CAM POCKET INDEX -90 0");
+            if (ImGui::MenuItem(tr("Drill the Right Face (3+2, A -90 C -90)"))) cmd.commands.push_back("CAM DRILL INDEX -90 -90");
+            if (ImGui::MenuItem(tr("Rotary Wrap Finish (4-axis, helical)"))) cmd.commands.push_back("CAM ROTARY");
+            if (ImGui::MenuItem(tr("Rotary Rough (4-axis, 3 mm levels)"))) cmd.commands.push_back("CAM ROTARY STEPDOWN 3mm LEAVE 0.3mm");
+            if (ImGui::MenuItem(tr("5-axis Surface Finish (ball, leaning 10 deg)"))) cmd.commands.push_back("CAM 5AXIS");
+            if (ImGui::MenuItem(tr("Swarf: Leaning Walls with the Side (5-axis)"))) cmd.commands.push_back("CAM SWARF");
+            ImGui::TextDisabled("%s", tr("Change any of them on the CAM panel"));
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Generate the Toolpaths", nullptr, false, camSet)) cmd.commands.push_back("CAM GENERATE");
-        if (ImGui::MenuItem("Simulate (show cut stock)", nullptr, false, camSet)) cmd.commands.push_back("CAM SIMULATE SHOW");
-        if (ImGui::MenuItem("Check the Program (read-back)", nullptr, false, camSet)) cmd.commands.push_back("CAM CHECK");
-        if (ImGui::MenuItem("Post Process (G-code)...", nullptr, false, camSet)) requestFile(FilePost, st);
-        if (ImGui::MenuItem("Show Toolpaths", nullptr, job && job->showPaths)) cmd.commands.push_back(job && job->showPaths ? "CAM HIDE" : "CAM SHOW");
+        if (ImGui::MenuItem(tr("Generate the Toolpaths"), nullptr, false, camSet)) cmd.commands.push_back("CAM GENERATE");
+        if (ImGui::MenuItem(tr("Simulate (show cut stock)"), nullptr, false, camSet)) cmd.commands.push_back("CAM SIMULATE SHOW");
+        if (ImGui::MenuItem(tr("Check the Program (read-back)"), nullptr, false, camSet)) cmd.commands.push_back("CAM CHECK");
+        if (ImGui::MenuItem(tr("Post Process (G-code)..."), nullptr, false, camSet)) requestFile(FilePost, st);
+        if (ImGui::MenuItem(tr("Show Toolpaths"), nullptr, job && job->showPaths)) cmd.commands.push_back(job && job->showPaths ? "CAM HIDE" : "CAM SHOW");
         ImGui::Separator();
-        if (ImGui::BeginMenu("Turning (Lathe)")) {
+        if (ImGui::BeginMenu(tr("Turning (Lathe)"))) {
             const LatheJob* lathe = st.lathe;
             const bool latheSet = lathe && !lathe->setup.body.empty();
-            if (ImGui::MenuItem("Set Up the Selected Part", nullptr, false, st.selectedBody >= 0)) cmd.commands.push_back("LATHE SETUP");
-            if (ImGui::MenuItem("Add Starter Lathe Tools")) {
+            if (ImGui::MenuItem(tr("Set Up the Selected Part"), nullptr, false, st.selectedBody >= 0)) cmd.commands.push_back("LATHE SETUP");
+            if (ImGui::MenuItem(tr("Add Starter Lathe Tools"))) {
                 for (const char* t : {"LATHE TOOL 1 TURN NOSE 0.8mm INSERT C", "LATHE TOOL 2 TURN NOSE 0.4mm INSERT D", "LATHE TOOL 3 GROOVE 3mm",
                                       "LATHE TOOL 4 DRILL 8mm", "LATHE TOOL 5 BORE 6mm NOSE 0.2mm", "LATHE TOOL 6 THREAD"})
                     cmd.commands.push_back(t);
                 cmd.commands.push_back("LATHE TOOLS");
             }
-            if (ImGui::MenuItem("Show the Part's Profile", nullptr, false, latheSet)) cmd.commands.push_back("LATHE PROFILE");
+            if (ImGui::MenuItem(tr("Show the Part's Profile"), nullptr, false, latheSet)) cmd.commands.push_back("LATHE PROFILE");
             ImGui::Separator();
             ImGui::BeginDisabled(!latheSet);
-            if (ImGui::MenuItem("Face")) cmd.commands.push_back("LATHE FACE");
-            if (ImGui::MenuItem("Rough Turn (leave 0.2 mm)")) cmd.commands.push_back("LATHE ROUGH LEAVE 0.2mm");
-            if (ImGui::MenuItem("Finish Turn")) cmd.commands.push_back("LATHE FINISH");
-            if (ImGui::MenuItem("Groove the Recesses")) cmd.commands.push_back("LATHE GROOVE");
-            if (ImGui::MenuItem("Thread (pitch 1.5 mm)")) cmd.commands.push_back("LATHE THREAD PITCH 1.5mm");
-            if (ImGui::MenuItem("Drill the Bore")) cmd.commands.push_back("LATHE DRILL");
-            if (ImGui::MenuItem("Rough Bore (leave 0.1 mm)")) cmd.commands.push_back("LATHE BORE LEAVE 0.1mm");
-            if (ImGui::MenuItem("Finish Bore")) cmd.commands.push_back("LATHE FINISH INSIDE");
-            if (ImGui::MenuItem("Groove the Bore")) cmd.commands.push_back("LATHE GROOVE INSIDE");
-            if (ImGui::MenuItem("Thread the Bore (pitch 1.5 mm)")) cmd.commands.push_back("LATHE THREAD PITCH 1.5mm INSIDE");
-            if (ImGui::MenuItem("Part Off")) cmd.commands.push_back("LATHE PARTOFF");
+            if (ImGui::MenuItem(tr("Face"))) cmd.commands.push_back("LATHE FACE");
+            if (ImGui::MenuItem(tr("Rough Turn (leave 0.2 mm)"))) cmd.commands.push_back("LATHE ROUGH LEAVE 0.2mm");
+            if (ImGui::MenuItem(tr("Finish Turn"))) cmd.commands.push_back("LATHE FINISH");
+            if (ImGui::MenuItem(tr("Groove the Recesses"))) cmd.commands.push_back("LATHE GROOVE");
+            if (ImGui::MenuItem(tr("Thread (pitch 1.5 mm)"))) cmd.commands.push_back("LATHE THREAD PITCH 1.5mm");
+            if (ImGui::MenuItem(tr("Drill the Bore"))) cmd.commands.push_back("LATHE DRILL");
+            if (ImGui::MenuItem(tr("Rough Bore (leave 0.1 mm)"))) cmd.commands.push_back("LATHE BORE LEAVE 0.1mm");
+            if (ImGui::MenuItem(tr("Finish Bore"))) cmd.commands.push_back("LATHE FINISH INSIDE");
+            if (ImGui::MenuItem(tr("Groove the Bore"))) cmd.commands.push_back("LATHE GROOVE INSIDE");
+            if (ImGui::MenuItem(tr("Thread the Bore (pitch 1.5 mm)"))) cmd.commands.push_back("LATHE THREAD PITCH 1.5mm INSIDE");
+            if (ImGui::MenuItem(tr("Part Off"))) cmd.commands.push_back("LATHE PARTOFF");
             ImGui::Separator();
-            if (ImGui::MenuItem("Generate the Lathe Paths")) cmd.commands.push_back("LATHE GENERATE");
-            if (ImGui::MenuItem("Simulate (show turned stock)")) cmd.commands.push_back("LATHE SIMULATE SHOW");
-            ImGui::MenuItem("Canned Cycles in the Post (G71 / G72)", nullptr, &m_latheCycles);
-            if (ImGui::MenuItem("Post Lathe G-code...")) requestFile(FileLathePost, st);
-            if (ImGui::MenuItem("Show Lathe Paths", nullptr, lathe && lathe->showPaths)) cmd.commands.push_back("LATHE PATHS");
+            if (ImGui::MenuItem(tr("Generate the Lathe Paths"))) cmd.commands.push_back("LATHE GENERATE");
+            if (ImGui::MenuItem(tr("Simulate (show turned stock)"))) cmd.commands.push_back("LATHE SIMULATE SHOW");
+            ImGui::MenuItem(tr("Canned Cycles in the Post (G71 / G72)"), nullptr, &m_latheCycles);
+            if (ImGui::MenuItem(tr("Post Lathe G-code..."))) requestFile(FileLathePost, st);
+            if (ImGui::MenuItem(tr("Show Lathe Paths"), nullptr, lathe && lathe->showPaths)) cmd.commands.push_back("LATHE PATHS");
             ImGui::EndDisabled();
             ImGui::EndMenu();
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("AI")) {
+    if (ImGui::BeginMenu(tr("AI"))) {
         bool running = st.mcpRunning;
         char label[64];
         std::snprintf(label, sizeof(label), "MCP Server (port %d)", st.mcpPort);
         if (ImGui::MenuItem(label, nullptr, &running)) cmd.toggleMcp = true;
-        if (ImGui::MenuItem("Connect an AI Agent...")) m_showMcp = true;
+        if (ImGui::MenuItem(tr("Connect an AI Agent..."))) m_showMcp = true;
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Plugins")) {
+    if (ImGui::BeginMenu(tr("Plugins"))) {
         bool any = false;
         for (const Plugin& p : plugins()) {
             if (p.commands.empty()) continue;
@@ -779,29 +780,29 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                 ImGui::EndMenu();
             }
         }
-        if (!any) ImGui::TextDisabled("No plugins installed");
+        if (!any) ImGui::TextDisabled("%s", tr("No plugins installed"));
         ImGui::Separator();
-        if (ImGui::MenuItem("List Plugins")) cmd.commands.push_back("PLUGINS");
-        if (ImGui::MenuItem("Reload Plugins")) cmd.commands.push_back("PLUGINS RELOAD");
-        ImGui::TextDisabled("Plugins folder: %s", pluginsFolder().c_str());
+        if (ImGui::MenuItem(tr("List Plugins"))) cmd.commands.push_back("PLUGINS");
+        if (ImGui::MenuItem(tr("Reload Plugins"))) cmd.commands.push_back("PLUGINS RELOAD");
+        ImGui::TextDisabled(tr("Plugins folder: %s"), pluginsFolder().c_str());
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("User Guide", "F1")) st.showHelp = true;
-        if (ImGui::MenuItem("Getting Started")) st.showHelp = true, st.helpPage = "getting-started.md";
-        if (ImGui::BeginMenu("Sample Projects")) {
+    if (ImGui::BeginMenu(tr("Help"))) {
+        if (ImGui::MenuItem(tr("User Guide"), "F1")) st.showHelp = true;
+        if (ImGui::MenuItem(tr("Getting Started"))) st.showHelp = true, st.helpPage = "getting-started.md";
+        if (ImGui::BeginMenu(tr("Sample Projects"))) {
             for (const HelpExample& e : helpExamples())
                 if (ImGui::MenuItem(e.title.c_str())) runSample(cmd, e.file);
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Commands (HELP)")) cmd.commands.push_back("HELP");
-        ImGui::MenuItem("Keyboard and Mouse", nullptr, &st.showControls);
-        if (ImGui::MenuItem("Crash Reports")) cmd.commands.push_back("CRASHES");
+        if (ImGui::MenuItem(tr("Commands (HELP)"))) cmd.commands.push_back("HELP");
+        ImGui::MenuItem(tr("Keyboard and Mouse"), nullptr, &st.showControls);
+        if (ImGui::MenuItem(tr("Crash Reports"))) cmd.commands.push_back("CRASHES");
         ImGui::Separator();
-        ImGui::MenuItem("Licence...", nullptr, &st.showLicence);
-        if (ImGui::MenuItem("Check for Updates", nullptr, false, !preferences().updateUrl.empty())) cmd.commands.push_back("UPDATES CHECK");
-        ImGui::MenuItem("About SI CDM", nullptr, &st.showAbout);
+        ImGui::MenuItem(tr("Licence..."), nullptr, &st.showLicence);
+        if (ImGui::MenuItem(tr("Check for Updates"), nullptr, false, !preferences().updateUrl.empty())) cmd.commands.push_back("UPDATES CHECK");
+        ImGui::MenuItem(tr("About SI CDM"), nullptr, &st.showAbout);
         ImGui::EndMenu();
     }
 
@@ -840,7 +841,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         const ImVec2 c{lo.x + fh * 0.5f, lo.y + fh * 0.5f + 1};
         if (ImGui::IsItemHovered()) {
             dl->AddRectFilled(lo, {lo.x + fh, lo.y + fh}, IM_COL32(58, 64, 76, 255), 4.0f);
-            ImGui::SetTooltip("Home view (3D isometric, fit all)");
+            ImGui::SetTooltip("%s", tr("Home view (3D isometric, fit all)"));
         }
         if (ImGui::IsItemClicked()) {
             cmd.home = true;
@@ -862,7 +863,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         drawToolIcon(dl, tool.id, {lo.x + fh * 0.5f, lo.y + fh * 0.5f}, fh * 0.62f, IM_COL32(230, 232, 238, 255));
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(tool.name);
+        ImGui::TextUnformatted(tr(tool.name));
     }
     divider();
 
@@ -871,7 +872,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     if (st.mode == ViewMode::Simulation) {
         drawSimTransport(st);
     } else if (isSketchTool(tool.id)) {
-        ImGui::TextDisabled("Plane");
+        ImGui::TextDisabled("%s", tr("Plane"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(110);
         if (ImGui::BeginCombo("##plane", st.planeLabel.c_str())) {
@@ -881,17 +882,17 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                 if (ImGui::Selectable(d.c_str(), st.plane == SketchPlane::Custom && st.planeLabel == d)) cmd.commands.push_back(datumCommand(d));
             ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Datum planes: PLANE OFFSET / ANGLE / THROUGH / AT / FACE");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Datum planes: PLANE OFFSET / ANGLE / THROUGH / AT / FACE"));
         ImGui::SameLine();
-        ImGui::Checkbox("Snap to grid", &st.snapGrid);
+        ImGui::Checkbox(tr("Snap to grid"), &st.snapGrid);
         ImGui::SameLine();
-        ImGui::Checkbox("Snap to points", &st.snapPoints);
+        ImGui::Checkbox(tr("Snap to points"), &st.snapPoints);
         ImGui::SameLine();
-        ImGui::Checkbox("Construction", &st.sketchConstruction);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("New curves are construction curves: dashed references, not part of profiles");
+        ImGui::Checkbox(tr("Construction"), &st.sketchConstruction);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("New curves are construction curves: dashed references, not part of profiles"));
         if (tool.id == ToolId::Polygon) {
             ImGui::SameLine();
-            ImGui::TextDisabled("Sides");
+            ImGui::TextDisabled("%s", tr("Sides"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(70);
             ImGui::InputInt("##sides", &st.polygonSides);
@@ -905,51 +906,51 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                                                                                      : "Shift: horizontal / vertical  ·  Esc cancels");
     } else if (isSketchEditTool(tool.id)) {
         if (tool.id == ToolId::SketchOffset) {
-            ImGui::TextDisabled("Distance");
+            ImGui::TextDisabled("%s", tr("Distance"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(90);
             lengthField("##offd", &st.sketchOffset, 0.001f, 1e5f);
             ImGui::SameLine();
-            ImGui::TextDisabled("Click a curve on the side to offset to");
+            ImGui::TextDisabled("%s", tr("Click a curve on the side to offset to"));
         } else if (tool.id == ToolId::SketchTrim) {
-            ImGui::TextDisabled("Click the piece of a curve to cut away (back to the curves crossing it)");
+            ImGui::TextDisabled("%s", tr("Click the piece of a curve to cut away (back to the curves crossing it)"));
         } else {
-            ImGui::TextDisabled("Click near the end of a line, arc or open polyline to carry it on to the next curve");
+            ImGui::TextDisabled("%s", tr("Click near the end of a line, arc or open polyline to carry it on to the next curve"));
         }
     } else if (tool.id == ToolId::Extrude) {
-        ImGui::TextDisabled("Distance");
+        ImGui::TextDisabled("%s", tr("Distance"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(100);
         if (lengthField("##extdist", &st.extrudeDistance, -1e6f, 1e6f))
             st.extrudeLive = false; // typed in the field: stop following the mouse
         ImGui::SameLine();
-        ImGui::Checkbox("Symmetric", &st.extrudeSymmetric);
+        ImGui::Checkbox(tr("Symmetric"), &st.extrudeSymmetric);
         ImGui::SameLine();
-        ImGui::Checkbox("Keep sketch", &st.extrudeKeepSketch);
+        ImGui::Checkbox(tr("Keep sketch"), &st.extrudeKeepSketch);
         ImGui::SameLine();
         if (st.extrudeProfileName.empty()) {
-            ImGui::TextDisabled("Click a closed profile: rectangle, circle or closed polyline");
+            ImGui::TextDisabled("%s", tr("Click a closed profile: rectangle, circle or closed polyline"));
         } else {
             ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "%s", st.extrudeProfileName.c_str());
             ImGui::SameLine();
-            if (ImGui::Button("Apply")) cmd.applyExtrude = true;
+            if (ImGui::Button(tr("Apply"))) cmd.applyExtrude = true;
             ImGui::SameLine();
-            if (ImGui::Button("Cancel")) cmd.cancelExtrude = true;
+            if (ImGui::Button(tr("Cancel"))) cmd.cancelExtrude = true;
             ImGui::SameLine();
-            ImGui::TextDisabled("drag, type the depth, click or Enter");
+            ImGui::TextDisabled("%s", tr("drag, type the depth, click or Enter"));
         }
     } else if (isSculptTool(tool.id)) {
-        ImGui::TextDisabled("Radius");
+        ImGui::TextDisabled("%s", tr("Radius"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70);
         lengthField("##sradius", &st.sculptRadius, 0.1f, 1e5f);
         ImGui::SameLine();
-        ImGui::TextDisabled("Strength");
+        ImGui::TextDisabled("%s", tr("Strength"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         ImGui::SliderFloat("##sstrength", &st.sculptStrength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         ImGui::SameLine();
-        ImGui::TextDisabled("Symmetry");
+        ImGui::TextDisabled("%s", tr("Symmetry"));
         ImGui::SameLine();
         ImGui::Checkbox("X##symx", &st.sculptSymmetry);
         ImGui::SameLine();
@@ -960,13 +961,13 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::SetNextItemWidth(60);
         ImGui::InputInt("##radial", &st.sculptRadial, 1, 4);
         st.sculptRadial = std::clamp(st.sculptRadial, 1, 64);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Radial symmetry: copies of each dab around the body's vertical axis (1: none)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Radial symmetry: copies of each dab around the body's vertical axis (1: none)"));
         ImGui::SameLine();
         {
             static const char* kFalloffs[] = {"Smooth", "Sphere", "Sharp", "Linear", "Flat"};
             ImGui::SetNextItemWidth(78);
             ImGui::Combo("##falloff", &st.sculptFalloff, kFalloffs, 5);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Brush falloff from its centre to its rim");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Brush falloff from its centre to its rim"));
         }
         if (tool.id != ToolId::SculptMask && tool.id != ToolId::SculptGrab && tool.id != ToolId::SculptSnakeHook) {
             static std::vector<std::string> labels;
@@ -981,48 +982,48 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                     if (ImGui::Selectable(labels[static_cast<std::size_t>(k)].c_str(), k == st.sculptAlpha)) st.sculptAlpha = k;
                 ImGui::EndCombo();
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press the brush through a pattern (SCULPT ... ALPHA \"image.png\" takes your own)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Press the brush through a pattern (SCULPT ... ALPHA \"image.png\" takes your own)"));
             if (st.sculptAlpha > 0) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(56);
                 ImGui::DragFloat("##alphaangle", &st.sculptAlphaAngle, 1.0f, -360.0f, 360.0f, "%.0f deg");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the alpha");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Turn the alpha"));
                 ImGui::SameLine();
-                ImGui::Checkbox("Follow##alphafollow", &st.sculptAlphaFollow);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the alpha along the stroke");
+                ImGui::Checkbox(tr("Follow##alphafollow"), &st.sculptAlphaFollow);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Turn the alpha along the stroke"));
                 ImGui::SameLine();
-                ImGui::Checkbox("Stamp##stamp", &st.sculptStamp);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag out one stamp from where you press: its size and turn follow the mouse");
+                ImGui::Checkbox(tr("Stamp##stamp"), &st.sculptStamp);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Drag out one stamp from where you press: its size and turn follow the mouse"));
             }
         }
         if (tool.id == ToolId::SculptPaint) {
             ImGui::SameLine();
             ImGui::ColorEdit3("##paintcolour", st.sculptColor, ImGuiColorEditFlags_NoInputs);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The colour the brush lays on");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The colour the brush lays on"));
             char rgb[64];
             std::snprintf(rgb, sizeof rgb, "%.3f,%.3f,%.3f", static_cast<double>(st.sculptColor[0]), static_cast<double>(st.sculptColor[1]),
                           static_cast<double>(st.sculptColor[2]));
             ImGui::SameLine();
-            if (ImGui::Button("Fill")) cmd.commands.push_back(std::string("PAINT FILL ") + rgb);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paint the whole selected body (the mask holds it off)");
+            if (ImGui::Button(tr("Fill"))) cmd.commands.push_back(std::string("PAINT FILL ") + rgb);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Paint the whole selected body (the mask holds it off)"));
             ImGui::SameLine();
-            if (ImGui::Button("Clear paint")) cmd.commands.push_back("PAINT CLEAR");
+            if (ImGui::Button(tr("Clear paint"))) cmd.commands.push_back("PAINT CLEAR");
             ImGui::SameLine();
-            if (ImGui::Button("Groups by paint")) cmd.commands.push_back("POLYGROUP PAINT");
+            if (ImGui::Button(tr("Groups by paint"))) cmd.commands.push_back("POLYGROUP PAINT");
         }
         if (tool.id == ToolId::SculptMask) {
             ImGui::SameLine();
-            if (ImGui::Button("Clear mask")) cmd.commands.push_back("MASK CLEAR");
+            if (ImGui::Button(tr("Clear mask"))) cmd.commands.push_back("MASK CLEAR");
             ImGui::SameLine();
-            if (ImGui::Button("Invert")) cmd.commands.push_back("MASK INVERT");
+            if (ImGui::Button(tr("Invert"))) cmd.commands.push_back("MASK INVERT");
             ImGui::SameLine();
-            if (ImGui::Button("Blur")) cmd.commands.push_back("MASK SMOOTH");
+            if (ImGui::Button(tr("Blur"))) cmd.commands.push_back("MASK SMOOTH");
             ImGui::SameLine();
-            if (ImGui::Button("To group")) cmd.commands.push_back("POLYGROUP MASK");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the masked faces a polygroup of their own");
+            if (ImGui::Button(tr("To group"))) cmd.commands.push_back("POLYGROUP MASK");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Make the masked faces a polygroup of their own"));
             ImGui::SameLine();
-            if (ImGui::Button("Auto groups")) cmd.commands.push_back("POLYGROUP AUTO");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Polygroups from the faces' angles (View > Polygroups shows them)");
+            if (ImGui::Button(tr("Auto groups"))) cmd.commands.push_back("POLYGROUP AUTO");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Polygroups from the faces' angles (View > Polygroups shows them)"));
         }
         // Sculpt layers of the selected body.
         if (m_menuScene && st.selectedBody >= 0 && st.selectedBody < static_cast<int>(m_menuScene->bodies().size())) {
@@ -1035,25 +1036,25 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             if (lb.multires) {
                 if (ImGui::ArrowButton("##levdown", ImGuiDir_Left)) cmd.commands.push_back(mq + "DOWN");
                 ImGui::SameLine();
-                ImGui::Text("Level %d/%d", lb.multires->current, static_cast<int>(lb.multires->levels.size()) - 1);
+                ImGui::Text(tr("Level %d/%d"), lb.multires->current, static_cast<int>(lb.multires->levels.size()) - 1);
                 ImGui::SameLine();
                 if (ImGui::ArrowButton("##levup", ImGuiDir_Right)) cmd.commands.push_back(mq + "UP");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sculpt big forms at low levels, detail at high ones: the detail follows");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Sculpt big forms at low levels, detail at high ones: the detail follows"));
                 ImGui::SameLine();
             }
-            if (ImGui::Button("+ Level")) cmd.commands.push_back(mq + "ADD 1");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiresolution: add a subdivision level (keeps the levels below to sculpt at)");
+            if (ImGui::Button(tr("+ Level"))) cmd.commands.push_back(mq + "ADD 1");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Multiresolution: add a subdivision level (keeps the levels below to sculpt at)"));
             ImGui::SameLine();
-            if (ImGui::Button("Retopo")) ImGui::OpenPopup("##retopo");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("An even all-quad mesh over this body (a new body; the original hidden)");
+            if (ImGui::Button(tr("Retopo"))) ImGui::OpenPopup("##retopo");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("An even all-quad mesh over this body (a new body; the original hidden)"));
             if (ImGui::BeginPopup("##retopo")) {
                 static int quads = 2000, detail = 0;
                 ImGui::SetNextItemWidth(160);
-                ImGui::DragInt("Quads", &quads, 20.0f, 50, 200000);
+                ImGui::DragInt(tr("Quads"), &quads, 20.0f, 50, 200000);
                 ImGui::SetNextItemWidth(160);
-                ImGui::SliderInt("Detail levels", &detail, 0, 5);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiresolution levels over the quads, laid on the original: its detail kept");
-                if (ImGui::Button("Retopologise")) {
+                ImGui::SliderInt(tr("Detail levels"), &detail, 0, 5);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Multiresolution levels over the quads, laid on the original: its detail kept"));
+                if (ImGui::Button(tr("Retopologise"))) {
                     cmd.commands.push_back("RETOPO \"" + lb.name + "\" FACES " + std::to_string(quads) + (detail > 0 ? " DETAIL " + std::to_string(detail) : std::string()));
                     ImGui::CloseCurrentPopup();
                 }
@@ -1061,16 +1062,16 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             }
             // Texture coordinates and baked maps.
             ImGui::SameLine();
-            if (ImGui::Button("UV")) ImGui::OpenPopup("##uvbake");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unwrap texture coordinates, see them as a checker, bake maps from a sculpt");
+            if (ImGui::Button(tr("UV"))) ImGui::OpenPopup("##uvbake");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Unwrap texture coordinates, see them as a checker, bake maps from a sculpt"));
             if (ImGui::BeginPopup("##uvbake")) {
                 const std::string uq = "UV \"" + lb.name + "\" ";
                 if (ImGui::Button(lb.mesh.hasUvs() ? "Unwrap again" : "Unwrap")) cmd.commands.push_back(uq + "UNWRAP");
                 if (lb.mesh.hasUvs()) {
                     ImGui::SameLine();
-                    if (ImGui::Button("Checker")) cmd.commands.push_back(uq + "SHOW CHECKER");
+                    if (ImGui::Button(tr("Checker"))) cmd.commands.push_back(uq + "SHOW CHECKER");
                     ImGui::SameLine();
-                    if (ImGui::Button("Plain")) cmd.commands.push_back(uq + "HIDE");
+                    if (ImGui::Button(tr("Plain"))) cmd.commands.push_back(uq + "HIDE");
                     ImGui::Separator();
                     static int map = 0, sizeIdx = 1, from = -1;
                     static char file[512] = "";
@@ -1078,7 +1079,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                     static const char* const kMapWords[] = {"NORMAL", "OBJECTNORMAL", "HEIGHT", "OCCLUSION", "COLOR"};
                     static const char* const kSizes[] = {"512", "1024", "2048", "4096"};
                     ImGui::SetNextItemWidth(160);
-                    ImGui::Combo("Map", &map, kMaps, 5);
+                    ImGui::Combo(tr("Map"), &map, kMaps, 5);
                     // From: the body this one was made from when there is one (its name before " retopo").
                     const auto& bodies = m_menuScene->bodies();
                     if (from < 0 || from >= static_cast<int>(bodies.size())) {
@@ -1088,36 +1089,36 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                             if (bodies[k].name == lb.name.substr(0, cut)) from = static_cast<int>(k);
                     }
                     ImGui::SetNextItemWidth(160);
-                    if (ImGui::BeginCombo("From", bodies[static_cast<std::size_t>(from)].name.c_str())) {
+                    if (ImGui::BeginCombo(tr("From"), bodies[static_cast<std::size_t>(from)].name.c_str())) {
                         for (std::size_t k = 0; k < bodies.size(); ++k)
                             if (ImGui::Selectable(bodies[k].name.c_str(), static_cast<int>(k) == from)) from = static_cast<int>(k);
                         ImGui::EndCombo();
                     }
                     ImGui::SetNextItemWidth(160);
-                    ImGui::Combo("Size", &sizeIdx, kSizes, 4);
+                    ImGui::Combo(tr("Size"), &sizeIdx, kSizes, 4);
                     if (!file[0] || ImGui::IsWindowAppearing()) {
                         std::string def = lb.name + "_" + kMapWords[map] + ".png";
                         for (char& c : def) c = c == ' ' ? '_' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                         std::snprintf(file, sizeof(file), "%s", def.c_str());
                     }
                     ImGui::SetNextItemWidth(260);
-                    ImGui::InputText("File", file, sizeof(file));
-                    if (ImGui::Button("Bake")) {
+                    ImGui::InputText(tr("File"), file, sizeof(file));
+                    if (ImGui::Button(tr("Bake"))) {
                         const std::string path = file;
                         cmd.commands.push_back("BAKE \"" + lb.name + "\" " + kMapWords[map] + " FROM \"" + bodies[static_cast<std::size_t>(from)].name + "\" SIZE " +
                                                kSizes[sizeIdx] + " FILE \"" + path + "\"");
                         if (map == 0) cmd.commands.push_back(uq + "SHOW NORMAL \"" + path + "\""); // see it on the body
                         else if (map == 4) cmd.commands.push_back(uq + "SHOW COLOR \"" + path + "\"");
                     }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Writes the map (PNG); normal and colour maps are then shown on the body");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Writes the map (PNG); normal and colour maps are then shown on the body"));
                 }
                 ImGui::EndPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button(has ? "Layers..." : "Layers")) ImGui::OpenPopup("##sculptlayers");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sculpt layers: record strokes into a layer, then dial it in or out");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Sculpt layers: record strokes into a layer, then dial it in or out"));
             if (ImGui::BeginPopup("##sculptlayers")) {
-                if (ImGui::Button("New layer")) {
+                if (ImGui::Button(tr("New layer"))) {
                     int n = static_cast<int>(lb.mesh.layers.size()) + 1;
                     auto taken = [&](const std::string& nm) {
                         for (const SculptLayer& l : lb.mesh.layers)
@@ -1129,10 +1130,10 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                 }
                 if (has) {
                     ImGui::SameLine();
-                    if (ImGui::Button("Bake all")) cmd.commands.push_back(q + "BAKE ALL");
+                    if (ImGui::Button(tr("Bake all"))) cmd.commands.push_back(q + "BAKE ALL");
                     if (lb.mesh.recordLayer >= 0) {
                         ImGui::SameLine();
-                        if (ImGui::Button("Stop recording")) cmd.commands.push_back(q + "STOP");
+                        if (ImGui::Button(tr("Stop recording"))) cmd.commands.push_back(q + "STOP");
                     }
                     ImGui::Separator();
                     for (std::size_t k = 0; k < lb.mesh.layers.size(); ++k) {
@@ -1144,7 +1145,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                         ImGui::SameLine();
                         const bool rec = static_cast<int>(k) == lb.mesh.recordLayer;
                         if (ImGui::RadioButton("##rec", rec) && !rec) cmd.commands.push_back(q + "RECORD " + nm);
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Record strokes into this layer");
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Record strokes into this layer"));
                         ImGui::SameLine();
                         ImGui::TextUnformatted(l.name.c_str());
                         ImGui::SameLine(170);
@@ -1159,9 +1160,9 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                         }
                         if (!ImGui::IsItemActive()) *v = l.strength;
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("Bake")) cmd.commands.push_back(q + "BAKE " + nm);
+                        if (ImGui::SmallButton(tr("Bake"))) cmd.commands.push_back(q + "BAKE " + nm);
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("Delete")) cmd.commands.push_back(q + "DELETE " + nm);
+                        if (ImGui::SmallButton(tr("Delete"))) cmd.commands.push_back(q + "DELETE " + nm);
                         ImGui::PopID();
                     }
                 }
@@ -1169,22 +1170,22 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             }
         }
         ImGui::SameLine();
-        ImGui::Checkbox("Dyntopo", &st.sculptRefine);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dynamic topology: split long edges under the brush so detail can be added anywhere");
+        ImGui::Checkbox(tr("Dyntopo"), &st.sculptRefine);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Dynamic topology: split long edges under the brush so detail can be added anywhere"));
         if (st.sculptRefine) {
             ImGui::SameLine();
-            ImGui::TextDisabled("Detail");
+            ImGui::TextDisabled("%s", tr("Detail"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(60);
             lengthField("##sdetail", &st.sculptDetail, 0.0f, 1e5f);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Longest edge left under the brush (0: a quarter of the radius)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Longest edge left under the brush (0: a quarter of the radius)"));
         }
         ImGui::SameLine();
-        if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
+        if (ImGui::Button(tr("Undo"))) cmd.commands.push_back("UNDO");
         ImGui::SameLine();
-        if (ImGui::Button("Redo")) cmd.commands.push_back("REDO");
+        if (ImGui::Button(tr("Redo"))) cmd.commands.push_back("REDO");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Drag over a body. Ctrl inverts the brush, Shift smooths, [ and ] change the size.%s%s",
+            ImGui::SetTooltip(tr("Drag over a body. Ctrl inverts the brush, Shift smooths, [ and ] change the size.%s%s"),
                               st.sculptInfo.empty() ? "" : "\n", st.sculptInfo.c_str());
     } else if (isCutTool(tool.id)) {
         auto shapeCombo = [](const char* id, int* v, std::initializer_list<const char*> names) {
@@ -1204,10 +1205,10 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         switch (tool.id) {
         case ToolId::CutHole:
             field("Diameter", "##hd", &st.holeDiameter, 0.01f);
-            ImGui::Checkbox("Through", &st.holeThrough);
+            ImGui::Checkbox(tr("Through"), &st.holeThrough);
             ImGui::SameLine();
             if (!st.holeThrough) field("Depth", "##hdepth", &st.holeDepth, 0.01f);
-            ImGui::TextDisabled("Click a surface");
+            ImGui::TextDisabled("%s", tr("Click a surface"));
             break;
         case ToolId::CutPocket:
             shapeCombo("##pshape", &st.pocketShape, {"Box", "Round", "Ball end"});
@@ -1216,42 +1217,42 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             if (st.pocketShape == 0) field("Length", "##pl", &st.pocketLength, 0.01f);
             field("Depth", "##pd", &st.pocketDepth, 0.01f);
             if (st.pocketShape == 0) {
-                ImGui::TextDisabled("Angle");
+                ImGui::TextDisabled("%s", tr("Angle"));
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(70);
                 ImGui::DragFloat("##pa", &st.pocketAngle, 1.0f, -180.0f, 180.0f, "%.0f deg");
                 ImGui::SameLine();
             }
-            ImGui::TextDisabled("Click a surface");
+            ImGui::TextDisabled("%s", tr("Click a surface"));
             break;
         case ToolId::CutChannel:
             field("Width", "##cw", &st.channelWidth, 0.01f);
             field("Depth", "##cd", &st.channelDepth, 0.0f);
-            ImGui::TextDisabled("Drag along a surface (depth 0: a round groove)");
+            ImGui::TextDisabled("%s", tr("Drag along a surface (depth 0: a round groove)"));
             break;
         case ToolId::CutKnife:
-            ImGui::TextDisabled("Drag a line across a body: the smaller side is cut away and the face capped");
+            ImGui::TextDisabled("%s", tr("Drag a line across a body: the smaller side is cut away and the face capped"));
             break;
         case ToolId::AddBoss:
             shapeCombo("##bshape", &st.bossShape, {"Cylinder", "Box", "Dome"});
             ImGui::SameLine();
             field("Diameter", "##bd", &st.bossDiameter, 0.01f);
             field("Height", "##bh", &st.bossHeight, 0.01f);
-            ImGui::TextDisabled("Click a surface");
+            ImGui::TextDisabled("%s", tr("Click a surface"));
             break;
         default: // BooleanBodies
             shapeCombo("##bop", &st.booleanOp, {"Union", "Subtract", "Intersect"});
             ImGui::SameLine();
-            ImGui::Checkbox("Keep tool body", &st.booleanKeep);
+            ImGui::Checkbox(tr("Keep tool body"), &st.booleanKeep);
             ImGui::SameLine();
-            if (st.booleanFirst.empty()) ImGui::TextDisabled("Click the body to keep");
-            else ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "%s  -  now click the tool body", st.booleanFirst.c_str());
+            if (st.booleanFirst.empty()) ImGui::TextDisabled("%s", tr("Click the body to keep"));
+            else ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, tr("%s  -  now click the tool body"), st.booleanFirst.c_str());
             break;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
+        if (ImGui::Button(tr("Undo"))) cmd.commands.push_back("UNDO");
         ImGui::SameLine();
-        if (ImGui::Button("Redo")) cmd.commands.push_back("REDO");
+        if (ImGui::Button(tr("Redo"))) cmd.commands.push_back("REDO");
     } else if (isWearableTool(tool.id)) {
         auto field = [&](const char* label, const char* id, float* v, float lo) {
             ImGui::TextDisabled("%s", label);
@@ -1263,72 +1264,72 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         switch (tool.id) {
         case ToolId::ShellBody:
             field("Wall", "##sw", &st.shellThickness, 0.05f);
-            ImGui::Checkbox("Outward", &st.shellOutward);
+            ImGui::Checkbox(tr("Outward"), &st.shellOutward);
             ImGui::SameLine();
-            ImGui::Checkbox("Open the clicked side", &st.shellOpen);
+            ImGui::Checkbox(tr("Open the clicked side"), &st.shellOpen);
             ImGui::SameLine();
             if (st.shellOpen) field("Cut depth", "##sod", &st.shellOpenDepth, 0.0f);
-            ImGui::TextDisabled("Click a body");
+            ImGui::TextDisabled("%s", tr("Click a body"));
             break;
         case ToolId::ArmorBody:
             field("Clearance", "##ac", &st.armorClearance, 0.0f);
             field("Wall", "##at", &st.armorThickness, 0.05f);
-            ImGui::TextDisabled("Click a body part");
+            ImGui::TextDisabled("%s", tr("Click a body part"));
             break;
         case ToolId::JointBody: {
             ImGui::SetNextItemWidth(80);
             const char* axes[] = {"Axis X", "Axis Y", "Axis Z", "View axis"};
             ImGui::Combo("##jaxis", &st.jointAxis, axes, 4);
             ImGui::SameLine();
-            ImGui::Checkbox("Ball", &st.jointBall);
+            ImGui::Checkbox(tr("Ball"), &st.jointBall);
             ImGui::SameLine();
-            ImGui::TextDisabled("Range");
+            ImGui::TextDisabled("%s", tr("Range"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120);
             ImGui::DragFloatRange2("##jrange", &st.jointLo, &st.jointHi, 1.0f, -180.0f, 180.0f, "%.0f", "%.0f deg",
                                    ImGuiSliderFlags_AlwaysClamp);
             ImGui::SameLine();
-            ImGui::TextDisabled("Period");
+            ImGui::TextDisabled("%s", tr("Period"));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(60);
             ImGui::DragFloat("##jper", &st.jointPeriod, 0.1f, 0.2f, 60.0f, "%.1f s", ImGuiSliderFlags_AlwaysClamp);
             ImGui::SameLine();
-            ImGui::TextDisabled("Click the moving part at its pivot");
+            ImGui::TextDisabled("%s", tr("Click the moving part at its pivot"));
             break;
         }
         case ToolId::InterferenceCheck:
             field("Clearance", "##ic", &st.interferenceClearance, 0.0f);
-            ImGui::TextDisabled("Click to sweep the motions");
+            ImGui::TextDisabled("%s", tr("Click to sweep the motions"));
             break;
         default: // Lighten / TPMS lattice
             field("Skin", "##ls", &st.latticeSkin, 0.1f);
-            ImGui::Checkbox("Hollow only", &st.latticeHollow);
+            ImGui::Checkbox(tr("Hollow only"), &st.latticeHollow);
             ImGui::SameLine();
             if (!st.latticeHollow) {
                 field("Cell", "##lc", &st.latticeCell, 1.0f);
                 field("Wall", "##lw", &st.latticeWall, 0.1f);
             }
-            ImGui::TextDisabled("Click a solid body");
+            ImGui::TextDisabled("%s", tr("Click a solid body"));
             break;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Undo")) cmd.commands.push_back("UNDO");
+        if (ImGui::Button(tr("Undo"))) cmd.commands.push_back("UNDO");
         ImGui::SameLine();
-        if (ImGui::Button("Redo")) cmd.commands.push_back("REDO");
+        if (ImGui::Button(tr("Redo"))) cmd.commands.push_back("REDO");
     } else if (isPrimitiveTool(tool.id)) {
         const std::string snap = lengthText(5.0);
-        if (is2D) ImGui::TextDisabled("Click to place on the %s plane (%s snap)", (st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : shortPlaneName(st.plane)), snap.c_str());
-        else ImGui::TextDisabled("Click the grid or a face to place (%s snap)", snap.c_str());
+        if (is2D) ImGui::TextDisabled(tr("Click to place on the %s plane (%s snap)"), (st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : shortPlaneName(st.plane)), snap.c_str());
+        else ImGui::TextDisabled(tr("Click the grid or a face to place (%s snap)"), snap.c_str());
     } else if (tool.id == ToolId::Move || tool.id == ToolId::Select) {
-        ImGui::TextDisabled("Auto-select:");
+        ImGui::TextDisabled("%s", tr("Auto-select:"));
         ImGui::SameLine();
-        ImGui::TextUnformatted(tool.id == ToolId::Select ? "Bodies & sketch curves" : "Bodies");
+        ImGui::TextUnformatted(tool.id == ToolId::Select ? tr("Bodies & sketch curves") : tr("Bodies"));
     } else if (tool.id == ToolId::Orbit && is2D) {
-        ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "Orbit is a 3D tool; drag pans in the 2D window");
+        ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "%s", tr("Orbit is a 3D tool; drag pans in the 2D window"));
     } else if (!tool.available) {
-        ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "Planned for a later milestone");
+        ImGui::TextColored({0.95f, 0.70f, 0.35f, 1.0f}, "%s", tr("Planned for a later milestone"));
     } else {
-        ImGui::TextDisabled("%s", tool.description);
+        ImGui::TextDisabled("%s", tr(tool.description));
     }
 
     // Right-aligned group: window switch + view options.
@@ -1337,22 +1338,22 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16.0f, right - m_rightGroupWidth));
     const float groupStart = ImGui::GetCursorScreenPos().x;
     const bool isSim = st.mode == ViewMode::Simulation;
-    if (segment("2D Drawing", is2D, ImDrawFlags_RoundCornersLeft, icon2D) && !is2D) cmd.mode = ViewMode::Drawing2D;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("2D drawing window: plan view of the %s plane  [Tab]", (st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : shortPlaneName(st.plane)));
+    if (segment(tr("2D Drawing"), is2D, ImDrawFlags_RoundCornersLeft, icon2D) && !is2D) cmd.mode = ViewMode::Drawing2D;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("2D drawing window: plan view of the %s plane  [Tab]"), (st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : shortPlaneName(st.plane)));
     ImGui::SameLine(0, 2);
-    if (segment("3D Model", st.mode == ViewMode::Model3D, ImDrawFlags_RoundCornersNone, icon3D) &&
+    if (segment(tr("3D Model"), st.mode == ViewMode::Model3D, ImDrawFlags_RoundCornersNone, icon3D) &&
         st.mode != ViewMode::Model3D)
         cmd.mode = ViewMode::Model3D;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D model window  [Tab]");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("3D model window  [Tab]"));
     ImGui::SameLine(0, 2);
-    if (segment("Simulation", isSim, ImDrawFlags_RoundCornersRight, iconSim) && !isSim)
+    if (segment(tr("Simulation"), isSim, ImDrawFlags_RoundCornersRight, iconSim) && !isSim)
         cmd.mode = ViewMode::Simulation;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Simulation window: circular and linear motion, live axes  [Shift+Tab]");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Simulation window: circular and linear motion, live axes  [Shift+Tab]"));
     divider();
 
     if (is2D) {
         ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("Plane");
+        ImGui::TextDisabled("%s", tr("Plane"));
         ImGui::SameLine();
         for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right}) {
             const bool on = st.plane == p;
@@ -1379,14 +1380,14 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         if (ImGui::Combo("##display", &mode, "Shaded\0Shaded + Edges\0Wireframe\0Hidden Line\0"))
             vp.displayMode = static_cast<DisplayMode>(mode);
         ImGui::SameLine();
-        if (ImGui::Button(cam.projection() == Projection::Perspective ? "Persp" : "Ortho")) cmd.toggleProjection = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle projection  [P]");
+        if (ImGui::Button(cam.projection() == Projection::Perspective ? tr("Persp") : tr("Ortho"))) cmd.toggleProjection = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Toggle projection  [P]"));
         ImGui::SameLine();
     }
-    if (ImGui::Button("Fit")) cmd.fit = true;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom to fit  [F]");
+    if (ImGui::Button(tr("Fit"))) cmd.fit = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Zoom to fit  [F]"));
     ImGui::SameLine();
-    ImGui::Checkbox("Grid", &vp.showGrid);
+    ImGui::Checkbox(tr("Grid"), &vp.showGrid);
     m_rightGroupWidth = ImGui::GetItemRectMax().x - groupStart;
 
     m_optionsHeight = ImGui::GetWindowSize().y;
@@ -1433,17 +1434,17 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
             const float cx = (a.x + b.x) * 0.5f, cy = (a.y + b.y) * 0.5f;
             const ImU32 c = ImGui::GetColorU32(ImGuiCol_Text);
             for (float dy : {-4.0f, 0.0f, 4.0f}) ImGui::GetWindowDrawList()->AddLine({cx - 6, cy + dy}, {cx + 6, cy + dy}, c, 1.5f);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Files");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Files"));
         }
         if (ImGui::BeginPopup("##filesMenu")) {
-            if (ImGui::MenuItem("New", "Ctrl+N")) cmd.commands.push_back("NEW");
-            if (ImGui::MenuItem("Open...", "Ctrl+O")) requestFile(FileOpen, st);
-            if (ImGui::MenuItem("Save", "Ctrl+S")) {
+            if (ImGui::MenuItem(tr("New"), "Ctrl+N")) cmd.commands.push_back("NEW");
+            if (ImGui::MenuItem(tr("Open..."), "Ctrl+O")) requestFile(FileOpen, st);
+            if (ImGui::MenuItem(tr("Save"), "Ctrl+S")) {
                 if (st.projectPath.empty()) requestFile(FileSaveAs, st);
                 else cmd.commands.push_back("SAVE");
             }
-            if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) requestFile(FileSaveAs, st);
-            if (ImGui::MenuItem("Close", "Ctrl+W")) requestClose(cmd, st, st.activeFile);
+            if (ImGui::MenuItem(tr("Save As..."), "Ctrl+Shift+S")) requestFile(FileSaveAs, st);
+            if (ImGui::MenuItem(tr("Close"), "Ctrl+W")) requestClose(cmd, st, st.activeFile);
             ImGui::Separator();
             for (const auto& f : st.files) {
                 const std::string label = f.name + (f.dirty ? "*" : "") + "###menufile" + std::to_string(f.id);
@@ -1465,10 +1466,10 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
             if (ImGui::IsItemClicked() && f.id != activeId) cmd.switchFile = f.id;
             if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) requestClose(cmd, st, static_cast<int>(i));
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                ImGui::SetTooltip("%s\n%s window%s", f.path.empty() ? "Not saved yet" : f.path.c_str(),
-                                  f.mode == ViewMode::Drawing2D   ? "2D Drawing"
-                                  : f.mode == ViewMode::Simulation ? "Simulation"
-                                                                   : "3D Model",
+                ImGui::SetTooltip(tr("%s\n%s window%s"), f.path.empty() ? "Not saved yet" : f.path.c_str(),
+                                  f.mode == ViewMode::Drawing2D   ? tr("2D Drawing")
+                                  : f.mode == ViewMode::Simulation ? tr("Simulation")
+                                                                   : tr("3D Model"),
                                   f.dirty ? "\nUnsaved changes" : "");
             }
             if (selected) {
@@ -1479,7 +1480,7 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
         }
         if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip))
             cmd.commands.push_back("NEW");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("New file (Ctrl+N)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("New file (Ctrl+N)"));
         ImGui::EndTabBar();
     }
     m_tabsBottom = y + ImGui::GetWindowSize().y;
@@ -1590,13 +1591,13 @@ void LandingUI::drawFeatureHistory(UiCommands& cmd, const UiState& st) {
     std::snprintf(label, sizeof(label), "Features (%zu)###features", steps.size());
     ImGui::SetNextItemOpen(true, ImGuiCond_Once);
     if (!ImGui::TreeNode(label)) return;
-    if (steps.empty()) ImGui::TextDisabled("Model commands are listed here");
+    if (steps.empty()) ImGui::TextDisabled("%s", tr("Model commands are listed here"));
     auto rollbackBar = [&]() {
         ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kWarning));
-        ImGui::TextUnformatted("--- rolled back ---");
+        ImGui::TextUnformatted(tr("--- rolled back ---"));
         ImGui::PopStyleColor();
         ImGui::SameLine();
-        if (ImGui::SmallButton("Roll forward")) cmd.commands.push_back("HISTORY ROLLFORWARD");
+        if (ImGui::SmallButton(tr("Roll forward"))) cmd.commands.push_back("HISTORY ROLLFORWARD");
     };
     for (int i = 0; i < static_cast<int>(steps.size()); ++i) {
         const HistoryStep& h = steps[static_cast<std::size_t>(i)];
@@ -1616,20 +1617,20 @@ void LandingUI::drawFeatureHistory(UiCommands& cmd, const UiState& st) {
             m_historyEdit = i;
             std::snprintf(m_historyEditLine, sizeof(m_historyEditLine), "%s", h.line.c_str());
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nDouble-click to edit; right-click for more", h.line.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("%s\nDouble-click to edit; right-click for more"), h.line.c_str());
         if (ImGui::BeginPopupContextItem("##step")) {
-            if (ImGui::MenuItem("Edit...")) {
+            if (ImGui::MenuItem(tr("Edit..."))) {
                 m_historyEdit = i;
                 std::snprintf(m_historyEditLine, sizeof(m_historyEditLine), "%s", h.line.c_str());
             }
             if (ImGui::MenuItem(h.suppressed ? "Unsuppress" : "Suppress")) cmd.commands.push_back(std::string("HISTORY ") + (h.suppressed ? "UNSUPPRESS " : "SUPPRESS ") + n);
-            if (ImGui::MenuItem("Move up", nullptr, false, i > 0)) cmd.commands.push_back("HISTORY MOVE " + n + " TO " + std::to_string(i));
-            if (ImGui::MenuItem("Move down", nullptr, false, i + 1 < static_cast<int>(steps.size())))
+            if (ImGui::MenuItem(tr("Move up"), nullptr, false, i > 0)) cmd.commands.push_back("HISTORY MOVE " + n + " TO " + std::to_string(i));
+            if (ImGui::MenuItem(tr("Move down"), nullptr, false, i + 1 < static_cast<int>(steps.size())))
                 cmd.commands.push_back("HISTORY MOVE " + n + " TO " + std::to_string(i + 2));
-            if (ImGui::MenuItem("Roll back to here")) cmd.commands.push_back("HISTORY ROLLBACK " + std::to_string(i));
-            if (ImGui::MenuItem("Roll back after this")) cmd.commands.push_back("HISTORY ROLLBACK " + n);
+            if (ImGui::MenuItem(tr("Roll back to here"))) cmd.commands.push_back("HISTORY ROLLBACK " + std::to_string(i));
+            if (ImGui::MenuItem(tr("Roll back after this"))) cmd.commands.push_back("HISTORY ROLLBACK " + n);
             ImGui::Separator();
-            if (ImGui::MenuItem("Delete")) cmd.commands.push_back("HISTORY DELETE " + n);
+            if (ImGui::MenuItem(tr("Delete"))) cmd.commands.push_back("HISTORY DELETE " + n);
             ImGui::EndPopup();
         }
         ImGui::PopID();
@@ -1639,12 +1640,12 @@ void LandingUI::drawFeatureHistory(UiCommands& cmd, const UiState& st) {
     if (m_historyEdit >= 0) { // the step's command, edited in place; Apply rebuilds the model
         ImGui::SetNextItemWidth(-1);
         const bool enter = ImGui::InputText("##editstep", m_historyEditLine, sizeof(m_historyEditLine), ImGuiInputTextFlags_EnterReturnsTrue);
-        if (ImGui::Button("Apply") || enter) {
+        if (ImGui::Button(tr("Apply")) || enter) {
             cmd.commands.push_back("HISTORY EDIT " + std::to_string(m_historyEdit + 1) + " " + m_historyEditLine);
             m_historyEdit = -1;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) m_historyEdit = -1;
+        if (ImGui::Button(tr("Cancel"))) m_historyEdit = -1;
     }
     ImGui::TreePop();
 }
@@ -1676,7 +1677,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 }
             }
             if (ImGui::TabItemButton("x", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) st.showModelTree = false;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close panel");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Close panel"));
             ImGui::EndTabBar();
         }
         ImGui::PopStyleVar();
@@ -1690,7 +1691,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
         if (ImGui::TreeNode("##root", "%s  (Part)", st.projectName.c_str())) {
             drawFeatureHistory(cmd, st);
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-            if (ImGui::TreeNode("Bodies")) {
+            if (ImGui::TreeNode(tr("Bodies"))) {
                 auto& bodies = scene.bodies();
                 // Sub-assemblies (every path and its ancestors), in the order their parts come.
                 std::vector<std::string> paths;
@@ -1740,12 +1741,12 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                         const bool met = m.suppressed || (e >= 0 && e < 1e-3);
                         const std::string text = describeMate(m);
                         if (met) ImGui::TextUnformatted(text.c_str());
-                        else ImGui::TextColored(theme::vec(theme::kError), "%s  (not met)", text.c_str());
+                        else ImGui::TextColored(theme::vec(theme::kError), tr("%s  (not met)"), text.c_str());
                         if (ImGui::BeginPopupContextItem("##mate")) {
                             if (ImGui::MenuItem(m.suppressed ? "Unsuppress" : "Suppress"))
                                 cmd.commands.push_back(std::string("MATE ") + (m.suppressed ? "UNSUPPRESS " : "SUPPRESS ") + m.name);
-                            if (m.a.geom == MateGeom::Plane && m.b.geom == MateGeom::Plane && ImGui::MenuItem("Flip")) cmd.commands.push_back("MATE FLIP " + m.name);
-                            if (ImGui::MenuItem("Delete")) cmd.commands.push_back("MATE DELETE " + m.name);
+                            if (m.a.geom == MateGeom::Plane && m.b.geom == MateGeom::Plane && ImGui::MenuItem(tr("Flip"))) cmd.commands.push_back("MATE FLIP " + m.name);
+                            if (ImGui::MenuItem(tr("Delete"))) cmd.commands.push_back("MATE DELETE " + m.name);
                             ImGui::EndPopup();
                         }
                         ImGui::PopID();
@@ -1758,7 +1759,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
             std::snprintf(sketchLabel, sizeof(sketchLabel), "Sketches (%zu)###sketches", curves.size());
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             if (ImGui::TreeNode(sketchLabel)) {
-                if (curves.empty()) ImGui::TextDisabled("Use the 2D tools to draw");
+                if (curves.empty()) ImGui::TextDisabled("%s", tr("Use the 2D tools to draw"));
                 for (int i = 0; i < static_cast<int>(curves.size()); ++i) {
                     SketchCurve& c = curves[static_cast<std::size_t>(i)];
                     ImGui::PushID(1000 + i);
@@ -1779,7 +1780,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
             std::snprintf(imageLabel, sizeof(imageLabel), "Images (%zu)###images", images.size());
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             if (ImGui::TreeNode(imageLabel)) {
-                if (images.empty()) ImGui::TextDisabled("File > Import Image...");
+                if (images.empty()) ImGui::TextDisabled("%s", tr("File > Import Image..."));
                 for (int i = 0; i < static_cast<int>(images.size()); ++i) {
                     ImageRef& img = images[static_cast<std::size_t>(i)];
                     ImGui::PushID(2000 + i);
@@ -1797,8 +1798,8 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 ImGui::TreePop();
             }
             ImGui::BeginDisabled();
-            ImGui::BulletText("Construction");
-            ImGui::BulletText("CAM Setups");
+            ImGui::BulletText("%s", tr("Construction"));
+            ImGui::BulletText("%s", tr("CAM Setups"));
             ImGui::EndDisabled();
             ImGui::TreePop();
         }
@@ -1816,7 +1817,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(theme::vec(theme::kTextDim), "Scale");
+                ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("Scale"));
                 ImGui::TableNextColumn();
                 // The field keeps what is typed until it is let go (Enter, a click away, or a +/- click),
                 // then sends one SCALE. (Number fields can't take ImGuiInputTextFlags_EnterReturnsTrue.)
@@ -1838,7 +1839,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(theme::vec(theme::kTextDim), "Colour");
+                ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("Colour"));
                 ImGui::TableNextColumn();
                 ImGui::ColorEdit3("##colour", &b.color.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                 ImGui::EndTable();
@@ -1906,14 +1907,14 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 propertyRow("Pixels", "%d x %d", img.pixelWidth, img.pixelHeight);
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(theme::vec(theme::kTextDim), "File");
+                ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("File"));
                 ImGui::TableNextColumn();
                 ImGui::TextWrapped("%s", img.path.c_str());
                 ImGui::EndTable();
             }
             ImGui::SetNextItemWidth(-90);
             lengthField("Width", &img.width, 0.1f, 1e6f);
-            ImGui::TextDisabled("Height     %s", lengthText(img.height()).c_str());
+            ImGui::TextDisabled(tr("Height     %s"), lengthText(img.height()).c_str());
             const float half = (ImGui::GetContentRegionAvail().x - 90.0f - ImGui::GetStyle().ItemInnerSpacing.x) * 0.5f;
             ImGui::SetNextItemWidth(half);
             lengthField("##cu", &img.center.x);
@@ -1921,7 +1922,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
             ImGui::SetNextItemWidth(half);
             lengthField("Centre", &img.center.y);
             ImGui::SetNextItemWidth(-90);
-            ImGui::SliderFloat("Opacity", &img.opacity, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat(tr("Opacity"), &img.opacity, 0.0f, 1.0f, "%.2f");
             img.width = std::max(img.width, 0.1f);
         }
     }
@@ -1956,7 +1957,7 @@ void LandingUI::drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCa
     };
     const ToolInfo& tool = toolInfo(m_toolbox.active());
     ImGui::PushFont(theme::font(theme::Font::Strong));
-    ImGui::TextUnformatted(tool.name);
+    ImGui::TextUnformatted(tr(tool.name));
     ImGui::PopFont();
     ImGui::SameLine(0, 10);
     // Long messages (file paths) are clipped so they never run into the coordinates.
@@ -1964,8 +1965,8 @@ void LandingUI::drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCa
     const ImVec2 msgPos = ImGui::GetCursorScreenPos();
     ImGui::PushClipRect(msgPos, {msgEnd, msgPos.y + ImGui::GetFrameHeight()}, true);
     if (!st.statusMessage.empty()) ImGui::TextColored(theme::vec(theme::kAccentText), "%s", st.statusMessage.c_str());
-    else if (tool.available) ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tool.description);
-    else ImGui::TextColored(theme::vec(theme::kWarning), "planned for a later milestone");
+    else if (tool.available) ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr(tool.description));
+    else ImGui::TextColored(theme::vec(theme::kWarning), "%s", tr("planned for a later milestone"));
     ImGui::PopClipRect();
 
     ImGui::SameLine(600.0f);
@@ -1994,7 +1995,7 @@ void LandingUI::drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCa
     if (ImGui::SmallButton(chip.c_str())) ImGui::OpenPopup("##unitspopup");
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Units: %s\nLengths are stored exactly in mm", describeUnits(units).c_str());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("Units: %s\nLengths are stored exactly in mm"), describeUnits(units).c_str());
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {10, 8});
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {8, 6});
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {8, 4});
@@ -2005,23 +2006,23 @@ void LandingUI::drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCa
     ImGui::PopStyleVar(3);
     sep();
     ImGui::TextColored(theme::vec(theme::kTextDim), "%s",
-                       st.mode == ViewMode::Drawing2D   ? "2D Drawing"
-                       : st.mode == ViewMode::Simulation ? "Simulation"
-                                                          : "3D Model");
+                       st.mode == ViewMode::Drawing2D   ? tr("2D Drawing")
+                       : st.mode == ViewMode::Simulation ? tr("Simulation")
+                                                          : tr("3D Model"));
     sep();
-    ImGui::TextColored(theme::vec(theme::kTextDim), "Bodies %zu   Curves %zu   Images %zu", scene.bodies().size(),
+    ImGui::TextColored(theme::vec(theme::kTextDim), tr("Bodies %zu   Curves %zu   Images %zu"), scene.bodies().size(),
                        scene.sketch().curves().size(), scene.images().size());
     if (!st.sketchConstraintStatus.empty()) {
         sep();
         const bool conflict = st.sketchConstraintStatus.find("conflict") != std::string::npos;
-        ImGui::TextColored(theme::vec(conflict ? theme::kError : theme::kTextDim), "Sketch: %s", st.sketchConstraintStatus.c_str());
+        ImGui::TextColored(theme::vec(conflict ? theme::kError : theme::kTextDim), tr("Sketch: %s"), st.sketchConstraintStatus.c_str());
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Curves in green are fully constrained, red ones have a constraint that can't be met;\nthe others can still move. Grey dashed: construction curves.");
+            ImGui::SetTooltip("%s", tr("Curves in green are fully constrained, red ones have a constraint that can't be met;\nthe others can still move. Grey dashed: construction curves."));
     }
     if (st.mcpRunning) {
         sep();
-        ImGui::TextColored(theme::vec(theme::kSuccess), "MCP  :%d", st.mcpPort);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("AI agents can connect at http://127.0.0.1:%d/mcp", st.mcpPort);
+        ImGui::TextColored(theme::vec(theme::kSuccess), tr("MCP  :%d"), st.mcpPort);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("AI agents can connect at http://127.0.0.1:%d/mcp"), st.mcpPort);
     }
     (void)cam;
     char perf[64];
@@ -2134,7 +2135,7 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
 
     // History toggle.
     if (ImGui::ArrowButton("##hist", m_showHistory ? ImGuiDir_Down : ImGuiDir_Up)) m_showHistory = !m_showHistory;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Command history");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Command history"));
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::PushFont(theme::font(theme::Font::Strong));
@@ -2155,8 +2156,8 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
     const bool submitted = ImGui::InputTextWithHint(
         "##command",
         st.mode == ViewMode::Simulation
-            ? "Type a command (SIM PLAY, MOTION ..., HELP; click here to type; Space plays / pauses the simulation)"
-            : "Type a command (HELP for the list, Tab completes, Space to focus) or x,y coordinates",
+            ? tr("Type a command (SIM PLAY, MOTION ..., HELP; click here to type; Space plays / pauses the simulation)")
+            : tr("Type a command (HELP for the list, Tab completes, Space to focus) or x,y coordinates"),
         m_commandBuf, sizeof(m_commandBuf),
         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion |
             ImGuiInputTextFlags_CallbackHistory,
@@ -2208,7 +2209,7 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
                 ImGui::SameLine();
                 ImGui::TextDisabled("%-38s %s", matches[i]->usage, matches[i]->help);
             }
-            ImGui::TextDisabled("Tab completes %s", matches.front()->name);
+            ImGui::TextDisabled(tr("Tab completes %s"), matches.front()->name);
             ImGui::End();
         }
     } else if ((m_showHistory || recent) && !st.commandLog.empty()) {
@@ -2334,9 +2335,9 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         std::string name = "This file";
         for (const auto& f : st.files)
             if (f.id == m_closeAsk) name = f.name;
-        ImGui::Text("Save changes to %s before closing?", name.c_str());
+        ImGui::Text(tr("Save changes to %s before closing?"), name.c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Save", {110, 0})) {
+        if (ImGui::Button(tr("Save"), {110, 0})) {
             if (st.projectPath.empty()) {
                 requestFile(FileSaveAs, st);
                 m_closeAfterSave = m_closeAsk;
@@ -2347,62 +2348,62 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Don't Save", {110, 0})) {
+        if (ImGui::Button(tr("Don't Save"), {110, 0})) {
             cmd.closeFile = m_closeAsk;
             cmd.closeDiscard = true;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", {110, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(tr("Cancel"), {110, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
 
 void LandingUI::drawMcpWindow(UiState& st) {
     ImGui::SetNextWindowSize({620, 0}, ImGuiCond_Appearing);
-    if (!ImGui::Begin("Connect an AI Agent (MCP)", &m_showMcp, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!ImGui::Begin(tr("Connect an AI Agent (MCP)"), &m_showMcp, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         return;
     }
-    ImGui::TextWrapped("SI CDM speaks the Model Context Protocol, so AI agents can read and edit the 2D and 3D "
-                       "model: sketches, solids, images, views and files.");
+    ImGui::TextWrapped("%s", tr("SI CDM speaks the Model Context Protocol, so AI agents can read and edit the 2D and 3D "
+                       "model: sketches, solids, images, views and files."));
     ImGui::Spacing();
-    ImGui::SeparatorText("Live app (HTTP)");
+    ImGui::SeparatorText(tr("Live app (HTTP)"));
     if (st.mcpRunning)
-        ImGui::TextColored({0.45f, 0.85f, 0.55f, 1}, "Running on http://127.0.0.1:%d/mcp", st.mcpPort);
+        ImGui::TextColored({0.45f, 0.85f, 0.55f, 1}, tr("Running on http://127.0.0.1:%d/mcp"), st.mcpPort);
     else if (!st.mcpError.empty())
         ImGui::TextColored({1.0f, 0.48f, 0.42f, 1}, "%s", st.mcpError.c_str());
     else
-        ImGui::TextDisabled("Stopped. Enable it in AI > MCP Server, or start the app with --mcp-port %d.", st.mcpPort);
+        ImGui::TextDisabled(tr("Stopped. Enable it in AI > MCP Server, or start the app with --mcp-port %d."), st.mcpPort);
     char url[96];
     std::snprintf(url, sizeof(url), "claude mcp add --transport http si-cdm http://127.0.0.1:%d/mcp", st.mcpPort);
-    ImGui::TextDisabled("Claude Code:");
+    ImGui::TextDisabled("%s", tr("Claude Code:"));
     ImGui::TextUnformatted(url);
     ImGui::SameLine();
-    if (ImGui::SmallButton("Copy##http")) ImGui::SetClipboardText(url);
+    if (ImGui::SmallButton(tr("Copy##http"))) ImGui::SetClipboardText(url);
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Headless (stdio)");
-    ImGui::TextWrapped("sicdm-mcp edits project files without a window. Point your agent at it:");
+    ImGui::SeparatorText(tr("Headless (stdio)"));
+    ImGui::TextWrapped("%s", tr("sicdm-mcp edits project files without a window. Point your agent at it:"));
     const std::string exe = st.mcpExecutable.empty() ? std::string("/path/to/sicdm-mcp") : st.mcpExecutable;
     const std::string cli = "claude mcp add si-cdm-files -- \"" + exe + "\"";
     ImGui::TextUnformatted(cli.c_str());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Copy##cli")) ImGui::SetClipboardText(cli.c_str());
+    if (ImGui::SmallButton(tr("Copy##cli"))) ImGui::SetClipboardText(cli.c_str());
     const std::string json = "{ \"mcpServers\": { \"si-cdm\": { \"command\": \"" + exe + "\" } } }";
-    ImGui::TextDisabled("Claude Desktop / other clients (JSON config):");
+    ImGui::TextDisabled("%s", tr("Claude Desktop / other clients (JSON config):"));
     ImGui::TextUnformatted(json.c_str());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Copy##json")) ImGui::SetClipboardText(json.c_str());
+    if (ImGui::SmallButton(tr("Copy##json"))) ImGui::SetClipboardText(json.c_str());
     ImGui::Spacing();
-    ImGui::TextDisabled("Tools: get_scene, create_sketch, create_solid, extrude, modify, delete, set_view, run_command,");
-    ImGui::TextDisabled("       open/save/new_project, import_file, export_file, list_commands");
+    ImGui::TextDisabled("%s", tr("Tools: get_scene, create_sketch, create_solid, extrude, modify, delete, set_view, run_command,"));
+    ImGui::TextDisabled("%s", tr("       open/save/new_project, import_file, export_file, list_commands"));
     ImGui::End();
 }
 
 void LandingUI::drawControlsWindow(UiState& st) {
     ImGui::SetNextWindowSize({380, 0}, ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Viewport Controls", &st.showControls, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::Begin(tr("Viewport Controls"), &st.showControls, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
             const char* rows[][2] = {
                 {"Tab", "Switch 2D Drawing / 3D Model window"},
@@ -2448,21 +2449,21 @@ void LandingUI::drawControlsWindow(UiState& st) {
 }
 
 void LandingUI::drawAboutWindow(UiState& st) {
-    if (ImGui::Begin("About SI CDM", &st.showAbout, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("SI CDM  %s", SICDM_VERSION);
-        ImGui::TextDisabled("CAD / CAM workbench written in modern C++");
+    if (ImGui::Begin(tr("About SI CDM"), &st.showAbout, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text(tr("SI CDM  %s"), SICDM_VERSION);
+        ImGui::TextDisabled("%s", tr("CAD / CAM workbench written in modern C++"));
         ImGui::Separator();
-        ImGui::Text("Renderer : %s", st.gpuName.c_str());
-        ImGui::Text("OpenGL   : %s", st.glVersion.c_str());
-        ImGui::Text("Dear ImGui %s", IMGUI_VERSION);
+        ImGui::Text(tr("Renderer : %s"), st.gpuName.c_str());
+        ImGui::Text(tr("OpenGL   : %s"), st.glVersion.c_str());
+        ImGui::Text(tr("Dear ImGui %s"), IMGUI_VERSION);
         ImGui::Separator();
         // The licence is read again only when the window opens (it is a small file).
         static std::string licence;
         if (ImGui::IsWindowAppearing() || licence.empty()) licence = currentLicence().describe();
         ImGui::TextUnformatted(licence.c_str());
-        if (ImGui::SmallButton("Licence...")) st.showLicence = true;
-        ImGui::TextDisabled("Crash reports stay on this computer: %s", crashDirectory().c_str());
-        if (ImGui::CollapsingHeader("Third-party components")) {
+        if (ImGui::SmallButton(tr("Licence..."))) st.showLicence = true;
+        ImGui::TextDisabled(tr("Crash reports stay on this computer: %s"), crashDirectory().c_str());
+        if (ImGui::CollapsingHeader(tr("Third-party components"))) {
             ImGui::BeginChild("notices", {560, 260}, true);
             ImGui::TextUnformatted(thirdPartyNotices());
             ImGui::EndChild();
@@ -2901,7 +2902,7 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
             m_libParamsOpen = true;
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) cmd.commands.push_back(std::string("PART ") + it.key);
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\nDouble-click to insert", it.name, it.summary);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("%s\n%s\nDouble-click to insert"), it.name, it.summary);
         const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
         ImDrawList* dl = ImGui::GetWindowDrawList();
         // Thumbnail tile.
@@ -2929,7 +2930,7 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
     theme::caption(selected->name);
     ImGui::SameLine(right - ImGui::CalcTextSize("x").x - ImGui::GetStyle().FramePadding.x * 2.0f);
     if (ImGui::SmallButton("x##libclose")) m_libParamsOpen = false;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide the parameters");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Hide the parameters"));
     if (beginPropertyGrid("##libparams")) {
         for (const LibraryParam& p : selected->params) {
             auto it = values.find(p.key);
@@ -2949,11 +2950,11 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
         ImGui::EndTable();
     }
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-    if (ImGui::Button("Defaults", {half * 0.7f, 0})) values.clear();
+    if (ImGui::Button(tr("Defaults"), {half * 0.7f, 0})) values.clear();
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(theme::kAccent));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(theme::kAccentHover));
-    if (ImGui::Button("Insert", {-1, 0})) {
+    if (ImGui::Button(tr("Insert"), {-1, 0})) {
         std::string line = std::string("PART ") + selected->key;
         for (const LibraryParam& p : selected->params) {
             const auto it = values.find(p.key);
@@ -2970,8 +2971,8 @@ void LandingUI::drawLibrary(UiCommands& cmd, const Scene& scene, UiState& st) {
     {
         theme::ScopedFont small(theme::Font::Small);
         ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::kTextFaint));
-        ImGui::TextWrapped("Placed beside the model; double-click a part to insert it with defaults. Motors spin in the "
-                           "Simulation window.");
+        ImGui::TextWrapped("%s", tr("Placed beside the model; double-click a part to insert it with defaults. Motors spin in the "
+                           "Simulation window."));
         ImGui::PopStyleColor();
     }
 }
@@ -3038,7 +3039,7 @@ void LandingUI::drawSimTransport(UiState& st) {
     std::snprintf(label, sizeof(label), "t = %.2f / %.1f s", static_cast<double>(st.simTime),
                   static_cast<double>(st.simDuration));
     ImGui::SliderFloat("##simtime", &st.simTime, 0.0f, st.simDuration, label, ImGuiSliderFlags_NoRoundToFormat);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scrub the timeline  [Left / Right step 1/30 s]");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Scrub the timeline  [Left / Right step 1/30 s]"));
     ImGui::SameLine();
     static const float kSpeeds[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 10.0f};
     char speed[16];
@@ -3051,9 +3052,9 @@ void LandingUI::drawSimTransport(UiState& st) {
         }
         ImGui::EndCombo();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback speed (1x = real time)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Playback speed (1x = real time)"));
     ImGui::SameLine();
-    ImGui::Checkbox("Loop", &st.simLoop);
+    ImGui::Checkbox(tr("Loop"), &st.simLoop);
 }
 
 float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom) {
@@ -3068,12 +3069,12 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
     ImGui::Begin("##motionstudy", nullptr, flags);
     {
         theme::ScopedFont title(theme::Font::Strong);
-        ImGui::TextUnformatted("Motion Study");
+        ImGui::TextUnformatted(tr("Motion Study"));
     }
     ImGui::SameLine();
     {
         theme::ScopedFont small(theme::Font::Small);
-        ImGui::TextColored(theme::vec(theme::kTextDim), "%zu motion%s", scene.motions().size(),
+        ImGui::TextColored(theme::vec(theme::kTextDim), tr("%zu motion%s"), scene.motions().size(),
                            scene.motions().size() == 1 ? "" : "s");
     }
     ImGui::Spacing();
@@ -3082,13 +3083,13 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
     const bool hasSel = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(bodies.size());
     const std::string targets = hasSel ? std::string() : " BODIES ALL";
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-    if (ImGui::Button("+ Circular", {half, 0})) cmd.commands.push_back("MOTION CIRCULAR" + targets);
+    if (ImGui::Button(tr("+ Circular"), {half, 0})) cmd.commands.push_back("MOTION CIRCULAR" + targets);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Rotate %s about an axis (deg/s)", hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name.c_str() : "all bodies");
+        ImGui::SetTooltip(tr("Rotate %s about an axis (deg/s)"), hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name.c_str() : "all bodies");
     ImGui::SameLine();
-    if (ImGui::Button("+ Linear", {half, 0})) cmd.commands.push_back("MOTION LINEAR" + targets);
+    if (ImGui::Button(tr("+ Linear"), {half, 0})) cmd.commands.push_back("MOTION LINEAR" + targets);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Move %s along a direction (mm/s)", hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name.c_str() : "all bodies");
+        ImGui::SetTooltip(tr("Move %s along a direction (mm/s)"), hasSel ? bodies[static_cast<std::size_t>(st.selectedBody)].name.c_str() : "all bodies");
     {
         theme::ScopedFont small(theme::Font::Small);
         ImGui::TextColored(theme::vec(theme::kTextDim), hasSel ? "Adds a motion for the selected body"
@@ -3096,18 +3097,18 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
     }
 
     theme::caption("Display");
-    ImGui::Checkbox("Real-time axes", &st.simAxes);
+    ImGui::Checkbox(tr("Real-time axes"), &st.simAxes);
     ImGui::SameLine(170);
-    ImGui::Checkbox("Motion axes", &st.simMotionAxes);
-    ImGui::Checkbox("Paths", &st.simPaths);
+    ImGui::Checkbox(tr("Motion axes"), &st.simMotionAxes);
+    ImGui::Checkbox(tr("Paths"), &st.simPaths);
     ImGui::SameLine(170);
-    ImGui::Checkbox("Readout", &st.simReadout);
+    ImGui::Checkbox(tr("Readout"), &st.simReadout);
     {
         ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("Length");
+        ImGui::TextDisabled("%s", tr("Length"));
         ImGui::SameLine();
         bool automatic = st.simDurationSetting <= 0.0f;
-        if (ImGui::Checkbox("Auto", &automatic))
+        if (ImGui::Checkbox(tr("Auto"), &automatic))
             cmd.commands.push_back(automatic ? "SIM DURATION 0" : "SIM DURATION " + std::to_string(st.simDuration));
         ImGui::SameLine();
         float d = st.simDuration;
@@ -3126,7 +3127,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
     {
         PhysicsSettings& ps = scene.physics();
         const ImGuiTreeNodeFlags open = ps.enabled ? ImGuiTreeNodeFlags_DefaultOpen : 0;
-        if (ImGui::CollapsingHeader("Physics environment", open)) {
+        if (ImGui::CollapsingHeader(tr("Physics environment"), open)) {
             ImGui::PushID("physics");
             auto run = [&](const std::string& line) { cmd.commands.push_back(line); };
             const float labelW = 92.0f;
@@ -3162,10 +3163,10 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 return num(v.x) + unit + "," + num(v.y) + unit + "," + num(v.z) + unit;
             };
             bool on = ps.enabled;
-            if (ImGui::Checkbox("Physics on", &on)) run(on ? "PHYSICS ON" : "PHYSICS OFF");
+            if (ImGui::Checkbox(tr("Physics on"), &on)) run(on ? "PHYSICS ON" : "PHYSICS OFF");
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Bodies in the physics move by forces: gravity, collisions, charges, fields.\n"
-                                  "Turning it on adds every visible body when none was chosen.");
+                ImGui::SetTooltip("%s", tr("Bodies in the physics move by forces: gravity, collisions, charges, fields.\n"
+                                  "Turning it on adds every visible body when none was chosen."));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
             if (ImGui::BeginCombo("##demo", "Experiment...")) {
@@ -3175,7 +3176,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                         run("SIM STOP");
                         run("SIM PLAY");
                     }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n(replaces the scene)", d.summary);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("%s\n(replaces the scene)"), d.summary);
                 }
                 ImGui::EndCombo();
             }
@@ -3194,11 +3195,11 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                     return std::string("PHYSICS GRAVITY ") + gravityModeKey(ps.gravity) + " G " + num(v);
                 }, "Newton's gravitational constant, 6.6743e-11 m^3/(kg s^2)");
             bool floor = ps.floor, air = ps.air, rel = ps.relativity;
-            if (ImGui::Checkbox("Floor", &floor)) run(floor ? "PHYSICS FLOOR ON" : "PHYSICS FLOOR OFF");
+            if (ImGui::Checkbox(tr("Floor"), &floor)) run(floor ? "PHYSICS FLOOR ON" : "PHYSICS FLOOR OFF");
             ImGui::SameLine(110);
-            if (ImGui::Checkbox("Air drag", &air)) run(air ? "PHYSICS AIR ON" : "PHYSICS AIR OFF");
+            if (ImGui::Checkbox(tr("Air drag"), &air)) run(air ? "PHYSICS AIR ON" : "PHYSICS AIR OFF");
             ImGui::SameLine(220);
-            if (ImGui::Checkbox("Relativity", &rel)) run(rel ? "PHYSICS RELATIVITY ON" : "PHYSICS RELATIVITY OFF");
+            if (ImGui::Checkbox(tr("Relativity"), &rel)) run(rel ? "PHYSICS RELATIVITY ON" : "PHYSICS RELATIVITY OFF");
             if (ps.floor)
                 number("Friction", "##mu", ps.friction, "%.3g", [&](float v) { return "PHYSICS FLOOR ON FRICTION " + num(v); });
             if (ps.relativity)
@@ -3217,11 +3218,11 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 const std::string q = "PHYSICS BODY \"" + b.name + "\"";
                 theme::caption(b.name.c_str());
                 bool in = p.enabled, fixed = p.fixed;
-                if (ImGui::Checkbox("In the physics", &in)) run(q + (in ? (p.fixed ? " FIXED" : " DYNAMIC") : " OFF"));
+                if (ImGui::Checkbox(tr("In the physics"), &in)) run(q + (in ? (p.fixed ? " FIXED" : " DYNAMIC") : " OFF"));
                 if (p.enabled) {
                     ImGui::SameLine(160);
-                    if (ImGui::Checkbox("Fixed", &fixed)) run(q + (fixed ? " FIXED" : " DYNAMIC"));
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Does not move (an anchor, a planet, a charged plate): still attracts and collides");
+                    if (ImGui::Checkbox(tr("Fixed"), &fixed)) run(q + (fixed ? " FIXED" : " DYNAMIC"));
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Does not move (an anchor, a planet, a charged plate): still attracts and collides"));
                     const MassProperties mp = massProperties(b);
                     char massFmt[48];
                     std::snprintf(massFmt, sizeof(massFmt), p.mass > 0 ? "%%.4g kg" : "auto %.4g kg", mp.mass);
@@ -3254,7 +3255,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 }
             } else {
                 theme::caption("Body");
-                ImGui::TextDisabled("Select a body to give it mass, velocity, charge...");
+                ImGui::TextDisabled("%s", tr("Select a body to give it mass, velocity, charge..."));
             }
             // Live readout at the playhead.
             if (ps.enabled && physicsRun(scene)) {
@@ -3292,12 +3293,12 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 summaries.push_back(buildRig(scene, s, rig, &why) ? describeRig(rig).front() : why);
             }
         }
-        if (ImGui::CollapsingHeader("Robots", robots.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader(tr("Robots"), robots.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::PushID("robots");
             auto run = [&](const std::string& line) { cmd.commands.push_back(line); };
             static int which = 0;
             if (robots.empty()) {
-                ImGui::TextWrapped("No robots yet: give parts joints (JOINT, motions) or tag them ROTOR / WHEEL, or insert one from the library (arm, humanoid).");
+                ImGui::TextWrapped("%s", tr("No robots yet: give parts joints (JOINT, motions) or tag them ROTOR / WHEEL, or insert one from the library (arm, humanoid)."));
             } else {
                 which = std::clamp(which, 0, static_cast<int>(robots.size()) - 1);
                 const std::string& name = robots[static_cast<std::size_t>(which)];
@@ -3317,13 +3318,13 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 if (const RigSettings* f = scene.rigs().find(name)) settings = *f;
                 // Engine and simulation.
                 bool simulate = settings.simulate;
-                if (ImGui::Checkbox("Simulate", &simulate)) run(rig + (simulate ? " SIMULATE ON" : " SIMULATE OFF"));
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play the robot with its engine: gravity, contacts, motors following its motions");
+                if (ImGui::Checkbox(tr("Simulate"), &simulate)) run(rig + (simulate ? " SIMULATE ON" : " SIMULATE OFF"));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Play the robot with its engine: gravity, contacts, motors following its motions"));
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                 const std::string engineNow = settings.engine.empty() ? "Engine: auto" : "Engine: " + settings.engine;
                 if (ImGui::BeginCombo("##engine", engineNow.c_str())) {
-                    if (ImGui::Selectable("auto (by morphology)")) run(rig + " ENGINE AUTO");
+                    if (ImGui::Selectable(tr("auto (by morphology)"))) run(rig + " ENGINE AUTO");
                     for (const SimEngineInfo& e : simEngines()) {
                         if (ImGui::Selectable(e.key)) run(rig + " ENGINE " + e.key);
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %s", e.title, e.summary);
@@ -3336,13 +3337,13 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                     static int tag = 0;
                     static const char* kTags[] = {"ROTOR", "WHEEL", "END_EFFECTOR", "FOOT", "KNEE", "HINGE", "BASE", "NONE"};
                     ImGui::AlignTextToFramePadding();
-                    ImGui::TextDisabled("Tag part");
+                    ImGui::TextDisabled("%s", tr("Tag part"));
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(130);
                     ImGui::Combo("##tag", &tag, kTags, 8);
                     ImGui::SameLine();
-                    if (ImGui::Button("Apply##tag")) run(rig + " TAG \"" + b.name + "\" " + kTags[tag]);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mark %s: rotors and wheels spin, knees get limits, end effectors are what ARM moves", b.name.c_str());
+                    if (ImGui::Button(tr("Apply##tag"))) run(rig + " TAG \"" + b.name + "\" " + kTags[tag]);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("Mark %s: rotors and wheels spin, knees get limits, end effectors are what ARM moves"), b.name.c_str());
                 }
                 // Ground.
                 {
@@ -3354,10 +3355,10 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                             : scene.terrain().kind == TerrainKind::Blocks ? 4
                                                                           : 0;
                     ImGui::AlignTextToFramePadding();
-                    ImGui::TextDisabled("Ground");
+                    ImGui::TextDisabled("%s", tr("Ground"));
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                    if (scene.terrain().kind == TerrainKind::Dem) ImGui::TextUnformatted("DEM file (TERRAIN DEM)");
+                    if (scene.terrain().kind == TerrainKind::Dem) ImGui::TextUnformatted(tr("DEM file (TERRAIN DEM)"));
                     else if (ImGui::Combo("##ground", &g, kGround, 5)) run(kGroundCmd[g]);
                 }
                 // Arm: move the tool to a point, collision-free.
@@ -3366,22 +3367,22 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 static bool optimise = false;
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                 ImGui::InputFloat3("##armtarget", target, "%.0f");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where the tool (the END_EFFECTOR part) should go, mm");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Where the tool (the END_EFFECTOR part) should go, mm"));
                 char point[96];
                 // Millimetres whatever the document's units (the field says mm).
                 std::snprintf(point, sizeof(point), "%gmm,%gmm,%gmm", static_cast<double>(target[0]), static_cast<double>(target[1]), static_cast<double>(target[2]));
-                if (ImGui::Button("Move tool")) run(arm + " MOVE_TO " + point + (optimise ? " OPTIMIZE" : ""));
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inverse kinematics, a collision-free path, keyed into the joints' motions");
+                if (ImGui::Button(tr("Move tool"))) run(arm + " MOVE_TO " + point + (optimise ? " OPTIMIZE" : ""));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Inverse kinematics, a collision-free path, keyed into the joints' motions"));
                 ImGui::SameLine();
-                if (ImGui::Button("Home")) run(arm + " HOME");
+                if (ImGui::Button(tr("Home"))) run(arm + " HOME");
                 ImGui::SameLine();
-                if (ImGui::Button("Reach?")) run(arm + " IK " + point);
+                if (ImGui::Button(tr("Reach?"))) run(arm + " IK " + point);
                 ImGui::SameLine();
-                ImGui::Checkbox("Least effort", &optimise);
+                ImGui::Checkbox(tr("Least effort"), &optimise);
                 // Sensors and forces on the selected part.
                 theme::caption("Sensors and forces");
-                for (const SensorSpec& s : settings.sensors) ImGui::BulletText("%s: %s on %s", s.name.c_str(), sensorKindKey(s.kind), s.body.c_str());
-                for (const ForceSpec& f : settings.forces) ImGui::BulletText("%s: %s on %s", f.name.c_str(), forceKindKey(f.kind), f.body.c_str());
+                for (const SensorSpec& s : settings.sensors) ImGui::BulletText(tr("%s: %s on %s"), s.name.c_str(), sensorKindKey(s.kind), s.body.c_str());
+                for (const ForceSpec& f : settings.forces) ImGui::BulletText(tr("%s: %s on %s"), f.name.c_str(), forceKindKey(f.kind), f.body.c_str());
                 if (hasSel) {
                     const Body& b = bodies[static_cast<std::size_t>(st.selectedBody)];
                     const std::string on = " ON \"" + b.name + "\"";
@@ -3391,28 +3392,28 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                     ImGui::SetNextItemWidth(110);
                     ImGui::Combo("##sensor", &sensor, kSensors, 5);
                     ImGui::SameLine();
-                    if (ImGui::Button("Add sensor")) run(rig + " SENSOR ADD " + kSensors[sensor] + " " + std::string(kSensors[sensor]) + n + on);
-                    if (ImGui::Button("Float in water")) run(rig + " FORCE ADD BUOYANCY water" + n + on + " LEVEL 300mm DRAG 20");
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Water up to 300 mm: buoyancy and drag on the part (RIG FORCE to change)");
+                    if (ImGui::Button(tr("Add sensor"))) run(rig + " SENSOR ADD " + kSensors[sensor] + " " + std::string(kSensors[sensor]) + n + on);
+                    if (ImGui::Button(tr("Float in water"))) run(rig + " FORCE ADD BUOYANCY water" + n + on + " LEVEL 300mm DRAG 20");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Water up to 300 mm: buoyancy and drag on the part (RIG FORCE to change)"));
                     ImGui::SameLine();
-                    if (ImGui::Button("Magnet")) run(rig + " FORCE ADD MAGNET magnet" + n + on + " STRENGTH 50 RANGE 20mm");
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Magnetic adhesion to the ground: 50 N flush, gone at 20 mm");
+                    if (ImGui::Button(tr("Magnet"))) run(rig + " FORCE ADD MAGNET magnet" + n + on + " STRENGTH 50 RANGE 20mm");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Magnetic adhesion to the ground: 50 N flush, gone at 20 mm"));
                     ImGui::SameLine();
-                    if (ImGui::Button("Push")) run(rig + " FORCE ADD WRENCH push" + n + on + " FORCE 20,0,0 FROM 1 UNTIL 1.2");
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("20 N along +X from 1 s to 1.2 s");
+                    if (ImGui::Button(tr("Push"))) run(rig + " FORCE ADD WRENCH push" + n + on + " FORCE 20,0,0 FROM 1 UNTIL 1.2");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("20 N along +X from 1 s to 1.2 s"));
                 } else {
-                    ImGui::TextDisabled("Select a part to put a sensor or a force on it");
+                    ImGui::TextDisabled("%s", tr("Select a part to put a sensor or a force on it"));
                 }
                 // Training and export.
                 theme::caption("Training and export");
-                if (ImGui::Button("Run 16 copies")) run(rig + " ENV COUNT 16 SECONDS 5");
+                if (ImGui::Button(tr("Run 16 copies"))) run(rig + " ENV COUNT 16 SECONDS 5");
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Headless, fast-forward batch on random actions: how fast training will go.\nTrain from Python with python/sicdm_env.py (PyTorch, JAX).");
+                    ImGui::SetTooltip("%s", tr("Headless, fast-forward batch on random actions: how fast training will go.\nTrain from Python with python/sicdm_env.py (PyTorch, JAX)."));
                 ImGui::SameLine();
-                if (ImGui::Button("State")) run(rig + " STATE AT " + std::to_string(st.simTime));
+                if (ImGui::Button(tr("State"))) run(rig + " STATE AT " + std::to_string(st.simTime));
                 {
                     theme::ScopedFont small(theme::Font::Small);
-                    ImGui::TextColored(theme::vec(theme::kTextDim), "EXPORT robot.urdf / .sdf / .xml (MJCF) writes it for other simulators");
+                    ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("EXPORT robot.urdf / .sdf / .xml (MJCF) writes it for other simulators"));
                 }
             }
             ImGui::PopID();
@@ -3458,14 +3459,14 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             ImGui::EndCombo();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Pose", {buttonW, 0})) {
+        if (ImGui::Button(tr("Pose"), {buttonW, 0})) {
             cmd.commands.push_back("POSE " + quoted + " " + postures[static_cast<std::size_t>(posture)].name);
             cmd.commands.push_back("SIM STOP");
             cmd.commands.push_back("SIM PLAY");
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Move into the posture from the one it holds: joints clamped to their hard stops,\n"
-                              "minimum-jerk paths within the motors' rated speed, feet kept on the floor");
+            ImGui::SetTooltip("%s", tr("Move into the posture from the one it holds: joints clamped to their hard stops,\n"
+                              "minimum-jerk paths within the motors' rated speed, feet kept on the floor"));
         label("Gesture");
         ImGui::SetNextItemWidth(fieldW);
         gesture = std::clamp(gesture, 0, static_cast<int>(gestures.size()) - 1);
@@ -3480,7 +3481,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             ImGui::EndCombo();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Play", {buttonW, 0})) {
+        if (ImGui::Button(tr("Play"), {buttonW, 0})) {
             cmd.commands.push_back("GESTURE " + quoted + " " + gestures[static_cast<std::size_t>(gesture)].name +
                                    (loopGesture ? " LOOP" : " ONCE") + (mirrorGesture ? " MIRROR" : ""));
             cmd.commands.push_back("SIM STOP");
@@ -3488,10 +3489,10 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
         }
         ImGui::Dummy({labelW - ImGui::GetStyle().ItemSpacing.x, 0});
         ImGui::SameLine(labelW);
-        ImGui::Checkbox("Loop##gesture", &loopGesture);
+        ImGui::Checkbox(tr("Loop##gesture"), &loopGesture);
         ImGui::SameLine();
-        ImGui::Checkbox("Other side", &mirrorGesture);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play it with the left arm / hand");
+        ImGui::Checkbox(tr("Other side"), &mirrorGesture);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Play it with the left arm / hand"));
     }
 
     theme::caption("Motions");
@@ -3499,12 +3500,12 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
     const float readoutH = st.simReadout ? 190.0f : 0.0f;
     ImGui::BeginChild("##motions", {0, -readoutH}, ImGuiChildFlags_None);
     if (motions.empty()) {
-        ImGui::TextWrapped("No motions yet. Select a body, add a Circular (rotation) or Linear (travel) motion, "
-                           "then press Play.");
+        ImGui::TextWrapped("%s", tr("No motions yet. Select a body, add a Circular (rotation) or Linear (travel) motion, "
+                           "then press Play."));
         ImGui::Spacing();
-        ImGui::TextDisabled("Command line:");
-        ImGui::TextWrapped("MOTION LINEAR Drive DIR X SPEED 20 BODIES ALL");
-        ImGui::TextWrapped("MOTION CIRCLE Spin AXIS Y RPM 30 BODIES \"Wheel 1\"");
+        ImGui::TextDisabled("%s", tr("Command line:"));
+        ImGui::TextWrapped("%s", tr("MOTION LINEAR Drive DIR X SPEED 20 BODIES ALL"));
+        ImGui::TextWrapped("%s", tr("MOTION CIRCLE Spin AXIS Y RPM 30 BODIES \"Wheel 1\""));
     }
     int remove = -1;
     for (std::size_t i = 0; i < motions.size(); ++i) {
@@ -3531,22 +3532,22 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
         }
         if (open) {
             ImGui::Checkbox("##on", &m.enabled);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enabled");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Enabled"));
             ImGui::SameLine();
             char name[96];
             std::snprintf(name, sizeof(name), "%s", m.name.c_str());
             ImGui::SetNextItemWidth(180);
             if (ImGui::InputText("##name", name, sizeof(name)) && name[0]) m.name = name;
             ImGui::SameLine();
-            if (ImGui::SmallButton("Delete")) remove = static_cast<int>(i);
+            if (ImGui::SmallButton(tr("Delete"))) remove = static_cast<int>(i);
 
             int kind = m.kind == MotionKind::Circular ? 0 : 1;
-            if (ImGui::RadioButton("Circular", &kind, 0)) m.kind = MotionKind::Circular;
+            if (ImGui::RadioButton(tr("Circular"), &kind, 0)) m.kind = MotionKind::Circular;
             ImGui::SameLine();
-            if (ImGui::RadioButton("Linear", &kind, 1)) m.kind = MotionKind::Linear;
+            if (ImGui::RadioButton(tr("Linear"), &kind, 1)) m.kind = MotionKind::Linear;
 
             // Moved bodies.
-            ImGui::TextDisabled("Bodies");
+            ImGui::TextDisabled("%s", tr("Bodies"));
             for (std::size_t b = 0; b < m.bodies.size(); ++b) {
                 ImGui::PushID(static_cast<int>(b));
                 ImGui::BulletText("%s", m.bodies[b] == "*" ? "All bodies" : m.bodies[b].c_str());
@@ -3568,7 +3569,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 }
                 if (!all) {
                     if (canAdd) ImGui::SameLine();
-                    if (ImGui::SmallButton("All bodies")) m.bodies = {"*"};
+                    if (ImGui::SmallButton(tr("All bodies"))) m.bodies = {"*"};
                 }
             }
 
@@ -3585,58 +3586,58 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 if (on) ImGui::PopStyleColor();
                 ImGui::SameLine();
             }
-            if (ImGui::SmallButton("Flip")) m.axis = m.axis * -1.0f;
+            if (ImGui::SmallButton(tr("Flip"))) m.axis = m.axis * -1.0f;
             ImGui::SetNextItemWidth(-1);
             ImGui::DragFloat3("##axis", &m.axis.x, 0.01f, -1.0f, 1.0f, "%.2f");
             if (m.kind == MotionKind::Circular) {
-                ImGui::Checkbox("Each body about its own centre", &m.eachCentre);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One motion spins every wheel about its own hub");
+                ImGui::Checkbox(tr("Each body about its own centre"), &m.eachCentre);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("One motion spins every wheel about its own hub"));
             }
             if (m.kind == MotionKind::Circular) {
                 // Gear trains: turn with another circular motion at a ratio.
-                ImGui::TextDisabled("Driven by");
+                ImGui::TextDisabled("%s", tr("Driven by"));
                 ImGui::SameLine(90);
                 ImGui::SetNextItemWidth(-1);
                 if (ImGui::BeginCombo("##drivenby", m.follow.empty() ? "Own speed" : m.follow.c_str())) {
-                    if (ImGui::Selectable("Own speed", m.follow.empty())) m.follow.clear();
+                    if (ImGui::Selectable(tr("Own speed"), m.follow.empty())) m.follow.clear();
                     for (const Motion& d : motions)
                         if (&d != &m && d.kind == MotionKind::Circular && ImGui::Selectable(d.name.c_str(), d.name == m.follow))
                             m.follow = d.name;
                     ImGui::EndCombo();
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns with another motion: angle = ratio x its angle");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Turns with another motion: angle = ratio x its angle"));
                 if (!m.follow.empty()) {
-                    ImGui::TextDisabled("Ratio");
+                    ImGui::TextDisabled("%s", tr("Ratio"));
                     ImGui::SameLine(90);
                     ImGui::SetNextItemWidth(130);
                     ImGui::DragFloat("##ratio", &m.ratio, 0.01f, -1000.0f, 1000.0f, "%.3f");
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("External mesh: -teeth(driver) / teeth(driven)");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("External mesh: -teeth(driver) / teeth(driven)"));
                 } else {
-                    ImGui::TextDisabled("Step");
+                    ImGui::TextDisabled("%s", tr("Step"));
                     ImGui::SameLine(90);
                     ImGui::SetNextItemWidth(130);
                     ImGui::DragFloat("##step", &m.step, 0.05f, 0.0f, 360.0f, m.step <= 0.0f ? "smooth" : "%.2f deg");
                     m.step = std::max(m.step, 0.0f);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stepper motors: moves in steps of this angle (1.8 deg = 200 steps/rev)");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Stepper motors: moves in steps of this angle (1.8 deg = 200 steps/rev)"));
                 }
             }
             if (m.kind == MotionKind::Linear) {
-                ImGui::Checkbox("Travel along the chain / belt loop", &m.alongLoop);
+                ImGui::Checkbox(tr("Travel along the chain / belt loop"), &m.alongLoop);
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Moves a chain or belt body around its own loop instead of sliding it");
-                ImGui::TextDisabled("Rolls with");
+                    ImGui::SetTooltip("%s", tr("Moves a chain or belt body around its own loop instead of sliding it"));
+                ImGui::TextDisabled("%s", tr("Rolls with"));
                 ImGui::SameLine(90);
                 ImGui::SetNextItemWidth(-1);
                 if (ImGui::BeginCombo("##follow", m.follow.empty() ? "Own speed" : m.follow.c_str())) {
-                    if (ImGui::Selectable("Own speed", m.follow.empty())) m.follow.clear();
+                    if (ImGui::Selectable(tr("Own speed"), m.follow.empty())) m.follow.clear();
                     for (const Motion& d : motions)
                         if (d.kind == MotionKind::Circular && ImGui::Selectable(d.name.c_str(), d.name == m.follow))
                             m.follow = d.name;
                     ImGui::EndCombo();
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Travel follows a wheel spin: distance = wheel angle x radius");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Travel follows a wheel spin: distance = wheel angle x radius"));
                 if (!m.follow.empty()) {
-                    ImGui::TextDisabled("Radius");
+                    ImGui::TextDisabled("%s", tr("Radius"));
                     ImGui::SameLine(90);
                     ImGui::SetNextItemWidth(130);
                     lengthField("##radius", &m.radius, 0.0f, 1e6f, "", "wheel size");
@@ -3644,9 +3645,9 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 }
             }
             if (m.kind == MotionKind::Circular && !m.eachCentre) {
-                ImGui::TextDisabled("Through");
+                ImGui::TextDisabled("%s", tr("Through"));
                 ImGui::SameLine(90);
-                if (ImGui::SmallButton("Centre of bodies")) {
+                if (ImGui::SmallButton(tr("Centre of bodies"))) {
                     AABB box;
                     for (const Body& b : bodies)
                         if (m.moves(b.name)) box.expand(b.bounds());
@@ -3662,14 +3663,14 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             }
 
             // Speed, range, mode, delay.
-            ImGui::TextDisabled("Speed");
+            ImGui::TextDisabled("%s", tr("Speed"));
             ImGui::SameLine(90);
             ImGui::SetNextItemWidth(130);
             if (m.kind == MotionKind::Circular) ImGui::DragFloat("##speed", &m.speed, 1.0f, -100000.0f, 100000.0f, "%.1f deg/s");
             else lengthField("##speed", &m.speed, -1e6f, 1e6f, "/s");
             if (m.kind == MotionKind::Circular) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("%.1f rpm", static_cast<double>(m.speed / 6.0f));
+                ImGui::TextDisabled(tr("%.1f rpm"), static_cast<double>(m.speed / 6.0f));
             }
             ImGui::TextDisabled(m.kind == MotionKind::Circular ? "Sweep" : "Stroke");
             ImGui::SameLine(90);
@@ -3684,17 +3685,17 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             if (m.range <= 0.0f) ImGui::BeginDisabled();
             if (ImGui::Combo("##mode", &mode, "Continuous\0Loop\0Oscillate\0Once\0")) m.mode = static_cast<MotionMode>(mode);
             if (m.range <= 0.0f) ImGui::EndDisabled();
-            ImGui::TextDisabled("Start");
+            ImGui::TextDisabled("%s", tr("Start"));
             ImGui::SameLine(90);
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##start", &m.start, 0.05f, 0.0f, 3600.0f, "%.2f s");
             m.start = std::max(m.start, 0.0f);
 
             // Live value.
-            ImGui::TextDisabled("Now");
+            ImGui::TextDisabled("%s", tr("Now"));
             ImGui::SameLine(90);
             if (m.kind == MotionKind::Circular)
-                ImGui::TextColored(col, "%.2f deg   %.1f deg/s", static_cast<double>(motionValue(scene, m, st.simTime)),
+                ImGui::TextColored(col, tr("%.2f deg   %.1f deg/s"), static_cast<double>(motionValue(scene, m, st.simTime)),
                                    static_cast<double>(motionRate(scene, m, st.simTime)));
             else
                 ImGui::TextColored(col, "%s   %s/s", lengthText(motionValue(scene, m, st.simTime)).c_str(),
@@ -3713,7 +3714,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
         for (std::size_t i = 0; i < bodies.size() && body < 0; ++i)
             if (isMoving(scene, i)) body = static_cast<int>(i);
         if (body < 0) {
-            ImGui::TextDisabled("Add a motion to read the moving axes.");
+            ImGui::TextDisabled("%s", tr("Add a motion to read the moving axes."));
         } else {
             const Body& b = bodies[static_cast<std::size_t>(body)];
             const float t = st.simTime, h = 1.0f / 120.0f;
@@ -3741,7 +3742,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 }
                 ImGui::EndTable();
             }
-            ImGui::TextDisabled("lengths in mm  ·  deg  ·  mm/s, deg/s   |v| %s/s", lengthText(length(v)).c_str());
+            ImGui::TextDisabled(tr("lengths in mm  ·  deg  ·  mm/s, deg/s   |v| %s/s"), lengthText(length(v)).c_str());
         }
     }
     ImGui::End();
@@ -3755,7 +3756,7 @@ void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
     const SheetGraphics& g = *st.sheet;
     ImGui::SetNextWindowSize({980, 720}, ImGuiCond_FirstUseEver);
     bool open = true;
-    if (!ImGui::Begin("Drawing Sheet", &open)) {
+    if (!ImGui::Begin(tr("Drawing Sheet"), &open)) {
         ImGui::End();
         if (!open) cmd.commands.push_back("SHEET HIDE");
         return;
@@ -3763,47 +3764,47 @@ void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
     if (!open) cmd.commands.push_back("SHEET HIDE");
     // Toolbar.
     bool fit = m_sheetZoom <= 0.0f;
-    if (ImGui::Button("Fit")) fit = true;
+    if (ImGui::Button(tr("Fit"))) fit = true;
     ImGui::SameLine();
-    if (ImGui::Button("Auto Dimension")) cmd.commands.push_back("SHEET AUTODIM");
+    if (ImGui::Button(tr("Auto Dimension"))) cmd.commands.push_back("SHEET AUTODIM");
     ImGui::SameLine();
     static const char* kSheetTools[] = {"Pan", "Dimension", "Feature Frame (GD&T)", "Datum", "Surface Finish"};
     ImGui::SetNextItemWidth(170);
     if (ImGui::Combo("##sheettool", &m_sheetTool, kSheetTools, 5)) m_sheetDimFirst = -1;
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Dimension: click two points of a view. Frame, datum, finish: click the feature's point in a view.");
+        ImGui::SetTooltip("%s", tr("Dimension: click two points of a view. Frame, datum, finish: click the feature's point in a view."));
     m_sheetDimTool = m_sheetTool != 0;
     ImGui::SameLine();
-    if (ImGui::Button("Section")) cmd.commands.push_back("SHEET SECTION FRONT VERTICAL");
+    if (ImGui::Button(tr("Section"))) cmd.commands.push_back("SHEET SECTION FRONT VERTICAL");
     ImGui::SameLine();
-    if (ImGui::Button("Export...")) requestFile(FileSheetExport, st);
+    if (ImGui::Button(tr("Export..."))) requestFile(FileSheetExport, st);
     // The tool's options.
     if (m_sheetTool == 1) {
         ImGui::SetNextItemWidth(160);
-        ImGui::InputTextWithHint("Tolerance##dimtol", "0.1 | +0.1 -0.05 | FIT H7", m_sheetTol, sizeof m_sheetTol);
+        ImGui::InputTextWithHint(tr("Tolerance##dimtol"), "0.1 | +0.1 -0.05 | FIT H7", m_sheetTol, sizeof m_sheetTol);
     } else if (m_sheetTool == 2) {
         static const char* kSymbols[] = {"Straightness", "Flatness", "Circularity", "Cylindricity", "Profile of a line", "Profile of a surface", "Angularity",
                                          "Perpendicularity", "Parallelism", "Position", "Concentricity", "Symmetry", "Circular runout", "Total runout"};
         ImGui::SetNextItemWidth(150);
         ImGui::Combo("##gdtsym", &m_gdtSymbol, kSymbols, 14);
         ImGui::SameLine();
-        ImGui::Checkbox("\xC3\x98", &m_gdtDiameter);
+        ImGui::Checkbox(tr("\xC3\x98"), &m_gdtDiameter);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
-        ImGui::InputFloat("mm##gdtv", &m_gdtValue, 0, 0, "%.3f");
+        ImGui::InputFloat(tr("mm##gdtv"), &m_gdtValue, 0, 0, "%.3f");
         ImGui::SameLine();
         static const char* kMat[] = {"RFS", "MMC", "LMC"};
         ImGui::SetNextItemWidth(70);
         ImGui::Combo("##gdtmat", &m_gdtMaterial, kMat, 3);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
-        ImGui::InputTextWithHint("Datums##gdtd", "A B C", m_gdtDatums, sizeof m_gdtDatums);
+        ImGui::InputTextWithHint(tr("Datums##gdtd"), "A B C", m_gdtDatums, sizeof m_gdtDatums);
     } else if (m_sheetTool == 3) {
         ImGui::SetNextItemWidth(40);
-        ImGui::InputText("Datum letter", m_datumLetter, sizeof m_datumLetter, ImGuiInputTextFlags_CharsUppercase);
+        ImGui::InputText(tr("Datum letter"), m_datumLetter, sizeof m_datumLetter, ImGuiInputTextFlags_CharsUppercase);
     } else if (m_sheetTool == 4) {
         ImGui::SetNextItemWidth(80);
-        ImGui::InputFloat("Ra (um)", &m_finishRa, 0, 0, "%.2f");
+        ImGui::InputFloat(tr("Ra (um)"), &m_finishRa, 0, 0, "%.2f");
         ImGui::SameLine();
         static const char* kProc[] = {"Any process", "Machined", "Not machined"};
         ImGui::SetNextItemWidth(130);
@@ -3962,7 +3963,7 @@ void LandingUI::drawMateWindow(UiCommands& cmd, UiState& st) {
     ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 70}, ImGuiCond_Appearing, {0.5f, 0.0f});
     ImGui::SetNextWindowBgAlpha(0.92f);
     bool open = true;
-    if (!ImGui::Begin("Mate", &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin(tr("Mate"), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         if (!open) st.mateTool.clear();
         return;
@@ -3978,9 +3979,9 @@ void LandingUI::drawMateWindow(UiCommands& cmd, UiState& st) {
         ImGui::SetNextItemWidth(90);
         ImGui::InputFloat(st.mateTool == "DISTANCE" ? "mm" : "deg", &st.mateValue, 0, 0, "%.3f");
     }
-    if (st.mateFirst.empty()) ImGui::TextUnformatted("Click a face on the part that stays");
-    else ImGui::Text("%s picked: now click a face on the part to move", st.mateFirst.c_str());
-    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) open = false;
+    if (st.mateFirst.empty()) ImGui::TextUnformatted(tr("Click a face on the part that stays"));
+    else ImGui::Text(tr("%s picked: now click a face on the part to move"), st.mateFirst.c_str());
+    if (ImGui::Button(tr("Cancel")) || ImGui::IsKeyPressed(ImGuiKey_Escape)) open = false;
     ImGui::End();
     if (!open) {
         st.mateTool.clear();

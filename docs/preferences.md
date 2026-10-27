@@ -11,6 +11,7 @@ is saved at once and is kept for the next session.
 | Autosave | How old unsaved changes get (in seconds) before a recovery copy is written; off writes none. See [autosave and recovery](#autosave-and-recovery). |
 | Material, post processor, machine | What *Set Up the Selected Part* on the CAM panel starts a job with. A lathe job takes the material, and the post when the lathe has it. |
 | Updates | Look for a newer release when SI CDM starts, from the release feed your administrator gives you. |
+| Language | The language of menus, buttons and tooltips: English or Deutsch built in, or one installed as a [language file](#languages). |
 
 The same settings can be typed:
 
@@ -23,6 +24,8 @@ PREFERENCES SET post haas            fanuc, haas, grbl, linuxcnc, or DEFAULT
 PREFERENCES SET machine vmc          a machine preset, or DEFAULT
 PREFERENCES SET updates on           ON or OFF
 PREFERENCES SET update-url https://example.com/sicdm/latest.json
+PREFERENCES SET language de          en, de, or an installed language's code; shown at once
+PREFERENCES LANGUAGES                the languages there are
 PREFERENCES RESET                    back to the defaults (the recent files stay)
 ```
 
@@ -36,6 +39,35 @@ PREFERENCES RESET                    back to the defaults (the recent files stay
 
 Set `SICDM_PREFERENCES` to use another file. A value in the file that SI CDM wouldn't accept
 from `PREFERENCES SET` is ignored, and the default is used.
+
+## Languages
+
+![The menus in German](language-de.png)
+
+The interface is in English or German (*Deutsch*) out of the box. Choose one in
+*Preferences*, or start the app in one for a single run with `sicdm --language de`.
+
+- **What changes:** the menus, buttons, panels, tooltips and tool names.
+- **What stays in English:** commands and their replies (`EXTRUDE`, `Created Block 1`).
+  Scripts, the MCP tools and the history then work the same in every language.
+
+**Adding or correcting a language:** put a language file in the `lang` folder next to the
+preferences file (or in the folder `SICDM_LANG_DIR` names). Call it after the language's code,
+for example `fr.json`:
+
+```json
+{"name": "Français", "strings": {"File": "Fichier", "Save As...": "Enregistrer sous..."}}
+```
+
+- **Keys** are the English words as the interface shows them.
+- **Format markers** such as `%d` and `%s` must stay, in the same order.
+- **A new code** adds a language to the list.
+- **A built-in code** (`de.json`) corrects or completes the built-in translation, and its
+  words win.
+
+To find what still needs translating, use the app in that language for a while, then type
+`PREFERENCES UNTRANSLATED fr.json`. It writes every word the language lacked, ready to fill
+in. From the sources, `tools/i18n_extract.py --json fr.json` lists every word there is.
 
 ## Autosave and recovery
 

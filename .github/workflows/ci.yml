@@ -7,10 +7,38 @@ on:
   pull_request:
 
 jobs:
+  # Signing: each job picks up its keys from the repository's secrets when they are set
+  # (Settings > Secrets and variables > Actions), and packages unsigned when they are not.
+  # Tag builds (releases) refuse to package unsigned once SICDM_REQUIRE_SIGNING is set as a
+  # repository variable. docs/release.md lists the secrets.
   macos-xcode:
     runs-on: macos-14
+    env:
+      MAC_CERT_P12: ${{ secrets.SICDM_MAC_CERT_P12 }}
+      MAC_CERT_PASS: ${{ secrets.SICDM_MAC_CERT_PASS }}
+      SICDM_CODESIGN_ID: ${{ secrets.SICDM_CODESIGN_ID }}
+      NOTARY_KEY_P8: ${{ secrets.SICDM_NOTARY_KEY_P8 }}
+      SICDM_NOTARY_KEY_ID: ${{ secrets.SICDM_NOTARY_KEY_ID }}
+      SICDM_NOTARY_ISSUER: ${{ secrets.SICDM_NOTARY_ISSUER }}
+      SICDM_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') && vars.SICDM_REQUIRE_SIGNING || '' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Signing keys (Developer ID certificate, notary API key)
+        if: env.MAC_CERT_P12 != ''
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"; pw=$(uuidgen)
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          echo "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MAC_CERT_PASS" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          if [ -n "$NOTARY_KEY_P8" ]; then
+            echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+            echo "SICDM_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+          fi
       - name: Build, test and package (.dmg)
         run: scripts/release.sh macos
       - uses: actions/upload-artifact@v4
@@ -21,12 +49,24 @@ jobs:
 
   linux:
     runs-on: ubuntu-24.04
+    env:
+      GPG_KEY_ASC: ${{ secrets.SICDM_GPG_KEY_ASC }}
+      SICDM_GPG_KEY: ${{ secrets.SICDM_GPG_KEY_ID }}
+      SICDM_GPG_PASSPHRASE: ${{ secrets.SICDM_GPG_PASSPHRASE }}
+      SICDM_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') && vars.SICDM_REQUIRE_SIGNING || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev xvfb
+      - name: Signing key (GPG)
+        if: env.GPG_KEY_ASC != ''
+        run: |
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf 2>/dev/null || { mkdir -p -m 700 ~/.gnupg; echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf; }
+          echo "$GPG_KEY_ASC" | gpg --batch --import
+      - name: Every interface word has a German translation
+        run: python3 tools/i18n_extract.py --missing de
       - name: Build, test and package (.deb, .tar.gz)
         run: scripts/release.sh linux
       - name: Render landing page
@@ -53,6 +93,10 @@ jobs:
 
   windows:
     runs-on: windows-2022
+    env:
+      WIN_CERT_PFX: ${{ secrets.SICDM_WIN_CERT_PFX }}
+      SICDM_WIN_CERT_PASS: ${{ secrets.SICDM_WIN_CERT_PASS }}
+      SICDM_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') && vars.SICDM_REQUIRE_SIGNING || '' }}
     defaults:
       run:
         shell: msys2 {0}
@@ -68,6 +112,13 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-nsis
+      - name: Signing certificate (Authenticode, osslsigncode)
+        if: env.WIN_CERT_PFX != ''
+        run: |
+          pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-osslsigncode
+          tmp=$(cygpath -u "$RUNNER_TEMP")
+          echo "$WIN_CERT_PFX" | base64 --decode > "$tmp/cert.pfx"
+          echo "SICDM_WIN_CERT=$tmp/cert.pfx" >> "$(cygpath -u "$GITHUB_ENV")"
       - name: Build, test and package (NSIS installer, .zip)
         run: scripts/release.sh windows
       - name: MCP server smoke test (stdio)

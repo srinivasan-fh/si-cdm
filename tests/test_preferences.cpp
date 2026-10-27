@@ -6,6 +6,7 @@
 #include "core/Licence.hpp"
 #include "core/Plugin.hpp"
 #include "core/Preferences.hpp"
+#include "core/Translate.hpp"
 #include "core/UpdateCheck.hpp"
 
 #include <cstdlib>
@@ -95,8 +96,16 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     reloadPreferences();
     CHECK(preferences().units == "mm" && preferences().autosaveSeconds == 30);
     const CommandOutput shown = run(d, "PREFS");
-    CHECK(shown.ok && shown.lines.size() == 8);
+    CHECK(shown.ok && shown.lines.size() == 9);
+    // The language: checked, shown at once, kept, and back to English on RESET.
+    CHECK(!run(d, "PREFERENCES SET language klingon").ok);
+    CHECK(run(d, "PREFERENCES SET language Deutsch").ok);
+    CHECK(language() == "de");
+    reloadPreferences();
+    CHECK(preferences().language == "de");
+    CHECK(run(d, "PREFERENCES LANGUAGES").lines.size() >= 2);
     CHECK(run(d, "PREFERENCES RESET").ok);
+    CHECK(language() == "en");
     CHECK(preferences().units.empty() && preferences().autosaveSeconds == 60);
     freshPreferences();
 }

@@ -19,6 +19,7 @@ struct Preferences {
     std::string camMachine;          // a machine preset's name
     bool checkUpdates = false;       // look for a newer release when the app starts
     std::string updateUrl;           // where the latest release is described (see UpdateCheck.hpp)
+    std::string language = "en";     // the interface's language (see Translate.hpp)
 
     static constexpr std::size_t kMaxRecent = 10;
 };

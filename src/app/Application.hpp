@@ -36,6 +36,7 @@ struct AppOptions {
     std::string executablePath; // argv[0], for MCP setup hints
     bool splash = true;         // cinematic launch splash with loading progress
     float splashSeconds = 3.2f; // shortest time the splash stays up
+    std::string language;       // the interface's language for this run ("": the preference)
 };
 
 class Application final : public ViewHost {

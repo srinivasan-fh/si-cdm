@@ -1,4 +1,5 @@
 #include "ui/Toolbox.hpp"
+#include "core/Translate.hpp"
 
 #include "ui/Theme.hpp"
 
@@ -223,14 +224,14 @@ void Toolbox::drawSlot(int gi, float size) {
     if (hovered && !ImGui::IsPopupOpen("flyout")) {
         const ToolInfo& info = toolInfo(shown);
         ImGui::BeginTooltip();
-        if (info.shortcut[0]) ImGui::Text("%s  (%s)", info.name, info.shortcut);
-        else ImGui::TextUnformatted(info.name);
+        if (info.shortcut[0]) ImGui::Text("%s  (%s)", tr(info.name), info.shortcut);
+        else ImGui::TextUnformatted(tr(info.name));
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
-        ImGui::TextDisabled("%s", info.description);
+        ImGui::TextDisabled("%s", tr(info.description));
         ImGui::PopTextWrapPos();
-        if (!info.available) ImGui::TextColored(theme::vec(theme::kWarning), "Planned for a later milestone");
-        if (dimmed) ImGui::TextColored(theme::vec(theme::kWarning), "3D window only");
-        if (hasFlyout) ImGui::TextDisabled("Right-click or hold for %zu more", group.tools.size() - 1);
+        if (!info.available) ImGui::TextColored(theme::vec(theme::kWarning), "%s", tr("Planned for a later milestone"));
+        if (dimmed) ImGui::TextColored(theme::vec(theme::kWarning), "%s", tr("3D window only"));
+        if (hasFlyout) ImGui::TextDisabled(tr("Right-click or hold for %zu more"), group.tools.size() - 1);
         ImGui::EndTooltip();
     }
 
@@ -261,14 +262,14 @@ void Toolbox::drawFlyout(int gi) {
         drawToolIcon(dl, id, {lo.x + 13, lo.y + rowH * 0.5f}, 18.0f, iconColor(id, false));
         const float ty = lo.y + (rowH - ImGui::GetFontSize()) * 0.5f;
         dl->AddText({lo.x + 32, ty}, info.available ? theme::kText : theme::kTextFaint,
-                    info.name);
+                    tr(info.name));
         if (info.shortcut[0]) dl->AddText({lo.x + rowW - 16, ty}, theme::kTextDim, info.shortcut);
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
-            ImGui::TextUnformatted(info.description);
+            ImGui::TextUnformatted(tr(info.description));
             ImGui::PopTextWrapPos();
-            if (!info.available) ImGui::TextColored(theme::vec(theme::kWarning), "Planned for a later milestone");
+            if (!info.available) ImGui::TextColored(theme::vec(theme::kWarning), "%s", tr("Planned for a later milestone"));
             ImGui::EndTooltip();
         }
         ImGui::PopID();

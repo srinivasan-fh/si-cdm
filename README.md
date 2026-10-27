@@ -65,8 +65,9 @@ test, the known limitations and how to report a problem. Before handing a build 
 `scripts/release.sh` alone builds for the machine it runs on, and `all` builds everything that machine
 can (Linux: Linux and Windows). `--clean` starts from empty build folders and `--skip-tests` skips the
 tests. Packages are signed when the environment holds the keys: `SICDM_CODESIGN_ID` (and
-`SICDM_NOTARY_PROFILE` to notarize) on macOS, `SICDM_WIN_CERT` / `SICDM_WIN_CERT_PASS` (a .pfx, with
-`osslsigncode`) for Windows.
+`SICDM_NOTARY_PROFILE` or an API key to notarize) on macOS, `SICDM_WIN_CERT` / `SICDM_WIN_CERT_PASS`
+(a .pfx, with `osslsigncode`) for Windows, `SICDM_GPG_KEY` on Linux. Each signature is checked
+as it is made. CI takes the keys from repository secrets; see [docs/release.md](docs/release.md).
 
 To publish all three platforms at once:
 

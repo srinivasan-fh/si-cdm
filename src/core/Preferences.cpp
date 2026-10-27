@@ -1,4 +1,5 @@
 #include "core/Preferences.hpp"
+#include "core/Translate.hpp"
 
 #include "core/Cam.hpp"
 #include "core/Json.hpp"
@@ -61,6 +62,7 @@ Json preferencesToJson(const Preferences& p) {
     j.set("cam_machine", p.camMachine);
     j.set("check_updates", p.checkUpdates);
     j.set("update_url", p.updateUrl);
+    j.set("language", p.language);
     return j;
 }
 
@@ -81,6 +83,7 @@ Preferences preferencesFromJson(const Json& j) {
     take("cam_post", "post");
     take("cam_machine", "machine");
     take("update_url", "update-url");
+    take("language", "language");
     if (j["autosave_seconds"].isNumber()) p.autosaveSeconds = std::clamp(j["autosave_seconds"].asInt(), 0, 3600);
     p.checkUpdates = j["check_updates"].asBool(false);
     return p;
@@ -202,8 +205,18 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (clear) p.updateUrl.clear();
         else if (value.rfind("https://", 0) == 0 || value.rfind("http://", 0) == 0 || value.rfind("file://", 0) == 0) p.updateUrl = value;
         else return fail("UPDATE-URL needs an https://, http:// or file:// address");
+    } else if (k == "language") {
+        if (clear || v == "english") {
+            p.language = "en";
+        } else {
+            std::string code;
+            for (const LanguageInfo& l : languages())
+                if (v == lower(l.code) || v == lower(l.name)) code = l.code;
+            if (code.empty()) return fail("No translation for '" + value + "' (PREFERENCES LANGUAGES lists them)");
+            p.language = code;
+        }
     } else {
-        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, update-url)");
+        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, update-url, language)");
     }
     return true;
 }
@@ -218,6 +231,7 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         "machine: " + orDefault(p.camMachine, "default (generic)"),
         std::string("updates: ") + (p.checkUpdates ? "on" : "off"),
         "update-url: " + orDefault(p.updateUrl, "none"),
+        "language: " + p.language,
     };
 }
 

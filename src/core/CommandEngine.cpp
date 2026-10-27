@@ -35,6 +35,7 @@
 #include "core/Features.hpp"
 #include "core/HoleWizard.hpp"
 #include "core/Variables.hpp"
+#include "core/Translate.hpp"
 #include "core/Assembly.hpp"
 #include "core/Drawing.hpp"
 #include "core/Rig.hpp"
@@ -1541,8 +1542,26 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             if (a.size() < 2) return usage();
             if (!setPreference(preferences(), a[1], a.size() > 2 ? a[2] : std::string(), &err)) return out.fail(err);
             if (!savePreferences(&err)) return out.fail(err);
+            if (lower(a[1]) == "language") setLanguage(preferences().language, &err); // shown at once
             for (const std::string& l : describePreferences(preferences()))
                 if (lower(l).rfind(lower(a[1]) + ":", 0) == 0) out.say("Preference " + l);
+            return out;
+        }
+        if (sub == "languages") { // the built-in and installed translations
+            for (const LanguageInfo& l : languages()) out.say("  " + l.code + "  " + l.name + (l.code == language() ? "  (shown)" : ""));
+            return out;
+        }
+        if (sub == "untranslated") { // what the language shown lacks, so far: to a language file to fill in
+            const std::vector<std::string> words = untranslated();
+            if (a.size() > 1) {
+                Json strings = Json::object();
+                for (const std::string& w : words) strings.set(w, "");
+                if (!writeFile(a[1], Json::object().set("name", language()).set("strings", strings).dump(), &err)) return out.fail(err);
+                out.say(fmt("%g words without a translation written to ", static_cast<double>(words.size())) + a[1]);
+            } else {
+                for (const std::string& w : words) out.say("  " + w);
+                out.say(fmt("%g words without a translation", static_cast<double>(words.size())));
+            }
             return out;
         }
         if (sub == "reset") {
@@ -1550,6 +1569,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             fresh.recent = preferences().recent; // the recent list isn't a setting
             preferences() = fresh;
             if (!savePreferences(&err)) return out.fail(err);
+            setLanguage(preferences().language);
             out.say("Preferences reset to the defaults");
             return out;
         }

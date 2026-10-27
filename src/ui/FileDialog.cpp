@@ -1,4 +1,5 @@
 #include "ui/FileDialog.hpp"
+#include "core/Translate.hpp"
 
 #include "ui/Theme.hpp"
 
@@ -99,7 +100,7 @@ std::optional<std::string> FileDialog::draw() {
     }
 
     // Folder bar.
-    if (ImGui::Button("Up")) {
+    if (ImGui::Button(tr("Up"))) {
         m_dir = fs::path(m_dir).parent_path().string();
         refresh();
     }
@@ -165,7 +166,7 @@ std::optional<std::string> FileDialog::draw() {
                     result = (fs::path(m_dir) / f).string();
             }
         }
-        if (m_dirs.empty() && m_files.empty()) ImGui::TextDisabled("  Empty folder");
+        if (m_dirs.empty() && m_files.empty()) ImGui::TextDisabled("%s", tr("  Empty folder"));
     }
     ImGui::PopStyleVar();
     ImGui::EndChild();
@@ -193,12 +194,12 @@ std::optional<std::string> FileDialog::draw() {
         theme::ScopedFont small(theme::Font::Small);
         if (!m_error.empty()) ImGui::TextColored(theme::vec(theme::kError), "%s", m_error.c_str());
         else if (m_confirmOverwrite)
-            ImGui::TextColored(theme::vec(theme::kWarning), "File exists. Click Save again to replace it.");
+            ImGui::TextColored(theme::vec(theme::kWarning), "%s", tr("File exists. Click Save again to replace it."));
         else ImGui::TextColored(theme::vec(theme::kTextFaint), "%s", m_dir.c_str());
         ImGui::PopClipRect();
     }
     ImGui::SameLine(buttonsX);
-    const bool cancel = ImGui::Button("Cancel", {kButton, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    const bool cancel = ImGui::Button(tr("Cancel"), {kButton, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape);
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(theme::kAccent));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(theme::kAccentHover));

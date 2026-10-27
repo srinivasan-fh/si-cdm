@@ -18,11 +18,18 @@
 #
 # Packages land in dist/<version>/ with a SHA256SUMS-<platform>.txt for each platform.
 #
-# Signing, when the environment provides it (otherwise the packages are unsigned):
+# Signing, when the environment provides it (otherwise the packages are unsigned). Every
+# signature made is checked straight after, and a bad one stops the release.
 #   macOS    SICDM_CODESIGN_ID="Developer ID Application: ..."  signs the app (hardened runtime)
-#            SICDM_NOTARY_PROFILE=<notarytool keychain profile>  notarizes and staples the .dmg
+#            SICDM_NOTARY_PROFILE=<notarytool keychain profile>  notarizes and staples the .dmg,
+#            or SICDM_NOTARY_KEY=<AuthKey.p8> SICDM_NOTARY_KEY_ID=... SICDM_NOTARY_ISSUER=...
+#            (an App Store Connect API key, as CI uses)
 #   Windows  SICDM_WIN_CERT=<file.pfx> SICDM_WIN_CERT_PASS=...   signs the .exe files with
 #            osslsigncode (MSYS2: pacman -S mingw-w64-ucrt-x86_64-osslsigncode; Linux: apt)
+#            SICDM_TIMESTAMP_URL  the RFC 3161 time-stamp server (default DigiCert's)
+#   Linux    SICDM_GPG_KEY=<key id or e-mail> [SICDM_GPG_PASSPHRASE=...]  a detached, armoured
+#            signature (.asc) for each package and for SHA256SUMS-<platform>.txt
+#   All      SICDM_REQUIRE_SIGNING=1  fails instead of packaging unsigned (tag builds in CI)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -65,6 +72,25 @@ need() { command -v "$1" >/dev/null || die "$1 not found${2:+ ($2)}"; }
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 
+# Signing keys must be there (SICDM_REQUIRE_SIGNING=1) for the platform being packaged.
+require_signing() { # platform, the variables that must be set...
+    [[ "${SICDM_REQUIRE_SIGNING:-}" == 1 ]] || return 0
+    local platform=$1; shift
+    for v in "$@"; do [[ -n "${!v:-}" ]] || die "$platform packages must be signed, but $v is not set"; done
+}
+
+# Linux: a detached, armoured signature beside each file (checked at once).
+gpg_sign() { # file...
+    [[ -n "${SICDM_GPG_KEY:-}" ]] || return 0
+    need gpg
+    local pass=()
+    [[ -n "${SICDM_GPG_PASSPHRASE:-}" ]] && pass=(--pinentry-mode loopback --passphrase "$SICDM_GPG_PASSPHRASE")
+    for f in "$@"; do
+        gpg --batch --yes "${pass[@]}" --local-user "$SICDM_GPG_KEY" --armor --detach-sign --output "$f.asc" "$f"
+        gpg --batch --verify "$f.asc" "$f" 2>/dev/null || die "the signature of $f does not verify"
+    done
+}
+
 # Copies the packages matching the globs from a build folder into dist/<version>/.
 collect() {
     local platform=$1 dir=$2; shift 2
@@ -76,8 +102,12 @@ collect() {
     ((${#files[@]})) || die "cpack wrote no packages in $dir"
     cp "${files[@]}" "$out/"
     (cd "$out" && sha256 "${files[@]##*/}" > "SHA256SUMS-$platform.txt")
+    if [[ $platform == linux && -n "${SICDM_GPG_KEY:-}" ]]; then
+        step "sign the Linux packages and their checksums (GPG)"
+        (cd "$out" && gpg_sign "${files[@]##*/}" "SHA256SUMS-$platform.txt")
+    fi
     step "$platform packages in dist/$VERSION:"
-    (cd "$out" && ls -l "${files[@]##*/}" "SHA256SUMS-$platform.txt")
+    (cd "$out" && ls -l "${files[@]##*/}" SHA256SUMS-"$platform".txt*)
 }
 
 fresh() { $CLEAN && rm -rf "$1"; return 0; }
@@ -87,14 +117,21 @@ win_sign() { # file...
     need osslsigncode
     for f in "$@"; do
         osslsigncode sign -pkcs12 "$SICDM_WIN_CERT" -pass "${SICDM_WIN_CERT_PASS:-}" -h sha256 \
-            -n "SI CDM" -t http://timestamp.digicert.com -in "$f" -out "$f.signed"
+            -n "SI CDM" -i "https://github.com/srinivasan-fh/si-cdm" \
+            -ts "${SICDM_TIMESTAMP_URL:-http://timestamp.digicert.com}" -in "$f" -out "$f.signed"
         mv "$f.signed" "$f"
+        # The signature must be there and whole (the chain is the client's to trust).
+        osslsigncode verify -in "$f" 2>&1 | grep -q "Signature verification: ok" || {
+            osslsigncode verify -in "$f" || true
+            die "the signature of $f does not verify"
+        }
     done
 }
 
 release_linux() {
     [[ $HOST == linux ]] || die "linux packages are built on Linux"
     need cmake
+    require_signing Linux SICDM_GPG_KEY
     fresh build/release
     step "Linux $VERSION: configure and build"
     cmake --preset release
@@ -109,6 +146,7 @@ release_linux() {
 release_macos() {
     [[ $HOST == macos ]] || die "macOS packages are built on macOS (Xcode)"
     need cmake; need xcodebuild "install Xcode"
+    require_signing macOS SICDM_CODESIGN_ID
     fresh build/xcode
     step "macOS $VERSION: configure and build (Universal)"
     cmake --preset xcode
@@ -118,6 +156,8 @@ release_macos() {
         step "sign the app"
         codesign --force --options runtime --timestamp --sign "$SICDM_CODESIGN_ID" build/xcode/Release/sicdm-mcp
         codesign --force --deep --options runtime --timestamp --sign "$SICDM_CODESIGN_ID" "build/xcode/Release/SICDM.app"
+        codesign --verify --deep --strict --verbose=2 "build/xcode/Release/SICDM.app" || die "the app's signature does not verify"
+        codesign --verify --strict build/xcode/Release/sicdm-mcp || die "sicdm-mcp's signature does not verify"
     fi
     step "package"
     rm -f build/xcode/SICDM-*.dmg
@@ -125,10 +165,18 @@ release_macos() {
     local dmg
     dmg=$(ls build/xcode/SICDM-*.dmg | head -1)
     if [[ -n "${SICDM_CODESIGN_ID:-}" ]]; then codesign --force --timestamp --sign "$SICDM_CODESIGN_ID" "$dmg"; fi
+    local notary=()
     if [[ -n "${SICDM_NOTARY_PROFILE:-}" ]]; then
+        notary=(--keychain-profile "$SICDM_NOTARY_PROFILE")
+    elif [[ -n "${SICDM_NOTARY_KEY:-}" ]]; then
+        notary=(--key "$SICDM_NOTARY_KEY" --key-id "${SICDM_NOTARY_KEY_ID:?SICDM_NOTARY_KEY_ID}" --issuer "${SICDM_NOTARY_ISSUER:?SICDM_NOTARY_ISSUER}")
+    fi
+    if ((${#notary[@]})); then
         step "notarize"
-        xcrun notarytool submit "$dmg" --keychain-profile "$SICDM_NOTARY_PROFILE" --wait
+        xcrun notarytool submit "$dmg" "${notary[@]}" --wait
         xcrun stapler staple "$dmg"
+        xcrun stapler validate "$dmg" || die "the notarization ticket is not stapled to $dmg"
+        spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg" || die "Gatekeeper does not accept $dmg"
     fi
     collect macos build/xcode "SICDM-*.dmg"
 }
@@ -137,6 +185,7 @@ release_windows() {
     [[ $HOST == windows ]] || die "use windows-cross on Linux; windows builds in an MSYS2 UCRT64 shell"
     need cmake "pacman -S mingw-w64-ucrt-x86_64-cmake"
     need makensis "pacman -S mingw-w64-ucrt-x86_64-nsis"
+    require_signing Windows SICDM_WIN_CERT
     fresh build/windows
     step "Windows $VERSION: configure and build"
     cmake --preset windows
@@ -156,6 +205,7 @@ release_windows_cross() {
     command -v x86_64-w64-mingw32-g++-posix >/dev/null || command -v x86_64-w64-mingw32-g++ >/dev/null ||
         die "MinGW-w64 not found (apt install g++-mingw-w64-x86-64-posix)"
     need makensis "apt install nsis"
+    require_signing Windows SICDM_WIN_CERT
     fresh build/mingw
     step "Windows $VERSION (cross-built): configure and build"
     cmake --preset mingw-cross

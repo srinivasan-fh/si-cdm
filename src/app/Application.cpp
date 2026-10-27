@@ -1,4 +1,5 @@
 #include "app/Application.hpp"
+#include "core/Translate.hpp"
 #include "app/OpenFiles.hpp"
 
 #include "core/CrashReport.hpp"
@@ -191,6 +192,7 @@ bool Application::init() {
     });
 
     if (const auto u = parseUnitName(preferences().units)) m_doc.state.units.unit = *u; // Preferences: units for new projects
+    if (!setLanguage(m_options.language.empty() ? preferences().language : m_options.language)) setLanguage(preferences().language);
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
     m_savedSignature = contentSignature(); // the demo part counts as unmodified
     if (!m_options.openPath.empty()) {
@@ -1539,25 +1541,25 @@ void Application::frame(float dt) {
         m_offerRecovery = false;
     }
     if (ImGui::BeginPopupModal("Recover Unsaved Work", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("SI CDM didn't close normally last time. This unsaved work was kept:");
+        ImGui::Text("%s", tr("SI CDM didn't close normally last time. This unsaved work was kept:"));
         for (const RecoveryFile& f : m_recoverable)
             ImGui::BulletText("%s%s", f.name.c_str(), f.original.empty() ? "  (never saved)" : ("  (" + f.original + ")").c_str());
         ImGui::Spacing();
-        if (ImGui::Button("Restore All", {120, 0})) {
+        if (ImGui::Button(tr("Restore All"), {120, 0})) {
             // Each RECOVER 1 opens the newest left and takes it off the list.
             for (std::size_t k = 0; k < m_recoverable.size(); ++k) runCommandLine("RECOVER 1");
             m_recoverable.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Discard", {90, 0})) {
+        if (ImGui::Button(tr("Discard"), {90, 0})) {
             runCommandLine("RECOVER DISCARD ALL");
             m_recoverable.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Later", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
-        ImGui::TextDisabled("Restored files open in their own tabs, still unsaved. Later: type RECOVER.");
+        if (ImGui::Button(tr("Later"), {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        ImGui::TextDisabled("%s", tr("Restored files open in their own tabs, still unsaved. Later: type RECOVER."));
         ImGui::EndPopup();
     }
 
@@ -1569,7 +1571,7 @@ void Application::frame(float dt) {
         ImGui::Text(m_newCrashes.size() == 1 ? "SI CDM stopped because of a fault last time. A report was kept on this computer:"
                                              : "SI CDM stopped because of a fault. Reports were kept on this computer:");
         for (const CrashReportFile& f : m_newCrashes) ImGui::BulletText("%s", f.path.c_str());
-        ImGui::TextDisabled("Nothing has been sent. To report the problem, attach the report to an issue or an e-mail.");
+        ImGui::TextDisabled("%s", tr("Nothing has been sent. To report the problem, attach the report to an issue or an e-mail."));
         ImGui::Spacing();
         if (ImGui::Button(m_newCrashes.size() == 1 ? "Copy the Report" : "Copy the Newest Report", {180, 0})) {
             std::ifstream f(m_newCrashes.front().path, std::ios::binary);
@@ -1578,12 +1580,12 @@ void Application::frame(float dt) {
             ImGui::SetClipboardText(text.str().c_str());
         }
         ImGui::SameLine();
-        if (ImGui::Button("OK", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        if (ImGui::Button(tr("OK"), {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             acknowledgeCrashReports();
             m_newCrashes.clear();
             ImGui::CloseCurrentPopup();
         }
-        ImGui::TextDisabled("CRASHES lists them; CRASHES CLEAR deletes them.");
+        ImGui::TextDisabled("%s", tr("CRASHES lists them; CRASHES CLEAR deletes them."));
         ImGui::EndPopup();
     }
 
@@ -1593,7 +1595,7 @@ void Application::frame(float dt) {
     }
     if (ImGui::BeginPopupModal("Quit SI CDM?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         bool canSave = true;
-        ImGui::Text("These files have unsaved changes:");
+        ImGui::Text("%s", tr("These files have unsaved changes:"));
         for (int i = 0; i < static_cast<int>(m_files.size()); ++i) {
             const Document& d = fileDoc(i);
             if (!d.dirty) continue;
@@ -1602,20 +1604,20 @@ void Application::frame(float dt) {
         }
         ImGui::Spacing();
         if (!canSave) ImGui::BeginDisabled();
-        if (ImGui::Button("Save All and Quit", {150, 0})) {
+        if (ImGui::Button(tr("Save All and Quit"), {150, 0})) {
             saveAll();
             if (!anyFileDirty()) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
             ImGui::CloseCurrentPopup();
         }
         if (!canSave) ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Quit Without Saving", {160, 0})) {
+        if (ImGui::Button(tr("Quit Without Saving"), {160, 0})) {
             glfwSetWindowShouldClose(m_window, GLFW_TRUE);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
-        if (!canSave) ImGui::TextDisabled("Some files were never saved: use File > Save As on them first.");
+        if (ImGui::Button(tr("Cancel"), {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (!canSave) ImGui::TextDisabled("%s", tr("Some files were never saved: use File > Save As on them first."));
         ImGui::EndPopup();
     }
     const bool anim3D = m_cam3D.update(dt);
@@ -1950,7 +1952,7 @@ void Application::updateTitle() {
 void Application::updatePrompt() {
     const ToolId tool = m_ui.toolbox().active();
     const int stage = m_sketcher.stage();
-    std::string p = "Command:";
+    std::string p = tr("Command:");
     switch (tool) {
     case ToolId::Point: p = "POINT  location (x,y):"; break;
     case ToolId::Line: p = stage == 0 ? "LINE  first point (x,y):" : "LINE  end point (x,y | @dx,dy | @len<deg):"; break;
@@ -3163,9 +3165,9 @@ std::string Application::describe() const {
     std::snprintf(buf, sizeof(buf),
                   "Window: %s   plane: %s   camera target (%.1f, %.1f, %.1f) distance %.1f yaw %.1f pitch %.1f "
                   "roll %.1f   %s   display: %s   grid %s",
-                  m_uiState.mode == ViewMode::Drawing2D   ? "2D Drawing"
-                  : m_uiState.mode == ViewMode::Simulation ? "Simulation"
-                                                           : "3D Model",
+                  m_uiState.mode == ViewMode::Drawing2D   ? tr("2D Drawing")
+                  : m_uiState.mode == ViewMode::Simulation ? tr("Simulation")
+                                                           : tr("3D Model"),
                   activePlaneName(m_doc.state).c_str(),
                   static_cast<double>(c.target().x), static_cast<double>(c.target().y), static_cast<double>(c.target().z),
                   static_cast<double>(c.distance()), static_cast<double>(degrees(c.yaw())),

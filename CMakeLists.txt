@@ -79,6 +79,8 @@ add_library(sicdm_core STATIC
     src/core/Multires.cpp
     src/core/Retopo.cpp
     src/core/UvMap.cpp
+    src/core/Translate.cpp
+    src/core/lang/German.cpp
     src/core/Library.cpp
     src/core/Lathe.cpp
     src/core/LatheCommand.cpp
