@@ -19,14 +19,15 @@ Vec3 srgbOf(float r, float g, float b) {
 }
 Vec3 hex(unsigned rgb) { return {static_cast<float>((rgb >> 16) & 255) / 255.0f, static_cast<float>((rgb >> 8) & 255) / 255.0f, static_cast<float>(rgb & 255) / 255.0f}; }
 
-// Families, in the order the picker shows them.
-constexpr const char* kPlastic = SICDM_TR_NOOP("Plastics and paint");
-constexpr const char* kMetal = SICDM_TR_NOOP("Metals");
-constexpr const char* kPrecious = SICDM_TR_NOOP("Precious metals");
-constexpr const char* kAlloy = SICDM_TR_NOOP("Alloys and finishes");
-constexpr const char* kColoured = SICDM_TR_NOOP("Coloured metals");
-constexpr const char* kClear = SICDM_TR_NOOP("Glass and liquids");
-constexpr const char* kOther = SICDM_TR_NOOP("Other");
+// Families, in the order the picker shows them. Arrays, so each name has one address (presets
+// and the picker compare families by pointer; a pointer to a literal may not be merged).
+constexpr char kPlastic[] = SICDM_TR_NOOP("Plastics and paint");
+constexpr char kMetal[] = SICDM_TR_NOOP("Metals");
+constexpr char kPrecious[] = SICDM_TR_NOOP("Precious metals");
+constexpr char kAlloy[] = SICDM_TR_NOOP("Alloys and finishes");
+constexpr char kColoured[] = SICDM_TR_NOOP("Coloured metals");
+constexpr char kClear[] = SICDM_TR_NOOP("Glass and liquids");
+constexpr char kOther[] = SICDM_TR_NOOP("Other");
 
 MaterialPreset dielectric(const char* name, const char* desc, const char* family, bool sets, Vec3 c, float rough) {
     return {name, desc, family, sets, c, 0, rough, 0, 1.5f, 0};
