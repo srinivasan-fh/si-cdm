@@ -723,7 +723,7 @@ bool sketchCommand(const std::string& cmd) {
 // Document::JobsUndo): around them that state is compared, and kept for UNDO when changed.
 bool sideCommand(const std::string& cmd) {
     static const char* const kSide[] = {"CAM",  "LATHE",  "MATE", "ASSEMBLY", "SHEET",   "VAR", "CONFIG", "PLANE", "REFAXIS",
-                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM", "PROPERTY"};
+                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM", "PROPERTY", "EXPLODE"};
     for (const char* k : kSide)
         if (cmd == k) return true;
     return false;
@@ -832,7 +832,7 @@ std::string releasedRefusal(const Document& doc, const std::string& cmd, const P
     if (!model) return {};
     // Asking: no arguments (MATERIAL, VAR, HISTORY... then show what there is), or a word that only asks.
     static const char* const kAskEmpty[] = {"MATERIAL", "VAR", "CONFIG", "MATE", "ASSEMBLY", "PHYSICS", "RIG", "TERRAIN", "SHEET", "LAYER", "POLYGROUP",
-                                            "UV", "MULTIRES", "HISTORY", "PLANE", "REFAXIS", "REFPOINT"};
+                                            "UV", "MULTIRES", "HISTORY", "PLANE", "REFAXIS", "REFPOINT", "EXPLODE"};
     // (Only names, like MATERIAL "Bracket", ask about those.)
     const bool onlyNames = std::all_of(pc.quoted.begin(), pc.quoted.end(), [](bool q) { return q; }) && pc.quoted.size() == pc.args.size();
     if (pc.args.empty() || onlyNames)
@@ -2658,6 +2658,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "LATHE") return runLatheCommand(doc, a, pc.quoted);
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
+    if (cmd == "EXPLODE") return runExplodeCommand(doc, a, pc.quoted);
     if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
     if (cmd == "COMPONENT") {
         // Replaying the history: only what builds the model (not LIST, OPEN or PACK).

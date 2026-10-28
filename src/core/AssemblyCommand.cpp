@@ -293,4 +293,169 @@ CommandOutput runAssemblyCommand(Document& doc, const std::string& cmd, const st
     return out;
 }
 
+CommandOutput runExplodeCommand(Document& doc, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
+    CommandOutput out;
+    ExplodeState& ex = doc.state.assembly.explode;
+    const std::string sub = a.empty() ? "list" : lowerOf(a[0]);
+    auto keyword = [&](std::size_t i, std::initializer_list<const char*> words) {
+        if (i >= a.size() || (i < quoted.size() && quoted[i])) return false;
+        const std::string w = lowerOf(a[i]);
+        return std::any_of(words.begin(), words.end(), [&](const char* k) { return w == k; });
+    };
+    auto stepAt = [&](std::size_t i) -> ExplodeStep* {
+        const auto n = i < a.size() ? parseNumber(a[i]) : std::nullopt;
+        if (!n || *n < 1 || *n > static_cast<float>(ex.steps.size()) || std::floor(*n) != *n) return nullptr;
+        return &ex.steps[static_cast<std::size_t>(*n) - 1];
+    };
+    // ALONG X|-X|Y|-Y|Z|-Z, DIR x,y,z and DISTANCE d from a[i...].
+    auto wayAndDistance = [&](std::size_t i, ExplodeStep& s, bool& gotDir, bool& gotDistance) -> bool {
+        for (; i < a.size(); ++i) {
+            if (keyword(i, {"along", "axis"}) && i + 1 < a.size()) {
+                std::string w = lowerOf(a[++i]);
+                double sg = 1;
+                if (!w.empty() && (w[0] == '-' || w[0] == '+')) sg = w[0] == '-' ? -1 : 1, w = w.substr(1);
+                if (w != "x" && w != "y" && w != "z") return out.fail("ALONG takes X, Y or Z (-Z for down)"), false;
+                s.dir = DVec3{w == "x" ? sg : 0.0, w == "y" ? sg : 0.0, w == "z" ? sg : 0.0};
+                gotDir = true;
+            } else if (keyword(i, {"dir", "direction"}) && i + 1 < a.size()) {
+                const auto v = parseVec3(a[++i]);
+                const DVec3 d = v ? DVec3(*v) : DVec3{0, 0, 0};
+                if (!(dlength(d) > 1e-9)) return out.fail("DIR takes a direction x,y,z"), false;
+                s.dir = d * (1.0 / dlength(d));
+                gotDir = true;
+            } else if (keyword(i, {"distance", "by"}) && i + 1 < a.size()) {
+                const auto d = parseLength(a[++i], doc.state.units.unit);
+                if (!d || !std::isfinite(*d)) return out.fail("DISTANCE takes a length"), false;
+                s.distance = *d;
+                if (s.distance < 0) s.distance = -s.distance, s.dir = s.dir * -1.0;
+                gotDistance = true;
+            } else {
+                return out.fail("Unexpected " + a[i] + ": EXPLODE ADD part... ALONG Z|DIR x,y,z DISTANCE d"), false;
+            }
+        }
+        return true;
+    };
+    auto listAll = [&] {
+        if (ex.steps.empty()) {
+            out.say("No exploded view: EXPLODE AUTO makes one, EXPLODE ADD part ALONG Z DISTANCE 50 adds a step");
+            return;
+        }
+        out.say(std::string("Exploded view, ") + (ex.shown ? "shown" : "not shown (EXPLODE SHOW)") + ", " + std::to_string(ex.steps.size()) +
+                (ex.steps.size() == 1 ? " step:" : " steps:"));
+        for (std::size_t i = 0; i < ex.steps.size(); ++i) {
+            std::string missing;
+            for (const std::string& p : ex.steps[i].parts)
+                if (explodeBodies(doc.scene, p).empty()) missing += (missing.empty() ? "" : ", ") + p;
+            out.say("  " + std::to_string(i + 1) + ": " + describeExplodeStep(ex.steps[i]) + (missing.empty() ? "" : "  [gone: " + missing + "]"));
+        }
+    };
+
+    if (sub == "list" || sub == "info") {
+        listAll();
+        return out;
+    }
+    if (sub == "show" || sub == "on" || sub == "hide" || sub == "off" || sub == "collapse") {
+        const bool on = sub == "show" || sub == "on";
+        if (on && ex.steps.empty()) return out.fail("No exploded view yet: EXPLODE AUTO makes one");
+        ex.shown = on;
+        doc.dirty = true;
+        out.say(on ? "Exploded view shown" : "Assembled view shown");
+        return out;
+    }
+    if (sub == "trails" || sub == "lines") {
+        if (a.size() < 2) return out.fail("EXPLODE TRAILS ON|OFF");
+        ex.trails = !keyword(1, {"off", "no", "hide"});
+        doc.dirty = true;
+        out.say(ex.trails ? "Trail lines on" : "Trail lines off");
+        return out;
+    }
+    if (sub == "clear") {
+        ex.steps.clear();
+        ex.shown = false;
+        doc.dirty = true;
+        out.say("Exploded view removed");
+        return out;
+    }
+    if (sub == "delete" || sub == "remove") {
+        ExplodeStep* s = stepAt(1);
+        if (!s) return out.fail("No step " + (a.size() > 1 ? a[1] : std::string()) + " (EXPLODE lists them)");
+        ex.steps.erase(ex.steps.begin() + (s - ex.steps.data()));
+        if (ex.steps.empty()) ex.shown = false;
+        doc.dirty = true;
+        out.say("Step removed");
+        return out;
+    }
+    if (sub == "auto") {
+        // EXPLODE AUTO [ALONG X|Y|Z | RADIAL] [FACTOR f] [part...]
+        int axis = 2;
+        double factor = 1;
+        std::vector<std::size_t> bodies;
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            if (keyword(i, {"radial", "out"})) axis = -1;
+            else if (keyword(i, {"along", "axis"}) && i + 1 < a.size()) {
+                const std::string w = lowerOf(a[++i]);
+                if (w == "x") axis = 0;
+                else if (w == "y") axis = 1;
+                else if (w == "z") axis = 2;
+                else if (w == "radial") axis = -1;
+                else return out.fail("ALONG takes X, Y, Z or RADIAL");
+            } else if (keyword(i, {"factor", "spread"}) && i + 1 < a.size()) {
+                const auto f = parseNumber(a[++i]);
+                if (!f || !(*f > 0) || *f > 100) return out.fail("FACTOR takes a number above 0 (1: the usual spacing)");
+                factor = *f;
+            } else {
+                const auto found = explodeBodies(doc.scene, a[i]);
+                if (found.empty()) return out.fail("No part named " + a[i]);
+                bodies.insert(bodies.end(), found.begin(), found.end());
+            }
+        }
+        std::sort(bodies.begin(), bodies.end());
+        bodies.erase(std::unique(bodies.begin(), bodies.end()), bodies.end());
+        auto steps = autoExplode(doc.scene, bodies, axis, factor);
+        if (steps.empty()) return out.fail("Nothing to take apart: it needs two or more parts, apart from each other along the way they go");
+        ex.steps = std::move(steps);
+        ex.shown = true;
+        doc.dirty = true;
+        listAll();
+        return out;
+    }
+    if (sub == "add") {
+        // EXPLODE ADD part... ALONG Z | DIR x,y,z DISTANCE d
+        ExplodeStep s;
+        std::size_t i = 1;
+        for (; i < a.size() && !keyword(i, {"along", "axis", "dir", "direction", "distance", "by"}); ++i) {
+            if (explodeBodies(doc.scene, a[i]).empty()) return out.fail("No part named " + a[i]);
+            s.parts.push_back(a[i]);
+        }
+        if (s.parts.empty() && doc.selectedBody >= 0 && doc.selectedBody < static_cast<int>(doc.scene.bodies().size())) {
+            const Body& b = doc.scene.bodies()[static_cast<std::size_t>(doc.selectedBody)];
+            s.parts.push_back(b.component.empty() ? b.name : b.component);
+        }
+        if (s.parts.empty()) return out.fail("EXPLODE ADD part... ALONG Z|DIR x,y,z DISTANCE d (name the parts, or select one)");
+        bool gotDir = false, gotDistance = false;
+        if (!wayAndDistance(i, s, gotDir, gotDistance)) return out;
+        if (!gotDistance || !(s.distance > 0)) return out.fail("How far: DISTANCE d");
+        ex.steps.push_back(std::move(s));
+        ex.shown = true;
+        doc.dirty = true;
+        out.say("Step " + std::to_string(ex.steps.size()) + ": " + describeExplodeStep(ex.steps.back()));
+        return out;
+    }
+    if (sub == "edit") {
+        // EXPLODE EDIT n [ALONG ..|DIR ..] [DISTANCE d]
+        ExplodeStep* s = stepAt(1);
+        if (!s) return out.fail("No step " + (a.size() > 1 ? a[1] : std::string()) + " (EXPLODE lists them)");
+        ExplodeStep e = *s;
+        bool gotDir = false, gotDistance = false;
+        if (!wayAndDistance(2, e, gotDir, gotDistance)) return out;
+        if (!gotDir && !gotDistance) return out.fail("EXPLODE EDIT n [ALONG Z|DIR x,y,z] [DISTANCE d]");
+        if (!(e.distance > 0)) return out.fail("DISTANCE takes a length above 0");
+        *s = e;
+        doc.dirty = true;
+        out.say("Step " + a[1] + ": " + describeExplodeStep(*s));
+        return out;
+    }
+    return out.fail("EXPLODE [LIST] | AUTO [ALONG X|Y|Z|RADIAL] [FACTOR f] [part...] | ADD part... ALONG Z|DIR x,y,z DISTANCE d | EDIT n ... | DELETE n | CLEAR | SHOW | HIDE | TRAILS ON|OFF");
+}
+
 } // namespace sicdm

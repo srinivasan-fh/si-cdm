@@ -20,6 +20,8 @@
 //   Callouts    hole callouts on a leader (ASME Y14.5 style): drill diameter, depth or THRU,
 //               counterbore, countersink and thread, "4X" for holes alike
 //   Flat views  a sheet metal part's flat pattern with its bend lines and bend notes
+//   Assemblies  views of the exploded assembly (EXPLODE) with trail lines, balloons with
+//               the parts' item numbers, and the parts list above the title block
 //   Sheet       ISO and ANSI sizes, a border, a title block and the projection symbol
 //   Export      PDF, SVG and DXF (layers and line types for visible, hidden, centre,
 //               dimension and hatch lines)
@@ -28,6 +30,7 @@
 
 #include "core/Brep.hpp"
 
+#include <array>
 #include <map>
 #include <string>
 #include <vector>
@@ -36,6 +39,7 @@ namespace sicdm {
 
 class Scene;
 struct HoleNote;
+struct ExplodeState;
 
 enum class ViewKind { Front, Back, Top, Bottom, Left, Right, Iso, Section, Flat };
 const char* viewKindName(ViewKind k);
@@ -60,6 +64,7 @@ struct DrawingView {
     // normal points to. Its model points are flat-pattern coordinates (x, y on the base's
     // plane, z through the sheet).
     std::string body;
+    bool exploded = false;    // the assembly drawn exploded (EXPLODE), with its trail lines
 };
 
 // A size tolerance on a dimension.
@@ -135,6 +140,23 @@ struct DrawingCallout {
     double dx = 0, dy = 0; // where the text starts from the hole's centre, sheet mm (0, 0: up and to the right)
 };
 
+// A balloon: a part's item number in the parts list, in a circle on a leader ending in a dot
+// on the part. The number follows the parts list.
+struct DrawingBalloon {
+    std::string view;
+    std::string body;     // the body it points at
+    DVec3 at;             // the leader's end on it, in the body's own frame (its offset taken off)
+    double x = 0, y = 0;  // the circle's centre on the sheet
+};
+
+// The parts list (ASME Y14.34, ISO 7573): item, quantity, part number, description and
+// material of the drawn parts, a row each, the headings at the bottom, standing on the
+// title block.
+struct DrawingPartsList {
+    bool shown = false;
+    double x = 0, y = 0;  // its bottom-right corner on the sheet; 0, 0: on the title block
+};
+
 struct DrawingNote {
     double x = 0, y = 0;
     double height = 3.5;
@@ -154,6 +176,8 @@ struct Drawing {
     std::vector<DrawingDatum> datums;
     std::vector<DrawingFinish> finishes;
     std::vector<DrawingCallout> callouts;
+    std::vector<DrawingBalloon> balloons;
+    DrawingPartsList partsList;
     std::string generalTolerance; // "ISO 2768-mK": shown in the title block
     std::map<std::string, std::string> title; // TITLE, PART, MATERIAL, DRAWN, CHECKED, COMPANY, REV, DATE
     bool empty() const { return views.empty(); }
@@ -194,15 +218,21 @@ struct SheetGraphics {
 };
 
 // Draws the drawing of the scene's bodies. `quality`: 1 normal, more for finer
-// hidden-line tests (exports use 2).
-SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality = 1);
+// hidden-line tests (exports use 2). `explode`: the assembly's exploded view, for the views
+// that show it (without it they show the assembly together).
+SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality = 1, const ExplodeState* explode = nullptr);
 
 // A new drawing of the bodies: front, top, right and isometric views laid out on the
 // sheet, at a standard scale that fits.
 Drawing defaultDrawing(const Scene& scene, const std::vector<std::string>& bodies, const std::string& sheet, bool landscape, bool thirdAngle,
                        double scale = 0);
+// An assembly drawing: the assembly exploded (when it has an exploded view, else together)
+// in one isometric view, as large as a standard scale lets it be beside or above the parts
+// list. Balloons are left to autoBalloons().
+Drawing assemblyDrawing(const Scene& scene, const std::vector<std::string>& bodies, const std::string& sheet, bool landscape, bool thirdAngle, double scale,
+                        const ExplodeState* explode);
 // Where a standard view goes next to the front view (first or third angle).
-void placeView(Drawing& d, const Scene& scene, DrawingView& v);
+void placeView(Drawing& d, const Scene& scene, DrawingView& v, const ExplodeState* explode = nullptr);
 // Overall sizes of each orthographic view, and the diameters of round holes and bosses
 // seen end on. Returns how many were added.
 int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView = "");
@@ -211,6 +241,19 @@ int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView = 
 // from the geometry (diameter, depth or THRU, counterbore). Holes alike in a view share
 // one callout ("4X"); their plain diameter dimensions go. Returns how many were added.
 int autoCallouts(Drawing& d, const Scene& scene, const std::string& onlyView = "");
+// Balloons for the parts seen in `view` (default: an exploded view, else the isometric,
+// else the front), one for each item of the parts list, its leader on a part of it that can
+// be seen, the circles around the view in the order of their parts (no leaders crossing).
+// The view's balloons are made again. Returns how many there are now; `why` says why none.
+int autoBalloons(Drawing& d, const Scene& scene, const std::string& view, const ExplodeState* explode, std::string* why = nullptr);
+// A balloon on `body` in `view`, its leader to a part of it that can be seen there, the
+// circle at (x, y) on the sheet or (both 0) beside the view. False, with why, when the body
+// isn't seen there.
+bool addBalloon(Drawing& d, const Scene& scene, const std::string& view, const std::string& body, double x, double y, const ExplodeState* explode,
+                std::string* why = nullptr);
+// The parts list's rows as the sheet shows them (item, quantity, part number, description,
+// material), and each body's item number (1...; 0: not drawn).
+std::vector<std::array<std::string, 5>> drawingPartsRows(const Drawing& d, const Scene& scene, std::vector<int>* itemOfBody = nullptr);
 // A hole wizard hole's callout, line by line: "\xC3\x98" "5 {DEPTH}15\nM6x1 - 6H {DEPTH}12".
 std::string holeCalloutText(const HoleNote& h);
 // The sheet metal bodies a flat view can show (body kind "sheet").

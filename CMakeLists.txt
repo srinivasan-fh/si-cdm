@@ -63,6 +63,7 @@ add_library(sicdm_core STATIC
     src/core/CamVerify.cpp
     src/core/Iges.cpp
     src/core/Assembly.cpp
+    src/core/Explode.cpp
     src/core/Bvh.cpp
     src/core/SketchEdit.cpp
     src/core/AssemblyCommand.cpp

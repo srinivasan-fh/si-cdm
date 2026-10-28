@@ -192,7 +192,52 @@ at least a ten-thousandth of the smaller part.
 
 `ASSEMBLY BOM` counts the parts. Copies count as the same part: "Bolt", "Bolt 2" and
 "Bolt (3)" are one part, quantity 3. So are bodies with the same part number
-(`PROPERTY "Bolt 1" NUMBER B-6`), and the instances of one linked part file.
+(`PROPERTY "Bolt 1" NUMBER B-6`), and the instances of one linked part file. Any of a part's
+bodies can give its description and material. On a drawing, the parts list shows the drawn
+parts in a table above the title block ([Drawings](drawing.md#assembly-drawings)).
+
+## Exploded views
+
+![The gearbox exploded: housing, shaft, cover and screws stacked apart, with trail lines](exploded.png)
+
+An exploded view shows how an assembly goes together: the parts drawn apart, each along a
+line from where it sits. It is a way of *showing* the assembly. The parts stay where they are,
+mates and measurements are unchanged, and tools that pick a part work on it where it really is.
+
+```text
+EXPLODE AUTO                                  stack the parts apart, up along Z
+EXPLODE AUTO ALONG X FACTOR 1.5               along X, wider gaps
+EXPLODE AUTO RADIAL                           out from the middle
+EXPLODE AUTO "Gearbox"                        only the parts of a sub-assembly
+EXPLODE ADD "Cover" ALONG Z DISTANCE 60       a step by hand
+EXPLODE ADD shaft-1 "Bearing 2" DIR 1,1,0 DISTANCE 40
+EXPLODE                                       list the steps
+EXPLODE EDIT 2 DISTANCE 80                    change a step (or its ALONG / DIR)
+EXPLODE DELETE 2 | CLEAR
+EXPLODE SHOW | HIDE                           exploded or together in the 3D window
+EXPLODE TRAILS OFF                            without the trail lines
+```
+
+A step moves its parts a distance along a direction. Its parts can be bodies, component
+instances (all of the instance's bodies) or sub-assemblies (`Gearbox` or `Gearbox/Input`).
+Parts attached to a part go with it. The steps run one after another: a later step starts from
+where the earlier ones left its parts. In the 3D window they play in that order when the view
+explodes or collapses.
+
+`EXPLODE AUTO` takes the assembly apart along an axis. The largest part stays put. The others
+go to the side of it their middles are on, and each moves until it clears, by a gap, every
+part between it and the largest one that lies in its way. Parts side by side, like the screws
+of a cover, move together. `FACTOR` scales the gaps. `RADIAL` instead moves each part away
+from the middle of the assembly, as far again as it is from it. AUTO replaces any steps there
+were. They are ordinary steps afterwards, so you can edit or delete them.
+
+In the app, **Assembly > Explode** has the automatic ways and a quick way to move the
+selected part out along an axis. It also has *Show Exploded*, *Trail Lines* and *Remove the
+Exploded View*. **Fit** frames the exploded parts.
+
+The exploded view is saved with the project and taken back by UNDO. REGEN keeps it. A
+released revision keeps its exploded view: it can be shown and hidden but not changed. Drawings
+show it in exploded views ([Drawings](drawing.md#assembly-drawings)).
 
 ## For AI agents
 
@@ -206,3 +251,7 @@ The MCP tool `assembly` does all of this. Its operations are:
 
 The MCP tool `component` handles part files: `insert`, `list`, `reload`, `replace`, `make`,
 `break`, `move`, `rotate` and `pack`.
+
+The MCP tool `explode` makes exploded views: `auto` (with `along` and `factor`), `add` (with
+`parts`, `along` or `direction`, and `distance`), `edit`, `delete`, `clear`, `show`, `hide`,
+`trails` and `list`.

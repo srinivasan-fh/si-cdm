@@ -388,8 +388,11 @@ void Application::setPlane(SketchPlane plane) {
 
 std::optional<RayHit> Application::pick(float x, float y) const {
     const ImGuiIO& io = ImGui::GetIO();
-    return m_doc.scene.raycast(camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y),
-                               simulating() && !m_simTransforms.empty() ? &m_simTransforms : nullptr);
+    auto hit = m_doc.scene.raycast(camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y), bodyTransforms());
+    // Exploded: the point where the part really is (tools work on the assembly as it stands).
+    if (hit && !simulating() && hit->body >= 0 && static_cast<std::size_t>(hit->body) < m_explodeShifts.size())
+        hit->point = hit->point - m_explodeShifts[static_cast<std::size_t>(hit->body)].f();
+    return hit;
 }
 
 int Application::pickCurve(float x, float y) const {
@@ -1594,6 +1597,7 @@ void Application::frame(float dt) {
         m_framesToRender = std::max(m_framesToRender, 3);
 
     advanceSimulation(dt);
+    advanceExplode(dt);
     penInputPoll();
     handleViewportInput();
     updatePrompt();
@@ -1767,6 +1771,7 @@ void Application::frame(float dt) {
     if (m_uiState.mode == ViewMode::Model3D && (!m_doc.state.datums.empty() || !m_doc.state.refAxes.empty() || !m_doc.state.refPoints.empty()))
         drawDatumOverlay();
     if (m_uiState.mode == ViewMode::Model3D) drawFieldLegend();
+    if (m_explodeT > 0 && m_doc.state.assembly.explode.trails) drawExplodeOverlay();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active())))
         drawSculptOverlay();
@@ -1791,7 +1796,7 @@ void Application::frame(float dt) {
         m_cam3D.setAspect(m_aspect);
         m_cam2D.setAspect(m_aspect);
         m_renderer->render(m_doc.scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve,
-                           m_uiState.selectedImage, simulating() ? &m_simTransforms : nullptr,
+                           m_uiState.selectedImage, bodyTransforms(),
                            simulating() && !m_loopOverrides.empty() ? &m_loopOverrides
                            : (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) && sculptTargetValid()
                                ? &m_sculptOverrides
@@ -2491,6 +2496,56 @@ void Application::openWindow(bool drawing2D) { setMode(drawing2D ? ViewMode::Dra
 
 // Simulation ------------------------------------------------------------------
 
+const std::vector<Mat4>* Application::bodyTransforms() const {
+    if (simulating()) return m_simTransforms.empty() ? nullptr : &m_simTransforms;
+    return m_explodeTransforms.empty() ? nullptr : &m_explodeTransforms;
+}
+
+void Application::advanceExplode(float dt) {
+    const ExplodeState& ex = m_doc.state.assembly.explode;
+    const bool want = ex.shown && !ex.steps.empty() && m_uiState.mode == ViewMode::Model3D && !isSculptTool(m_ui.toolbox().active());
+    const float target = want ? 1.0f : 0.0f;
+    if (ex.steps.empty()) m_explodeT = 0.0f;
+    if (m_explodeT != target) {
+        // The steps one after another: about a third of a second each, a second and a half at most.
+        const float span = std::clamp(0.3f * static_cast<float>(ex.steps.size()), 0.4f, 1.5f);
+        const float step = std::min(dt, 1.0f / 30.0f) / span;
+        m_explodeT = target > m_explodeT ? std::min(target, m_explodeT + step) : std::max(target, m_explodeT - step);
+        m_framesToRender = std::max(m_framesToRender, 2);
+    }
+    m_explodeMoving = m_explodeT != target;
+    m_explodeTransforms.clear();
+    m_explodeShifts.clear();
+    if (m_explodeT <= 0.0f) return;
+    // Eased: parts start and stop gently.
+    const double t = static_cast<double>(m_explodeT);
+    m_explodeShifts = explodeShifts(m_doc.scene, ex, t * t * (3 - 2 * t));
+    m_explodeTransforms.reserve(m_explodeShifts.size());
+    for (const DVec3& v : m_explodeShifts) m_explodeTransforms.push_back(translate(v.f()));
+}
+
+// Trail lines: from where each part sits to where it is drawn, step by step.
+void Application::drawExplodeOverlay() const {
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    dl->PushClipRect(m_ui.canvasMin(), m_ui.canvasMax(), true);
+    const auto& bodies = m_doc.scene.bodies();
+    const double t = static_cast<double>(m_explodeT), te = t * t * (3 - 2 * t);
+    const ImU32 col = IM_COL32(150, 165, 190, 170);
+    for (const ExplodeTrail& tr : explodeTrails(m_doc.scene, m_doc.state.assembly.explode, te, [&](std::size_t i) { return bodies[i].visible; })) {
+        const auto a = projectToScreen(camera(), tr.from.f(), io.DisplaySize);
+        const auto b = projectToScreen(camera(), tr.to.f(), io.DisplaySize);
+        if (!a || !b) continue;
+        const float len = std::hypot(b->x - a->x, b->y - a->y);
+        const int dashes = std::max(1, static_cast<int>(len / 8.0f));
+        for (int d = 0; d < dashes; d += 2) {
+            const float t0 = static_cast<float>(d) / static_cast<float>(dashes), t1 = static_cast<float>(d + 1) / static_cast<float>(dashes);
+            dl->AddLine(ImVec2(a->x + (b->x - a->x) * t0, a->y + (b->y - a->y) * t0), ImVec2(a->x + (b->x - a->x) * t1, a->y + (b->y - a->y) * t1), col, 1.2f);
+        }
+    }
+    dl->PopClipRect();
+}
+
 void Application::advanceSimulation(float dt) {
     UiState& st = m_uiState;
     st.simDurationSetting = m_doc.state.simDuration;
@@ -3159,6 +3214,19 @@ AABB Application::viewBounds() const {
                     box.expand(AABB{p - Vec3{r, r, r}, p + Vec3{r, r, r}});
                 }
             }
+    // Exploded: the parts where they are drawn (where they end up, while it opens).
+    const ExplodeState& ex = m_doc.state.assembly.explode;
+    if (!simulating() && ex.shown && !ex.steps.empty() && m_uiState.mode == ViewMode::Model3D) {
+        const std::vector<DVec3> shifts = explodeShifts(m_doc.scene, ex, 1);
+        const auto& bodies = m_doc.scene.bodies();
+        for (std::size_t i = 0; i < bodies.size() && i < shifts.size(); ++i) {
+            if (!bodies[i].visible) continue;
+            AABB b = bodies[i].bounds();
+            if (!b.valid()) continue;
+            b.min += shifts[i].f(), b.max += shifts[i].f();
+            box.expand(b);
+        }
+    }
     return box;
 }
 
@@ -3326,10 +3394,13 @@ void Application::updateSheet() {
         return;
     }
     const Drawing shown = drawingWithProduct(m_doc.state.drawing, m_doc.state.product); // PART and REV from the project
-    const std::string text = drawingToJson(shown).dump();
+    std::string text = drawingToJson(shown).dump() + assemblyToJson(m_doc.state.assembly).dump();
+    if (shown.partsList.shown || !shown.balloons.empty()) // the parts' properties (they don't change the scene's revision)
+        for (const auto& row : drawingPartsRows(shown, m_doc.scene))
+            for (const std::string& cell : row) text += cell + "|";
     const std::uint64_t key = std::hash<std::string>{}(text) * 1000003u ^ m_doc.scene.revision();
     if (key != m_sheetKey || m_uiState.sheet == nullptr) {
-        m_sheet = renderDrawing(shown, m_doc.scene, 1);
+        m_sheet = renderDrawing(shown, m_doc.scene, 1, &m_doc.state.assembly.explode);
         m_sheetKey = key;
     }
     m_uiState.sheet = &m_sheet;
@@ -3409,6 +3480,7 @@ int Application::run() {
         m_uiState.frameMs = std::chrono::duration<float, std::milli>(clock::now() - t0).count();
 
         if (m_uiState.renderRunning || m_uiState.renderStart) screenshotCountdown = std::max(screenshotCountdown, 5); // the picture first (and its window grown)
+        if (m_explodeMoving) screenshotCountdown = std::max(screenshotCountdown, 2);                                  // the exploded view opened (or shut)
         if (!m_options.screenshotPath.empty() && --screenshotCountdown == 0) {
             const bool ok = saveScreenshot(m_options.screenshotPath);
             std::printf("%s screenshot: %s\n", ok ? "Saved" : "Failed to save", m_options.screenshotPath.c_str());

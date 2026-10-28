@@ -944,6 +944,24 @@ const char* const kGerman[][2] = {
     {"Open the Component's File", "Datei der Komponente öffnen"},
     {"Pack and Go...", "Pack and Go..."},
     {"Reload Components", "Komponenten neu laden"},
+    // Exploded views, balloons and the parts list
+    {"Add Balloons", "Positionsnummern hinzufügen"},
+    {"Automatically (Along X)", "Automatisch (entlang X)"},
+    {"Automatically (Along Y)", "Automatisch (entlang Y)"},
+    {"Automatically (Out from the Middle)", "Automatisch (von der Mitte nach außen)"},
+    {"Automatically (Stacked Up)", "Automatisch (übereinander)"},
+    {"Explode", "Explosionsansicht"},
+    {"Explode the assembly first (Assembly menu)", "Zuerst die Baugruppe explodieren (Menü Baugruppe)"},
+    {"Exploded Isometric", "Isometrische Explosionsansicht"},
+    {"Item numbers on the parts, as the parts list numbers them", "Positionsnummern an den Teilen, wie in der Stückliste nummeriert"},
+    {"List the Steps", "Schritte auflisten"},
+    {"Move the Selected Part Out", "Ausgewähltes Teil herausbewegen"},
+    {"New Assembly Drawing (A3)", "Neue Baugruppenzeichnung (A3)"},
+    {"Parts List", "Stückliste"},
+    {"Remove the Exploded View", "Explosionsansicht entfernen"},
+    {"Show Exploded", "Explodiert anzeigen"},
+    {"The assembly exploded, with balloons and the parts list", "Die Baugruppe explodiert, mit Positionsnummern und Stückliste"},
+    {"Trail Lines", "Bewegungslinien"},
 };
 
 const std::size_t kGermanCount = sizeof(kGerman) / sizeof(kGerman[0]);

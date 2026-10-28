@@ -15,6 +15,7 @@
 
 #include "core/Brep.hpp"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -48,9 +49,27 @@ struct Mate {
     bool suppressed = false;  // kept but not solved
 };
 
+// An exploded view: steps that each move some parts a distance along a direction, one after
+// another (a later step starts from where the earlier ones left its parts). It is a way of
+// showing the assembly: the parts stay where they are, the 3D view and drawing views draw
+// them moved.
+struct ExplodeStep {
+    std::vector<std::string> parts; // bodies, component instances or sub-assemblies (by name)
+    DVec3 dir{0, 0, 1};              // unit
+    double distance = 0;             // mm
+};
+
+struct ExplodeState {
+    std::vector<ExplodeStep> steps;
+    bool shown = false;  // the 3D view shows the assembly exploded
+    bool trails = true;  // lines from where each part sits to where it is drawn
+    bool empty() const { return steps.empty() && !shown && trails; }
+};
+
 struct AssemblyState {
     std::vector<Mate> mates;
-    bool empty() const { return mates.empty(); }
+    ExplodeState explode;
+    bool empty() const { return mates.empty() && explode.empty(); }
     std::string nextName() const;
 };
 
@@ -98,8 +117,34 @@ struct BomLine {
     std::string part, number, description, material;
     std::string file; // the part file, for a linked component
     int quantity = 1;
+    std::size_t firstBody = 0; // the scene index of its first body
 };
 std::vector<BomLine> partsList(const Scene& scene);
+// The same of only the bodies `include` takes, and each body's item (an index into the
+// list; -1 for bodies left out) in `itemOfBody`.
+std::vector<BomLine> partsList(const Scene& scene, const std::function<bool(const Body&)>& include, std::vector<int>* itemOfBody);
+
+// --- exploded views -------------------------------------------------------------------------
+
+// The bodies a part name stands for (case-insensitive): a body, the bodies of a component
+// instance, or of a sub-assembly ("Gearbox" or "Gearbox/Input shaft"); with the bodies
+// attached to them. Empty when nothing has that name.
+std::vector<std::size_t> explodeBodies(const Scene& scene, const std::string& part);
+// How far each body (by scene index) is drawn from where it is, with the steps played to
+// `t` (0 assembled, 1 fully exploded; the steps take their turns, one after another).
+std::vector<DVec3> explodeShifts(const Scene& scene, const ExplodeState& st, double t = 1);
+// Steps that take the assembly apart: each part (a component instance, or a body) away from
+// the middle of `bodies` (every visible body when empty), along `axis` (0 x, 1 y, 2 z:
+// stacked apart along it, gaps between them) or out from the middle (axis -1). `factor`
+// scales the distances.
+std::vector<ExplodeStep> autoExplode(const Scene& scene, const std::vector<std::size_t>& bodies, int axis, double factor);
+std::string describeExplodeStep(const ExplodeStep& s);
+// Trail lines: for each part of each step that has started by `t`, the middle of its bodies
+// (those `include` takes) before the step and after it (as far as it has got).
+struct ExplodeTrail {
+    DVec3 from, to;
+};
+std::vector<ExplodeTrail> explodeTrails(const Scene& scene, const ExplodeState& st, double t, const std::function<bool(std::size_t)>& include);
 
 class Json;
 Json assemblyToJson(const AssemblyState& st);

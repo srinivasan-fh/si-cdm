@@ -2,6 +2,7 @@
 
 #include "core/DrawingCommand.hpp"
 
+#include "core/Assembly.hpp"
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/Drawing.hpp"
@@ -44,6 +45,7 @@ std::string describeView(const Drawing& d, const DrawingView& v) {
     if (v.kind == ViewKind::Section) s += ", cut through " + v.parent + (v.vertical ? " vertically at " : " horizontally at ") + mm(v.cut);
     if (v.kind == ViewKind::Flat) s += ", the flat pattern of " + v.body;
     if (!v.hidden) s += ", no hidden lines";
+    if (v.exploded) s += ", exploded";
     (void)d;
     return s;
 }
@@ -137,15 +139,15 @@ std::string frameText(const DrawingFrame& f) {
 
 // Lays the standard views out again (after the scale or sheet changes); other views
 // find a free place.
-void relayout(Drawing& d, const Scene& scene) {
+void relayout(Drawing& d, const Scene& scene, const ExplodeState* explode) {
     const Drawing fresh = defaultDrawing(scene, d.bodies, d.sheet, d.landscape, d.thirdAngle, d.scale);
     for (DrawingView& v : d.views)
         for (const DrawingView& f : fresh.views)
-            if (v.kind == f.kind && v.kind != ViewKind::Section) v.x = f.x, v.y = f.y;
+            if (v.kind == f.kind && v.kind != ViewKind::Section && !v.exploded) v.x = f.x, v.y = f.y;
     for (DrawingView& v : d.views)
-        if (v.kind != ViewKind::Section && !fresh.view(viewKindName(v.kind)) && v.kind != ViewKind::Front) placeView(d, scene, v);
+        if (v.kind != ViewKind::Section && (v.exploded || !fresh.view(viewKindName(v.kind))) && v.kind != ViewKind::Front) placeView(d, scene, v, explode);
     for (DrawingView& v : d.views)
-        if (v.kind == ViewKind::Section) placeView(d, scene, v);
+        if (v.kind == ViewKind::Section) placeView(d, scene, v, explode);
 }
 
 } // namespace
@@ -153,6 +155,7 @@ void relayout(Drawing& d, const Scene& scene) {
 CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, const std::vector<bool>& quoted, ViewHost* view) {
     CommandOutput out;
     Drawing& d = doc.state.drawing;
+    const ExplodeState* explode = &doc.state.assembly.explode;
     const std::string sub = a.empty() ? "list" : lowerOf(a[0]);
     auto quotedArg = [&](std::size_t k) { return k < quoted.size() && quoted[k]; };
     auto changed = [&] { doc.dirty = true; };
@@ -166,7 +169,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
     // What does not fit on the sheet after views move or the scale changes.
     auto warnFit = [&]() {
         if (d.empty()) return;
-        for (const std::string& w : renderDrawing(d, doc.scene, 1).warnings) out.say("  warning: " + w);
+        for (const std::string& w : renderDrawing(d, doc.scene, 1, explode).warnings) out.say("  warning: " + w);
     };
     auto rest = [&](std::size_t from) {
         std::string s;
@@ -200,6 +203,18 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
                 if (c == '\n') c = ';';
             out.say("  callout " + std::to_string(i + 1) + " in " + d.callouts[i].view + ": " + t);
         }
+        if (!d.balloons.empty()) {
+            std::vector<int> itemOf;
+            drawingPartsRows(d, doc.scene, &itemOf);
+            for (std::size_t i = 0; i < d.balloons.size(); ++i) {
+                int item = 0;
+                for (std::size_t k = 0; k < doc.scene.bodies().size(); ++k)
+                    if (doc.scene.bodies()[k].name == d.balloons[i].body) item = itemOf[k];
+                out.say("  balloon " + std::to_string(i + 1) + " in " + d.balloons[i].view + ": " + (item > 0 ? "item " + std::to_string(item) : std::string("no item")) +
+                        " (" + d.balloons[i].body + ")");
+            }
+        }
+        if (d.partsList.shown) out.say("  parts list: " + std::to_string(drawingPartsRows(d, doc.scene).size()) + " items");
         if (!d.generalTolerance.empty()) out.say("  general tolerances " + d.generalTolerance);
         for (const auto& [k, v] : d.title) out.say("  title " + k + ": " + v);
         return out;
@@ -209,7 +224,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         // SHEET NEW [names...] [SIZE s] [PORTRAIT|LANDSCAPE] [FIRST|THIRD] [SCALE 1:n]
         std::vector<std::string> bodies;
         std::string sheet = "A3";
-        bool landscape = true, third = false;
+        bool landscape = true, third = false, assembly = false;
         double scale = 0;
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string w = lowerOf(a[i]);
@@ -221,6 +236,8 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
             else if (!quotedArg(i) && (w == "first" || w == "third" || w == "iso" || w == "ansi" || w == "asme")) third = w == "third" || w == "ansi" || w == "asme";
             else if (!quotedArg(i) && w == "scale" && i + 1 < a.size()) {
                 if (!parseScale(a[++i], scale)) return out.fail("SCALE takes 1:2, 2:1 or a number");
+            } else if (!quotedArg(i) && (w == "assembly" || w == "exploded")) {
+                assembly = true;
             } else {
                 double W, H;
                 if (!quotedArg(i) && sheetSize(a[i], W, H)) {
@@ -233,15 +250,24 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
                 if (!found) return out.fail("No body named " + a[i]);
             }
         }
-        Drawing nd = defaultDrawing(doc.scene, bodies, toUpper(sheet), landscape, third, scale);
+        Drawing nd = assembly ? assemblyDrawing(doc.scene, bodies, toUpper(sheet), landscape, third, scale, explode)
+                              : defaultDrawing(doc.scene, bodies, toUpper(sheet), landscape, third, scale);
         if (nd.empty()) return out.fail("Nothing to draw: no visible bodies");
+        int balloons = 0;
+        std::string why;
+        if (assembly) balloons = autoBalloons(nd, doc.scene, "", explode, &why);
         nd.title = d.title.empty() ? nd.title : d.title;
         if (nd.title["TITLE"].empty()) nd.title["TITLE"] = !doc.path.empty() ? std::filesystem::path(doc.path).stem().string() : doc.name;
         d = nd;
         changed();
         if (view) view->showSheet(true);
-        out.say("New " + d.sheet + " drawing at " + scaleText(d.scale) + ": front, top, right and isometric views (" + (d.thirdAngle ? "third" : "first") +
-                " angle). SHEET AUTODIM adds dimensions, SHEET EXPORT file.pdf writes it");
+        if (assembly)
+            out.say("New " + d.sheet + " assembly drawing at " + scaleText(d.scale) + ": the assembly " + (d.views[0].exploded ? "exploded" : "together (EXPLODE AUTO takes it apart)") +
+                    ", " + std::to_string(balloons) + (balloons == 1 ? " balloon" : " balloons") + " and the parts list. SHEET EXPORT file.pdf writes it");
+        else
+            out.say("New " + d.sheet + " drawing at " + scaleText(d.scale) + ": front, top, right and isometric views (" + (d.thirdAngle ? "third" : "first") +
+                    " angle). SHEET AUTODIM adds dimensions, SHEET EXPORT file.pdf writes it");
+        if (!why.empty()) out.say("  " + why);
         warnFit();
         return out;
     }
@@ -272,7 +298,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
             ViewKind k;
             if (!viewKindFromName(a[2], &k) || k == ViewKind::Section)
                 return out.fail("Views: FRONT, BACK, TOP, BOTTOM, LEFT, RIGHT, ISO, FLAT [body] (SHEET SECTION cuts one)");
-            DrawingView v{viewKindName(k), k, 0, 0, 0, k != ViewKind::Iso && k != ViewKind::Flat, "", true, 0, false, ""};
+            DrawingView v{viewKindName(k), k, 0, 0, 0, k != ViewKind::Iso && k != ViewKind::Flat, "", true, 0, false, "", false};
             if (k == ViewKind::Flat) { // FLAT [body]: the sheet metal body (the only one drawn, if not named)
                 std::size_t at = 3;
                 if (at < a.size() && lowerOf(a[at]) != "at" && lowerOf(a[at]) != "scale") v.body = a[at];
@@ -302,9 +328,17 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
                     if (!parseScale(a[++i], v.scale)) return out.fail("SCALE takes 1:2, 2:1 or a number");
                 } else if (w == "nohidden") v.hidden = false;
                 else if (w == "hidden") v.hidden = true;
+                else if (w == "exploded" || w == "explode") v.exploded = true;
+            }
+            if (v.exploded) {
+                if (k == ViewKind::Flat) return out.fail("A flat pattern can't be exploded");
+                if (doc.state.assembly.explode.steps.empty()) return out.fail("No exploded view yet: EXPLODE AUTO (or EXPLODE ADD) makes one first");
+                v.name = "Exploded " + stem;
+                for (int n = 2; d.view(v.name); ++n) v.name = "Exploded " + stem + " " + std::to_string(n);
+                v.hidden = false; // an assembly picture: what can be seen
             }
             d.views.push_back(v);
-            if (!placed) placeView(d, doc.scene, d.views.back());
+            if (!placed) placeView(d, doc.scene, d.views.back(), explode);
             changed();
             out.say("Added " + describeView(d, d.views.back()));
             warnFit();
@@ -337,6 +371,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
             std::erase_if(d.datums, [&](const DrawingDatum& x) { return lowerOf(x.view) == lowerOf(name); });
             std::erase_if(d.finishes, [&](const DrawingFinish& x) { return lowerOf(x.view) == lowerOf(name); });
             std::erase_if(d.callouts, [&](const DrawingCallout& x) { return lowerOf(x.view) == lowerOf(name); });
+            std::erase_if(d.balloons, [&](const DrawingBalloon& x) { return lowerOf(x.view) == lowerOf(name); });
             changed();
             out.say("Deleted view " + name + " and its dimensions and annotations");
             return out;
@@ -344,7 +379,24 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
             if (!parseScale(a[3], v->scale)) return out.fail("SCALE takes 1:2, 2:1 or a number");
         } else if (op == "hidden" && a.size() >= 4) {
             v->hidden = lowerOf(a[3]) != "off" && lowerOf(a[3]) != "no";
-        } else return out.fail("SHEET VIEW MOVE name x,y | DELETE name | SCALE name s | HIDDEN name ON|OFF");
+        } else if ((op == "exploded" || op == "explode") && a.size() >= 4) {
+            const bool on = lowerOf(a[3]) != "off" && lowerOf(a[3]) != "no";
+            if (on && (v->kind == ViewKind::Section || v->kind == ViewKind::Flat)) return out.fail("Sections and flat patterns can't be exploded");
+            if (on && doc.state.assembly.explode.steps.empty()) return out.fail("No exploded view yet: EXPLODE AUTO (or EXPLODE ADD) makes one first");
+            if (on && std::any_of(d.views.begin(), d.views.end(), [&](const DrawingView& o) { return o.kind == ViewKind::Section && lowerOf(o.parent) == lowerOf(v->name); }))
+                return out.fail(v->name + " has a section cut through it: it stays together");
+            if (on) {
+                const std::string name = v->name;
+                const bool annotated = std::any_of(d.dims.begin(), d.dims.end(), [&](const DrawingDim& x) { return x.view == name; }) ||
+                                       std::any_of(d.frames.begin(), d.frames.end(), [&](const DrawingFrame& x) { return x.dim < 0 && x.view == name; }) ||
+                                       std::any_of(d.datums.begin(), d.datums.end(), [&](const DrawingDatum& x) { return x.view == name; }) ||
+                                       std::any_of(d.finishes.begin(), d.finishes.end(), [&](const DrawingFinish& x) { return x.view == name; }) ||
+                                       std::any_of(d.callouts.begin(), d.callouts.end(), [&](const DrawingCallout& x) { return x.view == name; });
+                if (annotated) return out.fail(name + " has dimensions or annotations on the parts where they are: add an exploded view instead (SHEET VIEW ADD ISO EXPLODED)");
+            }
+            v->exploded = on;
+            std::erase_if(d.balloons, [&](const DrawingBalloon& x) { return x.view == v->name; }); // their leaders went to the parts' other places
+        } else return out.fail("SHEET VIEW MOVE name x,y | DELETE name | SCALE name s | HIDDEN name ON|OFF | EXPLODED name ON|OFF");
         changed();
         out.say("View " + describeView(d, *v));
         warnFit();
@@ -353,7 +405,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
 
     if (sub == "section") {
         // SHEET SECTION [parent] [VERTICAL|HORIZONTAL] [AT value] [FLIP] [LABEL B]
-        DrawingView v{"", ViewKind::Section, 0, 0, 0, false, "Front", true, 0, false, ""};
+        DrawingView v{"", ViewKind::Section, 0, 0, 0, false, "Front", true, 0, false, "", false};
         bool cutGiven = false;
         std::string label;
         for (std::size_t i = 1; i < a.size(); ++i) {
@@ -370,6 +422,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         }
         const DrawingView* p = d.view(v.parent);
         if (!p || p->kind == ViewKind::Section || p->kind == ViewKind::Iso || p->kind == ViewKind::Flat) return out.fail("Cut a front, top or side view");
+        if (p->exploded) return out.fail("Cut a view of the assembly together, not an exploded one");
         if (!cutGiven) { // through the middle of the bodies
             DVec3 r, u, into;
             viewAxes(p->kind, r, u, into);
@@ -395,7 +448,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         v.name = "Section " + label;
         if (d.view(v.name)) return out.fail("There is already a " + v.name);
         d.views.push_back(v);
-        placeView(d, doc.scene, d.views.back());
+        placeView(d, doc.scene, d.views.back(), explode);
         changed();
         out.say("Added " + describeView(d, d.views.back()));
         warnFit();
@@ -437,6 +490,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         else return out.fail("Dimension kinds: HORIZONTAL, VERTICAL, ALIGNED, DIAMETER, RADIUS");
         const DrawingView* v = d.view(a[2]);
         if (!v) return out.fail("No view named " + a[2]);
+        if (v->exploded) return out.fail(v->name + " is exploded: dimension a view of the parts where they are");
         dm.view = v->name;
         const auto p0 = parseVec3(a[3]), p1 = parseVec3(a[4]);
         if (!p0 || !p1) return out.fail("Points are model x,y,z (mm)");
@@ -506,6 +560,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         if (a.size() < 3) return out.fail("SHEET CALLOUT view x,y,z [TEXT t] [OFFSET dx,dy] | DELETE n | CLEAR | SHEET CALLOUTS [view]");
         const DrawingView* v = d.view(a[1]);
         if (!v) return out.fail("No view named " + a[1]);
+        if (v->exploded) return out.fail(v->name + " is exploded: call holes out in a view of the parts where they are");
         const auto p = parseVec3(a[2]);
         if (!p) return out.fail("The hole's point is model x,y,z (mm)");
         // The hole nearest the point, as SHEET CALLOUTS would call it out (on its own).
@@ -552,6 +607,110 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         for (char& ch : t)
             if (ch == '\n') ch = ';';
         out.say("Callout " + std::to_string(d.callouts.size()) + " in " + c.view + ": " + t);
+        return out;
+    }
+
+    if (sub == "balloons") {
+        // SHEET BALLOONS [view]: a balloon for each part seen there, numbered as the parts list
+        std::string why;
+        const int n = autoBalloons(d, doc.scene, a.size() > 1 ? rest(1) : std::string(), explode, &why);
+        if (n == 0) return out.fail(why);
+        changed();
+        out.say("Added " + std::to_string(n) + (n == 1 ? " balloon" : " balloons") + " in " + d.balloons.back().view + ", numbered as the parts list" +
+                (d.partsList.shown ? std::string() : " (SHEET PARTSLIST shows it)"));
+        if (!why.empty()) out.say("  " + why + ": SHEET BALLOON part IN view puts one on another view");
+        warnFit();
+        return out;
+    }
+
+    if (sub == "balloon") {
+        // SHEET BALLOON part [IN view] [AT x,y] | MOVE n x,y | DELETE n | CLEAR
+        if (a.size() >= 2 && lowerOf(a[1]) == "clear" && !quotedArg(1)) {
+            d.balloons.clear();
+            changed();
+            out.say("All balloons removed");
+            return out;
+        }
+        auto numbered = [&](std::size_t i) -> int {
+            const auto n = i < a.size() ? parseNumber(a[i]) : std::nullopt;
+            if (!n || *n < 1 || *n > static_cast<float>(d.balloons.size()) || std::floor(*n) != *n) return -1;
+            return static_cast<int>(*n) - 1;
+        };
+        if (a.size() >= 3 && !quotedArg(1) && (lowerOf(a[1]) == "delete" || lowerOf(a[1]) == "remove")) {
+            const int k = numbered(2);
+            if (k < 0) return out.fail("No balloon " + a[2] + " (SHEET lists them)");
+            d.balloons.erase(d.balloons.begin() + k);
+            changed();
+            out.say("Balloon removed");
+            return out;
+        }
+        if (a.size() >= 4 && !quotedArg(1) && lowerOf(a[1]) == "move") {
+            const int k = numbered(2);
+            if (k < 0) return out.fail("No balloon " + a[2] + " (SHEET lists them)");
+            const auto p = parseVec3(a[3]);
+            if (!p) return out.fail("MOVE takes x,y on the sheet (mm)");
+            d.balloons[static_cast<std::size_t>(k)].x = p->x, d.balloons[static_cast<std::size_t>(k)].y = p->y;
+            changed();
+            out.say("Balloon " + a[2] + " moved");
+            return out;
+        }
+        if (a.size() < 2) return out.fail("SHEET BALLOON part [IN view] [AT x,y] | MOVE n x,y | DELETE n | CLEAR | SHEET BALLOONS [view]");
+        std::string viewName;
+        double x = 0, y = 0;
+        for (std::size_t i = 2; i < a.size(); ++i) {
+            const std::string w = lowerOf(a[i]);
+            if ((w == "in" || w == "on") && i + 1 < a.size()) viewName = a[++i];
+            else if (w == "at" && i + 1 < a.size()) {
+                const auto p = parseVec3(a[++i]);
+                if (!p || (p->x == 0 && p->y == 0)) return out.fail("AT takes x,y on the sheet (mm)");
+                x = p->x, y = p->y;
+            } else return out.fail("SHEET BALLOON part [IN view] [AT x,y]");
+        }
+        // A part name: a body, or a component instance (its first body drawn).
+        std::string body = a[1];
+        if (!std::any_of(doc.scene.bodies().begin(), doc.scene.bodies().end(), [&](const Body& b) { return lowerOf(b.name) == lowerOf(body); }))
+            for (const Body& b : doc.scene.bodies())
+                if (!b.component.empty() && lowerOf(b.component) == lowerOf(body)) {
+                    body = b.name;
+                    break;
+                }
+        std::string why;
+        if (!addBalloon(d, doc.scene, viewName, body, x, y, explode, &why)) return out.fail(why);
+        changed();
+        std::vector<int> itemOf;
+        drawingPartsRows(d, doc.scene, &itemOf);
+        int item = 0;
+        for (std::size_t k = 0; k < doc.scene.bodies().size(); ++k)
+            if (doc.scene.bodies()[k].name == d.balloons.back().body) item = itemOf[k];
+        out.say("Balloon " + std::to_string(d.balloons.size()) + ": item " + std::to_string(item) + " (" + d.balloons.back().body + ") in " + d.balloons.back().view);
+        return out;
+    }
+
+    if (sub == "partslist" || sub == "bom" || sub == "parts") {
+        // SHEET PARTSLIST [ON|OFF] [AT x,y]
+        bool on = true;
+        DrawingPartsList pl = d.partsList;
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            const std::string w = lowerOf(a[i]);
+            if (w == "on" || w == "show") on = true;
+            else if (w == "off" || w == "hide") on = false;
+            else if (w == "at" && i + 1 < a.size()) {
+                const auto p = parseVec3(a[++i]);
+                if (!p) return out.fail("AT takes the list's bottom-right corner x,y on the sheet (mm); AT 0,0 puts it back on the title block");
+                pl.x = p->x, pl.y = p->y;
+            } else return out.fail("SHEET PARTSLIST [ON|OFF] [AT x,y]");
+        }
+        pl.shown = on;
+        d.partsList = pl;
+        changed();
+        if (!on) {
+            out.say("Parts list hidden");
+            return out;
+        }
+        const auto rows = drawingPartsRows(d, doc.scene);
+        out.say("Parts list: " + std::to_string(rows.size()) + (rows.size() == 1 ? " item" : " items") + " above the title block");
+        for (const auto& r : rows) out.say("  " + r[0] + "  " + r[1] + " x  " + r[2] + (r[3].empty() ? "" : "  " + r[3]) + (r[4].empty() ? "" : "  " + r[4]));
+        warnFit();
         return out;
     }
 
@@ -624,6 +783,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
             } else if ((w == "on" || w == "in") && i + 2 < a.size()) {
                 const DrawingView* v = d.view(a[i + 1]);
                 if (!v) return why = "No view named " + a[i + 1], false;
+                if (v->exploded) return why = v->name + " is exploded: put it on a view of the parts where they are", false;
                 const auto p = parseVec3(a[i + 2]);
                 if (!p) return why = "The point is model x,y,z (mm)", false;
                 viewName = v->name, at = DVec3(*p);
@@ -824,7 +984,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         } else {
             d.thirdAngle = lowerOf(a[1]) == "third" || lowerOf(a[1]) == "ansi" || lowerOf(a[1]) == "asme";
         }
-        relayout(d, doc.scene);
+        relayout(d, doc.scene, explode);
         changed();
         out.say("Drawing: " + d.sheet + ", scale " + scaleText(d.scale) + ", " + (d.thirdAngle ? "third" : "first") + "-angle; views laid out again");
         warnFit();
@@ -835,7 +995,7 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         if (a.size() < 2) return out.fail("SHEET EXPORT file.pdf|.svg|.dxf");
         const std::string path = rest(1);
         std::string ext = lowerOf(std::filesystem::path(path).extension().string());
-        const SheetGraphics g = renderDrawing(drawingWithProduct(d, doc.state.product), doc.scene, 2);
+        const SheetGraphics g = renderDrawing(drawingWithProduct(d, doc.state.product), doc.scene, 2, explode);
         std::string data;
         if (ext == ".pdf") data = sheetToPdf(g, d.title.count("TITLE") ? d.title.at("TITLE") : "Drawing");
         else if (ext == ".svg") data = sheetToSvg(g);
@@ -848,8 +1008,8 @@ CommandOutput runSheetCommand(Document& doc, const std::vector<std::string>& a, 
         return out;
     }
 
-    return out.fail("SHEET NEW | VIEW | SECTION | FLAT | DIM | AUTODIM | CALLOUTS | CALLOUT | TOL | GDT | DATUM | FINISH | TOLERANCE | TITLE | NOTE | SCALE | SIZE | PROJECTION | "
-                    "EXPORT | SHOW | HIDE | DELETE");
+    return out.fail("SHEET NEW | VIEW | SECTION | FLAT | DIM | AUTODIM | CALLOUTS | CALLOUT | BALLOONS | BALLOON | PARTSLIST | TOL | GDT | DATUM | FINISH | TOLERANCE | TITLE | "
+                    "NOTE | SCALE | SIZE | PROJECTION | EXPORT | SHOW | HIDE | DELETE");
 }
 
 } // namespace sicdm

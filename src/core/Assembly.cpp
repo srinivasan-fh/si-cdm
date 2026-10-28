@@ -897,18 +897,28 @@ std::vector<std::pair<std::string, int>> billOfMaterials(const Scene& scene) {
     return out;
 }
 
-std::vector<BomLine> partsList(const Scene& scene) {
+std::vector<BomLine> partsList(const Scene& scene) { return partsList(scene, [](const Body&) { return true; }, nullptr); }
+
+std::vector<BomLine> partsList(const Scene& scene, const std::function<bool(const Body&)>& include, std::vector<int>* itemOfBody) {
     std::vector<BomLine> out;
     auto prop = [](const Body& b, const char* key) {
         const auto it = b.properties.find(key);
         return it == b.properties.end() ? std::string() : it->second;
     };
+    const auto& bodies = scene.bodies();
+    if (itemOfBody) itemOfBody->assign(bodies.size(), -1);
     // A linked part file is one part, counted once an instance (however many bodies it has).
-    std::vector<std::pair<std::string, std::string>> instancesSeen; // file, instance
-    for (const Body& b : scene.bodies()) {
+    std::vector<std::pair<std::pair<std::string, std::string>, int>> instancesSeen; // (file, instance), item
+    for (std::size_t i = 0; i < bodies.size(); ++i) {
+        const Body& b = bodies[i];
+        if (!include(b)) continue;
         if (b.linked()) {
-            if (std::find(instancesSeen.begin(), instancesSeen.end(), std::make_pair(b.link.file, b.component)) != instancesSeen.end()) continue;
-            instancesSeen.push_back({b.link.file, b.component});
+            const auto key = std::make_pair(b.link.file, b.component);
+            const auto seen = std::find_if(instancesSeen.begin(), instancesSeen.end(), [&](const auto& e) { return e.first == key; });
+            if (seen != instancesSeen.end()) {
+                if (itemOfBody) (*itemOfBody)[i] = seen->second;
+                continue;
+            }
         }
         // Bodies with the same part number are the same part, whatever they are called.
         const std::string number = prop(b, "NUMBER");
@@ -920,12 +930,20 @@ std::vector<BomLine> partsList(const Scene& scene) {
         });
         if (it != out.end()) {
             ++it->quantity;
-            continue;
+            // Any of its bodies may say what it is.
+            if (it->description.empty()) it->description = prop(b, "DESCRIPTION");
+            if (it->material.empty()) it->material = prop(b, "MATERIAL");
+        } else {
+            BomLine l;
+            l.part = name, l.number = number, l.description = prop(b, "DESCRIPTION"), l.material = prop(b, "MATERIAL");
+            if (b.linked()) l.file = b.link.file;
+            l.firstBody = i;
+            out.push_back(std::move(l));
+            it = out.end() - 1;
         }
-        BomLine l;
-        l.part = name, l.number = number, l.description = prop(b, "DESCRIPTION"), l.material = prop(b, "MATERIAL");
-        if (b.linked()) l.file = b.link.file;
-        out.push_back(std::move(l));
+        const int item = static_cast<int>(it - out.begin());
+        if (b.linked()) instancesSeen.push_back({{b.link.file, b.component}, item});
+        if (itemOfBody) (*itemOfBody)[i] = item;
     }
     return out;
 }
@@ -963,7 +981,18 @@ Json assemblyToJson(const AssemblyState& st) {
         if (m.suppressed) o.set("suppressed", true);
         mates.push(o);
     }
-    return Json::object().set("mates", mates);
+    Json o = Json::object().set("mates", mates);
+    const ExplodeState& ex = st.explode;
+    if (!ex.empty()) {
+        Json steps = Json::array();
+        for (const ExplodeStep& s : ex.steps) {
+            Json parts = Json::array();
+            for (const std::string& p : s.parts) parts.push(Json(p));
+            steps.push(Json::object().set("parts", parts).set("dir", vecJson(s.dir)).set("distance", s.distance));
+        }
+        o.set("explode", Json::object().set("steps", steps).set("shown", ex.shown).set("trails", ex.trails));
+    }
+    return o;
 }
 
 bool assemblyFromJson(const Json& j, AssemblyState& st) {
@@ -980,6 +1009,21 @@ bool assemblyFromJson(const Json& j, AssemblyState& st) {
         m.aligned = o["aligned"].asBool(al);
         m.suppressed = o["suppressed"].asBool(false);
         st.mates.push_back(m);
+    }
+    if (const Json& ex = j["explode"]; ex.isObject()) {
+        for (const Json& o : ex["steps"].items()) {
+            ExplodeStep s;
+            for (const Json& p : o["parts"].items())
+                if (!p.asString("").empty()) s.parts.push_back(p.asString(""));
+            s.dir = vecOf(o["dir"], {0, 0, 1});
+            s.distance = o["distance"].asNumber(0);
+            const double l = dlength(s.dir);
+            if (s.parts.empty() || !(l > 1e-12) || !std::isfinite(s.distance)) continue;
+            s.dir = s.dir * (1.0 / l);
+            st.explode.steps.push_back(std::move(s));
+        }
+        st.explode.shown = ex["shown"].asBool(false);
+        st.explode.trails = ex["trails"].asBool(true);
     }
     return true;
 }

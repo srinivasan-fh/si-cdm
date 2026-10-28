@@ -41,6 +41,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <tuple>
 
 namespace sicdm {
 
@@ -697,6 +698,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             if (ImGui::MenuItem(tr("A3, Third-Angle (ASME)"))) cmd.commands.push_back("SHEET NEW A3 THIRD");
             ImGui::EndMenu();
         }
+        if (ImGui::MenuItem(tr("New Assembly Drawing (A3)"))) cmd.commands.push_back("SHEET NEW A3 ASSEMBLY");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The assembly exploded, with balloons and the parts list"));
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Show Drawing"), nullptr, st.showSheet)) cmd.commands.push_back(st.showSheet ? "SHEET HIDE" : "SHEET SHOW");
         if (ImGui::MenuItem(tr("Dimension Automatically"))) cmd.commands.push_back("SHEET AUTODIM");
@@ -707,7 +710,17 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::BeginMenu(tr("Add View"))) {
             for (const char* v : {"Front", "Back", "Top", "Bottom", "Left", "Right", "Iso"})
                 if (ImGui::MenuItem(v)) cmd.commands.push_back(std::string("SHEET VIEW ADD ") + v);
+            ImGui::Separator();
+            const bool exploded = st.assembly && !st.assembly->explode.steps.empty();
+            if (ImGui::MenuItem(tr("Exploded Isometric"), nullptr, false, exploded)) cmd.commands.push_back("SHEET VIEW ADD ISO EXPLODED");
+            if (!exploded && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("Explode the assembly first (Assembly menu)"));
             ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem(tr("Add Balloons"))) cmd.commands.push_back("SHEET BALLOONS");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Item numbers on the parts, as the parts list numbers them"));
+        {
+            const bool listShown = st.project && st.project->drawing.partsList.shown;
+            if (ImGui::MenuItem(tr("Parts List"), nullptr, listShown)) cmd.commands.push_back(listShown ? "SHEET PARTSLIST OFF" : "SHEET PARTSLIST");
         }
         if (ImGui::BeginMenu(tr("Scale"))) {
             for (const char* sc : {"5:1", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20"})
@@ -756,8 +769,42 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         const bool body = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size());
         const std::string selName = body ? "\"" + scene.bodies()[static_cast<std::size_t>(st.selectedBody)].name + "\"" : std::string();
         if (ImGui::MenuItem(tr("Fix the Selected Part"), nullptr, false, body)) cmd.commands.push_back("MATE FIX " + selName);
-        if (ImGui::MenuItem(tr("Solve Mates"), nullptr, false, st.assembly && !st.assembly->empty())) cmd.commands.push_back("MATE SOLVE");
+        if (ImGui::MenuItem(tr("Solve Mates"), nullptr, false, st.assembly && !st.assembly->mates.empty())) cmd.commands.push_back("MATE SOLVE");
         if (ImGui::MenuItem(tr("List Mates"))) cmd.commands.push_back("MATE");
+        ImGui::Separator();
+        // The exploded view: how it goes together.
+        {
+            const ExplodeState* ex = st.assembly ? &st.assembly->explode : nullptr;
+            const bool steps = ex && !ex->steps.empty();
+            if (ImGui::BeginMenu(tr("Explode"))) {
+                if (ImGui::MenuItem(tr("Automatically (Stacked Up)"))) cmd.commands.push_back("EXPLODE AUTO");
+                if (ImGui::MenuItem(tr("Automatically (Along X)"))) cmd.commands.push_back("EXPLODE AUTO ALONG X");
+                if (ImGui::MenuItem(tr("Automatically (Along Y)"))) cmd.commands.push_back("EXPLODE AUTO ALONG Y");
+                if (ImGui::MenuItem(tr("Automatically (Out from the Middle)"))) cmd.commands.push_back("EXPLODE AUTO RADIAL");
+                ImGui::Separator();
+                if (ImGui::BeginMenu(tr("Move the Selected Part Out"), body)) {
+                    const Body& b = scene.bodies()[static_cast<std::size_t>(st.selectedBody)];
+                    // As far as the part is long that way, and a bit: clear of where it was.
+                    const AABB box = b.bounds();
+                    const Vec3 size = box.valid() ? box.max - box.min : Vec3{10, 10, 10};
+                    const std::string part = "\"" + (b.component.empty() ? b.name : b.component) + "\"";
+                    for (const auto& [label, way, along] : {std::tuple{"+X", "+X", size.x}, std::tuple{"-X", "-X", size.x}, std::tuple{"+Y", "+Y", size.y},
+                                                            std::tuple{"-Y", "-Y", size.y}, std::tuple{"+Z", "+Z", size.z}, std::tuple{"-Z", "-Z", size.z}})
+                        if (ImGui::MenuItem(label)) {
+                            char d[32];
+                            std::snprintf(d, sizeof d, "%g", std::ceil(static_cast<double>(along) * 1.2 + 5));
+                            cmd.commands.push_back("EXPLODE ADD " + part + " ALONG " + way + " DISTANCE " + d);
+                        }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(tr("Show Exploded"), nullptr, steps && ex->shown, steps)) cmd.commands.push_back(ex->shown ? "EXPLODE HIDE" : "EXPLODE SHOW");
+                if (ImGui::MenuItem(tr("Trail Lines"), nullptr, ex && ex->trails, steps)) cmd.commands.push_back(ex->trails ? "EXPLODE TRAILS OFF" : "EXPLODE TRAILS ON");
+                if (ImGui::MenuItem(tr("List the Steps"), nullptr, false, steps)) cmd.commands.push_back("EXPLODE");
+                if (ImGui::MenuItem(tr("Remove the Exploded View"), nullptr, false, steps)) cmd.commands.push_back("EXPLODE CLEAR");
+                ImGui::EndMenu();
+            }
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Put the Selected Part in a Sub-assembly"), nullptr, false, body)) {
             int n = 1;
@@ -1886,7 +1933,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 group("");
                 ImGui::TreePop();
             }
-            if (st.assembly && !st.assembly->empty()) {
+            if (st.assembly && !st.assembly->mates.empty()) {
                 char mateLabel[48];
                 std::snprintf(mateLabel, sizeof(mateLabel), "Mates (%zu)###mates", st.assembly->mates.size());
                 if (ImGui::TreeNode(mateLabel)) {

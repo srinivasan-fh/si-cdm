@@ -191,6 +191,56 @@ the base's normal points to:
 
 ![Hole callouts on a block, and a flat pattern with its bend notes](drawing-callouts.png)
 
+## Assembly drawings
+
+![An assembly drawing: the gearbox exploded, balloons 1 to 4, and the parts list on the title block](assembly-drawing.png)
+
+An assembly drawing shows what an assembly is made of. It has an exploded view, a balloon on
+each part with its item number, and the parts list (bill of materials) above the title block.
+
+```text
+EXPLODE AUTO                        take the assembly apart (see Assemblies)
+SHEET NEW ASSEMBLY                  one exploded isometric view, balloons and the parts list
+SHEET NEW A2 ASSEMBLY SCALE 1:2
+```
+
+The view is drawn as large as a standard scale allows, beside the parts list or above it,
+whichever room is bigger. Without an exploded view the assembly is drawn together.
+
+On any drawing:
+
+```text
+SHEET VIEW ADD ISO EXPLODED         an exploded view placed where there is room
+SHEET VIEW EXPLODED Isometric ON    an existing view shown exploded (OFF: together)
+SHEET BALLOONS [view]               a balloon for each item seen there
+SHEET BALLOON "Shaft" [IN view] [AT x,y]
+SHEET BALLOON MOVE 2 300,240 | DELETE 2 | CLEAR
+SHEET PARTSLIST [ON|OFF] [AT x,y]   the parts list (AT: its bottom-right corner; AT 0,0 on the title block)
+```
+
+- **Exploded views** draw the parts where the exploded view puts them. Trail lines (thin chain
+  lines) run from where each part sits to where it is drawn, step by step; `EXPLODE TRAILS
+  OFF` leaves them out. Exploded views show what can be seen, with no hidden lines. They take
+  no dimensions, tolerances, callouts or sections, since those belong on views of the parts
+  where they are. `SHEET AUTODIM` passes them by.
+- **Balloons** carry the item number of the part they point at. The number follows the parts
+  list, so it changes when the list does. Each leader ends in a dot on a part of the item that
+  can be seen. The end is chosen so the leader crosses as little of the other parts as it can.
+  The balloons go round the view in the order of their parts, so leaders don't cross, and they
+  keep clear of each other, the view's name and the title block. A part hidden in the view
+  gets no balloon: `SHEET BALLOONS` names its item, and another view, or an exploded one, can
+  show it. `SHEET BALLOONS` makes the view's balloons again. A balloon moved by hand stays
+  where it is put until then.
+- **The parts list** has a row for each drawn part, with item, quantity, part number,
+  description and material. Item 1 is just above the headings, ASME Y14.34 and ISO 7573
+  style. Parts are counted as in [the assembly's parts list](assembly.md#parts-list): the copies
+  of a part, bodies with one part number, and the instances of a part file are one item. Without a
+  part number the part's name is shown. The material is the `MATERIAL` property, else the
+  body's appearance material. Long entries are cut short to fit their column.
+
+In the app, the **Drawing** menu has *New Assembly Drawing*, *Add View > Exploded
+Isometric*, *Add Balloons* and *Parts List*.
+
 ## Tolerances and GD&T
 
 ![Size tolerances, ISO fits, feature control frames, datums and a surface finish mark](drawing-gdt.png)
@@ -299,6 +349,8 @@ The MCP tool `drawing` does all of this. Its operations are:
 - `view_add`, `view_move`, `view_delete`, `view_scale` and `view_hidden`;
 - `section`, `dim` (with `tolerance`), `dim_delete` and `autodim`;
 - `callouts`, `callout_delete` and `flat` (with `body`);
+- `assembly` (a new assembly drawing), `view_exploded` (and `exploded` on `view_add`),
+  `balloons`, `balloon` (with `body`), `balloon_move`, `balloon_delete` and `parts_list`;
 - `tolerance`, `general_tolerance`, `gdt`, `gdt_delete`, `datum`, `datum_delete` and `finish`;
 - `title` and `note`;
 - `scale`, `size` and `projection`;

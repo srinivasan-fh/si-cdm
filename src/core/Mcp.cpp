@@ -675,6 +675,23 @@ Json McpServer::toolDefinitions() {
                             return c;
                         }(),
                         {"operation"}));
+        tools.push(tool("explode",
+                        "Exploded views of the assembly: steps that move parts (bodies, component instances or sub-assemblies) apart along "
+                        "a direction, one after another, made automatically (stacked apart along an axis, or out from the middle) or by "
+                        "hand; shown in the 3D window and in drawing views (drawing view_add with exploded). The parts stay where they are.",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "auto | add | edit | delete | clear | show | hide | trails | list"));
+                            c.set("parts", prop("array", "add: the parts to move; auto: only these (default: every visible part)"));
+                            c.set("along", prop("string", "add / edit: X, -X, Y, -Y, Z or -Z; auto: X, Y, Z or RADIAL (default Z)"));
+                            c.set("direction", prop("array", "add / edit: any direction [x, y, z] instead of along"));
+                            c.set("distance", prop("number", "add / edit: how far (mm)"));
+                            c.set("factor", prop("number", "auto: scales the gaps (default 1)"));
+                            c.set("step", prop("number", "edit / delete: the step's number (1-based)"));
+                            c.set("on", prop("boolean", "trails: draw the trail lines"));
+                            return c;
+                        }(),
+                        {"operation"}));
         tools.push(tool("assembly",
                         "Assemblies: mate parts by their faces (coincident, flush, concentric, distance, angle, parallel, perpendicular; "
                         "planes, axes of round faces and sphere centres picked by a point on the face) and the solver moves the second "
@@ -686,7 +703,8 @@ Json McpServer::toolDefinitions() {
         Json p = Json::object();
         p.set("operation", prop("string", "new | list | view_add | view_move | view_delete | view_scale | view_hidden | section | dim | dim_delete | "
                                           "autodim | callouts | callout_delete | flat | tolerance | gdt | gdt_delete | datum | datum_delete | "
-                                          "finish | general_tolerance | title | note | scale | size | projection | export | delete"));
+                                          "finish | general_tolerance | title | note | scale | size | projection | export | delete | assembly | "
+                                          "view_exploded | balloons | balloon | balloon_move | balloon_delete | parts_list"));
         p.set("bodies", prop("array", "new: the bodies to draw (default: every visible body)"));
         p.set("size", prop("string", "new / size: A4, A3, A2, A1, A0, LETTER, TABLOID, ANSI C, ANSI D (default A3)"));
         p.set("portrait", prop("boolean", "new / size: portrait instead of landscape"));
@@ -718,13 +736,16 @@ Json McpServer::toolDefinitions() {
         p.set("point", prop("array", "gdt / datum / finish: the model point [x, y, z] in 'view' the leader goes to"));
         p.set("sheet_offset", prop("array", "gdt / datum / finish: where the symbol sits from the point, [dx, dy] sheet mm"));
         p.set("machined", prop("boolean", "finish: material removal required (false: not allowed; omit: any process)"));
-        p.set("body", prop("string", "flat: the sheet metal body (default: the drawing's only one)"));
+        p.set("body", prop("string", "flat: the sheet metal body (default: the drawing's only one); balloon: the part it points at"));
+        p.set("exploded", prop("boolean", "view_add / view_exploded: the view shows the assembly exploded (explode tool)"));
+        p.set("on", prop("boolean", "parts_list: shown (default true)"));
         tools.push(tool("drawing",
                         "2D engineering drawings of the model: front, top, right and isometric views laid out on an ISO or ANSI sheet "
                         "(first or third angle) with hidden lines dashed, section views hatched, centre marks, dimensions (automatic overall "
                         "sizes and hole diameters, or by hand), hole callouts (drill, depth or THRU, counterbore, countersink, thread, 4X), "
                         "sheet metal flat pattern views with bend lines and notes, size tolerances and ISO 286 fits, geometric tolerances (feature control frames, "
-                        "datums), surface finish marks, the general tolerance, a title block and notes; exported to PDF, SVG or DXF.",
+                        "datums), surface finish marks, the general tolerance, a title block and notes; assembly drawings with an exploded "
+                        "view, balloons numbered as the parts list and the parts list above the title block; exported to PDF, SVG or DXF.",
                         p, {"operation"}));
     }
     {
@@ -1279,6 +1300,35 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                           "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete, drag",
                           true);
     }
+    if (name == "explode") {
+        const std::string op = a["operation"].asString();
+        std::string way;
+        if (a["direction"].isArray()) {
+            std::string v;
+            for (std::size_t i = 0; i < 3; ++i) v += (i ? "," : "") + num(i < a["direction"].size() ? a["direction"][i].asNumber() : 0.0);
+            way = " DIR " + v;
+        } else if (a["along"].isString())
+            way = " ALONG " + a["along"].asString();
+        const std::string distance = a["distance"].isNumber() ? " DISTANCE " + num(a["distance"].asNumber()) : std::string();
+        std::string parts;
+        if (a["parts"].isArray())
+            for (std::size_t i = 0; i < a["parts"].size(); ++i) parts += " " + quote(a["parts"][i].asString());
+        if (op == "list") return runLine("EXPLODE");
+        if (op == "auto") {
+            std::string line = "EXPLODE AUTO";
+            if (a["along"].isString()) line += " ALONG " + a["along"].asString();
+            if (a["factor"].isNumber()) line += " FACTOR " + num(a["factor"].asNumber());
+            return runLine(line + parts);
+        }
+        if (op == "add") return parts.empty() ? textResult("add needs parts", true) : runLine("EXPLODE ADD" + parts + way + distance);
+        if (op == "edit") return runLine("EXPLODE EDIT " + num(a["step"].asNumber()) + way + distance);
+        if (op == "delete") return runLine("EXPLODE DELETE " + num(a["step"].asNumber()));
+        if (op == "clear") return runLine("EXPLODE CLEAR");
+        if (op == "show") return runLine("EXPLODE SHOW");
+        if (op == "hide") return runLine("EXPLODE HIDE");
+        if (op == "trails") return runLine(std::string("EXPLODE TRAILS ") + (a["on"].isBool() && !a["on"].asBool() ? "OFF" : "ON"));
+        return textResult("explode operations: auto, add, edit, delete, clear, show, hide, trails, list", true);
+    }
     if (name == "component") {
         const std::string op = a["operation"].asString();
         auto vec3 = [&](const Json& v) {
@@ -1373,7 +1423,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (op == "callout_delete") return runLine("SHEET CALLOUT DELETE " + num(a["index"].asNumber()));
         if (op == "flat") return runLine("SHEET FLAT" + text("body") + (a["at"].isArray() ? " AT " + vec(a["at"], 2) : std::string()) +
                                          (a["scale"].isString() ? " SCALE " + a["scale"].asString() : std::string()));
-        if (op == "new") {
+        if (op == "new" || op == "assembly") {
             std::string line = "SHEET NEW";
             if (a["bodies"].isArray())
                 for (std::size_t i = 0; i < a["bodies"].size(); ++i) line += " " + quote(a["bodies"][i].asString());
@@ -1381,14 +1431,30 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["portrait"].asBool()) line += " PORTRAIT";
             if (a["third_angle"].asBool()) line += " THIRD";
             if (a["scale"].isString()) line += " SCALE " + a["scale"].asString();
+            if (op == "assembly") line += " ASSEMBLY";
             return runLine(line);
         }
+        if (op == "balloons") return runLine("SHEET BALLOONS" + view);
+        if (op == "balloon") {
+            if (!a["body"].isString()) return textResult("balloon needs body", true);
+            return runLine("SHEET BALLOON " + quote(a["body"].asString()) + (view.empty() ? std::string() : " IN" + view) +
+                           (a["at"].isArray() ? " AT " + vec(a["at"], 2) : std::string()));
+        }
+        if (op == "balloon_move") {
+            if (!a["at"].isArray()) return textResult("balloon_move needs index and at [x, y]", true);
+            return runLine("SHEET BALLOON MOVE " + num(a["index"].asNumber()) + " " + vec(a["at"], 2));
+        }
+        if (op == "balloon_delete") return runLine("SHEET BALLOON DELETE " + num(a["index"].asNumber()));
+        if (op == "parts_list")
+            return runLine(std::string("SHEET PARTSLIST") + (a["on"].isBool() && !a["on"].asBool() ? " OFF" : "") + (a["at"].isArray() ? " AT " + vec(a["at"], 2) : std::string()));
+        if (op == "view_exploded") return runLine("SHEET VIEW EXPLODED" + view + (a["exploded"].isBool() && !a["exploded"].asBool() ? " OFF" : " ON"));
         if (op == "view_add") {
             if (!a["view"].isString()) return textResult("view_add needs view (front, top, right, iso...)", true);
             std::string line = "SHEET VIEW ADD " + a["view"].asString();
             if (a["at"].isArray()) line += " AT " + vec(a["at"], 2);
             if (a["scale"].isString()) line += " SCALE " + a["scale"].asString();
             if (a["hidden"].isBool()) line += a["hidden"].asBool() ? " HIDDEN" : " NOHIDDEN";
+            if (a["exploded"].asBool()) line += " EXPLODED";
             return runLine(line);
         }
         if (op == "view_move") {

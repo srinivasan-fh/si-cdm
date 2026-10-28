@@ -112,6 +112,11 @@ private:
     // Simulation window.
     bool simulating() const noexcept { return m_uiState.mode == ViewMode::Simulation; }
     void advanceSimulation(float dt);
+    // The exploded view (EXPLODE SHOW / HIDE): eased open and shut, drawn by moving the bodies.
+    void advanceExplode(float dt);
+    void drawExplodeOverlay() const;
+    // How each body is drawn moved: the simulation's motion, or the exploded view (nullptr: as they are).
+    const std::vector<Mat4>* bodyTransforms() const;
     void drawSimulationOverlay() const;
     void drawToolpathOverlay() const;
     void drawDatumOverlay() const;
@@ -221,6 +226,10 @@ private:
     Vec2 m_imageGrab{}, m_imageStart{};
 
     std::vector<Mat4> m_simTransforms; // per body, while the Simulation window shows motion
+    std::vector<Mat4> m_explodeTransforms; // per body, while the exploded view shows (or opens or shuts)
+    std::vector<DVec3> m_explodeShifts;    // the same as moves
+    float m_explodeT = 0.0f;               // 0 together .. 1 exploded
+    bool m_explodeMoving = false;          // opening or shutting
     // Chains / belts travelling along their loop: shape per body for this frame.
     struct LoopShape {
         float travel = 0.0f;

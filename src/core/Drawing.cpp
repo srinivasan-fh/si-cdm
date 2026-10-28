@@ -1,6 +1,7 @@
 #include "core/Drawing.hpp"
 #include "core/Tolerances.hpp"
 
+#include "core/Assembly.hpp"
 #include "core/Json.hpp"
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
@@ -70,6 +71,7 @@ struct Model {
     std::vector<DVec3> p;                 // welded positions
     std::vector<std::array<int, 3>> tris;
     std::vector<int> face;                // exact face id, or -1 (a mesh body)
+    std::vector<int> body;                // per triangle: its body's index in the bodies built from
     std::vector<DVec3> normal;            // per triangle
     struct Edge {
         int a, b, t0, t1; // t1 = -1: an open edge
@@ -98,7 +100,8 @@ std::vector<const Body*> drawnBodies(const Drawing& d, const Scene& scene) {
     return out;
 }
 
-Model buildModel(const std::vector<const Body*>& bodies, double chord) {
+// `shifts` (one per body): moved this far (an exploded view).
+Model buildModel(const std::vector<const Body*>& bodies, double chord, const std::vector<DVec3>* shifts = nullptr) {
     Model m;
     int faceBase = 0;
     std::map<std::tuple<float, float, float>, int> weld;
@@ -107,14 +110,16 @@ Model buildModel(const std::vector<const Body*>& bodies, double chord) {
         if (added) m.p.push_back(DVec3(q));
         return it->second;
     };
-    for (const Body* b : bodies) {
+    for (std::size_t bi = 0; bi < bodies.size(); ++bi) {
+        const Body* b = bodies[bi];
+        const DVec3 shift = shifts && bi < shifts->size() ? (*shifts)[bi] : DVec3{0, 0, 0};
         const auto ex = exactBrep(*b);
         MeshData mesh;
         std::vector<int> triFace;
         if (ex) {
             Brep br = *ex;
             Placement t;
-            t.t = decimal(b->offset);
+            t.t = decimal(b->offset) + shift;
             br.transform(t);
             TessellateOptions o;
             o.chord = chord;
@@ -155,6 +160,8 @@ Model buildModel(const std::vector<const Body*>& bodies, double chord) {
             faceBase += static_cast<int>(rep.faceTriangles.size());
         } else {
             mesh = worldMesh(*b);
+            if (dlength(shift) > 0)
+                for (Vertex& v : mesh.vertices) v.position = (DVec3(v.position) + shift).f();
         }
         for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
             const std::array<int, 3> tr{vid(mesh.vertices[mesh.indices[t]].position), vid(mesh.vertices[mesh.indices[t + 1]].position),
@@ -162,6 +169,7 @@ Model buildModel(const std::vector<const Body*>& bodies, double chord) {
             if (tr[0] == tr[1] || tr[1] == tr[2] || tr[2] == tr[0]) continue;
             m.tris.push_back(tr);
             m.face.push_back(ex && t / 3 < triFace.size() ? triFace[t / 3] : -1);
+            m.body.push_back(static_cast<int>(bi));
         }
     }
     for (const DVec3& q : m.p) {
@@ -998,6 +1006,390 @@ void drawSectionLine(const Drawing& d, const DrawingView& sec, const Model& m, S
     }
 }
 
+// --- assemblies: exploded views, balloons, the parts list -------------------------------------
+
+bool explodes(const ExplodeState* e) { return e && !e->steps.empty(); }
+double chordFor(const Drawing& d, const std::vector<const Body*>& bodies);
+
+// The drawn bodies' shifts in an exploded view played to `t` (one per body in `bodies`).
+std::vector<DVec3> drawnShifts(const Scene& scene, const std::vector<const Body*>& bodies, const ExplodeState* explode, double t = 1) {
+    std::vector<DVec3> out(bodies.size(), DVec3{0, 0, 0});
+    if (!explodes(explode)) return out;
+    const std::vector<DVec3> all = explodeShifts(scene, *explode, t);
+    const Body* first = scene.bodies().data();
+    for (std::size_t i = 0; i < bodies.size(); ++i) {
+        const std::size_t k = static_cast<std::size_t>(bodies[i] - first);
+        if (k < all.size()) out[i] = all[k];
+    }
+    return out;
+}
+
+// Trail lines: each part's way out, step by step, from where it sits (thin chain lines
+// between the middles of its places).
+void drawTrails(const Drawing& d, const DrawingView& v, const Model& mx, const Scene& scene, const std::vector<const Body*>& bodies, const ExplodeState& ex,
+                SheetGraphics& g) {
+    ViewSetup vs;
+    if (!setupView(d, v, vs)) return;
+    const Projector P = projectorFor(d, v, vs.f, mx.centre());
+    const Body* first = scene.bodies().data();
+    std::vector<char> drawn(scene.bodies().size(), 0);
+    for (const Body* b : bodies) drawn[static_cast<std::size_t>(b - first)] = 1;
+    for (const ExplodeTrail& t : explodeTrails(scene, ex, 1, [&](std::size_t i) { return drawn[i] != 0; })) {
+        const auto a = P(t.from), b = P(t.to);
+        if (std::hypot(b.first - a.first, b.second - a.second) > 0.5) g.lines.push_back({a.first, a.second, b.first, b.second, SheetLine::Center});
+    }
+}
+
+// The parts list of the drawn bodies (a row each: item, quantity, part number, description,
+// material) and each scene body's item number (0: not drawn).
+std::vector<std::array<std::string, 5>> partsRows(const Drawing& d, const Scene& scene, std::vector<int>* itemOfBody) {
+    const std::vector<const Body*> drawn = drawnBodies(d, scene);
+    std::vector<int> item;
+    const auto list = partsList(
+        scene, [&](const Body& b) { return std::find(drawn.begin(), drawn.end(), &b) != drawn.end(); }, &item);
+    if (itemOfBody) {
+        itemOfBody->assign(item.size(), 0);
+        for (std::size_t i = 0; i < item.size(); ++i) (*itemOfBody)[i] = item[i] + 1;
+    }
+    std::vector<std::array<std::string, 5>> rows;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        const BomLine& l = list[i];
+        std::string material = l.material;
+        if (material.empty() && l.firstBody < scene.bodies().size()) material = scene.bodies()[l.firstBody].material.preset;
+        rows.push_back({std::to_string(i + 1), std::to_string(l.quantity), l.number.empty() ? l.part : l.number,
+                        l.description.empty() && !l.number.empty() ? l.part : l.description, material});
+    }
+    return rows;
+}
+
+constexpr double kPartsRow = 7.0;
+constexpr double kPartsWidths[5] = {0.08, 0.08, 0.27, 0.35, 0.22}; // of the title block's width
+
+// Where the parts list stands (x0, y0, x1, y1): on the title block, the width of it, a row
+// for each part and one for the headings.
+std::array<double, 4> partsListRect(const Drawing& d, std::size_t rows, double W) {
+    const double tw = std::min(180.0, W - 20);
+    double x1 = W - 10, y0 = 50 + (d.generalTolerance.empty() ? 0.0 : 5.0);
+    if (d.partsList.x != 0 || d.partsList.y != 0) x1 = d.partsList.x, y0 = d.partsList.y;
+    return {x1 - tw, y0, x1, y0 + kPartsRow * static_cast<double>(rows + 1)};
+}
+
+// Text cut to fit `w` (".." where it was cut).
+std::string fitText(std::string s, double h, double w) {
+    if (textWidth(s, h) <= w) return s;
+    while (!s.empty() && textWidth(s + "..", h) > w) {
+        s.pop_back();
+        while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80) s.pop_back(); // a whole UTF-8 character
+        if (!s.empty() && (static_cast<unsigned char>(s.back()) & 0x80)) s.pop_back();
+    }
+    return s + "..";
+}
+
+void drawPartsList(const Drawing& d, const std::vector<std::array<std::string, 5>>& rows, SheetGraphics& g) {
+    const auto r = partsListRect(d, rows.size(), g.width);
+    const double x0 = r[0], y0 = r[1], x1 = r[2], y1 = r[3], tw = x1 - x0;
+    g.lines.push_back({x0, y0, x1, y0, SheetLine::Border});
+    g.lines.push_back({x1, y0, x1, y1, SheetLine::Border});
+    g.lines.push_back({x1, y1, x0, y1, SheetLine::Border});
+    g.lines.push_back({x0, y1, x0, y0, SheetLine::Border});
+    g.lines.push_back({x0, y0 + kPartsRow, x1, y0 + kPartsRow, SheetLine::Border}); // the headings' row
+    for (std::size_t k = 2; k <= rows.size(); ++k) g.lines.push_back({x0, y0 + kPartsRow * static_cast<double>(k), x1, y0 + kPartsRow * static_cast<double>(k)});
+    double cx[6] = {x0, 0, 0, 0, 0, x1};
+    for (int c = 1; c < 5; ++c) cx[c] = cx[c - 1] + tw * kPartsWidths[c - 1];
+    for (int c = 1; c < 5; ++c) g.lines.push_back({cx[c], y0, cx[c], y1});
+    static const char* const kHead[5] = {"ITEM", "QTY", "PART NUMBER", "DESCRIPTION", "MATERIAL"};
+    for (int c = 0; c < 5; ++c) g.texts.push_back({0.5 * (cx[c] + cx[c + 1]), y0 + 2.4, 2.5, 0, 1, kHead[c]});
+    // Item 1 just above the headings, the others on up.
+    const double th = 3.0;
+    for (std::size_t k = 0; k < rows.size(); ++k) {
+        const double y = y0 + kPartsRow * static_cast<double>(k + 1) + 0.5 * (kPartsRow - th);
+        for (int c = 0; c < 5; ++c) {
+            const std::string t = fitText(rows[k][static_cast<std::size_t>(c)], th, cx[c + 1] - cx[c] - 3);
+            if (c < 2) g.texts.push_back({0.5 * (cx[c] + cx[c + 1]), y, th, 0, 1, t});
+            else g.texts.push_back({cx[c] + 1.5, y, th, 0, 0, t});
+        }
+    }
+}
+
+constexpr double kBalloonText = 3.5;
+double balloonRadius(const std::string& number) { return std::max(4.5, 0.5 * textWidth(number, kBalloonText) + 1.5); }
+
+void drawBalloon(SheetGraphics& g, double x, double y, double px, double py, const std::string& number) {
+    const double r = balloonRadius(number);
+    circle(g, x, y, r);
+    g.texts.push_back({x, y - 0.5 * kBalloonText, kBalloonText, 0, 1, number});
+    const double dx = px - x, dy = py - y, l = std::hypot(dx, dy);
+    if (l > r + 0.5) g.lines.push_back({x + dx / l * r, y + dy / l * r, px, py, SheetLine::Thin});
+    // A dot on the part (the leader ends on a surface).
+    std::vector<std::pair<double, double>> dot;
+    for (int k = 0; k < 10; ++k) dot.push_back({px + 0.7 * std::cos(k * kPiD2 / 5), py + 0.7 * std::sin(k * kPiD2 / 5)});
+    g.fills.push_back(dot);
+}
+
+// What laying balloons out on a view needs: the bodies drawn, the model as the view shows
+// it, where it lands on the sheet.
+struct BalloonView {
+    const DrawingView* v = nullptr;
+    std::vector<const Body*> bodies;
+    std::vector<DVec3> shifts;
+    Model m;
+    ViewSetup vs;
+    Projector P{};
+    double x0 = 0, y0 = 0, x1 = 0, y1 = 0; // the view on the sheet
+    double labelRoom = 0;                  // below the view: its name
+    // What the view shows where: the nearest body (index into `bodies`, -1 none) and its depth
+    // in cells `cell` sheet mm square from (gx, gy).
+    double gx = 0, gy = 0, cell = 0.5;
+    int nx = 0, ny = 0;
+    std::vector<int> id;
+    std::vector<double> depth;
+    std::vector<int> inside;                      // cells to the nearest cell showing something else (or nothing)
+    std::vector<std::vector<std::size_t>> cellsOf; // each body's cells
+    int at(int i, int j) const { return i < 0 || j < 0 || i >= nx || j >= ny ? -1 : id[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i)]; }
+    int atSheet(double x, double y) const { return at(static_cast<int>(std::floor((x - gx) / cell)), static_cast<int>(std::floor((y - gy) / cell))); }
+};
+
+bool balloonView(const Drawing& d, const Scene& scene, const std::string& name, const ExplodeState* explode, BalloonView& bv, std::string* why) {
+    auto fail = [&](const std::string& w) {
+        if (why) *why = w;
+        return false;
+    };
+    bv.v = d.view(name);
+    if (!bv.v) return fail("No view named " + name);
+    if (bv.v->kind == ViewKind::Section || bv.v->kind == ViewKind::Flat) return fail("Balloons go on a view of the whole assembly, not a section or a flat pattern");
+    bv.bodies = drawnBodies(d, scene);
+    if (bv.bodies.empty()) return fail("No bodies drawn");
+    bv.shifts = bv.v->exploded ? drawnShifts(scene, bv.bodies, explode) : std::vector<DVec3>(bv.bodies.size(), DVec3{0, 0, 0});
+    bv.m = buildModel(bv.bodies, chordFor(d, bv.bodies), &bv.shifts);
+    if (!bv.m.valid() || !setupView(d, *bv.v, bv.vs)) return fail("Nothing drawn in " + name);
+    bv.P = projectorFor(d, *bv.v, bv.vs.f, bv.m.centre());
+    bv.x0 = bv.y0 = 1e300, bv.x1 = bv.y1 = -1e300;
+    for (const DVec3& q : bv.m.p) {
+        const auto s = bv.P(q);
+        bv.x0 = std::min(bv.x0, s.first), bv.x1 = std::max(bv.x1, s.first), bv.y0 = std::min(bv.y0, s.second), bv.y1 = std::max(bv.y1, s.second);
+    }
+    const DrawingView& v = *bv.v;
+    bv.labelRoom = v.kind == ViewKind::Iso || (v.scale > 0 && std::fabs(v.scale - d.scale) > 1e-12) ? 10 : 0;
+    // The body buffer: each triangle drawn into the cells it covers, the nearest kept.
+    bv.cell = std::max(0.25, std::max(bv.x1 - bv.x0, bv.y1 - bv.y0) / 1200);
+    bv.gx = bv.x0 - bv.cell, bv.gy = bv.y0 - bv.cell;
+    bv.nx = static_cast<int>((bv.x1 - bv.x0) / bv.cell) + 3, bv.ny = static_cast<int>((bv.y1 - bv.y0) / bv.cell) + 3;
+    bv.id.assign(static_cast<std::size_t>(bv.nx) * static_cast<std::size_t>(bv.ny), -1);
+    bv.depth.assign(bv.id.size(), 1e300);
+    const ViewFrame& F = bv.vs.f;
+    for (std::size_t t = 0; t < bv.m.tris.size(); ++t) {
+        std::array<std::pair<double, double>, 3> q;
+        std::array<double, 3> z;
+        for (int k = 0; k < 3; ++k) {
+            const DVec3& p = bv.m.p[static_cast<std::size_t>(bv.m.tris[t][static_cast<std::size_t>(k)])];
+            q[static_cast<std::size_t>(k)] = bv.P(p), z[static_cast<std::size_t>(k)] = ddot(p, F.d);
+        }
+        const double area = (q[1].first - q[0].first) * (q[2].second - q[0].second) - (q[2].first - q[0].first) * (q[1].second - q[0].second);
+        if (std::fabs(area) < 1e-12) continue;
+        const int i0 = std::max(0, static_cast<int>(std::floor((std::min({q[0].first, q[1].first, q[2].first}) - bv.gx) / bv.cell)));
+        const int i1 = std::min(bv.nx - 1, static_cast<int>(std::floor((std::max({q[0].first, q[1].first, q[2].first}) - bv.gx) / bv.cell)));
+        const int j0 = std::max(0, static_cast<int>(std::floor((std::min({q[0].second, q[1].second, q[2].second}) - bv.gy) / bv.cell)));
+        const int j1 = std::min(bv.ny - 1, static_cast<int>(std::floor((std::max({q[0].second, q[1].second, q[2].second}) - bv.gy) / bv.cell)));
+        for (int j = j0; j <= j1; ++j)
+            for (int i = i0; i <= i1; ++i) {
+                const double x = bv.gx + (i + 0.5) * bv.cell, y = bv.gy + (j + 0.5) * bv.cell;
+                const double w0 = ((q[1].first - x) * (q[2].second - y) - (q[2].first - x) * (q[1].second - y)) / area;
+                const double w1 = ((q[2].first - x) * (q[0].second - y) - (q[0].first - x) * (q[2].second - y)) / area;
+                const double w2 = 1 - w0 - w1;
+                if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+                const double zz = w0 * z[0] + w1 * z[1] + w2 * z[2];
+                const std::size_t c = static_cast<std::size_t>(j) * static_cast<std::size_t>(bv.nx) + static_cast<std::size_t>(i);
+                if (zz < bv.depth[c]) bv.depth[c] = zz, bv.id[c] = bv.m.body[t];
+            }
+    }
+    // How far inside what is seen of its body each cell is (chessboard distance, two passes).
+    const int nx = bv.nx, ny = bv.ny;
+    bv.inside.assign(bv.id.size(), 0);
+    auto at = [&](int i, int j) { return static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i); };
+    auto step = [&](int i, int j, int di, int dj) {
+        const std::size_t c = at(i, j);
+        const int ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) return 1;
+        const std::size_t o = at(ii, jj);
+        return bv.id[o] == bv.id[c] ? bv.inside[o] + 1 : 1;
+    };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            const std::size_t c = at(i, j);
+            if (bv.id[c] < 0) continue;
+            bv.inside[c] = std::min({step(i, j, -1, 0), step(i, j, -1, -1), step(i, j, 0, -1), step(i, j, 1, -1)});
+        }
+    for (int j = ny - 1; j >= 0; --j)
+        for (int i = nx - 1; i >= 0; --i) {
+            const std::size_t c = at(i, j);
+            if (bv.id[c] < 0) continue;
+            bv.inside[c] = std::min({bv.inside[c], step(i, j, 1, 0), step(i, j, 1, 1), step(i, j, 0, 1), step(i, j, -1, 1)});
+        }
+    bv.cellsOf.assign(bv.bodies.size(), {});
+    for (std::size_t c = 0; c < bv.id.size(); ++c)
+        if (bv.id[c] >= 0) bv.cellsOf[static_cast<std::size_t>(bv.id[c])].push_back(c);
+    return true;
+}
+
+// The ring balloons stand on round a view: its outline `grow` mm out (more below, where the
+// view's name goes).
+std::array<double, 4> balloonRing(const BalloonView& bv, double grow) { return {bv.x0 - grow, bv.y0 - grow - bv.labelRoom, bv.x1 + grow, bv.y1 + grow}; }
+
+// Where the line from the view's middle through (x, y) leaves the ring.
+std::pair<double, double> ringPoint(const BalloonView& bv, const std::array<double, 4>& R, double x, double y) {
+    const double cx = 0.5 * (bv.x0 + bv.x1), cy = 0.5 * (bv.y0 + bv.y1);
+    double dx = x - cx, dy = y - cy;
+    if (std::hypot(dx, dy) < 1e-9) dx = 0, dy = 1;
+    double t = 1e300;
+    if (dx > 0) t = std::min(t, (R[2] - cx) / dx);
+    if (dx < 0) t = std::min(t, (R[0] - cx) / dx);
+    if (dy > 0) t = std::min(t, (R[3] - cy) / dy);
+    if (dy < 0) t = std::min(t, (R[1] - cy) / dy);
+    return {std::clamp(cx + dx * t, R[0], R[2]), std::clamp(cy + dy * t, R[1], R[3])};
+}
+
+// The leader's end for body `bi` (in bv.bodies): a point of it the view shows, well inside
+// what is seen of it, from which the leader out to the ring crosses as little as it can of
+// the other parts (and of this one). False when none of it can be seen.
+bool anchorPoint(const BalloonView& bv, std::size_t bi, DVec3& out) {
+    const int me = static_cast<int>(bi);
+    std::vector<std::pair<int, int>> cells;
+    // Well inside what is seen of it (2.5 sheet mm in from its outline, less when it is small).
+    const int deep = static_cast<int>(std::ceil(2.5 / bv.cell)), some = static_cast<int>(std::ceil(1.0 / bv.cell));
+    for (int margin : {deep, some, 0}) {
+        for (std::size_t c : bv.cellsOf[bi])
+            if (bv.inside[c] > margin)
+                cells.push_back({static_cast<int>(c % static_cast<std::size_t>(bv.nx)), static_cast<int>(c / static_cast<std::size_t>(bv.nx))});
+        if (!cells.empty()) break;
+    }
+    if (cells.empty()) return false;
+    const std::size_t stride = std::max<std::size_t>(1, cells.size() / 400);
+    const std::array<double, 4> R = balloonRing(bv, 12.5);
+    double best = 1e300;
+    std::pair<int, int> pick = cells[0];
+    for (std::size_t k = 0; k < cells.size(); k += stride) {
+        const double x = bv.gx + (cells[k].first + 0.5) * bv.cell, y = bv.gy + (cells[k].second + 0.5) * bv.cell;
+        const auto q = ringPoint(bv, R, x, y);
+        const double len = std::hypot(q.first - x, q.second - y);
+        const int n = std::max(1, static_cast<int>(len / 0.5));
+        double cost = 0.02 * len;
+        int last = me;
+        for (int s = 1; s <= n; ++s) {
+            const double t = static_cast<double>(s) / n;
+            const int c = bv.atSheet(x + (q.first - x) * t, y + (q.second - y) * t);
+            if (c >= 0) cost += c == me ? 0.15 : 1.0;
+            if (c != last && c >= 0 && c != me) cost += 4; // crossing into another part's outline
+            last = c;
+        }
+        if (cost < best) best = cost, pick = cells[k];
+    }
+    // Back into the model: the point of the part under that cell.
+    const std::size_t c = static_cast<std::size_t>(pick.second) * static_cast<std::size_t>(bv.nx) + static_cast<std::size_t>(pick.first);
+    const double x = bv.gx + (pick.first + 0.5) * bv.cell, y = bv.gy + (pick.second + 0.5) * bv.cell;
+    const ViewFrame& F = bv.vs.f;
+    const double a = (x - bv.P.sx) / bv.P.scale + bv.P.cx, b = (y - bv.P.sy) / bv.P.scale + bv.P.cy;
+    out = F.r * a + F.u * b + F.d * bv.depth[c];
+    return true;
+}
+
+// Balloon circles on a ring round the view, each where the line from the view's middle
+// through its leader's end meets the ring, then spaced out along the ring keeping their
+// order (so leaders don't cross). `fixed`: circles already there, left where they are.
+std::vector<std::pair<double, double>> ringPlaces(const BalloonView& bv, const std::vector<std::pair<double, double>>& ends, const std::vector<double>& radii,
+                                                  const std::vector<std::array<double, 3>>& fixed, double W, double H, const std::array<double, 4>& keepOut) {
+    const std::size_t n = ends.size();
+    std::vector<std::pair<double, double>> out(n);
+    if (!n) return out;
+    double rmax = 0;
+    for (double r : radii) rmax = std::max(rmax, r);
+    const double cx = 0.5 * (bv.x0 + bv.x1), cy = 0.5 * (bv.y0 + bv.y1), sep = 2 * rmax + 2.5;
+    double grow = 8 + rmax;
+    for (int attempt = 0; attempt < 8; ++attempt, grow += 6) {
+        const std::array<double, 4> R = balloonRing(bv, grow);
+        const double X0 = R[0], Y0 = R[1], X1 = R[2], Y1 = R[3];
+        const double w = X1 - X0, h = Y1 - Y0, P = 2 * (w + h);
+        if (static_cast<double>(n + fixed.size()) * sep > P && attempt < 7) continue;
+        auto at = [&](double s) -> std::pair<double, double> {
+            s = std::fmod(std::fmod(s, P) + P, P);
+            if (s < w) return {X0 + s, Y0};
+            if ((s -= w) < h) return {X1, Y0 + s};
+            if ((s -= h) < w) return {X1 - s, Y1};
+            return {X0, Y1 - (s - w)};
+        };
+        auto param = [&](double x, double y) {
+            if (std::fabs(y - Y0) < 1e-9) return x - X0;
+            if (std::fabs(x - X1) < 1e-9) return w + (y - Y0);
+            if (std::fabs(y - Y1) < 1e-9) return w + h + (X1 - x);
+            return 2 * w + h + (Y1 - y);
+        };
+        auto onRing = [&](double ex, double ey) {
+            double dx = ex - cx, dy = ey - cy;
+            if (std::hypot(dx, dy) < 1e-9) dx = 0, dy = 1;
+            double t = 1e300;
+            if (dx > 0) t = std::min(t, (X1 - cx) / dx);
+            if (dx < 0) t = std::min(t, (X0 - cx) / dx);
+            if (dy > 0) t = std::min(t, (Y1 - cy) / dy);
+            if (dy < 0) t = std::min(t, (Y0 - cy) / dy);
+            double x = std::clamp(cx + dx * t, X0, X1), y = std::clamp(cy + dy * t, Y0, Y1);
+            // Snap to the side it is on.
+            const double dl = std::fabs(x - X0), dr = std::fabs(x - X1), db = std::fabs(y - Y0), dt = std::fabs(y - Y1);
+            const double mn = std::min({dl, dr, db, dt});
+            if (mn == db) y = Y0;
+            else if (mn == dr) x = X1;
+            else if (mn == dt) y = Y1;
+            else x = X0;
+            return param(x, y);
+        };
+        // The new circles and the fixed ones (which stay put), in order round the ring.
+        struct Slot {
+            double s;
+            int idx; // -1: fixed
+        };
+        std::vector<Slot> slots;
+        for (std::size_t i = 0; i < n; ++i) slots.push_back({onRing(ends[i].first, ends[i].second), static_cast<int>(i)});
+        for (const auto& f : fixed) slots.push_back({onRing(f[0], f[1]), -1});
+        std::stable_sort(slots.begin(), slots.end(), [](const Slot& a, const Slot& b) { return a.s < b.s; });
+        const std::size_t m = slots.size();
+        for (int it = 0; it < 2000 && m > 1; ++it) {
+            bool moved = false;
+            for (std::size_t i = 0; i < m; ++i) {
+                Slot &a = slots[i], &b = slots[(i + 1) % m];
+                const double gap = i + 1 < m ? b.s - a.s : b.s + P - a.s;
+                if (gap >= sep - 1e-9) continue;
+                const double push = sep - gap;
+                if (a.idx < 0 && b.idx < 0) continue;
+                if (a.idx < 0) b.s += push;
+                else if (b.idx < 0) a.s -= push;
+                else a.s -= push / 2, b.s += push / 2;
+                moved = true;
+            }
+            if (!moved) break;
+        }
+        for (const Slot& sl : slots) {
+            if (sl.idx < 0) continue;
+            auto p = at(sl.s);
+            const double r = radii[static_cast<std::size_t>(sl.idx)];
+            p.first = std::clamp(p.first, 10 + r + 1, W - 10 - r - 1);
+            p.second = std::clamp(p.second, 10 + r + 1, H - 10 - r - 1);
+            // Off the title block (and the parts list on it): above them.
+            if (p.first + r > keepOut[0] && p.first - r < keepOut[2] && p.second - r < keepOut[3] && p.second + r > keepOut[1]) p.second = keepOut[3] + r + 1;
+            out[static_cast<std::size_t>(sl.idx)] = p;
+        }
+        return out;
+    }
+    return out;
+}
+
+// The title block, and the parts list on it when shown: where balloons must not go.
+std::array<double, 4> keepOutRect(const Drawing& d, const Scene& scene, double W) {
+    std::array<double, 4> r{W - 10 - std::min(180.0, W - 20), 10, W - 10, 50};
+    if (d.partsList.shown) {
+        const auto t = partsListRect(d, partsRows(d, scene, nullptr).size(), W);
+        r = {std::min(r[0], t[0]), std::min(r[1], t[1]), std::max(r[2], t[2]), std::max(r[3], t[3])};
+    }
+    return r;
+}
+
 void drawSheetFrame(const Drawing& d, SheetGraphics& g) {
     const double W = g.width, H = g.height, b = 10;
     auto L = [&](double x0, double y0, double x1, double y1, SheetLine::Style s = SheetLine::Thin) { g.lines.push_back({x0, y0, x1, y1, s}); };
@@ -1198,18 +1590,24 @@ double chordFor(const Drawing& d, const std::vector<const Body*>& bodies) {
 
 } // namespace
 
-void placeView(Drawing& d, const Scene& scene, DrawingView& v) {
+void placeView(Drawing& d, const Scene& scene, DrawingView& v, const ExplodeState* explode) {
     double W = 0, H = 0;
     if (!sheetSize(d.sheet, W, H)) W = 420, H = 297;
     if (!d.landscape) std::swap(W, H);
     const Model m = modelFor(d, scene, 1e9);
+    Model mx;
+    if (explodes(explode) && (v.exploded || std::any_of(d.views.begin(), d.views.end(), [](const DrawingView& o) { return o.exploded; }))) {
+        const std::vector<const Body*> bodies = drawnBodies(d, scene);
+        const std::vector<DVec3> shifts = drawnShifts(scene, bodies, explode);
+        mx = buildModel(bodies, 1e9, &shifts);
+    }
     std::map<std::string, Model> flats;
     for (const DrawingView& o : d.views)
         if (o.kind == ViewKind::Flat) flats[upper(o.name)] = flatModel(scene, o, nullptr);
     if (v.kind == ViewKind::Flat && !flats.count(upper(v.name))) flats[upper(v.name)] = flatModel(scene, v, nullptr);
     auto extentOf = [&](const DrawingView& o) {
         const auto it = o.kind == ViewKind::Flat ? flats.find(upper(o.name)) : flats.end();
-        return viewExtent(d, it != flats.end() ? it->second : m, o);
+        return viewExtent(d, it != flats.end() ? it->second : o.exploded && mx.valid() ? mx : m, o);
     };
     const DrawingView* front = d.view("Front");
     const double s = v.scale > 0 ? v.scale : d.scale, gap = 18;
@@ -1218,18 +1616,19 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v) {
         v.x = W * 0.35, v.y = H * 0.55;
         return;
     }
-    const auto fe = viewExtent(d, m, *front);
+    const auto fe = extentOf(*front);
     const double fs = front->scale > 0 ? front->scale : d.scale;
     const double dx = fs * fe.first / 2 + s * ext.first / 2 + gap, dy = fs * fe.second / 2 + s * ext.second / 2 + gap;
     const double sg = d.thirdAngle ? 1.0 : -1.0; // third angle: views where they are seen from
     v.x = front->x, v.y = front->y;
-    switch (v.kind) {
+    // An exploded view isn't lined up with the others: it goes where there is room.
+    switch (v.exploded && v.kind != ViewKind::Section ? ViewKind::Flat : v.kind) {
     case ViewKind::Top: v.y = front->y + sg * dy; break;
     case ViewKind::Bottom: v.y = front->y - sg * dy; break;
     case ViewKind::Right: v.x = front->x + sg * dx; break;
     case ViewKind::Left: v.x = front->x - sg * dx; break;
     case ViewKind::Back: {
-        const DrawingView side{"", d.thirdAngle ? ViewKind::Right : ViewKind::Left, 0, 0, 0, true, "", true, 0, false, ""};
+        const DrawingView side{"", d.thirdAngle ? ViewKind::Right : ViewKind::Left, 0, 0, 0, true, "", true, 0, false, "", false};
         const auto se = viewExtent(d, m, side);
         v.x = front->x + dx + s * se.first + gap;
         break;
@@ -1240,16 +1639,17 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v) {
         break;
     case ViewKind::Section:
     case ViewKind::Flat: {
-        // The free place nearest its parent (a flat pattern: the front view): clear of the
-        // other views and the title block.
+        // The free place nearest its parent (a flat pattern or an exploded view: the front
+        // view): clear of the other views, the title block and the parts list.
         const DrawingView* p = v.kind == ViewKind::Section ? d.view(v.parent) : nullptr;
         const DrawingView& base = p ? *p : *front;
-        const double hw = s * ext.first / 2 + gap / 2, hh = s * ext.second / 2 + gap / 2 + 4; // + its label below
+        const double ring = v.exploded ? 14 : 0; // room for balloons round an exploded view
+        const double hw = s * ext.first / 2 + gap / 2 + ring, hh = s * ext.second / 2 + gap / 2 + 4 + ring; // + its label below
         // It reads best on the side the viewer of the cut stands, level with the parent.
         double px = 1, py = 0;
         ViewSetup ps, ss;
         if (p && setupView(d, *p, ps) && setupView(d, v, ss)) px = -ddot(ss.f.d, ps.f.r), py = -ddot(ss.f.d, ps.f.u);
-        const bool anyWay = v.kind == ViewKind::Flat;
+        const bool anyWay = v.kind != ViewKind::Section;
         std::vector<std::array<double, 4>> taken; // x0 y0 x1 y1
         for (const DrawingView& o : d.views) {
             if (&o == &v) continue;
@@ -1260,6 +1660,10 @@ void placeView(Drawing& d, const Scene& scene, DrawingView& v) {
             taken.push_back({o.x - os * oe.first / 2 - m2, o.y - os * oe.second / 2 - m2, o.x + os * oe.first / 2 + m2, o.y + os * oe.second / 2 + m2});
         }
         taken.push_back({W - 10 - 180, 0, W, 10 + 40 + 6}); // the title block
+        if (d.partsList.shown) {
+            const auto r = partsListRect(d, partsRows(d, scene, nullptr).size(), W);
+            taken.push_back({r[0] - gap / 2, r[1], r[2], r[3] + gap / 2});
+        }
         auto freeAt = [&](double x, double y) {
             if (x - hw < 10 || x + hw > W - 10 || y - hh < 10 || y + hh > H - 10) return false;
             for (const auto& t : taken)
@@ -1294,7 +1698,7 @@ Drawing defaultDrawing(const Scene& scene, const std::vector<std::string>& bodie
     if (!landscape) std::swap(W, H);
     const Model m = modelFor(d, scene, 1e9);
     if (!m.valid()) return d;
-    auto extentOf = [&](ViewKind k) { return viewExtent(d, m, DrawingView{"", k, 0, 0, 0, true, "", true, 0, false, ""}); };
+    auto extentOf = [&](ViewKind k) { return viewExtent(d, m, DrawingView{"", k, 0, 0, 0, true, "", true, 0, false, "", false}); };
     const auto F = extentOf(ViewKind::Front), T = extentOf(ViewKind::Top), R = extentOf(ViewKind::Right), I = extentOf(ViewKind::Iso);
     // Front and right side by side, the top above or below the front, the isometric in
     // the corner above the title block: the largest standard scale that fits.
@@ -1310,10 +1714,10 @@ Drawing defaultDrawing(const Scene& scene, const std::vector<std::string>& bodie
     const double used = s * (R.first + F.first) + g;
     const double left = border + g + std::max(0.0, (room - used - g) / 2);
     const double topY = H - border - g;
-    DrawingView front{"Front", ViewKind::Front, 0, 0, 0, true, "", true, 0, false, ""};
-    DrawingView right{"Right", ViewKind::Right, 0, 0, 0, true, "", true, 0, false, ""};
-    DrawingView top{"Top", ViewKind::Top, 0, 0, 0, true, "", true, 0, false, ""};
-    DrawingView iso{"Isometric", ViewKind::Iso, 0, 0, 0, false, "", true, 0, false, ""};
+    DrawingView front{"Front", ViewKind::Front, 0, 0, 0, true, "", true, 0, false, "", false};
+    DrawingView right{"Right", ViewKind::Right, 0, 0, 0, true, "", true, 0, false, "", false};
+    DrawingView top{"Top", ViewKind::Top, 0, 0, 0, true, "", true, 0, false, "", false};
+    DrawingView iso{"Isometric", ViewKind::Iso, 0, 0, 0, false, "", true, 0, false, "", false};
     const double rowsH = s * (F.second + T.second) + g;
     const double y0 = std::min(topY, border + g + rowsH + std::max(0.0, (H - 2 * border - 2 * g - rowsH) / 2));
     if (thirdAngle) {
@@ -1351,6 +1755,40 @@ Drawing defaultDrawing(const Scene& scene, const std::vector<std::string>& bodie
     return d;
 }
 
+Drawing assemblyDrawing(const Scene& scene, const std::vector<std::string>& bodies, const std::string& sheet, bool landscape, bool thirdAngle, double scale,
+                        const ExplodeState* explode) {
+    Drawing d;
+    d.sheet = sheet;
+    d.landscape = landscape;
+    d.thirdAngle = thirdAngle;
+    d.bodies = bodies;
+    d.partsList.shown = true;
+    double W = 0, H = 0;
+    if (!sheetSize(sheet, W, H)) W = 420, H = 297, d.sheet = "A3";
+    if (!landscape) std::swap(W, H);
+    const std::vector<const Body*> drawn = drawnBodies(d, scene);
+    if (drawn.empty()) return d;
+    DrawingView iso{explodes(explode) ? "Exploded view" : "Isometric", ViewKind::Iso, 0, 0, 0, false, "", true, 0, false, "", explodes(explode)};
+    const std::vector<DVec3> shifts = drawnShifts(scene, drawn, iso.exploded ? explode : nullptr);
+    const Model m = buildModel(drawn, 1e9, &shifts);
+    if (!m.valid()) return d;
+    const auto e = viewExtent(d, m, iso);
+    // The room the parts list leaves: above it across the sheet, or beside it full height
+    // (whichever takes the larger picture), with a ring round the view for the balloons.
+    const auto list = partsListRect(d, partsRows(d, scene, nullptr).size(), W);
+    const double border = 10, ring = 16;
+    const std::array<double, 4> above{border + ring, list[3] + ring, W - border - ring, H - border - ring};
+    const std::array<double, 4> beside{border + ring, border + ring, list[0] - ring, H - border - ring};
+    auto fit = [&](const std::array<double, 4>& r) {
+        return std::min((r[2] - r[0]) / std::max(e.first, 1e-9), (r[3] - r[1]) / std::max(e.second, 1e-9));
+    };
+    const std::array<double, 4>& room = fit(above) >= fit(beside) ? above : beside;
+    d.scale = scale > 0 ? scale : standardScale(std::max(fit(room), 1e-9));
+    iso.x = 0.5 * (room[0] + room[2]), iso.y = 0.5 * (room[1] + room[3]);
+    d.views = {iso};
+    return d;
+}
+
 int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView) {
     const Model m = modelFor(d, scene, chordFor(d, drawnBodies(d, scene)));
     if (!m.valid()) return 0;
@@ -1368,6 +1806,7 @@ int autoDimension(Drawing& d, const Scene& scene, const std::string& onlyView) {
     bool depthDone = false;
     for (const DrawingView& v : d.views) {
         if (!onlyView.empty() && upper(v.name) != upper(onlyView)) continue;
+        if (v.exploded) continue; // an exploded view shows how it goes together, not sizes
         if (v.kind == ViewKind::Flat) { // the flat pattern's overall sizes
             const Model fm = flatModel(scene, v, nullptr);
             if (!fm.valid()) continue;
@@ -1487,7 +1926,7 @@ const DrawingView* endOnView(const Drawing& d, const DVec3& into, const std::str
     const DrawingView* best = nullptr;
     double bestDot = 0;
     for (const DrawingView& v : d.views) {
-        if (v.kind == ViewKind::Iso || v.kind == ViewKind::Section || v.kind == ViewKind::Flat) continue;
+        if (v.kind == ViewKind::Iso || v.kind == ViewKind::Section || v.kind == ViewKind::Flat || v.exploded) continue;
         if (!onlyView.empty() && upper(v.name) != upper(onlyView)) continue;
         const double c = ddot(frameOf(v.kind).d, into);
         if (std::fabs(c) < 0.999) continue;
@@ -1657,6 +2096,123 @@ int autoCallouts(Drawing& d, const Scene& scene, const std::string& onlyView) {
     return added;
 }
 
+// --- balloons and the parts list --------------------------------------------------------------
+
+std::vector<std::array<std::string, 5>> drawingPartsRows(const Drawing& d, const Scene& scene, std::vector<int>* itemOfBody) {
+    return partsRows(d, scene, itemOfBody);
+}
+
+namespace {
+
+// Where balloons go when no view is named: an exploded view, else the isometric, else the
+// front, else any whole view.
+const DrawingView* balloonDefaultView(const Drawing& d) {
+    for (const DrawingView& v : d.views)
+        if (v.exploded) return &v;
+    for (ViewKind k : {ViewKind::Iso, ViewKind::Front})
+        for (const DrawingView& v : d.views)
+            if (v.kind == k) return &v;
+    for (const DrawingView& v : d.views)
+        if (v.kind != ViewKind::Section && v.kind != ViewKind::Flat) return &v;
+    return nullptr;
+}
+
+void sheetExtent(const Drawing& d, double& W, double& H) {
+    if (!sheetSize(d.sheet, W, H)) W = 420, H = 297;
+    if (!d.landscape) std::swap(W, H);
+}
+
+} // namespace
+
+int autoBalloons(Drawing& d, const Scene& scene, const std::string& view, const ExplodeState* explode, std::string* why) {
+    const DrawingView* v = view.empty() ? balloonDefaultView(d) : d.view(view);
+    if (!v) {
+        if (why) *why = view.empty() ? "No view to put balloons on" : "No view named " + view;
+        return 0;
+    }
+    const std::string name = v->name;
+    BalloonView bv;
+    if (!balloonView(d, scene, name, explode, bv, why)) return 0;
+    std::vector<int> itemOf;
+    const auto rows = partsRows(d, scene, &itemOf);
+    const Body* first = scene.bodies().data();
+    struct Made {
+        std::size_t bi;
+        DVec3 at;
+        int item;
+    };
+    std::vector<Made> made;
+    std::string hidden;
+    for (int item = 1; item <= static_cast<int>(rows.size()); ++item) {
+        bool done = false;
+        for (std::size_t bi = 0; bi < bv.bodies.size() && !done; ++bi) {
+            if (itemOf[static_cast<std::size_t>(bv.bodies[bi] - first)] != item) continue;
+            DVec3 p;
+            if (anchorPoint(bv, bi, p)) made.push_back({bi, p, item}), done = true;
+        }
+        if (!done) hidden += (hidden.empty() ? "" : ", ") + std::to_string(item);
+    }
+    std::erase_if(d.balloons, [&](const DrawingBalloon& b) { return b.view == name; });
+    if (made.empty()) {
+        if (why) *why = "No part of the parts list can be seen in " + name;
+        return 0;
+    }
+    std::vector<std::pair<double, double>> ends;
+    std::vector<double> radii;
+    for (const Made& mk : made) ends.push_back(bv.P(mk.at)), radii.push_back(balloonRadius(std::to_string(mk.item)));
+    double W, H;
+    sheetExtent(d, W, H);
+    const auto places = ringPlaces(bv, ends, radii, {}, W, H, keepOutRect(d, scene, W));
+    for (std::size_t k = 0; k < made.size(); ++k) {
+        const Body& b = *bv.bodies[made[k].bi];
+        d.balloons.push_back({name, b.name, made[k].at - bv.shifts[made[k].bi] - decimal(b.offset), places[k].first, places[k].second});
+    }
+    if (why) *why = hidden.empty() ? std::string() : "item " + hidden + (hidden.find(',') == std::string::npos ? " is" : " are") + " hidden in " + name;
+    return static_cast<int>(made.size());
+}
+
+bool addBalloon(Drawing& d, const Scene& scene, const std::string& view, const std::string& body, double x, double y, const ExplodeState* explode,
+                std::string* why) {
+    const DrawingView* v = view.empty() ? balloonDefaultView(d) : d.view(view);
+    if (!v) {
+        if (why) *why = view.empty() ? "No view to put a balloon on" : "No view named " + view;
+        return false;
+    }
+    const std::string name = v->name;
+    BalloonView bv;
+    if (!balloonView(d, scene, name, explode, bv, why)) return false;
+    std::size_t bi = 0;
+    auto lower = [](std::string t) {
+        for (char& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return t;
+    };
+    while (bi < bv.bodies.size() && lower(bv.bodies[bi]->name) != lower(body)) ++bi;
+    if (bi == bv.bodies.size()) {
+        if (why) *why = "No body named " + body + " is drawn";
+        return false;
+    }
+    DVec3 p;
+    if (!anchorPoint(bv, bi, p)) {
+        if (why) *why = bv.bodies[bi]->name + " can't be seen in " + name + " (other parts are in front of it)";
+        return false;
+    }
+    if (x == 0 && y == 0) {
+        std::vector<int> itemOf;
+        partsRows(d, scene, &itemOf);
+        const int item = itemOf[static_cast<std::size_t>(bv.bodies[bi] - scene.bodies().data())];
+        std::vector<std::array<double, 3>> fixed;
+        for (const DrawingBalloon& o : d.balloons)
+            if (o.view == name) fixed.push_back({o.x, o.y, 4.5});
+        double W, H;
+        sheetExtent(d, W, H);
+        const auto pl = ringPlaces(bv, {bv.P(p)}, {balloonRadius(std::to_string(item))}, fixed, W, H, keepOutRect(d, scene, W));
+        x = pl[0].first, y = pl[0].second;
+    }
+    const Body& b = *bv.bodies[bi];
+    d.balloons.push_back({name, b.name, p - bv.shifts[bi] - decimal(b.offset), x, y});
+    return true;
+}
+
 double dimensionValue(const Drawing& d, const DrawingDim& dim) {
     const DrawingView* v = d.view(dim.view);
     ViewSetup vs;
@@ -1784,7 +2340,7 @@ bool dimensionLimits(const Drawing& d, const DrawingDim& dim, double& high, doub
     }
 }
 
-SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
+SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality, const ExplodeState* explode) {
     SheetGraphics g;
     if (!sheetSize(d.sheet, g.width, g.height)) g.width = 420, g.height = 297;
     if (!d.landscape) std::swap(g.width, g.height);
@@ -1794,7 +2350,12 @@ SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
         g.warnings.push_back("No bodies to draw");
         return g;
     }
-    const Model m = buildModel(bodies, chordFor(d, bodies));
+    const double chord = chordFor(d, bodies);
+    const Model m = buildModel(bodies, chord);
+    // Exploded views: the bodies moved apart.
+    const bool anyExploded = explodes(explode) && std::any_of(d.views.begin(), d.views.end(), [](const DrawingView& v) { return v.exploded; });
+    const std::vector<DVec3> shifts = anyExploded ? drawnShifts(scene, bodies, explode) : std::vector<DVec3>{};
+    const Model mx = anyExploded ? buildModel(bodies, chord, &shifts) : Model{};
     // Flat views draw their own models: the flat patterns.
     std::map<std::string, Model> flats;
     std::map<std::string, std::vector<FlatBend>> flatBends;
@@ -1802,7 +2363,9 @@ SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
         if (v.kind == ViewKind::Flat) flats[upper(v.name)] = flatModel(scene, v, &flatBends[upper(v.name)]);
     auto modelOf = [&](const std::string& view) -> const Model& {
         const auto it = flats.find(upper(view));
-        return it != flats.end() ? it->second : m;
+        if (it != flats.end()) return it->second;
+        const DrawingView* v = d.view(view);
+        return v && v->exploded && anyExploded ? mx : m;
     };
     std::vector<std::pair<std::string, std::array<double, 4>>> rects; // where each view landed
     for (const DrawingView& v : d.views) {
@@ -1814,6 +2377,7 @@ SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
         }
         drawView(d, v, vm, g, std::max(1, quality), &ext);
         if (v.kind == ViewKind::Flat) drawBends(d, v, vm, flatBends[upper(v.name)], g);
+        if (v.exploded && anyExploded && explode->trails) drawTrails(d, v, mx, scene, bodies, *explode, g);
         if (!ext.empty()) rects.push_back({v.name, {ext["x0"], ext["y0"], ext["x1"], ext["y1"]}});
         // The view's name under it (sections, flat patterns and the isometric; standard views go unlabelled in their places).
         if (v.kind == ViewKind::Section || v.kind == ViewKind::Iso || v.kind == ViewKind::Flat || (v.scale > 0 && std::fabs(v.scale - d.scale) > 1e-12)) {
@@ -1834,6 +2398,31 @@ SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
     for (const DrawingFinish& f : d.finishes) drawFinish(d, f, modelOf(f.view), g);
     for (const DrawingCallout& c : d.callouts) drawCallout(d, c, modelOf(c.view), g);
     for (const DrawingNote& n : d.notes) g.texts.push_back({n.x, n.y, n.height, 0, 0, n.text});
+    // The parts list, and balloons with its item numbers.
+    std::vector<int> itemOf;
+    std::vector<std::array<std::string, 5>> rows;
+    if (!d.balloons.empty() || d.partsList.shown) rows = partsRows(d, scene, &itemOf);
+    if (d.partsList.shown) drawPartsList(d, rows, g);
+    const std::vector<DVec3> allShifts = anyExploded ? explodeShifts(scene, *explode, 1) : std::vector<DVec3>{};
+    for (const DrawingBalloon& b : d.balloons) {
+        const DrawingView* v = d.view(b.view);
+        std::size_t k = 0;
+        while (k < scene.bodies().size() && scene.bodies()[k].name != b.body) ++k;
+        if (k == scene.bodies().size() || !v) {
+            g.warnings.push_back("A balloon points at " + b.body + (v ? ", which is gone" : " in a view that is gone") + ": SHEET BALLOONS makes them again");
+            continue;
+        }
+        if (itemOf[k] <= 0) {
+            g.warnings.push_back("A balloon points at " + b.body + ", which isn't drawn");
+            continue;
+        }
+        ViewSetup vs;
+        if (!setupView(d, *v, vs)) continue;
+        DVec3 at = decimal(scene.bodies()[k].offset) + b.at;
+        if (v->exploded && anyExploded) at = at + allShifts[k];
+        const auto p = projectorFor(d, *v, vs.f, modelOf(v->name).centre())(at);
+        drawBalloon(g, b.x, b.y, p.first, p.second, std::to_string(itemOf[k]));
+    }
     // Views that do not fit: off the sheet, on the title block or on each other.
     const double W = g.width, H = g.height, tol = 0.5;
     const std::array<double, 4> block{W - 10 - std::min(180.0, W - 20), 10, W - 10, 50};
@@ -1845,6 +2434,8 @@ SheetGraphics renderDrawing(const Drawing& d, const Scene& scene, int quality) {
         if (r[0] < 10 - tol || r[1] < 10 - tol || r[2] > W - 10 + tol || r[3] > H - 10 + tol)
             g.warnings.push_back(rects[i].first + " runs off the sheet: a smaller scale (SHEET SCALE) or a larger sheet (SHEET SIZE)");
         else if (meets(r, block)) g.warnings.push_back(rects[i].first + " is on the title block: move it (SHEET VIEW MOVE) or use a smaller scale");
+        else if (d.partsList.shown && meets(r, partsListRect(d, rows.size(), W)))
+            g.warnings.push_back(rects[i].first + " is on the parts list: move one (SHEET VIEW MOVE, SHEET PARTSLIST AT) or use a smaller scale");
         for (std::size_t j = i + 1; j < rects.size(); ++j)
             if (meets(r, rects[j].second)) g.warnings.push_back(rects[i].first + " and " + rects[j].first + " overlap: move one (SHEET VIEW MOVE) or use a smaller scale");
     }
@@ -2165,6 +2756,7 @@ Json drawingToJson(const Drawing& d) {
         o.set("name", v.name).set("kind", viewKindName(v.kind)).set("x", v.x).set("y", v.y).set("scale", v.scale).set("hidden", v.hidden);
         if (v.kind == ViewKind::Section) o.set("parent", v.parent).set("vertical", v.vertical).set("cut", v.cut).set("flip", v.flip);
         if (v.kind == ViewKind::Flat) o.set("body", v.body);
+        if (v.exploded) o.set("exploded", true);
         views.push(o);
     }
     j.set("views", views);
@@ -2213,6 +2805,13 @@ Json drawingToJson(const Drawing& d) {
             callouts.push(Json::object().set("view", c.view).set("at", point(c.at)).set("radius", c.radius).set("text", c.text).set("dx", c.dx).set("dy", c.dy));
         j.set("callouts", callouts);
     }
+    if (!d.balloons.empty()) {
+        Json balloons = Json::array();
+        for (const DrawingBalloon& b : d.balloons)
+            balloons.push(Json::object().set("view", b.view).set("body", b.body).set("at", point(b.at)).set("x", b.x).set("y", b.y));
+        j.set("balloons", balloons);
+    }
+    if (d.partsList.shown) j.set("parts_list", Json::object().set("x", d.partsList.x).set("y", d.partsList.y));
     if (!d.generalTolerance.empty()) j.set("general_tolerance", d.generalTolerance);
     Json notes = Json::array();
     for (const DrawingNote& n : d.notes) notes.push(Json::object().set("x", n.x).set("y", n.y).set("height", n.height).set("text", n.text));
@@ -2238,6 +2837,7 @@ bool drawingFromJson(const Json& j, Drawing& d) {
         v.x = o["x"].asNumber(0), v.y = o["y"].asNumber(0), v.scale = o["scale"].asNumber(0), v.hidden = o["hidden"].asBool(true);
         v.parent = o["parent"].asString(""), v.vertical = o["vertical"].asBool(true), v.cut = o["cut"].asNumber(0), v.flip = o["flip"].asBool(false);
         v.body = o["body"].asString("");
+        v.exploded = o["exploded"].asBool(false);
         d.views.push_back(v);
     }
     static const char* kDims[] = {"horizontal", "vertical", "aligned", "diameter", "radius"};
@@ -2284,6 +2884,13 @@ bool drawingFromJson(const Json& j, Drawing& d) {
         d.finishes.push_back({o["ra"].asNumber(1.6), o["process"].asInt(0), o["view"].asString(""), point(o["at"]), o["dx"].asNumber(0), o["dy"].asNumber(0)});
     for (const Json& o : j["callouts"].items())
         d.callouts.push_back({o["view"].asString(""), point(o["at"]), o["radius"].asNumber(1), o["text"].asString(""), o["dx"].asNumber(0), o["dy"].asNumber(0)});
+    for (const Json& o : j["balloons"].items()) {
+        DrawingBalloon b;
+        b.view = o["view"].asString(""), b.body = o["body"].asString(""), b.at = point(o["at"]);
+        b.x = o["x"].asNumber(0), b.y = o["y"].asNumber(0);
+        if (!b.view.empty() && !b.body.empty()) d.balloons.push_back(std::move(b));
+    }
+    if (const Json& pl = j["parts_list"]; pl.isObject()) d.partsList = {true, pl["x"].asNumber(0), pl["y"].asNumber(0)};
     d.generalTolerance = j["general_tolerance"].asString("");
     for (const Json& o : j["notes"].items()) d.notes.push_back({o["x"].asNumber(0), o["y"].asNumber(0), o["height"].asNumber(3.5), o["text"].asString("")});
     if (j["title"].isObject())

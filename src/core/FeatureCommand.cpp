@@ -3079,7 +3079,11 @@ bool regenerateHistory(Document& doc, const std::vector<HistoryStep>& steps, Com
     const int sb = doc.selectedBody, sc = doc.selectedCurve, si = doc.selectedImage, serial = doc.primitiveSerial;
     const bool mm = doc.apiMillimeters;
     doc.scene.clear();
-    doc.state.assembly = {}; // the MATE steps put the mates back
+    { // the MATE steps put the mates back; the exploded view is a way of showing them, kept
+        ExplodeState explode = std::move(doc.state.assembly.explode);
+        doc.state.assembly = {};
+        doc.state.assembly.explode = std::move(explode);
+    }
     doc.clearSelection();
     doc.primitiveSerial = 0;
     doc.state.plane = SketchPlane::Top;

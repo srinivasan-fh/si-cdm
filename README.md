@@ -354,6 +354,9 @@ Details: [docs/cad.md](docs/cad.md).
   (`COMPONENT INSERT shaft AT 40,0,10`). Every assembly that uses a file updates when it changes,
   keeping where each instance was placed. `COMPONENT PACK` gathers an assembly and its files into
   one folder.
+- **Exploded views:** the parts drawn apart, step by step along their directions, made
+  automatically or by hand (`EXPLODE AUTO`). The 3D window explodes and collapses them, and
+  drawings show them.
 
 ```text
 MATE CONCENTRIC "Plate" AT 19,0,5 "Pin" AT 115,50,24      MATE FLUSH "Plate" AT 0,0,0 "Pin" AT 15,0,-3
@@ -377,6 +380,8 @@ Details: [docs/assembly.md](docs/assembly.md).
   (H7, g6...); feature control frames for all 14 characteristics with Ø zones, MMC / LMC and
   datum references, checked against ISO 1101; datum symbols, surface finish marks and the
   ISO 2768 general tolerance.
+- **Assembly drawings:** an exploded view with trail lines, balloons numbered as the parts list,
+  and the parts list above the title block (`EXPLODE AUTO`, then `SHEET NEW ASSEMBLY`).
 - **Sheet:** a title block, notes, and export to PDF, SVG or DXF.
 
 ```text
