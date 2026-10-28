@@ -235,6 +235,10 @@ constexpr CommandSpec kCommands[] = {
      "MATE EDIT n value, FLIP n, SUPPRESS n, DELETE n; MATE SOLVE places the parts again"},
     {"COMPONENT", "COMP LINK", "COMPONENT INSERT file [AS name] [AT x,y,z] [ROTATE rx,ry,rz] | LIST | RELOAD [name] [FORCE] | OPEN name | REPLACE name file | MAKE name FILE file FROM body... | BREAK name | MOVE name dx,dy,dz | ROTATE name rx,ry,rz [ABOUT x,y,z] | PACK folder",
      "Assemblies of part files: link a part (or sub-assembly) file in, as often as needed; it updates when the file changes, keeping where it is here"},
+    {"FACE", "DIRECT PUSHPULL", "FACE INFO|OFFSET|DELETE|MOVE [body] AT x,y,z [DISTANCE d] [BY dx,dy,dz]",
+     "Direct editing of any solid by its faces, picked by a point on them: OFFSET pushes or pulls a face (its neighbours follow; "
+     "a round face makes a hole or boss larger or smaller), DELETE takes away a hole, boss, fillet or chamfer, MOVE moves a hole or boss, "
+     "INFO says what the face is"},
     {"EXPLODE", "EXPLODED", "EXPLODE [LIST] | AUTO [ALONG X|Y|Z|RADIAL] [FACTOR f] [part...] | ADD part... ALONG Z|DIR x,y,z DISTANCE d | EDIT n ... | DELETE n | CLEAR | SHOW | HIDE | TRAILS ON|OFF",
      "Exploded view: steps that move parts (bodies, component instances, sub-assemblies) apart along a direction, one after another. "
      "AUTO stacks the parts apart along an axis (or out from the middle); SHOW and HIDE explode and collapse the 3D view (the parts "

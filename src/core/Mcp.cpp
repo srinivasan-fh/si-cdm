@@ -692,6 +692,20 @@ Json McpServer::toolDefinitions() {
                             return c;
                         }(),
                         {"operation"}));
+        tools.push(tool("face",
+                        "Direct editing: change a solid by its faces, whatever made it (a STEP import, a mesh, a feature), without "
+                        "history. Offset (push / pull) a face along its normal, its neighbours following; make a hole or boss larger "
+                        "or smaller; move a hole or boss; delete a hole, boss, fillet or chamfer. Faces are picked by a point on them.",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "info | offset | delete | move"));
+                            c.set("body", prop("string", "the body (default: the one nearest the point)"));
+                            c.set("at", prop("array", "a point on the face [x, y, z] (mm)"));
+                            c.set("distance", prop("number", "offset: how far along the outward normal (mm; negative: in)"));
+                            c.set("by", prop("array", "move: [dx, dy, dz] (mm)"));
+                            return c;
+                        }(),
+                        {"operation", "at"}));
         tools.push(tool("assembly",
                         "Assemblies: mate parts by their faces (coincident, flush, concentric, distance, angle, parallel, perpendicular; "
                         "planes, axes of round faces and sphere centres picked by a point on the face) and the solver moves the second "
@@ -1299,6 +1313,27 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return textResult("operation is one of revolve, sweep, loft, pattern, mirror, edges, fillet, chamfer, massprops, measure, history, regen, "
                           "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete, drag",
                           true);
+    }
+    if (name == "face") {
+        const std::string op = a["operation"].asString();
+        const auto vec = [&](const Json& v) {
+            std::string t;
+            for (std::size_t i = 0; i < 3; ++i) t += (i ? "," : "") + num(v.isArray() && i < v.size() ? v[i].asNumber() : 0.0);
+            return t;
+        };
+        if (!a["at"].isArray()) return textResult("face needs 'at': a point on the face", true);
+        std::string line = " " + (a["body"].isString() ? quote(a["body"].asString()) + " " : std::string()) + "AT " + vec(a["at"]);
+        if (op == "info") return runLine("FACE INFO" + line);
+        if (op == "offset") {
+            if (!a["distance"].isNumber()) return textResult("offset needs 'distance'", true);
+            return runLine("FACE OFFSET" + line + " DISTANCE " + num(a["distance"].asNumber()));
+        }
+        if (op == "delete") return runLine("FACE DELETE" + line);
+        if (op == "move") {
+            if (!a["by"].isArray()) return textResult("move needs 'by'", true);
+            return runLine("FACE MOVE" + line + " BY " + vec(a["by"]));
+        }
+        return textResult("face operations: info, offset, delete, move", true);
     }
     if (name == "explode") {
         const std::string op = a["operation"].asString();

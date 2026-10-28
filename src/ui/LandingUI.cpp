@@ -1430,6 +1430,12 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         case ToolId::CutKnife:
             ImGui::TextDisabled("%s", tr("Drag a line across a body: the smaller side is cut away and the face capped"));
             break;
+        case ToolId::PushPull:
+            ImGui::TextDisabled("%s", tr("Drag a face along its normal (Shift: whole millimetres). FACE OFFSET body AT x,y,z DISTANCE d types it"));
+            break;
+        case ToolId::DeleteFace:
+            ImGui::TextDisabled("%s", tr("Click a hole, boss, fillet or chamfer to take it away"));
+            break;
         case ToolId::AddBoss:
             shapeCombo("##bshape", &st.bossShape, {"Cylinder", "Box", "Dome"});
             ImGui::SameLine();

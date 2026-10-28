@@ -64,6 +64,8 @@ add_library(sicdm_core STATIC
     src/core/Iges.cpp
     src/core/Assembly.cpp
     src/core/Explode.cpp
+    src/core/DirectEdit.cpp
+    src/core/FaceCommand.cpp
     src/core/Bvh.cpp
     src/core/SketchEdit.cpp
     src/core/AssemblyCommand.cpp

@@ -28,7 +28,7 @@ enum class ToolId {
     SculptFlatten, SculptScrape, SculptLayer, SculptClayStrips, SculptFill, SculptBlob, SculptSnakeHook, SculptNudge,
     SculptMask, SculptPaint,
     // IX. Cuts & booleans (exact, closed results)
-    CutHole, CutPocket, CutChannel, CutKnife, AddBoss, BooleanBodies,
+    CutHole, CutPocket, CutChannel, CutKnife, AddBoss, BooleanBodies, PushPull, DeleteFace,
     // X. Armour & exoskeletons (wearable parts over a human base)
     ShellBody, ArmorBody, JointBody, LightenBody, InterferenceCheck,
     Count

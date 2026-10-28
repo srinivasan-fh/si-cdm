@@ -242,6 +242,18 @@ bool insertComponent(Scene& scene, ProjectState& /*state*/, const std::string& f
         if (why) *why = "An assembly can't contain itself";
         return false;
     }
+    // Whether it contains this assembly, read from the files as they are (before bringing its
+    // own parts up to date, which could change what it links).
+    if (!assemblyFile.empty()) {
+        Scene raw;
+        ProjectState rawState;
+        std::string err, warn;
+        std::set<std::string> seen;
+        if (loadProject(raw, rawState, path, &err, &warn) && reaches(raw, canonical(assemblyFile), seen)) {
+            if (why) *why = fs::path(file).filename().string() + " contains this assembly (through its parts): it can't go into it";
+            return false;
+        }
+    }
     PartFile part;
     std::set<std::string> visiting;
     if (!assemblyFile.empty()) visiting.insert(canonical(assemblyFile));

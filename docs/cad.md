@@ -14,6 +14,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Moulding | `DRAFT`: side faces tilted to come out of a mould |
 | Sheet metal | `SHEETMETAL`: base plate, flanges, flat pattern |
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
+| Direct editing | `FACE`: push / pull, move and delete faces of any solid, without a history |
 | Analysis | `MASSPROPS`, `MEASURE` and `FEA` (stress analysis) |
 | Design intent | `VAR`: global variables and equations; `CONFIG`: configurations and design tables |
 
@@ -803,6 +804,46 @@ SURFACE LOFT "Circle 1" "Circle 2" "Circle 3"
 ANALYZE ZEBRA "Surface 1"
 ```
 
+## Direct editing
+
+`FACE` changes a solid by its faces, whatever made it: a STEP or IGES import, a mesh, or
+this project's own features. It needs no feature history. A face is picked by a point on it;
+without a body name, the body nearest the point is used.
+
+```text
+FACE INFO [body] AT x,y,z                    what the face is: flat, cylinder, cone, sphere...
+FACE OFFSET [body] AT x,y,z DISTANCE d       push / pull along the outward normal (negative: in)
+FACE MOVE [body] AT x,y,z BY dx,dy,dz        move a hole or boss (a flat face: along its normal)
+FACE DELETE [body] AT x,y,z                  take away a hole, boss, fillet or chamfer
+```
+
+- **A flat face** moves along its normal. Its neighbours stretch or shrink to meet it: planes
+  at any angle, and cylinders or cones that run the way it moves. Fillets along its edges go
+  with it and stay fillets. Where a neighbour can't follow, the slab between the face and
+  where it goes is added or cut.
+- **A round face** gets larger or smaller: a hole's wall pushed out makes the hole larger.
+  A whole sphere or torus stays one.
+- **Holes and bosses** move as a whole, and are filled or cut away by `DELETE`.
+- **Fillets and chamfers** between two flat faces are taken off, and the two faces meet again.
+- Exact solids stay exact: each face lies on the surface it lay on, or on its offset.
+- An edit that would turn a face inside out, or open the solid, is refused and nothing changes.
+
+In the window, the **Push / Pull Face** tool (in the side toolbar, next to the boolean tool)
+drags a face along its normal; hold Shift for whole millimetres. **Delete Face** takes away
+the hole, boss, fillet or chamfer that is clicked. Every edit can be undone.
+
+```text
+BOX 60 40 20 @0,0,0
+HOLE "Block 1" AT 10,0,20 DIR 0,0,-1 DIAMETER 10 THROUGH
+FILLET "Block 1" RADIUS 5 EDGES NEAR 30,0,20
+FACE OFFSET AT -10,10,20 DISTANCE 8          the top up 8, the fillet with it
+FACE MOVE AT 15,0,10 BY -20,5,0              the hole somewhere else
+FACE OFFSET AT -15,5,14 DISTANCE -3          and 3 mm larger in radius
+FACE OFFSET AT 0,20,10 DISTANCE 10           a side out 10
+```
+
+![The block after the edits above](direct-edit.png)
+
 ## Mass properties
 
 ```text
@@ -1043,6 +1084,9 @@ The `cad` tool has these operations:
 - `massprops`, `measure`;
 - `history`, `regen`, `history_edit`, `history_insert`, `history_delete`.
 
+The `face` tool edits faces directly: `info`, `offset`, `move` and `delete`, with `at` a
+point on the face (and `body`, `distance` or `by`).
+
 ```json
 {"operation": "revolve", "curve": "Polyline 1", "axis": "v"}
 {"operation": "pattern", "body": "Boss", "type": "circular", "count": 6, "axis": "z"}
@@ -1054,4 +1098,9 @@ The `cad` tool has these operations:
 {"operation": "drag", "curve": "Polyline 1", "grip": "point 3", "to": [60, 50]}
 {"operation": "massprops", "body": "Housing", "material": "aluminium"}
 {"operation": "history_edit", "step": 2, "command": "HOLE \"Block 1\" AT -20,0,15 DIAMETER 10 THROUGH"}
+```
+
+```json
+{"operation": "offset", "body": "Block 1", "at": [0, 0, 20], "distance": 5}
+{"operation": "delete", "at": [5, 0, 10]}
 ```

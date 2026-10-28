@@ -962,7 +962,15 @@ const char* const kGerman[][2] = {
     {"Show Exploded", "Explodiert anzeigen"},
     {"The assembly exploded, with balloons and the parts list", "Die Baugruppe explodiert, mit Positionsnummern und Stückliste"},
     {"Trail Lines", "Bewegungslinien"},
+    // Direct editing
+    {"Click a hole, boss, fillet or chamfer to take it away", "Bohrung, Zapfen, Verrundung oder Fase anklicken, um sie zu entfernen"},
+    {"Click a hole, boss, fillet or chamfer to take it away: the faces round it close up.", "Bohrung, Zapfen, Verrundung oder Fase anklicken, um sie zu entfernen: die Flächen ringsum schließen sich."},
+    {"Delete Face", "Fläche löschen"},
+    {"Drag a face along its normal (Shift: whole millimetres). FACE OFFSET body AT x,y,z DISTANCE d types it", "Eine Fläche entlang ihrer Normalen ziehen (Umschalt: ganze Millimeter). FACE OFFSET Körper AT x,y,z DISTANCE d tippt es"},
+    {"Drag a face of any solid along its normal: a flat face moves and its neighbours follow; a hole or boss gets larger or smaller. Shift: whole millimetres.", "Eine Fläche eines beliebigen Volumenkörpers entlang ihrer Normalen ziehen: eine ebene Fläche verschiebt sich und ihre Nachbarn folgen; eine Bohrung oder ein Zapfen wird größer oder kleiner. Umschalt: ganze Millimeter."},
+    {"Push / Pull Face", "Fläche drücken / ziehen"},
 };
+
 
 const std::size_t kGermanCount = sizeof(kGerman) / sizeof(kGerman[0]);
 

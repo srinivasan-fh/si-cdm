@@ -193,7 +193,16 @@ TEST_CASE("components: make a part file from bodies, replace, break, multi-body 
     REQUIRE(run(loop, "SAVE " + q(dir / "loop.sicdm")).ok);
     const CommandOutput looped = run(d, "COMPONENT INSERT loop");
     CHECK(!looped.ok);
-    if (looped.ok) std::printf("  inserted %s into %s:\n%s", (dir / "loop.sicdm").string().c_str(), d.path.c_str(), text(looped).c_str());
+    if (looped.ok) {
+        std::printf("  inserted %s into %s:\n%s", (dir / "loop.sicdm").string().c_str(), d.path.c_str(), text(looped).c_str());
+        Document lp;
+        run(lp, "OPEN " + q(dir / "loop.sicdm"));
+        for (const Body& b : lp.scene.bodies()) {
+            std::error_code ec;
+            std::printf("  loop body %s links %s (the assembly's file: %d)\n", b.name.c_str(), b.link.file.c_str(),
+                        b.link.file.empty() ? -1 : static_cast<int>(fs::equivalent(b.link.file, d.path, ec)));
+        }
+    }
     // Released assemblies: listing is fine, inserting isn't.
     REQUIRE(run(d, "REVISION RELEASE").ok);
     CHECK(run(d, "COMPONENT LIST").ok);

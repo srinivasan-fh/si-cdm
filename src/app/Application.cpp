@@ -1,6 +1,7 @@
 #include "app/Application.hpp"
 #include "app/PenInput.hpp"
 #include "core/Components.hpp"
+#include "core/DirectEdit.hpp"
 #include "core/Translate.hpp"
 #include "app/OpenFiles.hpp"
 
@@ -610,7 +611,7 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
     }
 
     if (isCutTool(tool)) {
-        if (tool != ToolId::CutChannel && tool != ToolId::CutKnife) applyCutTool(tool, x, y);
+        if (tool != ToolId::CutChannel && tool != ToolId::CutKnife && tool != ToolId::PushPull) applyCutTool(tool, x, y);
         return;
     }
     if (isWearableTool(tool)) {
@@ -978,6 +979,9 @@ void Application::applyCutTool(ToolId tool, float x, float y) {
         }
         break;
     }
+    case ToolId::DeleteFace:
+        line = "FACE DELETE " + body + at;
+        break;
     case ToolId::AddBoss: {
         static const char* const kShapes[] = {"CYLINDER", "BOX", "BALL"};
         line = "BOSS " + body + at + " " + kShapes[std::clamp(u.bossShape, 0, 2)] + " DIAMETER " + mmText(u.bossDiameter) +
@@ -1184,7 +1188,7 @@ void Application::drawSculptOverlay() {
             prev = s;
         }
     }
-    if (!m_brushHit || tool == ToolId::CutKnife || tool == ToolId::BooleanBodies) return;
+    if (!m_brushHit || tool == ToolId::CutKnife || tool == ToolId::BooleanBodies || tool == ToolId::PushPull || tool == ToolId::DeleteFace) return;
     if (isWearableTool(tool)) { // the clicked point and its normal
         const auto c = projectToScreen(camera(), *m_brushHit, io.DisplaySize);
         const AABB vb = m_doc.scene.bounds();
@@ -1293,6 +1297,8 @@ void Application::handleViewportInput() {
         } else if (tool == ToolId::CutKnife) {
             m_leftDrag = DragMode::Knife;
             m_knifeStart = {mx, my};
+        } else if (tool == ToolId::PushPull) {
+            if (beginPushPull(mx, my)) m_leftDrag = DragMode::PushPull;
         } else if (io.KeyShift && !isSketchTool(tool)) {
             m_leftDrag = DragMode::Pan;
         } else if (tool == ToolId::Orbit) {
@@ -1363,6 +1369,7 @@ void Application::handleViewportInput() {
         case DragMode::Sculpt:
         case DragMode::Grab: continueSculpt(mx, my); break;
         case DragMode::SketchGrip: updateSketchDrag(mx, my); break;
+        case DragMode::PushPull: updatePushPull(mx, my); break;
         case DragMode::CutPath: {
             const auto hit = pick(mx, my);
             const float step = std::max(m_uiState.channelWidth * 0.5f, 0.5f);
@@ -1378,6 +1385,7 @@ void Application::handleViewportInput() {
         else if (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) endSculpt();
         else if (m_leftDrag == DragMode::CutPath) finishCutDrag(ToolId::CutChannel, mx, my);
         else if (m_leftDrag == DragMode::Knife) finishCutDrag(ToolId::CutKnife, mx, my);
+        else if (m_leftDrag == DragMode::PushPull) finishPushPull();
         else if (m_leftDrag == DragMode::SketchGrip) finishSketchDrag();
         else if (m_leftDrag == DragMode::MoveBody) finishMoveDrag(true);
         m_leftDrag = DragMode::None;
@@ -1772,6 +1780,7 @@ void Application::frame(float dt) {
         drawDatumOverlay();
     if (m_uiState.mode == ViewMode::Model3D) drawFieldLegend();
     if (m_explodeT > 0 && m_doc.state.assembly.explode.trails) drawExplodeOverlay();
+    if (m_leftDrag == DragMode::PushPull) drawPushPullOverlay();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active())))
         drawSculptOverlay();
@@ -2544,6 +2553,98 @@ void Application::drawExplodeOverlay() const {
         }
     }
     dl->PopClipRect();
+}
+
+// Push / pull ------------------------------------------------------------------
+
+bool Application::beginPushPull(float x, float y) {
+    const ImGuiIO& io = ImGui::GetIO();
+    const auto hit = pick(x, y);
+    if (!hit) {
+        setStatus("Press on a face of a body and drag");
+        return false;
+    }
+    const Body& body = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)];
+    DirectFaceInfo f;
+    std::string why;
+    if (!directFaceAt(body, hit->point, f, &why)) {
+        setStatus(why);
+        return false;
+    }
+    PushPullDrag p;
+    p.body = hit->body;
+    p.at = hit->point;
+    const DVec3 at(hit->point);
+    switch (f.kind) {
+    case DirectFaceKind::Plane: p.dir = f.normal.f(), p.what = "flat face"; break;
+    case DirectFaceKind::Cylinder:
+    case DirectFaceKind::Cone: {
+        const DVec3 q = at - f.point;
+        const DVec3 radial = dnormalize(q - f.axis * ddot(q, f.axis));
+        p.dir = (radial * (f.hole ? -1.0 : 1.0)).f();
+        p.what = f.hole ? "hole" : "round face";
+        break;
+    }
+    case DirectFaceKind::Sphere: p.dir = dnormalize(at - f.point).f(), p.what = "round face"; break;
+    default: setStatus("Only flat faces, and round faces of exact solids, can be pushed or pulled"); return false;
+    }
+    // The normal on screen, and how many pixels a millimetre along it is.
+    const auto s0 = projectToScreen(camera(), p.at, io.DisplaySize), s1 = projectToScreen(camera(), p.at + p.dir * 10.0f, io.DisplaySize);
+    if (!s0 || !s1) return false;
+    float dx = s1->x - s0->x, dy = s1->y - s0->y;
+    float len = std::hypot(dx, dy);
+    if (len < 4.0f) { // looking straight along it: drag up to pull
+        const auto s2 = projectToScreen(camera(), p.at + camera().up() * 10.0f, io.DisplaySize);
+        dx = 0, dy = -1;
+        len = s2 ? std::max(4.0f, std::hypot(s2->x - s0->x, s2->y - s0->y)) : 40.0f;
+        p.screenDir = {dx, dy};
+    } else {
+        p.screenDir = {dx / len, dy / len};
+    }
+    p.pxPerMm = len / 10.0f;
+    p.start = {x, y};
+    m_push = p;
+    setStatus("Drag along the " + p.what + "'s normal (Shift: whole millimetres)");
+    return true;
+}
+
+void Application::updatePushPull(float x, float y) {
+    const float along = (x - m_push.start.x) * m_push.screenDir.x + (y - m_push.start.y) * m_push.screenDir.y;
+    float d = along / std::max(m_push.pxPerMm, 1e-3f);
+    d = ImGui::GetIO().KeyShift ? std::round(d) : std::round(d * 10.0f) / 10.0f;
+    m_push.distance = d;
+    m_framesToRender = std::max(m_framesToRender, 2);
+}
+
+void Application::finishPushPull() {
+    if (m_push.body < 0 || m_push.body >= static_cast<int>(m_doc.scene.bodies().size()) || std::fabs(m_push.distance) < 0.05f) {
+        setStatus("Drag further to push or pull the face");
+        m_push = PushPullDrag{};
+        return;
+    }
+    runCommandLine("FACE OFFSET " + quotedName(m_doc.scene.bodies()[static_cast<std::size_t>(m_push.body)].name) + " AT " + mmVec(m_push.at) + " DISTANCE " +
+                   mmText(m_push.distance));
+    m_push = PushPullDrag{};
+}
+
+// The arrow from where the face was pressed to where it goes, and the distance.
+void Application::drawPushPullOverlay() const {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (m_push.body < 0) return;
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    const auto a = projectToScreen(camera(), m_push.at, io.DisplaySize), b = projectToScreen(camera(), m_push.at + m_push.dir * m_push.distance, io.DisplaySize);
+    if (!a || !b) return;
+    const ImU32 col = m_push.distance >= 0 ? IM_COL32(110, 200, 140, 240) : IM_COL32(240, 130, 110, 240);
+    fg->AddCircleFilled(*a, 3.0f, col);
+    fg->AddLine(*a, *b, col, 2.0f);
+    const float dx = b->x - a->x, dy = b->y - a->y, l = std::hypot(dx, dy);
+    if (l > 6) {
+        const float ux = dx / l, uy = dy / l;
+        fg->AddTriangleFilled(*b, ImVec2(b->x - ux * 10 - uy * 5, b->y - uy * 10 + ux * 5), ImVec2(b->x - ux * 10 + uy * 5, b->y - uy * 10 - ux * 5), col);
+    }
+    char label[64];
+    std::snprintf(label, sizeof label, "%s %.1f mm", m_push.distance >= 0 ? "+" : "", static_cast<double>(m_push.distance));
+    fg->AddText(ImVec2(b->x + 10, b->y - 8), col, label);
 }
 
 void Application::advanceSimulation(float dt) {

@@ -595,6 +595,21 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
         g.line(0.75f, -0.85f, 0.75f, -0.45f);
         g.line(0.55f, -0.65f, 0.95f, -0.65f);
         break;
+    case ToolId::PushPull: // a block, its top face lifted, the arrow pulling it
+        g.poly({{-0.75f, -0.85f}, {0.75f, -0.85f}, {0.75f, -0.1f}, {-0.75f, -0.1f}}, true, true);
+        g.dashed(-0.75f, -0.1f, -0.75f, 0.25f, 2);
+        g.dashed(0.75f, -0.1f, 0.75f, 0.25f, 2);
+        g.line(-0.75f, 0.25f, 0.75f, 0.25f);
+        g.line(0, 0.25f, 0, 0.9f);
+        g.line(0, 0.9f, -0.22f, 0.65f);
+        g.line(0, 0.9f, 0.22f, 0.65f);
+        break;
+    case ToolId::DeleteFace: // a block with a hole, crossed out
+        g.poly({{-0.85f, -0.75f}, {0.85f, -0.75f}, {0.85f, 0.45f}, {-0.85f, 0.45f}}, true, true);
+        g.ellipse(-0.1f, -0.15f, 0.3f, 0.12f, true);
+        g.line(0.35f, 0.45f, 0.95f, 0.95f);
+        g.line(0.35f, 0.95f, 0.95f, 0.45f);
+        break;
     case ToolId::BooleanBodies:
         g.circle(-0.28f, 0, 0.5f);
         g.circle(0.28f, 0, 0.5f, true);

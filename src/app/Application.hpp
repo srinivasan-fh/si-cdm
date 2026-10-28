@@ -215,7 +215,7 @@ private:
     void updateSketchColors();
 
     // Input state
-    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip };
+    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip, PushPull };
     DragMode m_leftDrag = DragMode::None;
     bool m_escapedDrag = false; // Esc cancelled the drag; the button is still held
     DragMode m_otherDrag = DragMode::None; // right / middle button
@@ -226,6 +226,22 @@ private:
     Vec2 m_imageGrab{}, m_imageStart{};
 
     std::vector<Mat4> m_simTransforms; // per body, while the Simulation window shows motion
+    // Push / pull: the face pressed on, the way it moves and how far the drag has taken it.
+    struct PushPullDrag {
+        int body = -1;
+        Vec3 at{};          // where it was pressed (the body as it is)
+        Vec3 dir{0, 0, 1};  // the face's outward normal there
+        ImVec2 start{};     // the press on screen
+        ImVec2 screenDir{}; // the normal on screen, unit
+        float pxPerMm = 1;  // screen pixels a millimetre along it
+        float distance = 0;
+        std::string what;   // "flat face", "hole"...
+    };
+    PushPullDrag m_push;
+    bool beginPushPull(float x, float y);
+    void updatePushPull(float x, float y);
+    void finishPushPull();
+    void drawPushPullOverlay() const;
     std::vector<Mat4> m_explodeTransforms; // per body, while the exploded view shows (or opens or shuts)
     std::vector<DVec3> m_explodeShifts;    // the same as moves
     float m_explodeT = 0.0f;               // 0 together .. 1 exploded

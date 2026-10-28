@@ -321,6 +321,8 @@ The *Design* menu (or the command line) adds part features to sketches and solid
 - **Mirror.**
 - **Fillets and chamfers:** on chosen edges, by number, filter or point. They are exact,
   including inside corners, round rims and ball corners. Or use rolling-ball rounds of every edge.
+- **Direct editing:** push or pull a face of any solid, imported or not; holes and bosses made
+  larger, moved or deleted; fillets and chamfers taken off (`FACE`, or the Push / Pull Face tool).
 - **Mass properties:** volume, mass, centre of mass and the inertia tensor.
 - **Measure:** distances between points and between bodies.
 
@@ -333,6 +335,7 @@ PATTERN "Boss" CIRCULAR 6 AXIS Z      PATTERN "Pin" LINEAR 3 SPACING 20 SUBTRACT
 MIRROR "Half" PLANE YZ UNION    FILLET "Housing" RADIUS 2 EDGES TOP      CHAMFER "Housing" DISTANCE 1 EDGES VERTICAL
 CONSTRAIN TANGENT "Line 1" "Circle 2"      DIM "Polyline 1" SIDE 1 60      CONSTRAINT EDIT D1 80      MASSPROPS "Housing"
 HISTORY      HISTORY EDIT 2 HOLE "Block 1" AT -20,0,15 DIAMETER 10 THROUGH      REGEN
+FACE OFFSET "Bracket" AT 0,0,20 DISTANCE 5      FACE MOVE AT 5,0,10 BY 15,0,0      FACE DELETE AT 18.5,0,18.5
 ```
 
 ![Part features: a revolved vase, a loft, a swept pipe, a rounded block with a pattern of holes](docs/cad-features.png)

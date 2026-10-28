@@ -98,6 +98,8 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::CutKnife, C::Cut, SICDM_TR_NOOP("Knife / Trim"), "", SICDM_TR_NOOP("Drag a line across a body: the plane through it slices the body and the smaller side is removed. The cut is capped."), true},
     {T::AddBoss, C::Cut, SICDM_TR_NOOP("Add Volume (Boss)"), "", SICDM_TR_NOOP("Click a surface to fuse on a boss, pad or dome."), true},
     {T::BooleanBodies, C::Cut, SICDM_TR_NOOP("Boolean Bodies"), "", SICDM_TR_NOOP("Click a body, then a second one: union, subtract or intersect them exactly."), true},
+    {T::PushPull, C::Cut, SICDM_TR_NOOP("Push / Pull Face"), "", SICDM_TR_NOOP("Drag a face of any solid along its normal: a flat face moves and its neighbours follow; a hole or boss gets larger or smaller. Shift: whole millimetres."), true},
+    {T::DeleteFace, C::Cut, SICDM_TR_NOOP("Delete Face"), "", SICDM_TR_NOOP("Click a hole, boss, fillet or chamfer to take it away: the faces round it close up."), true},
 
     {T::ShellBody, C::Wearable, SICDM_TR_NOOP("Shell / Hollow"), "", SICDM_TR_NOOP("Click a body to hollow it to a wall thickness (armour plating), or solidify a surface. With Open, the side you click is cut open: a helmet, a gauntlet, a chest plate."), true},
     {T::ArmorBody, C::Wearable, SICDM_TR_NOOP("Armour Offset"), "", SICDM_TR_NOOP("Click a body part (a humanoid's forearm, chest...) for an armour shell around it: a clearance gap for padding, wiring and movement, then the wall. It moves with the part."), true},
@@ -140,6 +142,7 @@ constexpr ToolId gCutHole[] = {T::CutHole, T::CutPocket, T::CutChannel};
 constexpr ToolId gCutKnife[] = {T::CutKnife};
 constexpr ToolId gBoss[] = {T::AddBoss};
 constexpr ToolId gBoolean[] = {T::BooleanBodies};
+constexpr ToolId gDirect[] = {T::PushPull, T::DeleteFace};
 constexpr ToolId gShell[] = {T::ShellBody, T::LightenBody};
 constexpr ToolId gArmor[] = {T::ArmorBody};
 constexpr ToolId gJoint[] = {T::JointBody};
@@ -153,7 +156,7 @@ constexpr ToolGroup kGroups[] = {
     {C::Feature, gRib},     {C::Surface, gPlane},   {C::Surface, gPatch},    {C::ClassA, gNurbs},
     {C::ClassA, gAirfoil},  {C::Generative, gTopo}, {C::Generative, gLattice}, {C::Mesh, gMesh},
     {C::Sculpt, gSculptAdd}, {C::Sculpt, gSculptGrab}, {C::Sculpt, gSculptPinch}, {C::Sculpt, gSculptSmooth}, {C::Sculpt, gSculptMask},
-    {C::Cut, gCutHole},     {C::Cut, gCutKnife},    {C::Cut, gBoss},        {C::Cut, gBoolean},
+    {C::Cut, gCutHole},     {C::Cut, gCutKnife},    {C::Cut, gBoss},        {C::Cut, gBoolean},     {C::Cut, gDirect},
     {C::Wearable, gShell},  {C::Wearable, gArmor},  {C::Wearable, gJoint},  {C::Wearable, gInterference},
 };
 
