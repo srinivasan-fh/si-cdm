@@ -372,6 +372,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showPreferences) drawPreferencesWindow(cmd, st);
     if (st.showRender) drawRenderWindow(cmd, st);
     if (st.showProduct) drawProductWindow(cmd, st);
+    if (st.showAppearance) drawAppearanceWindow(cmd, st);
     if (st.showLicence) drawLicenceWindow(cmd, st);
     if (st.showCamMachine && st.cam) drawCamMachineWindow(cmd, st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
@@ -574,6 +575,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::Separator();
         }
         if (ImGui::MenuItem(tr("Zoom to Fit"), "F")) cmd.fit = true;
+        if (!is2D && ImGui::MenuItem(tr("Appearance..."))) st.showAppearance = true;
+        if (!is2D && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The selected body's material: metals, colours, finishes"));
         if (!is2D && ImGui::MenuItem(tr("Render..."))) st.showRender = true;
         if (!is2D) {
             if (ImGui::MenuItem(tr("Orthographic"), "P", cam.projection() == Projection::Orthographic))

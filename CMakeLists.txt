@@ -80,6 +80,7 @@ add_library(sicdm_core STATIC
     src/core/Retopo.cpp
     src/core/UvMap.cpp
     src/core/Translate.cpp
+    src/core/Material.cpp
     src/core/Render.cpp
     src/core/Collide.cpp
     src/core/Pdm.cpp
@@ -188,6 +189,7 @@ if(SICDM_BUILD_APP)
         src/ui/HelpWindow.cpp
         src/ui/PreferencesWindow.cpp
         src/ui/ProductWindow.cpp
+        src/ui/AppearanceWindow.cpp
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
         src/ui/ToolIcons.cpp

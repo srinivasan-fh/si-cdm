@@ -16,46 +16,6 @@
 
 namespace sicdm {
 
-const std::vector<MaterialPreset>& materialPresets() {
-    static const std::vector<MaterialPreset> k = {
-        {SICDM_TR_NOOP("plastic"), SICDM_TR_NOOP("Glossy plastic in the body's colour"), false, {}, 0, 0.35f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("matte"), SICDM_TR_NOOP("Matte plastic or paint in the body's colour"), false, {}, 0, 0.8f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("paint"), SICDM_TR_NOOP("Car paint: a deep gloss in the body's colour"), false, {}, 0, 0.12f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("rubber"), SICDM_TR_NOOP("Black rubber"), true, {0.05f, 0.05f, 0.05f}, 0, 0.9f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("ceramic"), SICDM_TR_NOOP("White glazed ceramic"), true, {0.9f, 0.9f, 0.88f}, 0, 0.1f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("wood"), SICDM_TR_NOOP("Oiled wood"), true, {0.55f, 0.36f, 0.2f}, 0, 0.6f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("steel"), SICDM_TR_NOOP("Machined steel"), true, {0.56f, 0.57f, 0.58f}, 1, 0.3f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("brushed"), SICDM_TR_NOOP("Brushed stainless steel"), true, {0.62f, 0.62f, 0.62f}, 1, 0.45f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("aluminium"), SICDM_TR_NOOP("Machined aluminium"), true, {0.91f, 0.92f, 0.92f}, 1, 0.32f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("anodised"), SICDM_TR_NOOP("Anodised aluminium in the body's colour"), false, {}, 1, 0.35f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("chrome"), SICDM_TR_NOOP("Polished chrome"), true, {0.95f, 0.95f, 0.95f}, 1, 0.04f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("brass"), SICDM_TR_NOOP("Brass"), true, {0.91f, 0.78f, 0.42f}, 1, 0.25f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("copper"), SICDM_TR_NOOP("Copper"), true, {0.95f, 0.64f, 0.54f}, 1, 0.25f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("gold"), SICDM_TR_NOOP("Gold"), true, {1.0f, 0.77f, 0.34f}, 1, 0.18f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("titanium"), SICDM_TR_NOOP("Titanium"), true, {0.54f, 0.5f, 0.46f}, 1, 0.35f, 0, 1.5f, 0},
-        {SICDM_TR_NOOP("glass"), SICDM_TR_NOOP("Clear glass"), true, {0.97f, 0.98f, 0.98f}, 0, 0.0f, 1, 1.5f, 0},
-        {SICDM_TR_NOOP("tinted"), SICDM_TR_NOOP("Tinted glass in the body's colour"), false, {}, 0, 0.0f, 1, 1.5f, 0},
-        {SICDM_TR_NOOP("water"), SICDM_TR_NOOP("Water"), true, {0.9f, 0.96f, 1.0f}, 0, 0.0f, 1, 1.33f, 0},
-        {SICDM_TR_NOOP("light"), SICDM_TR_NOOP("A glowing surface in the body's colour (a lamp, a screen)"), false, {}, 0, 0.5f, 0, 1.5f, 6},
-    };
-    return k;
-}
-
-bool applyMaterialPreset(const std::string& name, MaterialProps& m, Vec3* color) {
-    std::string n;
-    for (char c : name) n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (n == "aluminum") n = "aluminium";
-    if (n == "anodized") n = "anodised";
-    for (const MaterialPreset& p : materialPresets()) {
-        if (n != p.name) continue;
-        m.preset = p.name;
-        m.metallic = p.metallic, m.roughness = p.roughness, m.transmission = p.transmission, m.ior = p.ior, m.emission = p.emission;
-        if (p.setsColor && color) *color = p.color;
-        return true;
-    }
-    return false;
-}
-
 const std::vector<std::string>& renderEnvironments() {
     static const std::vector<std::string> k = {"studio", "sky", "white", "dark"};
     return k;

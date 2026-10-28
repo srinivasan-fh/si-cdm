@@ -28,12 +28,23 @@ struct MaterialProps {
 struct MaterialPreset {
     const char* name;
     const char* description;
-    bool setsColor; // metals and glass have their own colour
+    const char* family; // one of materialFamilies(): what the picker groups it under
+    bool setsColor;     // metals and glass have their own colour (sRGB)
     Vec3 color;
     float metallic, roughness, transmission, ior, emission;
 };
 
+// Plastics and paint; pure metals (by their measured reflectance); precious metals; alloys and
+// finishes; coloured metals (anodised, heat-tinted titanium); glass and liquids; other.
 const std::vector<MaterialPreset>& materialPresets();
+const std::vector<const char*>& materialFamilies();
+
+// Surface finishes a metal (or anything) can take: MATERIAL body FINISH name.
+struct MaterialFinish {
+    const char* name;
+    float roughness;
+};
+const std::vector<MaterialFinish>& materialFinishes();
 // Applies a preset by name (case-insensitive); its colour too when it has one. False when
 // there is no such preset.
 bool applyMaterialPreset(const std::string& name, MaterialProps& material, Vec3* color);

@@ -1,5 +1,7 @@
 #include "render/Renderer.hpp"
 
+#include <map>
+#include <tuple>
 #include <unordered_map>
 #include <thread>
 #include <chrono>
@@ -90,7 +92,25 @@ uniform float uHiddenLine;
 uniform vec3 uPaper;      // hidden-line face fill
 uniform vec3 uInk;        // hidden-line silhouette colour
 uniform float uField;     // 1: the mask is a result (0..1), drawn blue - green - red
+uniform float uMetallic;  // the body's material: 1 a metal (its colour tints what it reflects)
+uniform float uRoughness; // 0 a mirror, 1 matte
 out vec4 fragColor;
+// A photo studio around the viewer (it turns with the view, so parts always catch it): a
+// dark floor, a bright ceiling, a big soft box above to the left and a tall strip to the
+// right. Rougher surfaces see it blurred.
+vec3 studio(vec3 r, float rough) {
+    float w = 0.02 + rough * 0.5;
+    // A dark floor, a dim horizon, a soft grey ceiling.
+    vec3 c = mix(vec3(0.025), vec3(0.16, 0.165, 0.18), smoothstep(-0.35 - w, 0.0 + w, r.y));
+    c = mix(c, vec3(0.70, 0.72, 0.76), smoothstep(0.05 - w, 0.85 + w, r.y));
+    // Panels: a big key light up to the left, a tall strip to the right, a thin one far left.
+    float key = smoothstep(-w, w, 0.36 - abs(r.x + 0.40)) * smoothstep(-w, w, 0.38 - abs(r.y - 0.52));
+    float right = smoothstep(-w, w, 0.11 - abs(r.x - 0.68)) * smoothstep(-w, w, 0.75 - abs(r.y - 0.10));
+    float left = smoothstep(-w, w, 0.05 - abs(r.x + 0.93)) * smoothstep(-w, w, 0.70 - abs(r.y - 0.05));
+    float below = smoothstep(-w, w, 0.45 - abs(r.x - 0.05)) * smoothstep(-w, w, 0.10 - abs(r.y + 0.42));
+    c += vec3(2.6) * key + vec3(2.0) * right + vec3(1.2) * left + vec3(0.35) * below;
+    return mix(c, vec3(0.45), rough * rough * 0.7);
+}
 vec3 fieldColour(float t) {
     t = clamp(t, 0.0, 1.0);
     vec3 a = vec3(0.10, 0.25, 0.95), b = vec3(0.10, 0.85, 0.95), c = vec3(0.20, 0.90, 0.25), d = vec3(0.98, 0.90, 0.15), e = vec3(0.95, 0.15, 0.10);
@@ -166,6 +186,25 @@ void main() {
     vec3 c = base * (ambient + diff) + vec3(spec);
     // Light rim to separate silhouettes from the background.
     c += pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.08;
+    // The material: what the surface reflects of the studio, by Fresnel's law (Schlick).
+    if (uField < 0.5) {
+        vec3 R = reflect(-V, N);
+        vec3 rv = vec3(dot(R, uCamRight), dot(R, uCamUp), dot(R, -uCamDir));
+        float rough = clamp(uRoughness, 0.0, 1.0);
+        float ndv = max(dot(N, V), 0.0);
+        vec3 env = studio(rv, rough);
+        float gloss = pow(max(dot(N, normalize(L1 + V)), 0.0), mix(400.0, 6.0, rough)) * (1.0 - rough * 0.7);
+        vec3 f0 = pow(clamp(own, 0.0, 1.0), vec3(2.2)); // a metal's colour is its reflectance
+        vec3 F = f0 + (max(vec3(1.0 - rough), f0) - f0) * pow(1.0 - ndv, 5.0);
+        vec3 lit = env * F + F * gloss * 3.0;
+        lit = mix(lit, 0.7 + 0.5 * (1.0 - exp(-(lit - 0.7) / 0.5)), step(0.7, lit)); // highlights roll off, keeping their colour
+        vec3 metal = pow(lit, vec3(1.0 / 2.2)) * (1.0 - 0.6 * clamp(vMask, 0.0, 1.0));
+        // Plastics and paint keep their colour and add a clear-coat reflection.
+        float fd = (0.04 + 0.96 * pow(1.0 - ndv, 5.0)) * (1.0 - rough);
+        vec3 dielectric = c + env * fd * 0.6;
+        c = mix(dielectric, metal, clamp(uMetallic, 0.0, 1.0));
+        c = mix(c, vec3(0.30, 0.65, 1.00), uHighlight * 0.4);
+    }
     fragColor = vec4(pow(c, vec3(1.0 / 1.1)), 1.0);
 }
 )";
@@ -888,23 +927,26 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                 if (t.body == bodies[i].name) return false;
         return true;
     };
-    std::unordered_map<const GpuMesh*, std::vector<std::size_t>> byShape;
+    // Grouped by shape and material (metallic, roughness: uniforms for the whole draw).
+    std::map<std::tuple<const GpuMesh*, float, float>, std::vector<std::size_t>> byShape;
     for (std::size_t i = 0; i < count; ++i)
-        if (plain(i)) byShape[&gpu(i)].push_back(i);
+        if (plain(i)) byShape[{&gpu(i), bodies[i].material.metallic, bodies[i].material.roughness}].push_back(i);
     std::vector<char> instanced(count, 0);
     struct Batch {
         const GpuMesh* mesh;
         GLsizei first, count;
         GLuint edgeVao;
         GLsizei edgeCount;
+        float metallic, roughness;
     };
     std::vector<Batch> batches;
     std::vector<float> inst; // 20 floats a copy: the placement (column by column), the colour
-    for (auto& [mesh, members] : byShape) {
+    for (auto& [key, members] : byShape) {
         if (members.size() < 2) continue;
         // The edges come from the full shape (a coarser copy keeps the full edges).
         const GpuMesh& full = m_entries[members[0]]->full;
-        batches.push_back({mesh, static_cast<GLsizei>(inst.size() / 20), static_cast<GLsizei>(members.size()), full.edgeVao, full.edgeVertexCount});
+        batches.push_back({std::get<0>(key), static_cast<GLsizei>(inst.size() / 20), static_cast<GLsizei>(members.size()), full.edgeVao, full.edgeVertexCount,
+                           std::get<1>(key), std::get<2>(key)});
         for (std::size_t i : members) {
             instanced[i] = 1;
             const Mat4 m = model(i);
@@ -964,6 +1006,8 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_mesh.set("uInstanced", 1.0f);
             for (const char* off : {"uField", "uHighlight", "uPolygroups", "uChecker", "uColorMap", "uNormalMap"}) m_mesh.set(off, 0.0f);
             for (const Batch& b : batches) {
+                m_mesh.set("uMetallic", b.metallic);
+                m_mesh.set("uRoughness", b.roughness);
                 glBindVertexArray(b.mesh->vao);
                 bindInstances(b, true);
                 glDrawElementsInstanced(GL_TRIANGLES, b.mesh->indexCount, GL_UNSIGNED_INT, nullptr, b.count);
@@ -974,6 +1018,8 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         for (std::size_t i = 0; i < count; ++i) {
             if (!shown[i] || instanced[i]) continue;
             m_mesh.set("uColor", bodies[i].color);
+            m_mesh.set("uMetallic", bodies[i].material.metallic);
+            m_mesh.set("uRoughness", bodies[i].material.roughness);
             m_mesh.set("uField", bodies[i].field.empty() ? 0.0f : bodies[i].field.rfind("zebra", 0) == 0 ? 2.0f : 1.0f);
             m_mesh.set("uModel", model(i));
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);

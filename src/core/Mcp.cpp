@@ -732,8 +732,11 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("path", prop("string", "The picture to write (.png); omit to only set materials and settings"));
-        p.set("material", prop("string", "Give 'body' this material first: plastic, matte, paint, rubber, ceramic, wood, steel, brushed, aluminium, "
-                                          "anodised, chrome, brass, copper, gold, titanium, glass, tinted, water, light"));
+        p.set("material", prop("string", "Give 'body' this material first: plastic, matte, paint, metallic-paint, rubber; steel, iron, cast-iron, aluminium, "
+                                          "chrome, nickel, copper, titanium, zinc, tin, lead, cobalt, tungsten, magnesium; gold, rose-gold, white-gold, silver, "
+                                          "platinum, palladium, rhodium; stainless, brushed, polished-steel, brass, bronze, pewter, gunmetal, black-chrome, "
+                                          "champagne, patina; anodised (in 'color'), anodised-red/-blue/-green/-purple/-orange/-gold/-black/-pink/-teal, "
+                                          "titanium-blue/-purple/-gold; glass, tinted, frosted, water; ceramic, wood, light"));
         p.set("body", prop("string", "The body 'material' (and 'roughness', 'metallic', 'color') applies to"));
         p.set("roughness", prop("number", "0 a mirror to 1 matte"));
         p.set("metallic", prop("number", "0 plastic or paint to 1 metal"));

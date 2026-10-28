@@ -62,6 +62,7 @@ struct UiState {
     // texture); renderSavePath set: the app writes the picture there.
     bool showRender = false;
     bool showProduct = false; // the Product data window: properties, revision, vault
+    bool showAppearance = false; // the Appearance window: the selected body's material from swatches
     bool renderStart = false, renderCancel = false, renderRunning = false;
     float renderProgress = 0;
     unsigned renderTexture = 0;
@@ -214,6 +215,7 @@ private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawRenderWindow(UiCommands& cmd, UiState& st);
     void drawProductWindow(UiCommands& cmd, UiState& st); // ProductWindow.cpp
+    void drawAppearanceWindow(UiCommands& cmd, UiState& st); // AppearanceWindow.cpp
     void drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawFileTabs(UiCommands& cmd, const UiState& st);
     void requestClose(UiCommands& cmd, const UiState& st, int index);

@@ -30,9 +30,51 @@ MATERIAL "Bracket" DEFAULT             back to plastic
 | `EMISSION` | Glows with its colour, this bright |
 | `COLORMAP`, `NORMALMAP` | Images on the body's texture coordinates, such as the maps `BAKE` writes (see [sculpting](sculpting.md#uv-unwrapping-and-baking)) |
 
-The presets are plastic, matte, paint, rubber, ceramic, wood, steel, brushed (stainless),
-aluminium, anodised, chrome, brass, copper, gold, titanium, glass, tinted (glass in the
-body's colour), water and light.
+### The materials
+
+![Metals rendered: steel, aluminium, chrome, silver, platinum, titanium, gold, rose gold, copper, brass, bronze, champagne, gunmetal, black chrome and anodised colours](materials.png)
+
+Each metal's colour is its measured reflectance at normal incidence. The renderer gives back
+those exact values, so gold, copper and brass are the right colours, not guesses.
+`MATERIAL LIST` shows them by family:
+
+| Family | Materials |
+| --- | --- |
+| Plastics and paint | plastic, matte, paint, metallic-paint (flakes under the gloss), rubber; all but rubber in the body's colour |
+| Metals | steel, iron, cast-iron, aluminium, chrome, nickel, copper, titanium, zinc, tin, lead, cobalt, tungsten, magnesium, mercury |
+| Precious metals | gold, rose-gold, white-gold, silver, platinum, palladium, rhodium |
+| Alloys and finishes | stainless, brushed, polished-steel, brushed-aluminium, brass, bronze, pewter, gunmetal, black-chrome, champagne, patina |
+| Coloured metals | anodised (in the body's colour), anodised-red, -blue, -green, -purple, -orange, -gold, -black, -pink, -teal; titanium-blue, -purple, -gold (heat-tinted) |
+| Glass and liquids | glass, tinted (in the body's colour), frosted, water |
+| Other | ceramic, wood, light (glows in the body's colour) |
+
+`aluminum`, `anodized-…`, `stainless steel`, `chromium` and other spellings work too. Any
+material takes a finish: `FINISH polished` (roughness 0.04), `satin` (0.25), `brushed` (0.45)
+or `matte` (0.75). A metal in any colour is `anodised COLOR #RRGGBB`.
+
+```text
+MATERIAL "Ring" rose-gold
+MATERIAL "Housing" stainless FINISH brushed
+MATERIAL "Knob" anodised COLOR #1E5BD6
+```
+
+### The Appearance window
+
+![The Appearance window: swatches by family, a card of anodised colours, finishes](appearance.png)
+
+**View > Appearance...** (or `PANEL APPEARANCE`) gives the selected body its material from
+swatches. Each swatch is shaded the way its material reflects. The window also has:
+
+- a card of anodised colours: 15 hues, each in four shades;
+- the finishes;
+- roughness and metallic sliders;
+- the colour.
+
+Every click is a `MATERIAL` command, so it is logged and can be undone.
+
+The 3D window shows materials as well, not only the rendered picture. Metals reflect a photo
+studio (a dark floor, a bright ceiling, soft boxes) tinted with their colour, and rougher
+finishes blur it.
 
 Polypaint shows in the picture too. Materials are saved in the project and undone with
 `UNDO`.

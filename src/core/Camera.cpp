@@ -103,6 +103,7 @@ void OrbitCamera::pan(float dx, float dy, float viewportHeight) noexcept {
 }
 
 void OrbitCamera::zoom(float steps) noexcept {
+    if (m_animT < 1.0f) applyPose(m_to); // a view change in flight (FIT, a standard view) ends where it was going
     m_animT = 1.0f;
     m_distance = std::clamp(m_distance * std::pow(kZoomFactor, steps), kMinDistance, kMaxDistance);
 }

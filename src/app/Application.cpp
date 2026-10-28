@@ -3169,6 +3169,7 @@ void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = o
 void Application::setPanelPage(int page) {
     if (page == 8 || page == 9) m_uiState.showRender = true, m_uiState.renderStart = m_uiState.renderStart || page == 9;
     else if (page == 10) m_uiState.showProduct = true;
+    else if (page == 11) m_uiState.showAppearance = true;
     else if (page == 7) m_uiState.showLicence = true;
     else if (page == 6) m_uiState.showPreferences = true;
     else if (page == 5) m_uiState.showHelp = true;

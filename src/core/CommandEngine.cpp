@@ -2778,10 +2778,17 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         // MATERIAL [body] preset | COLOR c | METALLIC m | ROUGHNESS r | TRANSMISSION t | IOR n | EMISSION e
         //          | COLORMAP file | NORMALMAP file | DEFAULT | LIST
         if (!a.empty() && iequal(a[0], "list")) {
-            for (const MaterialPreset& p : materialPresets()) out.say(std::string("  ") + p.name + "  " + p.description);
+            for (const char* family : materialFamilies()) {
+                out.say(std::string(family) + ":");
+                for (const MaterialPreset& p : materialPresets())
+                    if (p.family == family) out.say(std::string("  ") + p.name + "  " + p.description);
+            }
+            std::string finishes = "Finishes (FINISH name):";
+            for (const MaterialFinish& f : materialFinishes()) finishes += std::string(" ") + f.name;
+            out.say(finishes);
             return out;
         }
-        static const char* const kWords[] = {"color", "colour", "metallic", "roughness", "transmission", "ior", "emission", "colormap", "normalmap", "default"};
+        static const char* const kWords[] = {"color", "colour", "metallic", "roughness", "transmission", "ior", "emission", "colormap", "normalmap", "default", "finish"};
         auto isWord = [&](std::size_t k) {
             if (quotedArg(k)) return false;
             const std::string w = lower(a[k]);
@@ -2833,6 +2840,14 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 if (i + 1 >= a.size()) return out.fail(toUpper(w) + " needs an image file, or NONE");
                 const std::string f = a[++i];
                 (w == "colormap" ? m.colorMap : m.normalMap) = iequal(f, "none") ? std::string() : f;
+            } else if (w == "finish") {
+                // FINISH polished | satin | brushed | matte: how rough the surface is.
+                const std::string f = i + 1 < a.size() ? lower(a[++i]) : std::string();
+                const MaterialFinish* found = nullptr;
+                for (const MaterialFinish& x : materialFinishes())
+                    if (f == x.name) found = &x;
+                if (!found) return out.fail("FINISH is POLISHED, SATIN, BRUSHED or MATTE");
+                m.roughness = found->roughness;
             } else if (w == "default") {
                 m = MaterialProps{};
             } else if (!applyMaterialPreset(w, m, &color)) {
@@ -4875,11 +4890,12 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {
-        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT: open that page or window.
+        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE: open that page or window.
         const std::string page = toUpper(a[0]);
         const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5
                     : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7
-                    : page == "PRODUCT" || page == "PDM" || page == "VAULT" ? 10 : -1;
+                    : page == "PRODUCT" || page == "PDM" || page == "VAULT" ? 10
+                    : page == "APPEARANCE" || page == "MATERIALS" ? 11 : -1;
         if (p >= 0) {
             if (auto o = needView(view, "PANEL"); !o.ok) return o;
             view->setPanelPage(p);
