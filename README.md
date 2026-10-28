@@ -350,6 +350,10 @@ Details: [docs/cad.md](docs/cad.md).
   in conflict.
 - **Sub-assemblies:** a tree of them, shown in the Model panel and kept in STEP files both ways.
 - **Checks:** an interference check that reports overlap volumes, and a parts list.
+- **Part files:** parts and sub-assemblies in files of their own, linked in as often as needed
+  (`COMPONENT INSERT shaft AT 40,0,10`). Every assembly that uses a file updates when it changes,
+  keeping where each instance was placed. `COMPONENT PACK` gathers an assembly and its files into
+  one folder.
 
 ```text
 MATE CONCENTRIC "Plate" AT 19,0,5 "Pin" AT 115,50,24      MATE FLUSH "Plate" AT 0,0,0 "Pin" AT 15,0,-3

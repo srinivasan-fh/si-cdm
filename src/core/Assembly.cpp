@@ -6,6 +6,7 @@
 #include "core/Step.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -902,16 +903,28 @@ std::vector<BomLine> partsList(const Scene& scene) {
         const auto it = b.properties.find(key);
         return it == b.properties.end() ? std::string() : it->second;
     };
+    // A linked part file is one part, counted once an instance (however many bodies it has).
+    std::vector<std::pair<std::string, std::string>> instancesSeen; // file, instance
     for (const Body& b : scene.bodies()) {
+        if (b.linked()) {
+            if (std::find(instancesSeen.begin(), instancesSeen.end(), std::make_pair(b.link.file, b.component)) != instancesSeen.end()) continue;
+            instancesSeen.push_back({b.link.file, b.component});
+        }
         // Bodies with the same part number are the same part, whatever they are called.
-        const std::string number = prop(b, "NUMBER"), name = partName(b.name);
-        auto it = std::find_if(out.begin(), out.end(), [&](const BomLine& e) { return number.empty() ? e.number.empty() && e.part == name : e.number == number; });
+        const std::string number = prop(b, "NUMBER");
+        const std::string name = b.linked() ? std::filesystem::path(b.link.file).stem().string() : partName(b.name);
+        auto it = std::find_if(out.begin(), out.end(), [&](const BomLine& e) {
+            if (!number.empty()) return e.number == number;
+            if (b.linked()) return e.file == b.link.file && e.number.empty();
+            return e.number.empty() && e.file.empty() && e.part == name;
+        });
         if (it != out.end()) {
             ++it->quantity;
             continue;
         }
         BomLine l;
         l.part = name, l.number = number, l.description = prop(b, "DESCRIPTION"), l.material = prop(b, "MATERIAL");
+        if (b.linked()) l.file = b.link.file;
         out.push_back(std::move(l));
     }
     return out;

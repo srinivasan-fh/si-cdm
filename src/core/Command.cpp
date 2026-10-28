@@ -233,6 +233,8 @@ constexpr CommandSpec kCommands[] = {
      "Assembly mates: COINCIDENT, FLUSH, CONCENTRIC, DISTANCE mm, ANGLE deg, PARALLEL, PERPENDICULAR between faces picked by a point on each "
      "(planes, axes of round faces, sphere centres); the second part moves to the first. MATE FIX holds a part still; MATE alone lists them; "
      "MATE EDIT n value, FLIP n, SUPPRESS n, DELETE n; MATE SOLVE places the parts again"},
+    {"COMPONENT", "COMP LINK", "COMPONENT INSERT file [AS name] [AT x,y,z] [ROTATE rx,ry,rz] | LIST | RELOAD [name] [FORCE] | OPEN name | REPLACE name file | MAKE name FILE file FROM body... | BREAK name | MOVE name dx,dy,dz | ROTATE name rx,ry,rz [ABOUT x,y,z] | PACK folder",
+     "Assemblies of part files: link a part (or sub-assembly) file in, as often as needed; it updates when the file changes, keeping where it is here"},
     {"ASSEMBLY", "ASM", "ASSEMBLY [TREE] | GROUP \"name\" body... | UNGROUP body... | INTERFERENCE [body...] | BOM",
      "The assembly: its tree of sub-assemblies and parts, putting parts in a sub-assembly (a/b for one inside another), the parts that "
      "overlap and by how much, and the parts list"},

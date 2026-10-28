@@ -18,6 +18,8 @@
 #include "core/AssemblyCommand.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/Collide.hpp"
+#include "core/ComponentCommand.hpp"
+#include "core/Components.hpp"
 #include "core/DrawingCommand.hpp"
 #include "core/PdmCommand.hpp"
 #include "core/FeatureCommand.hpp"
@@ -795,7 +797,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -811,7 +813,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -837,7 +839,7 @@ std::string releasedRefusal(const Document& doc, const std::string& cmd, const P
         for (const char* k : kAskEmpty)
             if (cmd == k) return {};
     if (cmd == "PLANE" && pc.args.size() == 1) return {}; // only picks the sketch plane
-    static const char* const kAsk[] = {"list", "info", "show", "report", "tree", "bom", "parts", "interference", "export", "check", "status", "dof", "hide"};
+    static const char* const kAsk[] = {"list", "info", "show", "report", "tree", "bom", "parts", "interference", "export", "check", "status", "dof", "hide", "pack", "open"};
     for (std::size_t i = 0; i < pc.args.size(); ++i) {
         if (i < pc.quoted.size() && pc.quoted[i]) continue;
         const std::string w = lower(pc.args[i]);
@@ -1481,6 +1483,11 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.state.refAxes.clear();
         doc.state.refPoints.clear();
         doc.state.customPlane.clear();
+        doc.state.variables.clear(); // the old project's equations, configurations, product data and render set-up too
+        doc.state.configs.clear();
+        doc.state.config.clear();
+        doc.state.product = ProductData{};
+        doc.state.render = RenderSettings{};
         if (doc.state.plane == SketchPlane::Custom) doc.state.plane = SketchPlane::Top;
         if (const auto u = parseUnitName(preferences().units)) doc.state.units.unit = *u; // Preferences: units for new projects
         out.documentReplaced = true;
@@ -1533,6 +1540,9 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.jobsUndo.clear(), doc.jobsRedo.clear();
         doc.state = st;
         doc.path = fs::absolute(path).string();
+        // Linked part files that changed since it was saved come in as they are now.
+        std::vector<std::string> linkReport;
+        reloadComponents(doc.scene, "", false, linkReport);
         doc.dirty = false;
         doc.clearSelection();
         doc.primitiveSerial = static_cast<int>(doc.scene.bodies().size());
@@ -1540,6 +1550,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         out.documentReplaced = true;
         out.say("Opened " + doc.path);
         if (!warn.empty()) out.say(warn);
+        for (const std::string& l : linkReport) out.say(l);
         return out;
     }
     if (cmd == "RECENT") {
@@ -2648,6 +2659,12 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
     if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
+    if (cmd == "COMPONENT") {
+        // Replaying the history: only what builds the model (not LIST, OPEN or PACK).
+        const std::string sub = a.empty() ? std::string() : lower(a[0]);
+        if (doc.replaying && (sub == "list" || sub == "open" || sub == "edit" || sub == "pack")) return out;
+        return runComponentCommand(doc, a, pc.quoted, view);
+    }
     if (cmd == "RIG" || cmd == "TERRAIN" || cmd == "ARM") return runRobotCommand(doc, cmd, a, pc.quoted);
     if (cmd == "CONSTRUCTION" || cmd == "EXTEND" || cmd == "OFFSET" || cmd == "DRAG" || cmd == "SKETCHFILLET" || cmd == "SKETCHCHAMFER" ||
         cmd == "SKETCHMIRROR" || cmd == "SKETCHPATTERN" || cmd == "PROJECT")
@@ -4412,6 +4429,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
             return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
         Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        if (b.linked()) return out.fail(b.name + " is linked component " + b.component + ": COMPONENT ROTATE " + b.component + " rx,ry,rz turns it");
         if (!b.component.empty()) return out.fail(b.name + " is part of " + b.component + ": its pose comes from the component");
         b.setRotation(*deg);
         doc.scene.touchBodies();
@@ -4758,6 +4776,13 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         auto& s = doc.scene;
         if (doc.selectedBody >= 0 && doc.selectedBody < static_cast<int>(s.bodies().size())) {
             Body& b = s.bodies()[static_cast<std::size_t>(doc.selectedBody)];
+            if (b.linked()) { // a linked part moves as one
+                const std::string comp = b.component;
+                moveComponent(s, comp, *d);
+                markChanged(doc);
+                out.say("Moved " + comp + fmt(" by (%.1f, %.1f, %.1f)", d->x, d->y, d->z));
+                return out;
+            }
             b.offset += *d;
             markChanged(doc);
             out.say("Moved " + b.name + fmt(" to (%.1f, %.1f, %.1f)", b.offset.x, b.offset.y, b.offset.z));

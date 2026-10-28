@@ -933,6 +933,17 @@ const char* const kGerman[][2] = {
     {"[ and ] change the size, Shift+[ and Shift+] the strength; F drags the size, Shift+F the strength", "[ und ] ändern die Größe, Umschalt+[ und Umschalt+] die Stärke; F zieht die Größe, Umschalt+F die Stärke"},
     {"size", "Größe"},
     {"strength", "Stärke"},
+    // Linked components (assemblies of part files)
+    {"(linked)", "(verknüpft)"},
+    {"A part or sub-assembly file, linked: it updates when the file changes", "Eine Teil- oder Unterbaugruppendatei, verknüpft: sie aktualisiert sich, wenn sich die Datei ändert"},
+    {"Copies the assembly and every part file it uses into one folder", "Kopiert die Baugruppe und jede verwendete Teiledatei in einen Ordner"},
+    {"Insert Component...", "Komponente einfügen..."},
+    {"Linked from", "Verknüpft aus"},
+    {"List Components", "Komponenten auflisten"},
+    {"Make a Part File from the Selection...", "Teiledatei aus der Auswahl erstellen..."},
+    {"Open the Component's File", "Datei der Komponente öffnen"},
+    {"Pack and Go...", "Pack and Go..."},
+    {"Reload Components", "Komponenten neu laden"},
 };
 
 const std::size_t kGermanCount = sizeof(kGerman) / sizeof(kGerman[0]);

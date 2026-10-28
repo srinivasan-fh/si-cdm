@@ -52,6 +52,17 @@ struct Body {
     std::string component;  // library component this body belongs to ("" = none)
     std::string attachedTo; // moves rigidly with this body (armour on its part, a hinge pin on its parent)
     std::string assembly;   // the sub-assembly it sits in ("Gearbox/Input shaft"; "" = the top level)
+    // A body linked from a part file (COMPONENT INSERT; Components.hpp): the file and the body
+    // in it, and its pose there, so a reload keeps how it was placed here. `component` is
+    // the instance's name; file "": a body of this project's own.
+    struct Link {
+        std::string file;        // absolute in memory; saved relative to the project file
+        std::string body;        // its name in the part file
+        Vec3 partOffset{}, partRotation{}; // its pose in the part file when last loaded
+        std::size_t vertices = 0;          // its vertex count then (another: changed here)
+        std::uint64_t stamp = 0;           // the file's size and time then (fileStamp())
+    } link;
+    bool linked() const noexcept { return !link.file.empty(); }
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
     MaterialProps material; // how it looks rendered (RENDER): metal, glass, roughness, maps
     std::map<std::string, std::string> properties; // part number, description, vendor... (PROPERTY)

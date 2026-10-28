@@ -294,10 +294,11 @@ private:
     // File menu.
     enum FileAction {
         FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport,
-        FileLathePost, FileToolsImport, FileToolsExport, FileLicence
+        FileLathePost, FileToolsImport, FileToolsExport, FileLicence, FileInsertComponent, FileMakeComponent, FilePackComponents
     };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
+    std::string m_makeComponentBody; // the body FileMakeComponent saves as a part file
     // Design menu inputs.
     float m_revolveAngle = 360.0f, m_filletRadius = 2.0f, m_patternSpacing = 20.0f, m_patternAngle = 360.0f;
     int m_patternCount = 3, m_patternAxis = 0;

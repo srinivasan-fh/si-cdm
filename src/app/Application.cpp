@@ -1,5 +1,6 @@
 #include "app/Application.hpp"
 #include "app/PenInput.hpp"
+#include "core/Components.hpp"
 #include "core/Translate.hpp"
 #include "app/OpenFiles.hpp"
 
@@ -1616,6 +1617,7 @@ void Application::frame(float dt) {
     updateTitle();
     refreshFileTabs();
     autosave();
+    watchComponents();
     // Files the system asked us to open (a project double-clicked in the macOS Finder).
     for (const std::string& path : takeOpenFileRequests()) {
         runCommandLine((fileKindOf(path) == FileKind::Project ? "OPEN \"" : "IMPORT \"") + path + "\"");
@@ -2338,6 +2340,22 @@ bool Application::closeFileTab(int index, bool discard) {
     setStatus("Closed " + name);
     m_framesToRender = std::max(m_framesToRender, 3);
     return true;
+}
+
+void Application::watchComponents() {
+    // Every two seconds, between strokes and drags: a part file saved since (in another tab,
+    // by a colleague, from the vault) comes in. Each change is tried once (a released
+    // assembly refuses it, and says so once).
+    const double now = glfwGetTime();
+    if (now < m_componentCheck || m_leftDrag != DragMode::None) return;
+    m_componentCheck = now + 2.0;
+    std::string key;
+    for (const ComponentInfo& c : listComponents(m_doc.scene))
+        if (c.changed) key += c.name + "|" + c.file + "|" + std::to_string(fileStamp(c.file)) + ";";
+    if (key.empty() || key == m_componentTried) return;
+    m_componentTried = key;
+    runCommandLine("COMPONENT RELOAD");
+    m_framesToRender = std::max(m_framesToRender, 3);
 }
 
 void Application::autosave() {

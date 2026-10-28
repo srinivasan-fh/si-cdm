@@ -96,6 +96,7 @@ std::vector<std::pair<std::string, int>> billOfMaterials(const Scene& scene);
 // The same with the parts' properties (PROPERTY): bodies with one part NUMBER are one part.
 struct BomLine {
     std::string part, number, description, material;
+    std::string file; // the part file, for a linked component
     int quantity = 1;
 };
 std::vector<BomLine> partsList(const Scene& scene);

@@ -726,6 +726,24 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             st.mateFirst.clear();
             if (st.mode != ViewMode::Model3D) cmd.mode = ViewMode::Model3D;
         };
+        // Parts and sub-assemblies from their own files, linked.
+        {
+            const bool body = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size());
+            const Body* sel = body ? &scene.bodies()[static_cast<std::size_t>(st.selectedBody)] : nullptr;
+            if (ImGui::MenuItem(tr("Insert Component..."))) requestFile(FileInsertComponent, st);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A part or sub-assembly file, linked: it updates when the file changes"));
+            if (ImGui::MenuItem(tr("Make a Part File from the Selection..."), nullptr, false, sel && !sel->linked())) {
+                m_makeComponentBody = sel->name;
+                requestFile(FileMakeComponent, st);
+            }
+            if (ImGui::MenuItem(tr("Open the Component's File"), nullptr, false, sel && sel->linked()))
+                cmd.commands.push_back("COMPONENT OPEN \"" + sel->component + "\"");
+            if (ImGui::MenuItem(tr("Reload Components"))) cmd.commands.push_back("COMPONENT RELOAD");
+            if (ImGui::MenuItem(tr("List Components"))) cmd.commands.push_back("COMPONENT LIST");
+            if (ImGui::MenuItem(tr("Pack and Go..."))) requestFile(FilePackComponents, st);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Copies the assembly and every part file it uses into one folder"));
+            ImGui::Separator();
+        }
         ImGui::TextDisabled("%s", tr("Mate two faces (click one on each part)"));
         if (ImGui::MenuItem(tr("Coincident (Face to Face)"))) startMate("COINCIDENT");
         if (ImGui::MenuItem(tr("Flush (Faces the Same Way)"))) startMate("FLUSH");
@@ -1857,6 +1875,11 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                             st.selectedBody = st.selectedBody == i ? -1 : i;
                             st.selectedCurve = st.selectedImage = -1;
                         }
+                        if (b.linked()) { // from a part file: say which
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s %s", tr("Linked from"), b.link.file.c_str());
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%s", tr("(linked)"));
+                        }
                         ImGui::PopID();
                     }
                 };
@@ -1945,6 +1968,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                 propertyRow("Name", "%s", b.name.c_str());
                 propertyRow("Type", "%s", b.kind.c_str());
                 if (!b.component.empty()) propertyRow("Component", "%s", b.component.c_str());
+                if (b.linked()) propertyRow("Part file", "%s", b.link.file.c_str());
                 // Size factor: the whole library component scales with its motions.
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -2419,6 +2443,11 @@ void LandingUI::requestFile(int action, const UiState& st) {
         m_fileDialog.open(FileDialog::Mode::Save, "Save the Job's Tools", {".json", ".csv"}, dir, projectStem(st) + "-tools.json");
         break;
     case FileSheetExport: m_fileDialog.open(FileDialog::Mode::Save, "Export Drawing", {".pdf", ".svg", ".dxf"}, dir, projectStem(st) + ".pdf"); break;
+    case FileInsertComponent: m_fileDialog.open(FileDialog::Mode::Open, "Insert a Part or Assembly File (linked)", {".sicdm"}, dir); break;
+    case FileMakeComponent: m_fileDialog.open(FileDialog::Mode::Save, "Save the Selected Body as a Part File", {".sicdm"}, dir, "part.sicdm"); break;
+    case FilePackComponents:
+        m_fileDialog.open(FileDialog::Mode::Save, "Pack and Go: the Assembly and Its Parts into a Folder", {".sicdm"}, dir, projectStem(st) + ".sicdm");
+        break;
     default: m_fileAction = FileNone;
     }
 }
@@ -2448,6 +2477,13 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case FileToolsImport: cmd.commands.push_back("CAM LIBRARY LOAD " + quoted(*path)); break;
         case FileToolsExport: cmd.commands.push_back("CAM LIBRARY SAVE " + quoted(*path)); break;
         case FileLicence: cmd.commands.push_back("LICENCE INSTALL " + quoted(*path)); break;
+        case FileInsertComponent: cmd.commands.push_back("COMPONENT INSERT " + quoted(*path)); break;
+        case FileMakeComponent: {
+            const std::string stem = std::filesystem::path(*path).stem().string();
+            cmd.commands.push_back("COMPONENT MAKE \"" + stem + "\" FILE " + quoted(*path) + " FROM \"" + m_makeComponentBody + "\"");
+            break;
+        }
+        case FilePackComponents: cmd.commands.push_back("COMPONENT PACK " + quoted(std::filesystem::path(*path).parent_path().string())); break;
         case FileLathePost:
             cmd.commands.push_back("LATHE POST " + quoted(*path) + (st.lathe ? " " + st.lathe->setup.post : std::string()) + (m_latheCycles ? " CYCLES" : ""));
             break;

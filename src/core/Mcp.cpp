@@ -657,6 +657,24 @@ Json McpServer::toolDefinitions() {
         p.set("mate", prop("string", "edit / flip / suppress / unsuppress / delete: the mate's name (M1...) or number"));
         p.set("name", prop("string", "group: the sub-assembly (a/b for one inside another)"));
         p.set("parts", prop("array", "group / ungroup / interference: part names"));
+        tools.push(tool("component",
+                        "Assemblies of part files: insert a part or sub-assembly file as a linked component (as many times as needed), "
+                        "which updates when the file changes and keeps where it was placed; list, reload, replace, move, turn, unlink; "
+                        "make a part file from bodies; pack the assembly and its files into one folder.",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "insert | list | reload | replace | make | break | move | rotate | pack"));
+                            c.set("file", prop("string", "insert / replace / make: the part file (.sicdm), relative to the open project's folder or absolute"));
+                            c.set("name", prop("string", "the instance's name (insert: optional; the file's name and a number)"));
+                            c.set("at", prop("array", "insert: where the part's origin goes [x, y, z] (mm)"));
+                            c.set("rotation", prop("array", "insert: degrees about X, Y, Z; rotate: the turn to add"));
+                            c.set("by", prop("array", "move: [dx, dy, dz] (mm)"));
+                            c.set("bodies", prop("array", "make: the bodies that make the new part file"));
+                            c.set("force", prop("boolean", "reload: even if the file hasn't changed"));
+                            c.set("folder", prop("string", "pack: the folder to copy into"));
+                            return c;
+                        }(),
+                        {"operation"}));
         tools.push(tool("assembly",
                         "Assemblies: mate parts by their faces (coincident, flush, concentric, distance, angle, parallel, perpendicular; "
                         "planes, axes of round faces and sphere centres picked by a point on the face) and the solver moves the second "
@@ -1260,6 +1278,38 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return textResult("operation is one of revolve, sweep, loft, pattern, mirror, edges, fillet, chamfer, massprops, measure, history, regen, "
                           "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete, drag",
                           true);
+    }
+    if (name == "component") {
+        const std::string op = a["operation"].asString();
+        auto vec3 = [&](const Json& v) {
+            std::string s;
+            for (std::size_t i = 0; i < 3; ++i) s += (i ? "," : "") + num(i < v.size() ? v[i].asNumber() : 0.0);
+            return s;
+        };
+        const std::string inst = a["name"].isString() ? quote(a["name"].asString()) : std::string();
+        if (op == "insert") {
+            if (!a["file"].isString()) return textResult("insert needs file", true);
+            std::string line = "COMPONENT INSERT " + quote(a["file"].asString());
+            if (!inst.empty()) line += " AS " + inst;
+            if (a["at"].isArray()) line += " AT " + vec3(a["at"]);
+            if (a["rotation"].isArray()) line += " ROTATE " + vec3(a["rotation"]);
+            return runLine(line);
+        }
+        if (op == "list") return runLine("COMPONENT LIST");
+        if (op == "reload") return runLine("COMPONENT RELOAD" + (inst.empty() ? std::string() : " " + inst) + (a["force"].asBool() ? " FORCE" : ""));
+        if (inst.empty() && op != "pack") return textResult(op + " needs name", true);
+        if (op == "replace") return a["file"].isString() ? runLine("COMPONENT REPLACE " + inst + " " + quote(a["file"].asString())) : textResult("replace needs file", true);
+        if (op == "break") return runLine("COMPONENT BREAK " + inst);
+        if (op == "move") return runLine("COMPONENT MOVE " + inst + " " + vec3(a["by"]));
+        if (op == "rotate") return runLine("COMPONENT ROTATE " + inst + " " + vec3(a["rotation"]));
+        if (op == "make") {
+            if (!a["file"].isString() || !a["bodies"].isArray()) return textResult("make needs file and bodies", true);
+            std::string line = "COMPONENT MAKE " + inst + " FILE " + quote(a["file"].asString()) + " FROM";
+            for (std::size_t i = 0; i < a["bodies"].size(); ++i) line += " " + quote(a["bodies"][i].asString());
+            return runLine(line);
+        }
+        if (op == "pack") return a["folder"].isString() ? runLine("COMPONENT PACK " + quote(a["folder"].asString())) : textResult("pack needs folder", true);
+        return textResult("Unknown operation " + op, true);
     }
     if (name == "assembly") {
         const std::string op = a["operation"].asString();

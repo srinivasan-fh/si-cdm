@@ -83,6 +83,8 @@ add_library(sicdm_core STATIC
     src/core/Material.cpp
     src/core/Render.cpp
     src/core/Collide.cpp
+    src/core/Components.cpp
+    src/core/ComponentCommand.cpp
     src/core/Pdm.cpp
     src/core/PdmCommand.cpp
     src/core/lang/German.cpp

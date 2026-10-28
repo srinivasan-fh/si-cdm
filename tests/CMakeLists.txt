@@ -42,6 +42,7 @@ add_executable(sicdm_tests
     test_render.cpp
     test_pdm.cpp
     test_collide.cpp
+    test_components.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 target_include_directories(sicdm_tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/stb) # reading back written images

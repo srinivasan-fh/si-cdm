@@ -160,6 +160,7 @@ private:
     void refreshFileTabs();
     void saveAll();
     void autosave(); // keeps recovery copies of files with unsaved changes
+    void watchComponents(); // reloads linked part files that changed on disk
 
     // Each window keeps its own camera and display settings.
     OrbitCamera& camera() noexcept { return m_uiState.mode == ViewMode::Drawing2D ? m_cam2D : m_cam3D; }
@@ -290,6 +291,8 @@ private:
     // Autosave of unsaved work, and what an earlier session that ended badly left.
     Autosaver m_autosaver;
     double m_autosaveCheck = 0.0;
+    double m_componentCheck = 0.0;
+    std::string m_componentTried; // the changes last reloaded (or refused), so each is tried once
     std::future<UpdateResult> m_updateCheck; // the check at start (Preferences), while it runs
     // The render window's picture: made in the background from a copy of the scene.
     void pollRender();

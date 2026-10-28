@@ -8,6 +8,9 @@ SI-CDM puts parts together the way a fitter does:
   both when they are read and when they are written.
 - **The interference check** finds where parts overlap and by how much.
 - **The parts list** counts each part.
+- **Part files**: a part, or a whole sub-assembly, kept in a file of its own and linked
+  into any number of assemblies. Change the part file and every assembly that uses it
+  updates.
 
 ```text
 MATE CONCENTRIC "Plate" AT 19,0,5 "Pin" AT 115,50,24     the pin's axis on the hole's
@@ -25,6 +28,51 @@ In the app, use the **Assembly** menu:
 
 The Model panel shows the sub-assemblies as folders, and a **Mates** list. Right-click a mate
 to suppress, flip or delete it. A mate that isn't met shows in red.
+
+## Assemblies of part files
+
+![Three shafts and a base plate, each linked from its own part file; the parts list counts them by file](assembly-components.png)
+
+Each part can be a project file of its own (`shaft.sicdm`, `plate.sicdm`). An assembly links
+them in as **components**:
+
+```text
+COMPONENT INSERT shaft AT 40,0,10                    shaft.sicdm, as "shaft-1"
+COMPONENT INSERT shaft AS Spindle AT 0,0,10 ROTATE 0,90,0
+COMPONENT INSERT gearbox.sicdm AT 0,200,0            a sub-assembly file: all its parts
+COMPONENT LIST                                       each instance, its file, up to date or changed
+COMPONENT RELOAD                                     bring in parts whose files changed
+COMPONENT OPEN shaft-1                               edit the part file itself
+COMPONENT REPLACE shaft-1 shaft-long                 another file, in the same place
+COMPONENT MOVE shaft-1 0,0,5                         move or turn an instance as one
+COMPONENT ROTATE shaft-1 0,0,90 ABOUT 0,0,0
+COMPONENT MAKE Bracket FILE bracket FROM "Block 3"   turn bodies of this assembly into a part file, linked in place
+COMPONENT BREAK shaft-1                              stop linking: the bodies become this project's own
+COMPONENT PACK delivery                              the assembly and every file it uses, copied into one folder
+```
+
+In the app, these are at the top of the **Assembly** menu (Insert Component..., Make a Part
+File from the Selection..., Open the Component's File, Reload Components, Pack and Go...). Linked
+bodies are marked *(linked)* in the Model panel, and their properties show the part file.
+
+How it behaves:
+
+- **Updates.** A part file can be saved from another tab, by a colleague, or checked in from
+  the [vault](pdm.md). The assembly updates by itself within two seconds when it is open, or as
+  soon as it is opened. Each instance keeps the place, turn and mates it has in the assembly, and
+  only the shape comes from the file. If a linked body was reshaped in the assembly, the file's
+  shape replaces it, and the update says so. `UNDO` takes an update back.
+- **Reuse.** The same file can be inserted any number of times. The parts list counts the
+  instances of each file as one part. It shows the part number and description saved in the
+  part file (`PROPERTY NUMBER ...` there).
+- **One part, one unit.** An instance moves as one, even when its file holds several bodies,
+  which are then named `instance:body`. The mate solver treats it the same way.
+- **Paths.** Files are kept relative to the assembly when it is saved, so a folder of parts
+  and its assemblies can be moved or zipped together. `COMPONENT PACK` gathers files from
+  elsewhere into one folder and points the copies at each other.
+- **Missing files.** `COMPONENT LIST` marks a file that is gone as *missing*. Its bodies keep
+  the last shape that was loaded, so nothing disappears.
+- **No loops.** An assembly can't contain itself, directly or through one of its parts.
 
 ## Mates
 
@@ -142,8 +190,9 @@ at least a ten-thousandth of the smaller part.
 
 ## Parts list
 
-`ASSEMBLY BOM` counts the parts by name. Copies count as the same part: "Bolt", "Bolt 2" and
-"Bolt (3)" are one part, quantity 3.
+`ASSEMBLY BOM` counts the parts. Copies count as the same part: "Bolt", "Bolt 2" and
+"Bolt (3)" are one part, quantity 3. So are bodies with the same part number
+(`PROPERTY "Bolt 1" NUMBER B-6`), and the instances of one linked part file.
 
 ## For AI agents
 
@@ -154,3 +203,6 @@ The MCP tool `assembly` does all of this. Its operations are:
 - `edit`, `flip`, `suppress`, `unsuppress`, `delete` and `clear`;
 - `tree`, `group` and `ungroup`;
 - `interference` and `bom`.
+
+The MCP tool `component` handles part files: `insert`, `list`, `reload`, `replace`, `make`,
+`break`, `move`, `rotate` and `pack`.

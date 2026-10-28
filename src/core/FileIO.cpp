@@ -9,6 +9,7 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <array>
 #include <cctype>
@@ -478,6 +479,17 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (!b.component.empty()) jb.set("component", b.component);
         if (!b.attachedTo.empty()) jb.set("attached_to", b.attachedTo);
         if (!b.assembly.empty()) jb.set("assembly", b.assembly);
+        if (b.linked()) { // a part file's body: the file relative to this one (the pair moves together)
+            const fs::path rel = fs::path(b.link.file).lexically_relative(projectDir); // empty: another drive
+            const std::string file = rel.empty() ? fs::path(b.link.file).generic_string() : rel.generic_string();
+            jb.set("link", Json::object()
+                               .set("file", file)
+                               .set("body", b.link.body)
+                               .set("part_offset", vec3Json(b.link.partOffset))
+                               .set("part_rotation", vec3Json(b.link.partRotation))
+                               .set("vertices", static_cast<double>(b.link.vertices))
+                               .set("stamp", std::to_string(b.link.stamp)));
+        }
         if (!b.field.empty()) jb.set("field", b.field);
         if (b.multires && !b.multires->levels.empty()) { // the cage's triangles and each level's positions (finer triangles follow)
             std::vector<unsigned char> tri;
@@ -990,6 +1002,16 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         b.component = jb["component"].asString();
         b.attachedTo = jb["attached_to"].asString();
         b.assembly = jb["assembly"].asString();
+        if (const Json& jl = jb["link"]; jl.isObject() && !jl["file"].asString().empty()) {
+            fs::path f = jl["file"].asString();
+            if (f.is_relative()) f = fs::absolute(fs::path(path)).parent_path() / f;
+            b.link.file = f.lexically_normal().string();
+            b.link.body = jl["body"].asString();
+            b.link.partOffset = jsonVec3(jl["part_offset"]);
+            b.link.partRotation = jsonVec3(jl["part_rotation"]);
+            b.link.vertices = static_cast<std::size_t>(std::max(jl["vertices"].asNumber(), 0.0));
+            b.link.stamp = std::strtoull(jl["stamp"].asString().c_str(), nullptr, 10);
+        }
         b.field = jb["field"].asString();
         if (const Json& jm = jb["multires"]; jm.isObject()) { // levels that don't fit together are left out
             auto md = std::make_shared<MultiresData>();
