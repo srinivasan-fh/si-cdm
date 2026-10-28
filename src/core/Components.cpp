@@ -28,6 +28,22 @@ std::string canonical(const std::string& file) {
     return (ec ? fs::absolute(file).lexically_normal() : p).string();
 }
 
+// Whether two names are the one file: by the file itself where both exist (however they are
+// spelled: links, letter case on file systems that ignore it), else by their canonical names.
+bool sameFile(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    std::error_code ec;
+    if (fs::exists(a, ec) && fs::exists(b, ec)) {
+        const bool same = fs::equivalent(a, b, ec);
+        if (!ec) return same;
+    }
+    return canonical(a) == canonical(b);
+}
+
+bool anySameFile(const std::set<std::string>& files, const std::string& f) {
+    return std::any_of(files.begin(), files.end(), [&](const std::string& g) { return sameFile(g, f); });
+}
+
 // The instance's placement read off one of its bodies: its pose here relative to its pose in
 // the part file (rotation, then where the part's origin went).
 Placement instancePlacement(const Body& b) {
@@ -59,7 +75,7 @@ int reloadImpl(Scene& scene, const std::string& name, bool force, std::vector<st
 // that links back to one being read is refused (it would never end).
 bool readPart(const std::string& file, PartFile& part, std::string* why, std::set<std::string>& visiting) {
     const std::string key = canonical(file);
-    if (visiting.count(key)) {
+    if (anySameFile(visiting, key)) {
         if (why) *why = fs::path(file).filename().string() + " links back to itself (through its parts)";
         return false;
     }
@@ -80,8 +96,9 @@ bool reaches(const Scene& scene, const std::string& target, std::set<std::string
     for (const Body& b : scene.bodies()) {
         if (!b.linked()) continue;
         const std::string f = canonical(b.link.file);
-        if (f == target) return true;
-        if (!seen.insert(f).second) continue;
+        if (sameFile(f, target)) return true;
+        if (anySameFile(seen, f)) continue;
+        seen.insert(f);
         Scene s;
         ProjectState st;
         std::string err, warn;
@@ -221,7 +238,7 @@ bool insertComponent(Scene& scene, ProjectState& /*state*/, const std::string& f
         return false;
     }
     const std::string path = canonical(file);
-    if (!assemblyFile.empty() && canonical(assemblyFile) == path) {
+    if (!assemblyFile.empty() && sameFile(assemblyFile, path)) {
         if (why) *why = "An assembly can't contain itself";
         return false;
     }

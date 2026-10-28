@@ -7,6 +7,7 @@
 #include "core/Scene.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -190,7 +191,9 @@ TEST_CASE("components: make a part file from bodies, replace, break, multi-body 
     Document loop;
     REQUIRE(run(loop, "COMPONENT INSERT " + q(dir / "machine.sicdm")).ok);
     REQUIRE(run(loop, "SAVE " + q(dir / "loop.sicdm")).ok);
-    CHECK(!run(d, "COMPONENT INSERT loop").ok);
+    const CommandOutput looped = run(d, "COMPONENT INSERT loop");
+    CHECK(!looped.ok);
+    if (looped.ok) std::printf("  inserted %s into %s:\n%s", (dir / "loop.sicdm").string().c_str(), d.path.c_str(), text(looped).c_str());
     // Released assemblies: listing is fine, inserting isn't.
     REQUIRE(run(d, "REVISION RELEASE").ok);
     CHECK(run(d, "COMPONENT LIST").ok);
