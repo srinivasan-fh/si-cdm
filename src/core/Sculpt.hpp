@@ -90,6 +90,11 @@ struct SculptSettings {
     float spacing = 0.0f; // dabs along a stroke, in radii apart (0: a quarter; 2: stamps side by side)
 };
 
+// A drawing tablet's pen pressure (0..1) on a stroke's settings: the radius and/or the
+// strength scaled by it, never below 5 % (a light touch still marks). A negative pressure (a
+// mouse) leaves them as they are.
+SculptSettings withPressure(const SculptSettings& s, float pressure, bool size, bool strength) noexcept;
+
 enum class MaskOp { Clear, Invert, Smooth, Grow, Shrink, All };
 // Whole-body mask edits (the Mask brush paints it): CLEAR, INVERT, SMOOTH (blur),
 // GROW / SHRINK by one ring of vertices, ALL (mask everything).

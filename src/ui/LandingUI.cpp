@@ -1072,6 +1072,15 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         ImGui::SliderFloat("##sstrength", &st.sculptStrength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("[ and ] change the size, Shift+[ and Shift+] the strength; F drags the size, Shift+F the strength"));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", tr("Pen"));
+        ImGui::SameLine();
+        ImGui::Checkbox(tr("size##pensize"), &st.sculptPressureSize);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A drawing tablet's pen pressure sets the brush size"));
+        ImGui::SameLine();
+        ImGui::Checkbox(tr("strength##penstrength"), &st.sculptPressureStrength);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A drawing tablet's pen pressure sets the brush strength"));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", tr("Symmetry"));
         ImGui::SameLine();

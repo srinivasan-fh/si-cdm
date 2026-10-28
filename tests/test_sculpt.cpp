@@ -1294,3 +1294,22 @@ TEST_CASE("map baking: a sculpt's normals, height, occlusion and colour onto its
     const CommandOutput bad = run(d, "BAKE \"Sphere 1\" NORMAL SIZE 64 FILE \"" + path + "\"");
     CHECK(!bad.ok);
 }
+
+TEST_CASE("sculpt: a tablet pen's pressure sizes and weights the brush; a mouse doesn't") {
+    SculptSettings s;
+    s.radius = 20.0f;
+    s.strength = 0.6f;
+    const SculptSettings mouse = withPressure(s, -1.0f, true, true);
+    CHECK(mouse.radius == 20.0f);
+    CHECK(mouse.strength == 0.6f);
+    const SculptSettings half = withPressure(s, 0.5f, true, true);
+    CHECK(std::fabs(half.radius - 10.0f) < 1e-5f);
+    CHECK(std::fabs(half.strength - 0.3f) < 1e-5f);
+    const SculptSettings strengthOnly = withPressure(s, 0.5f, false, true);
+    CHECK(strengthOnly.radius == 20.0f);
+    CHECK(std::fabs(strengthOnly.strength - 0.3f) < 1e-5f);
+    const SculptSettings light = withPressure(s, 0.0f, true, true); // a touch still marks
+    CHECK(std::fabs(light.radius - 1.0f) < 1e-5f);
+    CHECK(light.strength > 0.0f);
+    CHECK(withPressure(s, 3.0f, true, true).radius == 20.0f); // never more than the brush's own
+}

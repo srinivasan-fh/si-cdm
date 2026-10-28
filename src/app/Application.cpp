@@ -1,4 +1,5 @@
 #include "app/Application.hpp"
+#include "app/PenInput.hpp"
 #include "core/Translate.hpp"
 #include "app/OpenFiles.hpp"
 
@@ -124,6 +125,7 @@ bool Application::init() {
     }
     // Callbacks are chained manually above; let the backend install the rest.
     ImGui_ImplGlfw_InitForOpenGL(m_window, false);
+    penInputAttach(m_window); // a tablet pen's pressure for the brushes
     glfwSetCharCallback(m_window, ImGui_ImplGlfw_CharCallback);
     glfwSetWindowFocusCallback(m_window, ImGui_ImplGlfw_WindowFocusCallback);
     glfwSetCursorEnterCallback(m_window, ImGui_ImplGlfw_CursorEnterCallback);
@@ -234,6 +236,7 @@ void Application::shutdown() {
     m_renderer.reset();
     if (m_imguiReady) {
         ImGui_ImplOpenGL3_Shutdown();
+        penInputDetach();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         m_imguiReady = false;
@@ -787,7 +790,7 @@ bool Application::beginSculpt(float x, float y) {
         m_stampBase = m_sculptMesh;
     } else {
         m_sculptMesh.beginStroke();
-        m_sculptMesh.dab(p, s);
+        m_sculptMesh.dab(p, withPressure(s, penPressure(), m_uiState.sculptPressureSize, m_uiState.sculptPressureStrength));
         ++m_dabs;
     }
     m_lastDab = p;
@@ -834,15 +837,17 @@ void Application::continueSculpt(float x, float y) {
     } else {
         const auto hit = m_sculptMesh.raycast(ray);
         if (!hit) return;
-        // Dabs every quarter radius (or the spacing set) along the stroke, each on the surface.
-        const float spacing = std::max(m_sculptSettings.radius * (m_sculptSettings.spacing > 0 ? m_sculptSettings.spacing : 0.25f), 1e-3f);
+        // Dabs every quarter radius (or the spacing set) along the stroke, each on the surface;
+        // a pen's pressure sizes and weights them.
+        const SculptSettings dabSettings = withPressure(m_sculptSettings, penPressure(), m_uiState.sculptPressureSize, m_uiState.sculptPressureStrength);
+        const float spacing = std::max(dabSettings.radius * (dabSettings.spacing > 0 ? dabSettings.spacing : 0.25f), 1e-3f);
         const Vec3 from = m_lastDab;
         const float len = length(*hit - from);
         if (len < spacing) return;
         const int steps = std::min(static_cast<int>(len / spacing), 64);
         for (int i = 1; i <= steps; ++i) {
             const Vec3 q = m_sculptMesh.closestPoint(from + (*hit - from) * (static_cast<float>(i) * spacing / len));
-            m_sculptMesh.dab(q, m_sculptSettings, q - m_lastDab);
+            m_sculptMesh.dab(q, dabSettings, q - m_lastDab);
             ++m_dabs;
             m_lastDab = q;
         }
@@ -1100,10 +1105,68 @@ void Application::finishCutDrag(ToolId tool, float x, float y) {
     runCommandLine("TRIM " + quotedName(body.name) + " PLANE " + mmVec(a) + " NORMAL " + dirVec(n) + " SMALLER");
 }
 
+void Application::startRadial(Radial mode) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.MousePos.x < -1e30f) return;
+    m_radial = mode;
+    if (mode == Radial::Size) {
+        // mm a pixel where the brush is (at the surface under the cursor, else the view's centre).
+        const OrbitCamera& cam = camera();
+        float perPixel = cam.worldPerPixel(io.DisplaySize.y);
+        if (m_brushHit && cam.projection() == Projection::Perspective && cam.distance() > 0)
+            perPixel *= std::max(dot(*m_brushHit - cam.position(), cam.forward()), 1e-3f) / cam.distance();
+        m_radialPerPixel = std::max(perPixel, 1e-6f);
+        m_radialWas = m_uiState.sculptRadius;
+        m_radialCentre = {io.MousePos.x - m_uiState.sculptRadius / m_radialPerPixel, io.MousePos.y};
+    } else {
+        m_radialWas = m_uiState.sculptStrength;
+        m_radialCentre = {io.MousePos.x - m_uiState.sculptStrength * kRadialStrengthSpan, io.MousePos.y};
+    }
+}
+
+bool Application::updateRadial() {
+    if (m_radial == Radial::None) return false;
+    const ImGuiIO& io = ImGui::GetIO();
+    const float d = std::hypot(io.MousePos.x - m_radialCentre.x, io.MousePos.y - m_radialCentre.y);
+    if (m_radial == Radial::Size) m_uiState.sculptRadius = std::clamp(d * m_radialPerPixel, 0.1f, 1e5f);
+    else m_uiState.sculptStrength = std::clamp(d / kRadialStrengthSpan, 0.0f, 1.0f);
+    const bool cancel = ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    const bool keep = ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+    if (cancel) (m_radial == Radial::Size ? m_uiState.sculptRadius : m_uiState.sculptStrength) = m_radialWas;
+    if (cancel || keep) {
+        char status[96];
+        if (m_radial == Radial::Size) std::snprintf(status, sizeof status, "%s %s", tr("Brush radius"), lengthText(m_uiState.sculptRadius).c_str());
+        else std::snprintf(status, sizeof status, "%s %.2f", tr("Brush strength"), static_cast<double>(m_uiState.sculptStrength));
+        setStatus(status);
+        m_radial = Radial::None;
+    }
+    return true;
+}
+
 void Application::drawSculptOverlay() {
     const ImGuiIO& io = ImGui::GetIO();
     ImDrawList* fg = ImGui::GetForegroundDrawList();
     const ToolId tool = m_ui.toolbox().active();
+    if (m_radial != Radial::None) { // the radial control: its circle and value
+        const float d = std::hypot(io.MousePos.x - m_radialCentre.x, io.MousePos.y - m_radialCentre.y);
+        const ImU32 ring = IM_COL32(235, 238, 245, 240), fill = IM_COL32(90, 160, 255, 70);
+        char label[64];
+        if (m_radial == Radial::Size) {
+            fg->AddCircle(m_radialCentre, d, ring, 96, 2.0f);
+            std::snprintf(label, sizeof label, "%s", lengthText(m_uiState.sculptRadius).c_str());
+        } else {
+            fg->AddCircle(m_radialCentre, kRadialStrengthSpan, IM_COL32(235, 238, 245, 110), 96, 1.2f);
+            fg->AddCircleFilled(m_radialCentre, d, fill, 96);
+            fg->AddCircle(m_radialCentre, d, ring, 96, 2.0f);
+            std::snprintf(label, sizeof label, "%.2f", static_cast<double>(m_uiState.sculptStrength));
+        }
+        fg->AddLine(m_radialCentre, io.MousePos, IM_COL32(235, 238, 245, 120), 1.0f);
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        fg->AddRectFilled({m_radialCentre.x - ts.x * 0.5f - 6, m_radialCentre.y - ts.y * 0.5f - 3}, {m_radialCentre.x + ts.x * 0.5f + 6, m_radialCentre.y + ts.y * 0.5f + 3},
+                          IM_COL32(20, 22, 28, 210), 4.0f);
+        fg->AddText({m_radialCentre.x - ts.x * 0.5f, m_radialCentre.y - ts.y * 0.5f}, IM_COL32(240, 242, 248, 255), label);
+        return;
+    }
     if (m_leftDrag == DragMode::Knife) {
         fg->AddLine(m_knifeStart, io.MousePos, IM_COL32(255, 120, 90, 255), 2.0f);
         fg->AddCircleFilled(m_knifeStart, 3.5f, IM_COL32(255, 120, 90, 255));
@@ -1175,6 +1238,7 @@ void Application::handleViewportInput() {
     OrbitCamera& cam = camera();
     // In the 2D window the view never tilts: every "orbit" gesture pans.
     const DragMode orbitOrPan = is2D ? DragMode::Pan : DragMode::Orbit;
+    if (updateRadial()) return; // the radial control (F) has the mouse
 
     // Sketch cursor (also feeds the rulers and status bar).
     m_uiState.cursorPlane.reset();
@@ -1382,7 +1446,13 @@ void Application::handleViewportInput() {
     if (viewKey(ImGuiKey_3, ImGuiKey_Keypad3)) cmd.view = ctrl ? StandardView::Left : StandardView::Right;
     if (viewKey(ImGuiKey_7, ImGuiKey_Keypad7)) cmd.view = ctrl ? StandardView::Bottom : StandardView::Top;
     if (viewKey(ImGuiKey_0, ImGuiKey_Keypad0)) cmd.view = StandardView::Isometric;
-    if (ImGui::IsKeyPressed(ImGuiKey_F)) cmd.fit = true;
+    // F fits the view; with a sculpt brush it sizes the brush (Shift+F: its strength), as in Blender.
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+        if (isSculptTool(m_ui.toolbox().active()) && !is2D && m_leftDrag == DragMode::None && !ctrl)
+            startRadial(ImGui::GetIO().KeyShift ? Radial::Strength : Radial::Size);
+        else
+            cmd.fit = true;
+    }
     auto togglePage = [&](int page) { // M: Model page, K: Library page, J: CAM page of the docked panel
         m_uiState.showModelTree = !(m_uiState.showModelTree && m_uiState.dockTab == page);
         m_uiState.dockTab = page;
@@ -1396,9 +1466,25 @@ void Application::handleViewportInput() {
         handleCommands(cmd);
         return;
     }
-    if (isSculptTool(m_ui.toolbox().active())) { // brush size, like Photoshop and ZBrush
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) m_uiState.sculptRadius = std::max(m_uiState.sculptRadius / 1.2f, 0.1f);
-        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) m_uiState.sculptRadius *= 1.2f;
+    if (isSculptTool(m_ui.toolbox().active())) { // brush size, like Photoshop and ZBrush; Shift: its strength
+        const bool shift = ImGui::GetIO().KeyShift;
+        char said[64] = "";
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) {
+            if (shift) m_uiState.sculptStrength = std::max(m_uiState.sculptStrength - 0.05f, 0.0f);
+            else m_uiState.sculptRadius = std::max(m_uiState.sculptRadius / 1.2f, 0.1f);
+            std::snprintf(said, sizeof said, "-");
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) {
+            if (shift) m_uiState.sculptStrength = std::min(m_uiState.sculptStrength + 0.05f, 1.0f);
+            else m_uiState.sculptRadius = std::min(m_uiState.sculptRadius * 1.2f, 1e5f);
+            std::snprintf(said, sizeof said, "+");
+        }
+        if (said[0]) {
+            char status[96];
+            if (shift) std::snprintf(status, sizeof status, "%s %.2f", tr("Brush strength"), static_cast<double>(m_uiState.sculptStrength));
+            else std::snprintf(status, sizeof status, "%s %s", tr("Brush radius"), lengthText(m_uiState.sculptRadius).c_str());
+            setStatus(status);
+        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_P) && !is2D) cmd.toggleProjection = true;
     if (ImGui::IsKeyPressed(ImGuiKey_G)) viewport().showGrid = !viewport().showGrid;
@@ -1507,6 +1593,7 @@ void Application::frame(float dt) {
         m_framesToRender = std::max(m_framesToRender, 3);
 
     advanceSimulation(dt);
+    penInputPoll();
     handleViewportInput();
     updatePrompt();
     refreshFileTabs();

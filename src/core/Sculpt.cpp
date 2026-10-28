@@ -4254,4 +4254,13 @@ bool bodyBoolean(Body& a, const Body& b, BooleanOp op, std::string* error, const
     return true;
 }
 
+SculptSettings withPressure(const SculptSettings& s, float pressure, bool size, bool strength) noexcept {
+    SculptSettings out = s;
+    if (pressure < 0.0f) return out;
+    const float p = std::clamp(pressure, 0.05f, 1.0f);
+    if (size) out.radius = s.radius * p;
+    if (strength) out.strength = s.strength * p;
+    return out;
+}
+
 } // namespace sicdm

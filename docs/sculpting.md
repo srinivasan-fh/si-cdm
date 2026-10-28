@@ -26,7 +26,35 @@ The code is our own. No code from those tools is used.
 
 ## Sculpting brushes
 
-Drag over a body. **Ctrl** inverts the brush, **Shift** smooths with any brush, `[` and `]` change the size.
+Drag over a body. **Ctrl** inverts the brush, and **Shift** smooths with any brush.
+
+### Brush size and strength
+
+| Keys | Does |
+| --- | --- |
+| `[` and `]` | Brush 20 % smaller or larger |
+| `Shift+[` and `Shift+]` | Strength 0.05 down or up |
+| `F`, then move the mouse | Size the brush live: a circle follows the pointer and shows the radius. Click or Enter keeps it; Esc or a right click puts it back |
+| `Shift+F`, then move the mouse | The same for the strength: the filled circle is the strength, the faint ring is full strength |
+
+The Radius box and Strength slider in the options bar take exact values; the radius can be in
+any unit (`5`, `0.25in`). The status bar shows each new value.
+
+While a sculpt tool is active, `F` sizes the brush, as in Blender. Elsewhere, `F` still fits
+the view, and the Fit button always does.
+
+**Pen pressure.** With a drawing tablet, pressing harder makes each dab stronger. Pressing
+also makes the brush larger when **Pen: size** is on in the options bar. **Pen: strength** is
+on by default. The values set above are the brush at full pressure, and a light touch still
+leaves at least 5 % of them. A mouse gives no pressure and leaves the brush as set.
+
+Pressure is read on:
+- Windows 8 and later, through its pointer messages;
+- macOS, through the tablet data on mouse events;
+- Linux on X11, through the tablet's XInput2 pressure axis.
+
+There is no pressure on Wayland.
+
 
 | Brush | Does | Ctrl |
 | --- | --- | --- |

@@ -98,6 +98,8 @@ struct UiState {
     // Sculpting brushes (options bar). Ctrl inverts a brush, Shift smooths.
     float sculptRadius = 20.0f;   // mm
     float sculptStrength = 0.5f;  // 0..1
+    bool sculptPressureSize = false;     // a tablet pen's pressure sets the brush size...
+    bool sculptPressureStrength = true;  // ...and its strength
     bool sculptSymmetry = false;  // mirror across the body's centre (X)
     bool sculptSymmetryY = false, sculptSymmetryZ = false;
     int sculptRadial = 1;         // radial copies around the body's Z axis (1: none)

@@ -924,6 +924,15 @@ const char* const kGerman[][2] = {
     {"tungsten", "Wolfram"},
     {"white-gold", "Weißgold"},
     {"zinc", "Zink"},
+    // Brush size and strength, pen pressure
+    {"A drawing tablet's pen pressure sets the brush size", "Der Stiftdruck eines Grafiktabletts bestimmt die Pinselgröße"},
+    {"A drawing tablet's pen pressure sets the brush strength", "Der Stiftdruck eines Grafiktabletts bestimmt die Pinselstärke"},
+    {"Brush radius", "Pinselradius"},
+    {"Brush strength", "Pinselstärke"},
+    {"Pen", "Stift"},
+    {"[ and ] change the size, Shift+[ and Shift+] the strength; F drags the size, Shift+F the strength", "[ und ] ändern die Größe, Umschalt+[ und Umschalt+] die Stärke; F zieht die Größe, Umschalt+F die Stärke"},
+    {"size", "Größe"},
+    {"strength", "Stärke"},
 };
 
 const std::size_t kGermanCount = sizeof(kGerman) / sizeof(kGerman[0]);

@@ -180,6 +180,7 @@ if(SICDM_BUILD_APP)
         src/app/McpHttpServer.cpp
         src/app/OpenFiles.cpp
         src/app/SketchController.cpp
+        src/app/PenInput.cpp
         src/app/Splash.cpp
         src/render/GL.cpp
         src/render/Renderer.cpp
@@ -198,6 +199,8 @@ if(SICDM_BUILD_APP)
     )
 
     if(APPLE)
+        enable_language(OBJCXX)
+        list(APPEND SICDM_APP_SOURCES src/app/PenInput_mac.mm) # tablet pressure (Cocoa events)
         set(SICDM_BUNDLE_NAME "SI CDM")
         set(SICDM_BUNDLE_ID "com.sicdm.workbench")
         # App icon (Dock, Finder, Launchpad), rendered by tools/make_icon.py.
@@ -234,6 +237,9 @@ if(SICDM_BUILD_APP)
 
     find_package(Threads REQUIRED)
     target_link_libraries(sicdm PRIVATE sicdm_core sicdm_imgui glfw OpenGL::GL Threads::Threads)
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(sicdm PRIVATE ${CMAKE_DL_LIBS}) # PenInput opens libXi at run time
+    endif()
     target_include_directories(sicdm SYSTEM PRIVATE third_party/stb) # window icon / splash logo decoding
     sicdm_set_compile_options(sicdm)
 

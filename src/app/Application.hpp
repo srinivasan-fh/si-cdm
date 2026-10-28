@@ -236,6 +236,17 @@ private:
     SculptMesh m_sculptMesh;
     SculptMesh m_stampBase;   // Stamp: the surface before the stamp being dragged out
     bool m_stamping = false;
+    // The radial control (F: brush size, Shift+F: strength, as in Blender): the value follows
+    // how far the pointer is from a circle's centre; a click or Enter keeps it, Esc or a right
+    // click puts it back.
+    enum class Radial { None, Size, Strength };
+    Radial m_radial = Radial::None;
+    ImVec2 m_radialCentre{};
+    float m_radialWas = 0.0f;      // the value before, for Esc
+    float m_radialPerPixel = 1.0f; // mm a pixel at the brush (Size)
+    static constexpr float kRadialStrengthSpan = 200.0f; // pixels from 0 to full strength
+    void startRadial(Radial mode);
+    bool updateRadial(); // true while it has the mouse
     SculptSettings m_sculptSettings;
     Vec3 m_lastDab{};
     int m_dabs = 0;
