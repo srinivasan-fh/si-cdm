@@ -1,6 +1,7 @@
 #include "core/Library.hpp"
 
 #include "core/Extrude.hpp"
+#include "core/Fastener.hpp"
 #include "core/Scene.hpp"
 
 #include <algorithm>
@@ -1842,7 +1843,7 @@ bool isLibraryKind(const std::string& k) {
            k == "o_ring" || k == "phalanx" || k == "robot_palm" || k == "robot_forearm" || k == "arm_link" ||
            k == "robot_shoulder" || k == "robot_head" || k == "robot_neck" || k == "robot_chest" || k == "robot_heart" ||
            k == "robot_gut" || k == "robot_midriff" || k == "robot_pelvis" || k == "robot_thigh" || k == "robot_shin" ||
-           k == "robot_foot" || k == "robot_bone";
+           k == "robot_foot" || k == "robot_bone" || k == "fastener";
 }
 
 MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
@@ -1899,6 +1900,7 @@ MeshData buildLibraryPart(const std::string& k, const std::vector<float>& p) {
     if (k == "robot_shin" && ok(3)) return robotShin(p[0], p[1], p[2], static_cast<int>(at(3)));
     if (k == "robot_foot" && ok(3)) return robotFoot(p[0], p[1], p[2], static_cast<int>(at(3)));
     if (k == "robot_bone" && !p.empty()) return skeletonBone(p);
+    if (k == "fastener") return buildFastener(p);
     MeshData m;
     if (k == "dc_motor") m = dcMotor();
     else if (k == "stepper_motor") m = stepperMotor();
@@ -1944,6 +1946,14 @@ std::vector<LibraryParam> partParams(const std::string& k, const std::vector<flo
                 {"rear_length", "Rear shaft", dc ? 10.0f : 15.0f, 0.5f, 500.0f, "mm"},
                 {"shaft_dia", "Shaft diameter", dc ? 3.0f : 5.0f, 0.4f, 60.0f, "mm"},
                 {"fitting", "Shaft end", 1.0f, 0.0f, 1.0f, "", true, "Plain|Coupler"}};
+    }
+    if (k == "fastener") { // the type is fixed; its size and length
+        const auto type = static_cast<FastenerType>(p.empty() ? 0 : std::clamp(static_cast<int>(std::lround(p[0])), 0, static_cast<int>(FastenerType::Count) - 1));
+        const float last = static_cast<float>(fastenerSizes(type).size()) - 1.0f;
+        std::vector<LibraryParam> out{fixed("type", static_cast<float>(type)),
+                                      {"size", "Size", 0.0f, 0.0f, last, "", true, fastenerChoices(type)}};
+        if (fastenerHasLength(type)) out.push_back({"length", "Length", 20.0f, 1.0f, 1000.0f, "mm"});
+        return out;
     }
     const char* tread = "Road|Off-road|Slick";
     if (k == "tyre")
@@ -2024,6 +2034,34 @@ std::vector<float> withDefaults(const std::string& kind, std::vector<float> para
 // ---------------------------------------------------------------------------
 // Catalogue
 
+// Standard fasteners (Fastener.hpp): a size from the type's table and a length.
+static void addFastenerItems(std::vector<LibraryItem>& items) {
+    struct Spec {
+        FastenerType type;
+        const char* aliases;
+        const char* name;
+        const char* summary;
+        float length;
+    };
+    static const Spec kSpecs[] = {
+        {FastenerType::HexBolt, "HEXBOLT BOLT HEXSCREW HEXCAPSCREW ISO4017", "Hex Bolt", "Hex head, full thread: ISO 4017 M1.6-M24, ASME B18.2.1 1/4-1\"", 30},
+        {FastenerType::SocketCap, "SHCS SOCKETCAP CAPSCREW SOCKETHEAD ISO4762", "Socket Head Cap Screw", "ISO 4762 M1.6-M24, ASME B18.3 #2-1\"", 20},
+        {FastenerType::Countersunk, "FHCS COUNTERSUNK CSK FLATHEAD ISO10642", "Countersunk Screw", "Flat head, hex socket: ISO 10642 (90 deg), ASME B18.3 (82 deg)", 20},
+        {FastenerType::ButtonHead, "BHCS BUTTON BUTTONHEAD ISO7380", "Button Head Screw", "Low domed head, hex socket: ISO 7380-1, ASME B18.3", 12},
+        {FastenerType::SetScrew, "SETSCREW SET GRUB GRUBSCREW ISO4026", "Set Screw", "Hex socket, flat point: ISO 4026, ASME B18.3", 8},
+        {FastenerType::HexNut, "NUT HEXNUT ISO4032", "Hex Nut", "ISO 4032 M1.6-M24, ASME B18.2.2 / B18.6.3", 0},
+        {FastenerType::Washer, "WASHER PLAINWASHER FLATWASHER ISO7089", "Plain Washer", "ISO 7089, ASME B18.22.1 type A narrow", 0},
+        {FastenerType::DowelPin, "DOWEL PIN DOWELPIN ISO8734", "Dowel Pin", "Hardened, ground: ISO 8734 1-20 mm, ASME B18.8.2 1/16-1\"", 20},
+    };
+    for (const Spec& sp : kSpecs) {
+        const int m6 = findFastenerSize(sp.type, sp.type == FastenerType::DowelPin ? "6" : "M6");
+        const float last = static_cast<float>(fastenerSizes(sp.type).size()) - 1.0f;
+        std::vector<LibraryParam> params{{"size", "Size", static_cast<float>(std::max(m6, 0)), 0.0f, last, "", true, fastenerChoices(sp.type)}};
+        if (fastenerHasLength(sp.type)) params.push_back({"length", "Length", sp.length, 1.0f, 1000.0f, "mm"});
+        items.push_back({fastenerKey(sp.type), sp.aliases, sp.name, "Fasteners", sp.summary, std::move(params)});
+    }
+}
+
 const std::vector<LibraryItem>& libraryItems() {
     static const std::vector<LibraryItem> items = [] {
         const LibraryParam size{"size", "Size", 1.0f, 0.1f, 20.0f, "x"};
@@ -2073,7 +2111,7 @@ const std::vector<LibraryItem>& libraryItems() {
         auto mm = [](const char* key, const char* label, float value, float lo, float hi) {
             return LibraryParam{key, label, value, lo, hi, "mm"};
         };
-        return std::vector<LibraryItem>{
+        std::vector<LibraryItem> all{
             {"dc_motor", "DCMOTOR DC", "DC Motor", "Motors", "28 mm brushed motor; single or dual shaft; spins 360 deg",
              {size, rpm(120.0f), shafts, {"shaft_length", "Shaft length", 14.0f, 0.5f, 500.0f, "mm"},
               {"rear_length", "Rear shaft", 10.0f, 0.5f, 500.0f, "mm"},
@@ -2282,6 +2320,8 @@ const std::vector<LibraryItem>& libraryItems() {
             {"robot_foot", "FOOT", "Robot Foot", "Humanoid body", "Foot and hinged toe with rubber soles; ankle joint at its origin",
              {mm("length", "Length", 250, 50, 2000), mm("width", "Width", 100, 20, 1000), mm("ankle", "Ankle height", 85, 20, 1000)}},
         };
+        addFastenerItems(all);
+        return all;
     }();
     return items;
 }
@@ -3230,6 +3270,16 @@ LibraryComponent makeLibraryComponent(const LibraryItem& item, const std::map<st
     const std::string key = item.key;
     const std::string rotor = name + " Rotor";
 
+    // A standard fastener: one body.
+    for (int t = 0; t < static_cast<int>(FastenerType::Count); ++t) {
+        const auto type = static_cast<FastenerType>(t);
+        if (key != fastenerKey(type)) continue;
+        std::vector<float> params{static_cast<float>(t), v("size")};
+        if (fastenerHasLength(type)) params.push_back(v("length"));
+        Body b = part(name, "fastener", params, o, fastenerColour(type), name);
+        if (!b.mesh.indices.empty()) c.bodies.push_back(std::move(b));
+        return c;
+    }
     // Motors: housing + rotor, 360 deg circular motion on the rotor.
     if (key == "dc_motor" || key == "stepper_motor" || key == "servo_motor" || key == "ev_motor" || key == "ev_flange_motor") {
         const float s = v("size");

@@ -257,6 +257,13 @@ constexpr CommandSpec kCommands[] = {
      "Mould tools: DRAFT colours the part by its draft along the pull (green: comes away with the cavity, red: with the core, yellow: too little "
      "draft, purple: undercut); PARTING adds the parting line as closed 3D paths; SPLIT makes the cavity and the core from a block round the part, "
      "flat at the parting height outside it with shut-off walls where the line steps (refused for undercuts)"},
+    {"FASTENER", "FASTENERS BOLT SCREW HARDWARE", "FASTENER [LIST] | SIZES type | type size[xlength] [LENGTH l] [AT x,y,z] [DIR x,y,z|-Z...] [NAME n] | "
+                                               "INTO [body] [HOLE n,...] [type] [SIZE s] [LENGTH l] [GRIP g] [WASHER] [NUT]",
+     "Standard fasteners: hex bolts, socket head cap, countersunk, button head and set screws, hex nuts, plain washers and dowel pins "
+     "(ISO metric M1.6 to M24 and ASME inch #2 to 1\"), exact, with their designation (ISO 4762 M6x20) for the parts list. Origin on the "
+     "bearing face, shank down DIR. INTO fills the hole wizard's holes: countersunk screws in countersinks, cap screws in counterbores and "
+     "tapped holes, hex bolts in plain ones, the length picked from the standard lengths (through the part and a NUT, 1.5 d into a thread); "
+     "WASHER adds washers, GRIP leaves room for a part clamped under the head"},
     {"SECTION", "CLIP XSECTION", "SECTION [X|Y|Z|-X|-Y|-Z|PLANE nx,ny,nz] [AT d | AT x,y,z] | MOVE d | FLIP | ON | OFF | CAP ON|OFF | ONLY body... | ALL",
      "Live section view: a plane through the model takes away the material on one side in the 3D window, the cut faces filled and "
      "hatched, so the inside shows (nothing in the model changes). It reports each body's section area and centroid"},

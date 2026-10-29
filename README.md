@@ -329,6 +329,10 @@ The *Design* menu (or the command line) adds part features to sketches and solid
 - **Mould tools:** draft and undercut analysis along a pull, the parting line, and the core and
   cavity cut from a block round the part, with shut-offs and shrinkage (`MOLD DRAFT`,
   `MOLD SPLIT "Part" SHRINK 0.6 GAP 60`).
+- **Standard fasteners:** hex bolts, socket head cap, countersunk, button head and set
+  screws, nuts, washers and dowel pins (ISO metric and ASME inch), exact, with their
+  designations in the parts list; `FASTENER INTO` fills the hole wizard's holes with the
+  right screw at a standard length, with washers and nuts.
 - **3D sketches and routes:** paths through points in space, bent at a radius or smooth, and
   pipes (EN 10255, ASME B36.10M), tubes, bars, cables and hoses along them as exact solids,
   with the bend table and the length to cut (`PATH3D ... BEND 60`, `ROUTE "3D Polyline 1" PIPE DN25`).

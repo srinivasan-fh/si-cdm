@@ -1,5 +1,6 @@
 #include "ui/LandingUI.hpp"
 #include "core/Weldment.hpp"
+#include "core/Fastener.hpp"
 #include "core/Route.hpp"
 #include "core/Translate.hpp"
 #include "core/Render.hpp"
@@ -944,6 +945,62 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             if (!part && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("Select the part first"));
             const bool shown = std::any_of(scene.bodies().begin(), scene.bodies().end(), [](const Body& b) { return b.field.rfind("draft", 0) == 0; });
             if (ImGui::MenuItem(tr("Draft Analysis Off"), nullptr, false, shown)) cmd.commands.push_back("MOLD OFF");
+            ImGui::EndMenu();
+        }
+        // Standard fasteners: one placed on its own, or the selected part's wizard holes filled.
+        if (m_menuScene && ImGui::BeginMenu(tr("Fasteners"))) {
+            const Scene& scene = *m_menuScene;
+            static const char* const kTypes[] = {SICDM_TR_NOOP("Hex bolt"),         SICDM_TR_NOOP("Socket head cap screw"),
+                                                 SICDM_TR_NOOP("Countersunk screw"), SICDM_TR_NOOP("Button head screw"),
+                                                 SICDM_TR_NOOP("Set screw"),         SICDM_TR_NOOP("Hex nut"),
+                                                 SICDM_TR_NOOP("Plain washer"),      SICDM_TR_NOOP("Dowel pin")};
+            static_assert(std::size(kTypes) == static_cast<std::size_t>(FastenerType::Count));
+            m_fastType = std::clamp(m_fastType, 0, static_cast<int>(FastenerType::Count) - 1);
+            const auto type = static_cast<FastenerType>(m_fastType);
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::BeginCombo(tr("Type"), tr(kTypes[m_fastType]))) {
+                for (int k = 0; k < static_cast<int>(FastenerType::Count); ++k)
+                    if (ImGui::Selectable(tr(kTypes[k]), k == m_fastType)) {
+                        // Keep the size by name where the new type has it.
+                        const std::string was = fastenerSizes(type)[static_cast<std::size_t>(std::clamp(m_fastSize, 0, static_cast<int>(fastenerSizes(type).size()) - 1))].name;
+                        m_fastType = k;
+                        const int same = findFastenerSize(static_cast<FastenerType>(k), was);
+                        m_fastSize = same >= 0 ? same : 0;
+                    }
+                ImGui::EndCombo();
+            }
+            const auto& sizes = fastenerSizes(static_cast<FastenerType>(m_fastType));
+            m_fastSize = std::clamp(m_fastSize, 0, static_cast<int>(sizes.size()) - 1);
+            const FastenerSize& size = sizes[static_cast<std::size_t>(m_fastSize)];
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::BeginCombo(tr("Size"), size.name.c_str())) {
+                for (int k = 0; k < static_cast<int>(sizes.size()); ++k)
+                    if (ImGui::Selectable(sizes[static_cast<std::size_t>(k)].name.c_str(), k == m_fastSize)) m_fastSize = k;
+                ImGui::EndCombo();
+            }
+            const bool lengthy = fastenerHasLength(static_cast<FastenerType>(m_fastType));
+            if (lengthy) {
+                ImGui::SetNextItemWidth(120);
+                ImGui::InputFloat(tr("Length (mm, 0: auto)"), &m_fastLength, 1.0f, 5.0f, "%.4g");
+                m_fastLength = std::clamp(m_fastLength, 0.0f, 1000.0f);
+            }
+            const std::string word = std::string(fastenerKey(static_cast<FastenerType>(m_fastType)));
+            char len[48] = "";
+            if (lengthy && m_fastLength > 0) std::snprintf(len, sizeof len, " LENGTH %.4gmm", static_cast<double>(m_fastLength));
+            if (ImGui::MenuItem(tr("Insert Fastener"))) cmd.commands.push_back("FASTENER " + word + " \"" + size.name + "\"" + len);
+            if (ImGui::MenuItem(tr("Sizes of This Type"))) cmd.commands.push_back("FASTENER SIZES " + word);
+            ImGui::Separator();
+            ImGui::Checkbox(tr("Washers"), &m_fastWasher);
+            ImGui::SameLine();
+            ImGui::Checkbox(tr("Nuts"), &m_fastNut);
+            const bool part = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size());
+            const bool holes = part && !scene.bodies()[static_cast<std::size_t>(st.selectedBody)].holes.empty();
+            if (ImGui::MenuItem(tr("Into the Selected Part's Holes"), nullptr, false, holes))
+                cmd.commands.push_back("FASTENER INTO \"" + scene.bodies()[static_cast<std::size_t>(st.selectedBody)].name + "\"" +
+                                       (m_fastWasher ? " WASHER" : "") + (m_fastNut ? " NUT" : ""));
+            if (!holes && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", tr("Select a part with holes made by the hole wizard (HOLE ... SIZE M6)"));
+            ImGui::TextDisabled("%s", tr("The screw for each hole follows it: countersunk, counterbored, tapped or plain"));
             ImGui::EndMenu();
         }
         ImGui::Separator();

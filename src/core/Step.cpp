@@ -1,7 +1,8 @@
 #include "core/Step.hpp"
 
 #include "core/Extrude.hpp"
-
+#include "core/ExactMesh.hpp"
+#include "core/Fastener.hpp"
 #include "core/Scene.hpp"
 
 #include <algorithm>
@@ -1229,6 +1230,11 @@ std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<floa
         auto b = brepCylinder({0, 0, 0}, p[at + 2], p[2] - p[1]);
         b->transform(Placement::fromFrames(Frame{}, Frame::make(o + u * p[at] + v * p[at + 1] + n * p[1], n, u)));
         return b;
+    }
+    if (k == "fastener") { // turned faces on cylinders, cones and a dome; the flats are planes
+        const MeshData m = buildFastener(pf);
+        if (m.indices.empty()) return nullptr;
+        return exactBrepFromMesh(m, fastenerSurfaces(pf));
     }
     // Flat-faced shapes: their facets are exact.
     if (k == "wedge" || k == "pyramid" || k == "prism") {

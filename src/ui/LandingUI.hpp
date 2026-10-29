@@ -316,6 +316,9 @@ private:
     float m_routeBend = 0.0f;                                // its bends (0: the path's own, else the size's default)
     int m_moldPull = 0;                                      // the Mold Tools menu: the pull (+Z, -Z, +X, -X, +Y, -Y),
     float m_moldMin = 1.0f, m_moldShrink = 0.0f;             // the least draft (degrees) and the shrinkage (%)
+    int m_fastType = 1, m_fastSize = 6;                      // the Fasteners menu: the type (FastenerType) and its size,
+    float m_fastLength = 0.0f;                               // the length (mm, 0: picked from the size)
+    bool m_fastWasher = false, m_fastNut = false;            // and what goes with them into holes
     int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;

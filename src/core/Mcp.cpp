@@ -754,6 +754,28 @@ Json McpServer::toolDefinitions() {
                             return c;
                         }(),
                         {"operation"}));
+        tools.push(tool("fastener",
+                        "Standard fasteners (ISO metric M1.6-M24, ASME inch #2-1\"): hex bolts, socket head cap, countersunk, button head and "
+                        "set screws, hex nuts, plain washers, dowel pins, each with its designation for the parts list. Place one, list the "
+                        "sizes, or fill a part's hole wizard holes (the screw follows each hole; the length is picked from the standard lengths).",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "list | sizes | place | into"));
+                            c.set("type", prop("string", "hex_bolt | socket_head_cap_screw | countersunk_screw | button_head_screw | set_screw | hex_nut | washer | dowel_pin "
+                                                         "(or SHCS, BOLT, NUT, DOWEL...); into: default by hole"));
+                            c.set("size", prop("string", "\"M6\", \"1/4-20\", \"#10-24\"; a pin's diameter \"6\" or \"1/4\"; into: default the hole's"));
+                            c.set("length", prop("string", "\"20\" (mm for metric sizes, inches for inch sizes), \"3/4\", \"25mm\" (default: picked)"));
+                            c.set("at", prop("array", "place: [x, y, z] of the bearing face (default: beside the model)"));
+                            c.set("dir", prop("array", "place: [x, y, z] the way the shank points (default [0, 0, -1])"));
+                            c.set("name", prop("string", "place: the new body's name"));
+                            c.set("body", prop("string", "into: the part with the holes (default: the selected body)"));
+                            c.set("holes", prop("array", "into: the hole numbers [1, 2, ...] (default: all)"));
+                            c.set("grip", prop("number", "into: room for a part clamped under the head (mm)"));
+                            c.set("washer", prop("boolean", "into: washers under the heads (and the nuts)"));
+                            c.set("nut", prop("boolean", "into: nuts on the far side of through holes"));
+                            return c;
+                        }(),
+                        {"operation"}));
         tools.push(tool("section",
                         "Live section view of the 3D window: a plane through the model takes away the material on one side so the "
                         "inside shows, the cut faces filled and hatched (the model doesn't change); reports each body's section area "
@@ -1465,6 +1487,47 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["gap"].isNumber()) line += " GAP " + num(a["gap"].asNumber());
         }
         return runLine(line);
+    }
+    if (name == "fastener") {
+        const std::string op = a["operation"].asString();
+        const auto vec = [&](const Json& v) {
+            std::string t;
+            for (std::size_t i = 0; i < 3; ++i) t += (i ? "," : "") + num(v.isArray() && i < v.size() ? v[i].asNumber() : 0.0);
+            return t;
+        };
+        if (op == "list") return runLine("FASTENER LIST");
+        if (op == "sizes") {
+            if (!a["type"].isString()) return textResult("sizes needs 'type'", true);
+            return runLine("FASTENER SIZES " + quote(a["type"].asString()));
+        }
+        if (op == "place") {
+            if (!a["type"].isString() || !a["size"].isString()) return textResult("place needs 'type' and 'size'", true);
+            std::string line = "FASTENER " + quote(a["type"].asString()) + " " + quote(a["size"].asString());
+            if (a["length"].isString()) line += " LENGTH " + quote(a["length"].asString());
+            else if (a["length"].isNumber()) line += " LENGTH " + num(a["length"].asNumber());
+            if (a["at"].isArray()) line += " AT " + vec(a["at"]);
+            if (a["dir"].isArray()) line += " DIR " + vec(a["dir"]);
+            if (a["name"].isString()) line += " NAME " + quote(a["name"].asString());
+            return runLine(line);
+        }
+        if (op == "into") {
+            std::string line = "FASTENER INTO";
+            if (a["body"].isString()) line += " " + quote(a["body"].asString());
+            if (a["holes"].isArray() && a["holes"].size() > 0) {
+                std::string ids;
+                for (std::size_t i = 0; i < a["holes"].size(); ++i) ids += (i ? "," : "") + num(a["holes"][i].asNumber());
+                line += " HOLE " + ids;
+            }
+            if (a["type"].isString()) line += " " + a["type"].asString();
+            if (a["size"].isString()) line += " SIZE " + quote(a["size"].asString());
+            if (a["length"].isString()) line += " LENGTH " + quote(a["length"].asString());
+            else if (a["length"].isNumber()) line += " LENGTH " + num(a["length"].asNumber());
+            if (a["grip"].isNumber()) line += " GRIP " + num(a["grip"].asNumber());
+            if (a["washer"].isBool() && a["washer"].asBool()) line += " WASHER";
+            if (a["nut"].isBool() && a["nut"].asBool()) line += " NUT";
+            return runLine(line);
+        }
+        return textResult("fastener operations: list, sizes, place, into", true);
     }
     if (name == "route") {
         const std::string op = a["operation"].asString();

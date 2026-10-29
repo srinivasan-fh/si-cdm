@@ -24,6 +24,7 @@
 #include "core/SectionView.hpp"
 #include "core/WeldmentCommand.hpp"
 #include "core/RouteCommand.hpp"
+#include "core/FastenerCommand.hpp"
 #include "core/MoldCommand.hpp"
 #include "core/Components.hpp"
 #include "core/DrawingCommand.hpp"
@@ -615,6 +616,11 @@ std::optional<float> paramValue(const LibraryParam& p, const std::string& word) 
                 if (std::isalnum(static_cast<unsigned char>(c))) k += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             return k;
         };
+        // A choice as written first ("M1.6" is not "M16", though both squash to "m16").
+        std::string list0 = std::string(p.choices) + "|";
+        int index = 0;
+        for (std::size_t at = 0, bar; (bar = list0.find('|', at)) != std::string::npos; at = bar + 1, ++index)
+            if (iequal(list0.substr(at, bar - at), word)) return static_cast<float>(index);
         const std::string w = key(word);
         std::vector<std::string> names;
         std::string list = std::string(p.choices) + "|";
@@ -803,7 +809,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -819,7 +825,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -838,7 +844,7 @@ std::string releasedRefusal(const Document& doc, const std::string& cmd, const P
     if (!model) return {};
     // Asking: no arguments (MATERIAL, VAR, HISTORY... then show what there is), or a word that only asks.
     static const char* const kAskEmpty[] = {"MATERIAL", "VAR", "CONFIG", "MATE", "ASSEMBLY", "PHYSICS", "RIG", "TERRAIN", "SHEET", "LAYER", "POLYGROUP",
-                                            "UV", "MULTIRES", "HISTORY", "PLANE", "REFAXIS", "REFPOINT", "EXPLODE"};
+                                            "UV", "MULTIRES", "HISTORY", "PLANE", "REFAXIS", "REFPOINT", "EXPLODE", "FASTENER"};
     // (Only names, like MATERIAL "Bracket", ask about those.)
     const bool onlyNames = std::all_of(pc.quoted.begin(), pc.quoted.end(), [](bool q) { return q; }) && pc.quoted.size() == pc.args.size();
     if (pc.args.empty() || onlyNames)
@@ -900,6 +906,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (cmd == "WELDMENT" && !pc.args.empty() && (iequal(pc.args[0], "list") || iequal(pc.args[0], "cutlist") || iequal(pc.args[0], "profiles"))) return; // only looks
     if (cmd == "PATH3D" && !pc.args.empty() && iequal(pc.args[0], "info")) return;
     if (cmd == "ROUTE" && !pc.args.empty() && (iequal(pc.args[0], "list") || iequal(pc.args[0], "bends") || iequal(pc.args[0], "sizes"))) return;
+    if (cmd == "FASTENER" && (pc.args.empty() || iequal(pc.args[0], "list") || iequal(pc.args[0], "sizes"))) return; // only looks
     if ((cmd == "POLYGROUP" || cmd == "LAYER" || cmd == "MULTIRES") &&
         std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); }))
         return;
@@ -2681,6 +2688,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "PATH3D") return runPath3dCommand(doc, a, pc.quoted);
     if (cmd == "ROUTE") return runRouteCommand(doc, a, pc.quoted);
     if (cmd == "MOLD") return runMoldCommand(doc, a, pc.quoted);
+    if (cmd == "FASTENER") return runFastenerCommand(doc, a, pc.quoted);
     if (cmd == "FACE") return runFaceCommand(doc, a, pc.quoted);
     if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
     if (cmd == "COMPONENT") {

@@ -1033,6 +1033,23 @@ const char* const kGerman[][2] = {
     {"core side", "Kernseite"},
     {"too little draft", "zu wenig Formschräge"},
     {"undercut", "Hinterschnitt"},
+    {"Button head screw", "Flachkopfschraube"},
+    {"Countersunk screw", "Senkschraube"},
+    {"Dowel pin", "Zylinderstift"},
+    {"Fasteners", "Verbindungselemente"},
+    {"Hex bolt", "Sechskantschraube"},
+    {"Hex nut", "Sechskantmutter"},
+    {"Insert Fastener", "Verbindungselement einfügen"},
+    {"Into the Selected Part's Holes", "In die Bohrungen des gewählten Teils"},
+    {"Length (mm, 0: auto)", "Länge (mm, 0: automatisch)"},
+    {"Nuts", "Muttern"},
+    {"Plain washer", "Scheibe"},
+    {"Select a part with holes made by the hole wizard (HOLE ... SIZE M6)", "Ein Teil mit Bohrungen aus dem Bohrungsassistenten wählen (HOLE ... SIZE M6)"},
+    {"Set screw", "Gewindestift"},
+    {"Sizes of This Type", "Größen dieser Art"},
+    {"Socket head cap screw", "Zylinderschraube mit Innensechskant"},
+    {"The screw for each hole follows it: countersunk, counterbored, tapped or plain", "Die Schraube richtet sich nach der Bohrung: Senkung, Flachsenkung, Gewinde oder Durchgang"},
+    {"Washers", "Scheiben"},
 };
 
 

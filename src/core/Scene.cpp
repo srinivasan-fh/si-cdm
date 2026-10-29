@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 #include "core/Brep.hpp"
+#include "core/Fastener.hpp"
 #include "core/Step.hpp"
 
 namespace sicdm {
@@ -26,6 +27,7 @@ Body makeBody(std::string name, std::string kind, std::vector<float> params, Vec
     b.offset = offset;
     b.color = color;
     attachPrimitiveBrep(b);
+    applyFastenerProperties(b);
     return b;
 }
 
@@ -41,6 +43,7 @@ void Body::rebuild() {
     if (rotation.x != 0.0f || rotation.y != 0.0f || rotation.z != 0.0f) mesh.transform(eulerRotation(rotation));
     if (scale != 1.0f) mesh.transform(sicdm::scale(Vec3{scale, scale, scale}));
     attachPrimitiveBrep(*this);
+    applyFastenerProperties(*this); // its part number follows its size
 }
 
 void Body::setRotation(const Vec3& degrees) {

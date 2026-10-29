@@ -74,6 +74,8 @@ add_library(sicdm_core STATIC
     src/core/Route.cpp
     src/core/RouteCommand.cpp
     src/core/Mold.cpp
+    src/core/Fastener.cpp
+    src/core/FastenerCommand.cpp
     src/core/MoldCommand.cpp
     src/core/WeldmentCommand.cpp
     src/core/Bvh.cpp

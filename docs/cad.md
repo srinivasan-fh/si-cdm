@@ -432,6 +432,74 @@ CYLINDER 5 30
 THREAD "Cylinder 1" AT 0,0,30 AXIS 0,0,-1 SIZE M10 LENGTH 20
 ```
 
+## Fasteners
+
+```text
+FASTENER [LIST]                         the types and their size ranges
+FASTENER SIZES type                     a type's sizes and the dimensions that matter
+FASTENER type size[xlength] [LENGTH l] [AT x,y,z] [DIR x,y,z | -Z...] [NAME n]
+FASTENER INTO [body] [HOLE n,...] [type] [SIZE s] [LENGTH l] [GRIP g] [WASHER] [NUT]
+```
+
+Standard fasteners, modelled from their standards' dimensions, each an exact solid carrying
+its designation for the parts list:
+
+| Type (typed as) | Metric | Inch |
+| --- | --- | --- |
+| Hex bolt (`BOLT`, `HEXBOLT`) | ISO 4017, M1.6 to M24 | ASME B18.2.1 hex cap screw, 1/4-20 to 1-8 |
+| Socket head cap screw (`SHCS`) | ISO 4762, M1.6 to M24 | ASME B18.3, #2-56 to 1-8 |
+| Countersunk screw (`FHCS`, `CSK`) | ISO 10642 (90 deg), M3 to M20 | ASME B18.3 flat head (82 deg), #2-56 to 1-8 |
+| Button head screw (`BHCS`, `BUTTON`) | ISO 7380-1, M3 to M16 | ASME B18.3, #4-40 to 5/8-11 |
+| Set screw (`SETSCREW`, `GRUB`) | ISO 4026 (flat point), M1.6 to M24 | ASME B18.3, #2-56 to 1-8 |
+| Hex nut (`NUT`) | ISO 4032, M1.6 to M24 | ASME B18.6.3 (#2 to #10), B18.2.2 (1/4 to 1) |
+| Plain washer (`WASHER`) | ISO 7089, M1.6 to M24 | ASME B18.22.1 type A narrow, #2 to 1 |
+| Dowel pin (`DOWEL`, `PIN`) | ISO 8734, 1 to 20 mm | ASME B18.8.2, 1/16 to 1 |
+
+- **Size and length:** `M6x20`, `1/4-20x3/4` (an inch size's length is in inches unless it
+  says otherwise: `LENGTH 20mm`), a pin `6x20` or `1/4x1`. With no length, a standard
+  length about three diameters. A screw's length is under its head; a countersunk screw's
+  is overall, as its standard measures it.
+- **Where:** the origin is the bearing face (a countersunk screw's: the top of its head,
+  flush with the part; a dowel pin's: its middle) and the shank runs along `DIR` (default
+  `-Z`). Without `AT` it lands beside the model.
+- **The parts list:** `NUMBER` is the designation (`ISO 4762 M6x20`, `ASME B18.3 1/4-20 x
+  3/4`), so like fasteners count as one item; `DESCRIPTION` (`Socket head cap screw M6x20`),
+  `MATERIAL` (8.8 bolts, 12.9 cap screws, grade 5 inch bolts...: change it with `PROPERTY`)
+  and `THREAD` (`M6x1`, `1/4-20 UNC`). They follow the size when it changes.
+- **The library:** every type is in the Library panel under *Fasteners*, and `PART` places
+  them too (`PART socket_head_cap_screw SIZE M8 LENGTH 30`); `PARAM` or the Properties panel
+  changes a placed one's size and length.
+- **INTO** fills the holes made with the hole wizard (`HOLE ... SIZE`), all of a body's or
+  those numbered (as `HOLE LIST` shows them): a countersunk screw in a countersink, a cap
+  screw sunk in a counterbore or into a tapped hole, a hex bolt in a plain hole, unless a
+  type is given (`SETSCREW`, `DOWEL`, `BHCS`...). The length is the standard one that
+  reaches: through the part (measured beside the hole) and 1.5 diameters into what lies
+  behind it; with `NUT`, through a washer and the nut and two threads past it; into a
+  tapped hole, 1.5 diameters of thread (no deeper than the thread). A set screw sits flush
+  in its thread; a dowel pin goes half its length into the hole. `WASHER` puts washers under
+  the heads (not in a counterbore, where they don't fit) and under the nuts; `GRIP g` leaves
+  room for a part `g` thick clamped under the head. `SIZE` gives a size where a hole has
+  none (one drilled by `DIAMETER`).
+- **Threads** are cosmetic: the shank is modelled at the nominal diameter, so a screw in a
+  tapped hole (drilled at the tap drill) shows as an overlap in an interference check.
+  Chamfers and the socket's drill point are simplified; hex heads and nuts have sharp
+  corners.
+- The *Design > Fasteners* menu places one by type and size, and fills the selected part's
+  holes (with washers and nuts if ticked).
+
+```text
+BOX 120 60 20
+HOLE "Block 1" AT -45,-15,20 -20,-15,20 SIZE M6 CBORE THROUGH
+HOLE "Block 1" AT 5,-15,20 SIZE M8 TAPPED DEPTH 16
+HOLE "Block 1" AT 30,-15,20 SIZE M10 THROUGH
+FASTENER INTO "Block 1" HOLE 1,2,3        two ISO 4762 M6x25 and an M8x12
+FASTENER INTO "Block 1" HOLE 4 WASHER NUT ISO 4017 M10x40, two ISO 7089 M10, ISO 4032 M10
+FASTENER SHCS M5x16 AT 0,40,0 DIR X       one on its own, pointing along +X
+ASSEMBLY BOM
+```
+
+![Fasteners in a plate's holes](fasteners.png)
+
 ## Revolve
 
 ```text
