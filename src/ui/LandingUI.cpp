@@ -379,6 +379,14 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showRender) drawRenderWindow(cmd, st);
     if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F2, false) && st.selectedBody >= 0) st.renameBody = st.selectedBody;
     if (st.renameBody >= 0) drawRenamePopup(cmd, st, scene);
+    if (st.openBodyMenu) { // a right click on a body in the 3D view
+        ImGui::OpenPopup("###bodymenu");
+        st.openBodyMenu = false;
+    }
+    if (ImGui::BeginPopup("###bodymenu")) {
+        drawBodyMenuItems(cmd, st, scene);
+        ImGui::EndPopup();
+    }
     if (st.showProduct) drawProductWindow(cmd, st);
     if (st.showAppearance) drawAppearanceWindow(cmd, st);
     if (st.showSection && st.project && st.mode != ViewMode::Drawing2D) drawSectionWindow(cmd, st, scene);
@@ -832,6 +840,42 @@ void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene
 
 // The live section view: which plane, where along it (dragged live), which side, the cut
 // faces filled or not, which bodies.
+// What a right click on a body offers (the 3D view, the model tree): each item acts on every
+// selected body, by the same command as its menu item or key.
+void LandingUI::drawBodyMenuItems(UiCommands& cmd, UiState& st, const Scene& scene) {
+    const std::vector<int> sel = selectedBodies(scene, st.selectedBody, st.bodySelection);
+    if (sel.empty()) {
+        ImGui::CloseCurrentPopup();
+        return;
+    }
+    const Body& active = scene.bodies()[static_cast<std::size_t>(sel[0])];
+    if (sel.size() == 1) ImGui::TextDisabled("%s", active.name.c_str());
+    else ImGui::TextDisabled(tr("%d bodies"), static_cast<int>(sel.size()));
+    ImGui::Separator();
+    if (ImGui::MenuItem(tr("Rename..."), "F2", false, sel.size() == 1)) st.renameBody = sel[0];
+    if (ImGui::MenuItem(tr("Duplicate"), "Ctrl+D")) cmd.commands.push_back("DUPLICATE");
+    if (ImGui::MenuItem(tr("Copy"), "Ctrl+C")) cmd.commands.push_back("COPY");
+    if (ImGui::MenuItem(tr("Cut"), "Ctrl+X")) cmd.commands.push_back("CUT");
+    if (ImGui::MenuItem(tr("Delete"), "Del")) cmd.commands.push_back("ERASE");
+    ImGui::Separator();
+    if (ImGui::MenuItem(tr("Hide"), "Alt+H")) cmd.commands.push_back("HIDE");
+    if (ImGui::MenuItem(tr("Isolate"), "Alt+I")) cmd.commands.push_back("ISOLATE");
+    if (ImGui::MenuItem(tr("Show All"), "Alt+Shift+H")) cmd.commands.push_back("SHOW ALL");
+    ImGui::Separator();
+    if (ImGui::BeginMenu(tr("Material"))) {
+        for (const char* family : materialFamilies()) {
+            if (!ImGui::BeginMenu(tr(family))) continue;
+            for (const MaterialPreset& p : materialPresets()) {
+                if (std::string_view(p.family) != family) continue;
+                if (ImGui::MenuItem(tr(p.name), nullptr, sel.size() == 1 && active.material.preset == p.name)) cmd.commands.push_back(std::string("MATERIAL ") + p.name);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(p.description));
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenu();
+    }
+}
+
 // A new name for a body (F2, Edit > Rename, double-click in the model tree): RENAME, which
 // also changes the name where mates, drawings, CAM setups and the rest refer to it.
 void LandingUI::drawRenamePopup(UiCommands& cmd, UiState& st, const Scene& scene) {
@@ -2972,6 +3016,15 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                             }
                             st.selectedCurve = st.selectedImage = -1;
                         }
+                        if (ImGui::BeginPopupContextItem("##bodymenu")) { // right click: the body menu, for it or the selection it is in
+                            if (std::find(treeSelection.begin(), treeSelection.end(), i) == treeSelection.end()) {
+                                st.selectedBody = i;
+                                st.bodySelection = {};
+                                st.selectedCurve = st.selectedImage = -1;
+                            }
+                            drawBodyMenuItems(cmd, st, scene);
+                            ImGui::EndPopup();
+                        }
                         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { // rename it (selected: the second click took it out)
                             st.selectedBody = st.renameBody = i;
                             st.bodySelection = {};
@@ -3741,6 +3794,7 @@ void LandingUI::drawControlsWindow(UiState& st) {
                 {"F2 / double-click in tree", "Rename the selected body"},
                 {"Alt + H / Alt + I", "Hide / isolate the selected bodies"},
                 {"Alt + Shift + H", "Show every body"},
+                {"Right-click a body", "Its menu (or the selection's): rename, copy, hide, material..."},
                 {"M  K  J", "Show / hide the Model, Library and CAM panels"},
                 {"V  S  O  H  Z", "Move / Select / Orbit / Pan / Zoom tools"},
                 {"L  C  R", "Line / Circle / Rectangle sketch tools"},

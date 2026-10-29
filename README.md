@@ -951,6 +951,9 @@ Details: [docs/plugins.md](docs/plugins.md).
   The copies are selected, ready to move. These are all in the **Edit** menu too.
 - `F2`, or double-click a body in the model tree: rename it (`RENAME "old" TO "new"`). Mates,
   drawings, CAM setups, stack-ups and the rest that refer to it follow the new name.
+- Right-click a body (in the 3D window, without dragging, or in the model tree): a menu with
+  Rename, Duplicate, Copy, Cut, Delete, Hide, Isolate, Show All and Material for it, or for the
+  whole selection when it is part of one. Right-drag still orbits.
 - `Alt H`: hide the selected bodies; `Alt I`: isolate them (hide every other body);
   `Alt Shift H`: show every body (`HIDE`, `ISOLATE`, `SHOW [name...|ALL]`). These are steps in the
   history, so they undo, and features and exports, which use the visible bodies, replay the same.

@@ -123,6 +123,7 @@ struct UiState {
     int selectedBody = -1;
     BodySelection bodySelection; // other bodies selected with selectedBody (Selection.hpp)
     int renameBody = -1;         // asks for a new name for this body (F2, double-click in the tree)
+    bool openBodyMenu = false;   // a right click on a body: open the body menu (for the selection)
     int selectedCurve = -1;
     int selectedImage = -1;
 
@@ -274,6 +275,7 @@ private:
     void drawRenderWindow(UiCommands& cmd, UiState& st);
     void drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawRenamePopup(UiCommands& cmd, UiState& st, const Scene& scene);
+    void drawBodyMenuItems(UiCommands& cmd, UiState& st, const Scene& scene); // the right-click menu of the selected bodies
     void drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawArmatureWindow(UiCommands& cmd, UiState& st, const Scene& scene);

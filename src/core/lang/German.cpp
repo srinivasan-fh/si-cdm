@@ -1197,6 +1197,7 @@ const char* const kGerman[][2] = {
     {"How far to move along this axis (any unit: 12.5  1in  -3mm)", "Wie weit entlang dieser Achse verschieben (jede Einheit: 12.5  1in  -3mm)"},
     {"The axis it turns about, through the gizmo's centre", "Die Drehachse, durch die Mitte des Gizmos"},
     {"The factor: 2 doubles, 0.5 halves", "Der Faktor: 2 verdoppelt, 0.5 halbiert"},
+    {"%d bodies", "%d Körper"},
 };
 
 

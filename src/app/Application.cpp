@@ -1463,7 +1463,26 @@ void Application::handleViewportInput() {
     if (m_extrudeCurve >= 0 && onCanvas && m_otherDrag == DragMode::None && m_leftDrag == DragMode::None)
         updateExtrudeFromMouse();
 
-    // Right drag orbits (3D) / pans (2D); middle drag pans; any tool.
+    // Right drag orbits (3D) / pans (2D); middle drag pans; any tool. A right click (no drag)
+    // on a body in 3D opens its menu, for it or for the selection it is in.
+    if (onCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) m_rightClickOnCanvas = true;
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        const bool click = m_rightClickOnCanvas && std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right]) < kDragThreshold;
+        m_rightClickOnCanvas = false;
+        if (click && onCanvas && !is2D && !simulating() && m_leftDrag == DragMode::None && !m_sketcher.busy() && m_extrudeCurve < 0 &&
+            m_uiState.booleanFirst.empty()) {
+            if (const auto hit = pick(mx, my)) {
+                const std::vector<int> sel = selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection);
+                if (std::find(sel.begin(), sel.end(), hit->body) == sel.end()) {
+                    m_uiState.selectedBody = hit->body;
+                    m_uiState.bodySelection = {};
+                    m_uiState.selectedCurve = m_uiState.selectedImage = -1;
+                    selectionChanged();
+                }
+                m_uiState.openBodyMenu = true;
+            }
+        }
+    }
     if (onCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) m_otherDrag = orbitOrPan;
     if (onCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) m_otherDrag = DragMode::Pan;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle))

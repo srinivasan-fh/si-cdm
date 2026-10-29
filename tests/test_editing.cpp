@@ -450,3 +450,34 @@ TEST_CASE("Typed transforms (the Move tool's bar): the lines it sends work in an
     REQUIRE(run(d, "UNDO").ok);
     CHECK(std::fabs(at(3).x - 2286.0f) < 1e-2f);
 }
+
+TEST_CASE("MATERIAL on several bodies: named or selected, one step, all or none, replayed") {
+    Document d;
+    fourBlocks(d);
+    REQUIRE(run(d, "SELECT \"Block 1\" \"Block 3\"").ok);
+    const auto r = run(d, "MATERIAL Gold");
+    REQUIRE(r.ok);
+    CHECK(r.lines[0].rfind("2 bodies: gold", 0) == 0);
+    CHECK(d.scene.bodies()[0].material.preset == "gold");
+    CHECK(d.scene.bodies()[2].material.preset == "gold");
+    CHECK(d.scene.bodies()[1].material.preset.empty());
+    CHECK(d.state.history.back().line == "MATERIAL \"Block 1\" \"Block 3\" Gold");
+    // Each keeps its own other settings; one change goes to all.
+    REQUIRE(run(d, "MATERIAL \"Block 2\" \"Block 4\" ROUGHNESS 0.7").ok);
+    CHECK(std::fabs(d.scene.bodies()[1].material.roughness - 0.7f) < 1e-6f);
+    CHECK(std::fabs(d.scene.bodies()[3].material.roughness - 0.7f) < 1e-6f);
+    // A bad value changes none of them.
+    CHECK(!run(d, "MATERIAL \"Block 2\" \"Block 4\" METALLIC 3").ok);
+    CHECK(d.scene.bodies()[1].material.metallic < 0.5f);
+    // One undo takes back the two-body change.
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.bodies()[1].material.roughness != 0.7f);
+    CHECK(d.scene.bodies()[3].material.roughness != 0.7f);
+    REQUIRE(run(d, "REGEN").ok);
+    CHECK(d.scene.bodies()[2].material.preset == "gold");
+    // One body, as before; the bare query still reports.
+    REQUIRE(run(d, "MATERIAL \"Block 4\" Copper").ok);
+    CHECK(d.scene.bodies()[3].material.preset == "copper");
+    CHECK(run(d, "MATERIAL \"Block 4\"").lines[0].rfind("Block 4: copper", 0) == 0);
+    CHECK(!run(d, "MATERIAL \"Nope\" Gold").ok);
+}

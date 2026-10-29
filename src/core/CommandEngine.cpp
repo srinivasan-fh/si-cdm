@@ -1267,6 +1267,51 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     ScopedUnits unitScope(doc.apiMillimeters ? UnitSettings{} : doc.state.units);
     auto usage = [&] { return out.fail(std::string("Usage: ") + spec->usage); };
 
+    // Names in the arguments a[from, to): each quoted one a name, unquoted words run together into one.
+    auto namesFrom = [&](std::size_t from, std::size_t to = static_cast<std::size_t>(-1)) {
+        std::vector<std::string> names;
+        std::string run;
+        for (std::size_t i = from; i < std::min(to, a.size()); ++i) {
+            if (quotedArg(i)) {
+                if (!run.empty()) names.push_back(run), run.clear();
+                names.push_back(a[i]);
+            } else {
+                run += (run.empty() ? "" : " ") + a[i];
+            }
+        }
+        if (!run.empty()) names.push_back(run);
+        return names;
+    };
+    auto quotedList = [&](const std::vector<int>& list) {
+        std::string q;
+        for (int b : list) q += " \"" + doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\"";
+        return q;
+    };
+    // The bodies a transform acts on: the named ones, else every selected body. Empty: `why` says.
+    auto transformGroup = [&](const std::vector<std::string>& names, std::string& why) {
+        std::vector<int> list;
+        for (const std::string& n : names) {
+            const int b = findBody(doc, n);
+            if (b < 0) {
+                why = "No body named " + n;
+                return std::vector<int>{};
+            }
+            if (std::find(list.begin(), list.end(), b) == list.end()) list.push_back(b);
+        }
+        if (names.empty()) list = doc.selectedBodies();
+        if (list.empty()) why = "Select a body first, or give its name";
+        return list;
+    };
+    // A length or point (mm) for a command line written here: marked mm, as bare numbers are
+    // read in the document's units.
+    auto mmVec = [&](const Vec3& v) { return fmt("%.9gmm,", v.x) + fmt("%.9gmm,", v.y) + fmt("%.9gmm", v.z); };
+    // The middle of their bounds: what several bodies turn and scale about.
+    auto groupCentre = [&](const std::vector<int>& list) {
+        AABB box;
+        for (int b : list) box.expand(doc.scene.bodies()[static_cast<std::size_t>(b)].bounds());
+        return box.valid() ? box.center() : Vec3{0, 0, 0};
+    };
+
     // ---- Sketch -----------------------------------------------------------
     // A trailing CONSTRUCTION makes any new curve a construction (reference) curve.
     bool construction = false;
@@ -2932,14 +2977,14 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             MaterialProps probe;
             return applyMaterialPreset(w, probe, nullptr);
         };
-        std::size_t i = 0;
-        std::vector<std::string> nameWords;
-        while (i < a.size() && !isWord(i)) nameWords.push_back(a[i++]);
-        const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
-        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
-            return out.fail(nameWords.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(nameWords));
-        Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
-        if (i >= a.size()) { // what it has
+        std::size_t first = 0; // the first word after the names
+        while (first < a.size() && !isWord(first)) ++first;
+        // The named bodies, else every selected one: all get the same change.
+        std::string why;
+        const std::vector<int> group = transformGroup(namesFrom(0, first), why);
+        if (group.empty()) return out.fail(why);
+        Body& b = doc.scene.bodies()[static_cast<std::size_t>(group[0])];
+        if (first >= a.size()) { // what it has
             const MaterialProps& m = b.material;
             out.say(b.name + ": " + (m.preset.empty() ? std::string("plastic (the default)") : m.preset) + fmt(", metallic %g", static_cast<double>(m.metallic)) +
                     fmt(", roughness %g", static_cast<double>(m.roughness)) +
@@ -2948,52 +2993,68 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                     (m.colorMap.empty() ? std::string() : ", colour map " + m.colorMap) + (m.normalMap.empty() ? std::string() : ", normal map " + m.normalMap));
             return out;
         }
-        MaterialProps m = b.material;
-        Vec3 color = b.color;
-        for (; i < a.size(); ++i) {
-            const std::string w = lower(a[i]);
-            const auto value = [&](float lo, float hi, float& v) {
-                const auto n = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
-                if (!n || *n < lo || *n > hi) return false;
-                v = *n;
-                return true;
-            };
-            if (w == "color" || w == "colour") {
-                if (i + 1 >= a.size()) return out.fail("COLOR needs a colour name, #RRGGBB or r,g,b");
-                if (!parseColorText(a[++i], color)) return out.fail("Unknown colour " + a[i]);
-            } else if (w == "metallic") {
-                if (!value(0, 1, m.metallic)) return out.fail("METALLIC is 0 (plastic, paint) to 1 (metal)");
-            } else if (w == "roughness") {
-                if (!value(0, 1, m.roughness)) return out.fail("ROUGHNESS is 0 (a mirror) to 1 (matte)");
-            } else if (w == "transmission") {
-                if (!value(0, 1, m.transmission)) return out.fail("TRANSMISSION is 0 (opaque) to 1 (clear)");
-            } else if (w == "ior") {
-                if (!value(1, 4, m.ior)) return out.fail("IOR is 1 to 4 (glass 1.5, water 1.33)");
-            } else if (w == "emission") {
-                if (!value(0, 1000, m.emission)) return out.fail("EMISSION is 0 (none) or more (how bright it glows)");
-            } else if (w == "colormap" || w == "normalmap") {
-                if (i + 1 >= a.size()) return out.fail(toUpper(w) + " needs an image file, or NONE");
-                const std::string f = a[++i];
-                (w == "colormap" ? m.colorMap : m.normalMap) = iequal(f, "none") ? std::string() : f;
-            } else if (w == "finish") {
-                // FINISH polished | satin | brushed | matte: how rough the surface is.
-                const std::string f = i + 1 < a.size() ? lower(a[++i]) : std::string();
-                const MaterialFinish* found = nullptr;
-                for (const MaterialFinish& x : materialFinishes())
-                    if (f == x.name) found = &x;
-                if (!found) return out.fail("FINISH is POLISHED, SATIN, BRUSHED or MATTE");
-                m.roughness = found->roughness;
-            } else if (w == "default") {
-                m = MaterialProps{};
-            } else if (!applyMaterialPreset(w, m, &color)) {
-                return out.fail("Unknown material " + a[i] + " (MATERIAL LIST shows them)");
+        auto edit = [&](MaterialProps& m, Vec3& color) -> std::optional<std::string> {
+            for (std::size_t i = first; i < a.size(); ++i) {
+                const std::string w = lower(a[i]);
+                const auto value = [&](float lo, float hi, float& v) {
+                    const auto n = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                    if (!n || *n < lo || *n > hi) return false;
+                    v = *n;
+                    return true;
+                };
+                if (w == "color" || w == "colour") {
+                    if (i + 1 >= a.size()) return std::string("COLOR needs a colour name, #RRGGBB or r,g,b");
+                    if (!parseColorText(a[++i], color)) return std::string("Unknown colour " + a[i]);
+                } else if (w == "metallic") {
+                    if (!value(0, 1, m.metallic)) return std::string("METALLIC is 0 (plastic, paint) to 1 (metal)");
+                } else if (w == "roughness") {
+                    if (!value(0, 1, m.roughness)) return std::string("ROUGHNESS is 0 (a mirror) to 1 (matte)");
+                } else if (w == "transmission") {
+                    if (!value(0, 1, m.transmission)) return std::string("TRANSMISSION is 0 (opaque) to 1 (clear)");
+                } else if (w == "ior") {
+                    if (!value(1, 4, m.ior)) return std::string("IOR is 1 to 4 (glass 1.5, water 1.33)");
+                } else if (w == "emission") {
+                    if (!value(0, 1000, m.emission)) return std::string("EMISSION is 0 (none) or more (how bright it glows)");
+                } else if (w == "colormap" || w == "normalmap") {
+                    if (i + 1 >= a.size()) return std::string(toUpper(w) + " needs an image file, or NONE");
+                    const std::string f = a[++i];
+                    (w == "colormap" ? m.colorMap : m.normalMap) = iequal(f, "none") ? std::string() : f;
+                } else if (w == "finish") {
+                    // FINISH polished | satin | brushed | matte: how rough the surface is.
+                    const std::string f = i + 1 < a.size() ? lower(a[++i]) : std::string();
+                    const MaterialFinish* found = nullptr;
+                    for (const MaterialFinish& x : materialFinishes())
+                        if (f == x.name) found = &x;
+                    if (!found) return std::string("FINISH is POLISHED, SATIN, BRUSHED or MATTE");
+                    m.roughness = found->roughness;
+                } else if (w == "default") {
+                    m = MaterialProps{};
+                } else if (!applyMaterialPreset(w, m, &color)) {
+                    return std::string("Unknown material " + a[i] + " (MATERIAL LIST shows them)");
+                }
+                if (w == "metallic" || w == "roughness" || w == "transmission" || w == "ior" || w == "emission") m.preset = m.preset.empty() ? "custom" : m.preset;
             }
-            if (w == "metallic" || w == "roughness" || w == "transmission" || w == "ior" || w == "emission") m.preset = m.preset.empty() ? "custom" : m.preset;
+            return std::nullopt;
+        };
+        std::vector<std::pair<MaterialProps, Vec3>> made;
+        for (int bi : group) { // all of them or none
+            const Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            made.emplace_back(body.material, body.color);
+            if (const auto bad = edit(made.back().first, made.back().second)) return out.fail(*bad);
         }
-        b.material = m;
-        b.color = color;
+        for (std::size_t k = 0; k < group.size(); ++k) {
+            Body& body = doc.scene.bodies()[static_cast<std::size_t>(group[k])];
+            body.material = made[k].first;
+            body.color = made[k].second;
+        }
+        if (group.size() > 1) { // replayed by name
+            std::string rest;
+            for (std::size_t k = first; k < a.size(); ++k) rest += " " + (quotedArg(k) ? "\"" + a[k] + "\"" : a[k]);
+            doc.recordAs = "MATERIAL" + quotedList(group) + rest;
+        }
         doc.scene.touchBodies();
-        out.say(b.name + ": " + (m.preset.empty() ? std::string("plastic") : m.preset) + fmt(", metallic %g", static_cast<double>(m.metallic)) +
+        const MaterialProps& m = made[0].first;
+        out.say((group.size() == 1 ? b.name : std::to_string(group.size()) + " bodies") + ": " + (m.preset.empty() ? std::string("plastic") : m.preset) + fmt(", metallic %g", static_cast<double>(m.metallic)) +
                 fmt(", roughness %g", static_cast<double>(m.roughness)) + (m.transmission > 0 ? std::string(", clear") : std::string()) +
                 (m.emission > 0 ? std::string(", glowing") : std::string()));
         return out;
@@ -4622,50 +4683,6 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))));
         return out;
     }
-    // Names in the arguments a[from, to): each quoted one a name, unquoted words run together into one.
-    auto namesFrom = [&](std::size_t from, std::size_t to = static_cast<std::size_t>(-1)) {
-        std::vector<std::string> names;
-        std::string run;
-        for (std::size_t i = from; i < std::min(to, a.size()); ++i) {
-            if (quotedArg(i)) {
-                if (!run.empty()) names.push_back(run), run.clear();
-                names.push_back(a[i]);
-            } else {
-                run += (run.empty() ? "" : " ") + a[i];
-            }
-        }
-        if (!run.empty()) names.push_back(run);
-        return names;
-    };
-    auto quotedList = [&](const std::vector<int>& list) {
-        std::string q;
-        for (int b : list) q += " \"" + doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\"";
-        return q;
-    };
-    // The bodies a transform acts on: the named ones, else every selected body. Empty: `why` says.
-    auto transformGroup = [&](const std::vector<std::string>& names, std::string& why) {
-        std::vector<int> list;
-        for (const std::string& n : names) {
-            const int b = findBody(doc, n);
-            if (b < 0) {
-                why = "No body named " + n;
-                return std::vector<int>{};
-            }
-            if (std::find(list.begin(), list.end(), b) == list.end()) list.push_back(b);
-        }
-        if (names.empty()) list = doc.selectedBodies();
-        if (list.empty()) why = "Select a body first, or give its name";
-        return list;
-    };
-    // A length or point (mm) for a command line written here: marked mm, as bare numbers are
-    // read in the document's units.
-    auto mmVec = [&](const Vec3& v) { return fmt("%.9gmm,", v.x) + fmt("%.9gmm,", v.y) + fmt("%.9gmm", v.z); };
-    // The middle of their bounds: what several bodies turn and scale about.
-    auto groupCentre = [&](const std::vector<int>& list) {
-        AABB box;
-        for (int b : list) box.expand(doc.scene.bodies()[static_cast<std::size_t>(b)].bounds());
-        return box.valid() ? box.center() : Vec3{0, 0, 0};
-    };
     if (cmd == "ROTATE") {
         // ROTATE [name] BY angle AXIS x,y,z [ABOUT x,y,z]: turns it on from where it is, about an
         // axis through a point (default its origin): what the gizmo's rings do.

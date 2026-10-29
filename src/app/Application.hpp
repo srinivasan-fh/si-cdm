@@ -225,6 +225,7 @@ private:
     float m_pressX = 0, m_pressY = 0;
     float m_pendingScroll = 0;
     Vec3 m_movePlanePoint;
+    bool m_rightClickOnCanvas = false; // the right button went down on the 3D view (a click there opens the body menu)
     std::vector<int> m_moveBodies;    // the Move tool drags these (the selection, when the body grabbed is in it)
     std::vector<Vec3> m_moveStarts;   // where they were
     Vec2 m_imageGrab{}, m_imageStart{};
