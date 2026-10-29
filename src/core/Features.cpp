@@ -1478,9 +1478,14 @@ namespace {
 
 // The cutter (outside edges) or filler (inside corners) along one chain: the section at
 // each point comes from the two faces' normals there.
-MeshData edgeTool(const EdgeChain& c, float r0, float r1, bool chamfer) {
-    const int arc = chamfer ? 0 : 12;
-    const float eps = std::max(r0, r1) * 0.05f;
+// `variant` changes only the cutter's facets and how far past the ends it runs (the same
+// round): another try when a boolean meets the body's own facets just so. `stop` (per end:
+// start, end) instead stops it that far short of the end, for a corner a ball finishes.
+MeshData edgeTool(const EdgeChain& c, float r0, float r1, bool chamfer, int variant = 0, std::array<float, 2> stop = {0.0f, 0.0f}) {
+    static const int kArcs[] = {12, 13, 11};
+    static const float kPast[] = {0.05f, 0.071f, 0.037f};
+    const int arc = chamfer ? 0 : kArcs[variant % 3];
+    const float eps = std::max(r0, r1) * kPast[(variant / 3) % 3];
     const std::size_t n = c.pts.size();
     // The size along the chain: r0 at its start to r1 at its end, by length (a variable fillet).
     std::vector<float> along(n, 0.0f);
@@ -1493,7 +1498,8 @@ MeshData edgeTool(const EdgeChain& c, float r0, float r1, bool chamfer) {
         const Vec3 nL = c.nL[i], nR = c.nR[i];
         if (!c.closed && c.convex && (i == 0 || i + 1 == n)) { // a hair past the ends, so the cut is clean (a filler stays flush)
             const Vec3 t = normalize(i == 0 ? c.pts[0] - c.pts[1] : c.pts[n - 1] - c.pts[n - 2]);
-            P += t * eps;
+            const float back = stop[i == 0 ? 0 : 1];
+            P += back > 0 ? t * -back : t * eps;
         }
         const float d = dot(nL, nR);
         const Vec3 bis = normalize(nL + nR);
@@ -1709,15 +1715,61 @@ bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::v
         body.brepKey = exact ? meshKey(body.mesh) : 0;
     }
     const bool wasClosed = openEdgeCount(body.mesh) == 0;
+    // Where three rounded outside edges meet (a corner a ball will finish).
+    auto threeRoundCorner = [&](const Vec3& p) {
+        if (chamfer || variable) return false;
+        int meet = 0;
+        for (int j : chosen) {
+            if (j < 0 || j >= static_cast<int>(chains.size())) continue;
+            const EdgeChain& o = chains[static_cast<std::size_t>(j)];
+            if (o.closed || !o.convex || o.pts.size() < 2) continue;
+            meet += (length(o.pts.front() - p) < size * 0.02f) + (length(o.pts.back() - p) < size * 0.02f);
+        }
+        return meet == 3;
+    };
     for (int k : chosen) {
         if (k < 0 || k >= static_cast<int>(chains.size())) continue;
         const EdgeChain& c = chains[static_cast<std::size_t>(k)];
         if (c.pts.size() < 2) continue;
-        const Body tool = featureBody("edge tool", edgeTool(c, size, variable ? sizeEnd : size, chamfer), {});
+        // A cut that leaves holes (the cutter's facets meeting the body's just so, as where it
+        // crosses the rounds already made at a corner) is tried again with the cutter's facets
+        // laid differently.
+        const Body before = body;
         std::string e;
-        if (!bodyBoolean(body, tool, c.convex ? BooleanOp::Subtract : BooleanOp::Union, &e, chamfer || variable ? std::vector<BSurface>{} : roundSurfaces(c, size)))
-            return fail("Edge " + std::to_string(k + 1) + ": " + e);
-        if (wasClosed && openEdgeCount(body.mesh) > 0) return fail("Edge " + std::to_string(k + 1) + " came out with holes");
+        bool done = false;
+        // Last, at a corner of three rounds, the cutter stops a radius short of it (crossing the
+        // two rounds there all but tangent is what goes wrong) and the corner's ball, made
+        // after, takes that bit too.
+        std::array<float, 2> stop{0.0f, 0.0f};
+        if (!c.closed && c.convex) {
+            if (threeRoundCorner(c.pts.front())) stop[0] = size;
+            if (threeRoundCorner(c.pts.back())) stop[1] = size;
+        }
+        // (A radius short puts its end where the rounds there turn into the faces: a little
+        // less is tried too, inside the ball's reach still.)
+        const int variants = stop[0] > 0 || stop[1] > 0 ? 18 : 9;
+        for (int variant = 0; variant < variants && !done; ++variant) {
+            if (variant > 0) body = before;
+            static const float kShort[] = {1.0f, 0.93f, 0.85f};
+            std::array<float, 2> s{0.0f, 0.0f};
+            if (variant >= 9) s = {stop[0] * kShort[(variant - 9) / 3], stop[1] * kShort[(variant - 9) / 3]};
+            const Body tool = featureBody("edge tool", edgeTool(c, size, variable ? sizeEnd : size, chamfer, variant % 9, s), {});
+            std::string why;
+            if (!bodyBoolean(body, tool, c.convex ? BooleanOp::Subtract : BooleanOp::Union, &why,
+                             chamfer || variable ? std::vector<BSurface>{} : roundSurfaces(c, size))) {
+                if (e.empty()) e = why;
+                continue;
+            }
+            if (wasClosed && openEdgeCount(body.mesh) > 0) {
+                if (e.empty()) e = "came out with holes";
+                continue;
+            }
+            done = true;
+        }
+        if (!done) {
+            body = before;
+            return fail("Edge " + std::to_string(k + 1) + (e == "came out with holes" ? " came out with holes" : ": " + e));
+        }
     }
     // Corners where three rounded outside edges meet become balls (one size only).
     if (!chamfer && !variable) {

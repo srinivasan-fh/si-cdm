@@ -7,6 +7,7 @@
 #include "core/Sculpt.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 
@@ -392,6 +393,30 @@ TEST_CASE("EDGES lists a body's sharp edges; FILLET and CHAMFER treat just the c
     CHECK_NEAR(volumeOf(*named(d, "Block 2")), 8000 - (1 - kPiD / 4) * 4 * 20, 2.0);
     CHECK(!run(d, "FILLET \"Block 2\" RADIUS 2 EDGES 99").ok);
     CHECK(!run(d, "CHAMFER \"Block 2\" EDGES TOP").ok); // no size
+}
+
+TEST_CASE("FILLET EDGES ALL rounds boxes anywhere in the model, where the cuts meet the rounds already made just so") {
+    // Sizes and places whose rounds once came out with holes: each is the exact rounded box.
+    struct Case {
+        const char* box;
+        double x, y, z, r;
+    };
+    for (const Case& c : {Case{"BOX 60 60 60 @-120,47,3", 60, 60, 60, 2.5}, Case{"BOX 81 59 31 @0,0,0", 81, 59, 31, 2.5},
+                          Case{"BOX 81 59 31 @1000,1000,0", 81, 59, 31, 5}, Case{"BOX 81 59 31 @300.5,900.25,0.1", 81, 59, 31, 4}}) {
+        Document d;
+        REQUIRE(run(d, c.box).ok);
+        const CommandOutput o = run(d, "FILLET \"Block 1\" RADIUS " + std::to_string(c.r) + " EDGES ALL");
+        CHECK(o.ok);
+        if (!o.ok) {
+            std::printf("  %s r%g: %s", c.box, c.r, text(o).c_str());
+            continue;
+        }
+        const Body* b = named(d, "Block 1");
+        CHECK(openEdgeCount(b->mesh) == 0);
+        const double r = c.r, a = c.x - 2 * r, w = c.y - 2 * r, h = c.z - 2 * r;
+        const double exact = a * w * h + 2 * r * (a * w + w * h + a * h) + kPiD * r * r * (a + w + h) + 4.0 / 3 * kPiD * r * r * r;
+        CHECK_NEAR(volumeOf(*b), exact, exact * 2e-3);
+    }
 }
 
 TEST_CASE("FILLET and CHAMFER fill inside corners, and treat round edge loops") {
