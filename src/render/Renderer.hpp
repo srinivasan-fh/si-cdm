@@ -78,6 +78,7 @@ public:
 
     // Other selected bodies, highlighted with the active one (multi-select).
     void setAlsoSelected(const std::vector<int>& bodies) { m_alsoSelected = bodies; }
+    void setAlsoSelectedCurves(const std::vector<int>& curves) { m_alsoSelectedCurves = curves; }
 
     void render(const Scene& scene, const OrbitCamera& camera, const ViewportSettings& settings,
                 int framebufferWidth, int framebufferHeight, int selectedBody, int selectedCurve,
@@ -86,6 +87,7 @@ public:
 
 private:
     std::vector<int> m_alsoSelected;
+    std::vector<int> m_alsoSelectedCurves;
     void drawBackground(const ViewportSettings& s);
     void drawGrid(const OrbitCamera& cam, const ViewportSettings& s);
     void uploadSketch(const Sketch& sketch);

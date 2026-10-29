@@ -808,7 +808,8 @@ void Renderer::drawSketch(const Scene& scene, const OrbitCamera& cam, const View
     for (std::size_t i = 0; i < n; ++i) {
         if (!curves[i].visible) continue;
         const SketchRange& r = m_sketchRanges[i];
-        const Vec3 c = static_cast<int>(i) == selected ? Vec3{0.35f, 0.72f, 1.0f} : i < s.sketchColors.size() ? s.sketchColors[i] : s.sketchColor;
+        const bool picked = static_cast<int>(i) == selected || std::find(m_alsoSelectedCurves.begin(), m_alsoSelectedCurves.end(), static_cast<int>(i)) != m_alsoSelectedCurves.end();
+        const Vec3 c = picked ? Vec3{0.35f, 0.72f, 1.0f} : i < s.sketchColors.size() ? s.sketchColors[i] : s.sketchColor;
         m_sketchShader.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
         m_sketchShader.set("uRound", r.point ? 1.0f : 0.0f);
         m_sketchShader.set("uPointSize", r.point ? 7.0f : 1.0f);

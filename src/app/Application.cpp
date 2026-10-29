@@ -718,8 +718,14 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
     }
 
     if ((tool == ToolId::Select || tool == ToolId::Move) && commandModifierHeld()) {
-        // Ctrl+click (Cmd on a Mac): the body goes into the selection, or comes out of it.
-        if (const auto hit = pick(x, y)) {
+        // Ctrl+click (Cmd on a Mac): the curve or body goes into the selection, or comes out of it.
+        if (const int curve = tool == ToolId::Select ? pickCurve(x, y) : -1; curve >= 0) {
+            m_uiState.selectedBody = m_uiState.selectedImage = -1;
+            m_uiState.bodySelection = {};
+            toggleCurve(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection, curve);
+            selectionChanged();
+        } else if (const auto hit = pick(x, y)) {
+            m_uiState.curveSelection = {};
             m_uiState.selectedCurve = m_uiState.selectedImage = -1;
             toggleBody(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection, hit->body);
             selectionChanged();
@@ -731,6 +737,7 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         const int curve = tool == ToolId::Select ? pickCurve(x, y) : -1;
         if (curve >= 0) {
             m_uiState.selectedCurve = curve;
+            m_uiState.curveSelection = {};
             m_uiState.selectedBody = m_uiState.selectedImage = -1;
             setStatus("Selected " + m_doc.scene.sketch().curves()[static_cast<std::size_t>(curve)].name);
             return;
@@ -1582,8 +1589,7 @@ void Application::handleViewportInput() {
                 m_sketchDragMoved = false;
                 m_uiState.selectedCurve = m_sketchDrag.curve;
                 m_uiState.selectedBody = m_uiState.selectedImage = -1;
-            } else if (commandModifierHeld() && (tool == ToolId::Select || tool == ToolId::Move) && !simulating() &&
-                       m_uiState.mode == ViewMode::Model3D) {
+            } else if (commandModifierHeld() && (tool == ToolId::Select || tool == ToolId::Move) && !simulating()) {
                 m_leftDrag = DragMode::BoxSelect; // Ctrl+drag: a box adding the bodies in it
                 m_boxStart = {m_pressX, m_pressY};
             } else
@@ -1810,6 +1816,7 @@ void Application::handleViewportInput() {
         } else {
             m_uiState.selectedBody = m_uiState.selectedCurve = m_uiState.selectedImage = -1;
             m_uiState.bodySelection = {};
+            m_uiState.curveSelection = {};
         }
     }
     if (ImGui::GetIO().KeyAlt && m_leftDrag == DragMode::None) { // Alt+H hide, Alt+Shift+H show all, Alt+I isolate
@@ -1830,15 +1837,25 @@ void Application::handleViewportInput() {
         // By the ERASE command, so it is in the history and undoes.
         const auto& curves = m_doc.scene.sketch().curves();
         std::string name;
-        if (m_uiState.selectedCurve >= 0 && m_uiState.selectedCurve < static_cast<int>(curves.size()))
-            name = curves[static_cast<std::size_t>(m_uiState.selectedCurve)].name;
-        else if (m_uiState.selectedImage >= 0 && m_uiState.selectedImage < static_cast<int>(m_doc.scene.images().size()))
+        if (m_uiState.selectedCurve >= 0 && m_uiState.selectedCurve < static_cast<int>(curves.size())) {
+            const std::vector<int> picked = selectedCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection);
+            for (int c : picked) name += (name.empty() ? "" : "\" \"") + curves[static_cast<std::size_t>(c)].name; // every selected curve
+        } else if (m_uiState.selectedImage >= 0 && m_uiState.selectedImage < static_cast<int>(m_doc.scene.images().size()))
             name = m_doc.scene.images()[static_cast<std::size_t>(m_uiState.selectedImage)].name;
         std::string bodies; // every selected body, by name
         for (int b : selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection))
             bodies += " \"" + m_doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\"";
         if (m_uiState.selectedCurve < 0 && !bodies.empty()) runCommandLine("ERASE" + bodies);
         else if (!name.empty()) runCommandLine("ERASE \"" + name + "\"");
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && is2D && m_leftDrag == DragMode::None) { // 2D: every visible sketch curve
+        std::vector<int> all;
+        for (std::size_t i = 0; i < m_doc.scene.sketch().curves().size(); ++i)
+            if (m_doc.scene.sketch().curves()[i].visible) all.push_back(static_cast<int>(i));
+        m_uiState.selectedBody = m_uiState.selectedImage = -1;
+        m_uiState.bodySelection = {};
+        selectCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection, all);
+        selectionChanged();
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && !is2D && m_leftDrag == DragMode::None) { // every visible body
         std::vector<int> all;
@@ -2165,6 +2182,7 @@ void Application::frame(float dt) {
                 for (const Body& b : m_doc.scene.bodies()) v.cut.push_back(sv.cuts(b) ? 1 : 0);
         }
         m_renderer->setAlsoSelected(selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection));
+        m_renderer->setAlsoSelectedCurves(selectedCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection));
         m_renderer->render(m_doc.scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve,
                            m_uiState.selectedImage, bodyTransforms(),
                            simulating() && !m_loopOverrides.empty() ? &m_loopOverrides
@@ -2215,6 +2233,7 @@ void Application::syncToDoc() {
     m_doc.selectedBody = m_uiState.selectedBody;
     m_doc.selection = m_uiState.bodySelection;
     m_doc.selectedCurve = m_uiState.selectedCurve;
+    m_doc.curveSelection = m_uiState.curveSelection;
     m_doc.selectedImage = m_uiState.selectedImage;
     m_doc.state.plane = m_uiState.plane;
     m_doc.snapGrid = m_uiState.snapGrid;
@@ -2225,6 +2244,7 @@ void Application::syncFromDoc() {
     m_uiState.selectedBody = m_doc.selectedBody;
     m_uiState.bodySelection = m_doc.selection;
     m_uiState.selectedCurve = m_doc.selectedCurve;
+    m_uiState.curveSelection = m_doc.curveSelection;
     m_uiState.selectedImage = m_doc.selectedImage;
     m_uiState.snapGrid = m_doc.snapGrid;
     m_uiState.snapPoints = m_doc.snapPoints;
@@ -2651,6 +2671,7 @@ void Application::loadFile(int index) {
     m_uiState.selectedBody = m_doc.selectedBody;
     m_uiState.bodySelection = m_doc.selection;
     m_uiState.selectedCurve = m_doc.selectedCurve;
+    m_uiState.curveSelection = m_doc.curveSelection;
     m_uiState.selectedImage = m_doc.selectedImage;
     m_uiState.snapGrid = m_doc.snapGrid;
     m_uiState.snapPoints = m_doc.snapPoints;
@@ -3923,6 +3944,11 @@ void Application::pollRender() {
 }
 
 void Application::selectionChanged() {
+    if (const std::vector<int> curves = selectedCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection); !curves.empty()) {
+        const std::string& first = m_doc.scene.sketch().curves()[static_cast<std::size_t>(curves[0])].name;
+        setStatus(curves.size() == 1 ? "Selected " + first : std::to_string(curves.size()) + " sketch curves selected (" + first + " active)");
+        return;
+    }
     const std::vector<int> sel = selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection);
     if (sel.empty()) setStatus("Nothing selected");
     else if (sel.size() == 1) setStatus("Selected " + m_doc.scene.bodies()[static_cast<std::size_t>(sel[0])].name);
@@ -3935,6 +3961,25 @@ void Application::finishBoxSelect(float x, float y) {
     if (x1 - x0 < 2 || y1 - y0 < 2) return;
     const bool window = x >= m_boxStart.x; // left to right: wholly inside; right to left: touching
     auto inside = [&](const ImVec2& p) { return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1; };
+    if (m_uiState.mode == ViewMode::Drawing2D) { // the 2D window: sketch curves
+        std::vector<int> list = selectedCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection);
+        const auto& curves = m_doc.scene.sketch().curves();
+        for (std::size_t i = 0; i < curves.size(); ++i) {
+            if (!curves[i].visible) continue;
+            bool all = true, any = false;
+            for (const Vec3& w : curves[i].worldStrip(48)) {
+                const auto p = projectToScreen(camera(), w, io.DisplaySize);
+                const bool in = p && inside(*p);
+                all = all && in, any = any || in;
+            }
+            if ((window ? all : any) && std::find(list.begin(), list.end(), static_cast<int>(i)) == list.end()) list.push_back(static_cast<int>(i));
+        }
+        m_uiState.selectedBody = m_uiState.selectedImage = -1;
+        m_uiState.bodySelection = {};
+        selectCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection, list);
+        selectionChanged();
+        return;
+    }
     std::vector<int> list = selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection);
     const auto& bodies = m_doc.scene.bodies();
     const auto centre = pick(0.5f * (x0 + x1), 0.5f * (y0 + y1));
@@ -3958,6 +4003,7 @@ void Application::finishBoxSelect(float x, float y) {
         if (in && std::find(list.begin(), list.end(), static_cast<int>(i)) == list.end()) list.push_back(static_cast<int>(i));
     }
     m_uiState.selectedCurve = m_uiState.selectedImage = -1;
+    m_uiState.curveSelection = {};
     selectBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection, list);
     selectionChanged();
 }

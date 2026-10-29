@@ -525,3 +525,91 @@ TEST_CASE("PASTE is kept with the project: REGEN, a reload and another computer 
     CHECK(pasteId("paste clip P4 OFFSET 1,2,3") == "P4");
     CHECK(pasteId("PASTE OFFSET 1,2,3").empty());
 }
+
+namespace {
+int curveNamed(const Document& d, const std::string& n) {
+    const auto& c = d.scene.sketch().curves();
+    for (std::size_t i = 0; i < c.size(); ++i)
+        if (c[i].name == n) return static_cast<int>(i);
+    return -1;
+}
+} // namespace
+
+TEST_CASE("Sketch curves: several selected, deleted, copied, cut, pasted and duplicated, undone, replayed") {
+    Document d;
+    REQUIRE(run(d, "LINE 0,0 10,0").ok);   // Line 1
+    REQUIRE(run(d, "CIRCLE 30,0 5").ok);   // Circle 2
+    REQUIRE(run(d, "RECT 50,0 60,10").ok); // Rectangle 3
+    const auto& curves = d.scene.sketch().curves();
+    REQUIRE(curves.size() == 3);
+    const std::string line = curves[0].name, circle = curves[1].name, rect = curves[2].name;
+    // Selecting several curves by name, adding, taking out.
+    REQUIRE(run(d, "SELECT \"" + line + "\" \"" + circle + "\"").ok);
+    CHECK(d.selectedCurves().size() == 2);
+    CHECK(d.selectedBodies().empty());
+    REQUIRE(run(d, "SELECT ADD \"" + rect + "\"").ok);
+    CHECK(d.selectedCurves().size() == 3);
+    CHECK(d.selectedCurve == 2); // the one added last is active
+    REQUIRE(run(d, "SELECT REMOVE \"" + line + "\"").ok);
+    CHECK(d.selectedCurves().size() == 2);
+    REQUIRE(run(d, "SELECT ALL CURVES").ok);
+    CHECK(d.selectedCurves().size() == 3);
+    // Duplicated beside them (along the plane's first axis), selected, one undo.
+    REQUIRE(run(d, "SELECT \"" + line + "\" \"" + circle + "\"").ok);
+    REQUIRE(run(d, "DUPLICATE").ok);
+    REQUIRE(curves.size() == 5);
+    const int lc = curveNamed(d, line + " copy");
+    REQUIRE(lc >= 0);
+    CHECK(curveNamed(d, circle + " copy") >= 0);
+    // Their width (0..35) and a tenth: 38.5 mm along X.
+    CHECK(std::fabs(curves[static_cast<std::size_t>(lc)].pts[0].x - 38.5f) < 1e-3f);
+    CHECK(d.selectedCurves().size() == 2);
+    CHECK(d.state.history.back().line == "DUPLICATE \"" + line + "\" \"" + circle + "\"");
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(curves.size() == 3);
+    // With an offset, partly out of the plane: a flat curve goes to a parallel plane.
+    REQUIRE(run(d, "DUPLICATE \"" + circle + "\" OFFSET 0,20,15").ok);
+    const SketchCurve& lifted = curves.back();
+    CHECK(std::fabs(lifted.pts[0].y - 20.0f) < 1e-4f);
+    CHECK(lifted.plane == SketchPlane::Custom);
+    CHECK(std::fabs(curveFrame(lifted).origin.z - 15.0f) < 1e-4f);
+    REQUIRE(run(d, "UNDO").ok);
+    // Deleted together, one undo brings both back.
+    REQUIRE(run(d, "SELECT \"" + circle + "\" \"" + rect + "\"").ok);
+    REQUIRE(run(d, "ERASE").ok);
+    CHECK(curves.size() == 1);
+    CHECK(d.state.history.back().line == "ERASE \"" + circle + "\" \"" + rect + "\"");
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(curves.size() == 3);
+    CHECK(!run(d, "ERASE \"" + line + "\" \"Nope\"").ok);
+    // Copied into another file: same names, same place; the clipboard is one (bodies go).
+    REQUIRE(run(d, "SELECT \"" + line + "\" \"" + rect + "\"").ok);
+    REQUIRE(run(d, "COPY").ok);
+    CHECK(bodyClipboard().empty());
+    Document e;
+    REQUIRE(run(e, "BOX 10 10 10").ok);
+    REQUIRE(run(e, "PASTE").ok);
+    REQUIRE(e.scene.sketch().curves().size() == 2);
+    CHECK(curveNamed(e, line) >= 0);
+    CHECK(e.scene.bodies().size() == 1);
+    CHECK(e.state.history.back().line == "PASTE CLIP P1 OFFSET 0mm,0mm,0mm");
+    curveClipboard().clear();
+    REQUIRE(run(e, "REGEN").ok); // from what the project kept
+    CHECK(e.scene.sketch().curves().size() == 2);
+    // Cut: taken out, pasted back in place.
+    REQUIRE(run(d, "SELECT \"" + circle + "\"").ok);
+    REQUIRE(run(d, "CUT").ok);
+    CHECK(curveNamed(d, circle) < 0);
+    REQUIRE(run(d, "PASTE").ok);
+    CHECK(curveNamed(d, circle) >= 0);
+    // Pasting where they are: beside them, new names; REGEN rebuilds it the same.
+    REQUIRE(run(d, "PASTE").ok);
+    const int again = curveNamed(d, circle + " copy");
+    REQUIRE(again >= 0);
+    const float x = curves[static_cast<std::size_t>(again)].pts[0].x;
+    REQUIRE(run(d, "REGEN").ok);
+    REQUIRE(curveNamed(d, circle + " copy") >= 0);
+    CHECK(std::fabs(curves[static_cast<std::size_t>(curveNamed(d, circle + " copy"))].pts[0].x - x) < 1e-4f);
+    // Bodies and curves are not mixed.
+    CHECK(!run(e, "ERASE \"Block 1\" \"" + line + "\"").ok);
+}

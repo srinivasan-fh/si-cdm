@@ -123,6 +123,7 @@ struct UiState {
     bool snapPoints = true;
     int selectedBody = -1;
     BodySelection bodySelection; // other bodies selected with selectedBody (Selection.hpp)
+    BodySelection curveSelection; // other sketch curves selected with selectedCurve
     int renameBody = -1;         // asks for a new name for this body (F2, double-click in the tree)
     bool openBodyMenu = false;   // a right click on a body: open the body menu (for the selection)
     int selectedCurve = -1;

@@ -12,7 +12,9 @@
 namespace sicdm {
 
 class Scene;
+class Sketch;
 struct Body;
+struct SketchCurve;
 
 struct BodySelection {
     std::vector<std::string> others; // besides the active body
@@ -35,5 +37,13 @@ std::vector<Body>& bodyClipboard();
 
 // A name not used in the scene (nor in `taken`): `base`, else "base copy", "base copy 2"...
 std::string copyName(const Scene& scene, const std::string& base, const std::vector<std::string>& taken = {}, bool keepIfFree = false);
+
+// The same for sketch curves: several selected (the active one is Document::selectedCurve),
+// kept by name; a clipboard of them; a name not used by another curve.
+std::vector<int> selectedCurves(const Sketch& sketch, int active, const BodySelection& selection);
+void selectCurves(const Sketch& sketch, int& active, BodySelection& selection, const std::vector<int>& curves);
+void toggleCurve(const Sketch& sketch, int& active, BodySelection& selection, int curve);
+std::vector<SketchCurve>& curveClipboard();
+std::string copyCurveName(const Sketch& sketch, const std::string& base, const std::vector<std::string>& taken = {}, bool keepIfFree = false);
 
 } // namespace sicdm

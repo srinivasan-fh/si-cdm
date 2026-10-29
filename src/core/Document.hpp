@@ -30,6 +30,9 @@ struct Document {
     // Other bodies selected with selectedBody (Selection.hpp).
     BodySelection selection;
     std::vector<int> selectedBodies() const { return sicdm::selectedBodies(scene, selectedBody, selection); }
+    // Other sketch curves selected with selectedCurve.
+    BodySelection curveSelection;
+    std::vector<int> selectedCurves() const { return sicdm::selectedCurves(scene.sketch(), selectedCurve, curveSelection); }
     // A command that acted on the selection records itself in the history as this (with the
     // bodies' names), so replaying it doesn't depend on what is selected then.
     std::string recordAs;
@@ -83,6 +86,7 @@ struct Document {
     void clearSelection() noexcept {
         selectedBody = selectedCurve = selectedImage = -1;
         selection = BodySelection{};
+        curveSelection = BodySelection{};
     }
     std::string title() const; // "file.sicdm" or the name, with " *" when dirty
     std::string displayName() const; // "file.sicdm" or the name

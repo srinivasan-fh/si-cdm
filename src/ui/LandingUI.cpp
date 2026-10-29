@@ -1330,19 +1330,20 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("Edit"))) {
-        const bool any = m_menuScene && !selectedBodies(*m_menuScene, st.selectedBody, st.bodySelection).empty();
+        const bool bodies = m_menuScene && !selectedBodies(*m_menuScene, st.selectedBody, st.bodySelection).empty();
+        const bool any = bodies || (m_menuScene && !selectedCurves(m_menuScene->sketch(), st.selectedCurve, st.curveSelection).empty());
         if (ImGui::MenuItem(tr("Undo"), "Ctrl+Z")) cmd.commands.push_back("UNDO");
         if (ImGui::MenuItem(tr("Redo"), "Ctrl+Shift+Z")) cmd.commands.push_back("REDO");
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Cut"), "Ctrl+X", false, any)) cmd.commands.push_back("CUT");
         if (ImGui::MenuItem(tr("Copy"), "Ctrl+C", false, any)) cmd.commands.push_back("COPY");
-        if (ImGui::MenuItem(tr("Paste"), "Ctrl+V", false, !bodyClipboard().empty())) cmd.commands.push_back("PASTE");
+        if (ImGui::MenuItem(tr("Paste"), "Ctrl+V", false, !bodyClipboard().empty() || !curveClipboard().empty())) cmd.commands.push_back("PASTE");
         if (ImGui::MenuItem(tr("Duplicate"), "Ctrl+D", false, any)) cmd.commands.push_back("DUPLICATE");
         if (ImGui::MenuItem(tr("Delete"), "Del", false, any)) cmd.commands.push_back("ERASE");
         if (ImGui::MenuItem(tr("Rename..."), "F2", false, st.selectedBody >= 0)) st.renameBody = st.selectedBody;
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Hide"), "Alt+H", false, any)) cmd.commands.push_back("HIDE");
-        if (ImGui::MenuItem(tr("Isolate"), "Alt+I", false, any)) cmd.commands.push_back("ISOLATE");
+        if (ImGui::MenuItem(tr("Hide"), "Alt+H", false, bodies)) cmd.commands.push_back("HIDE");
+        if (ImGui::MenuItem(tr("Isolate"), "Alt+I", false, bodies)) cmd.commands.push_back("ISOLATE");
         if (ImGui::MenuItem(tr("Show All"), "Alt+Shift+H")) cmd.commands.push_back("SHOW ALL");
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Select All"), "Ctrl+A")) cmd.commands.push_back("SELECT ALL");
@@ -3074,14 +3075,21 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             if (ImGui::TreeNode(sketchLabel)) {
                 if (curves.empty()) ImGui::TextDisabled("%s", tr("Use the 2D tools to draw"));
+                const std::vector<int> curveSel = selectedCurves(scene.sketch(), st.selectedCurve, st.curveSelection);
                 for (int i = 0; i < static_cast<int>(curves.size()); ++i) {
                     SketchCurve& c = curves[static_cast<std::size_t>(i)];
                     ImGui::PushID(1000 + i);
                     if (eyeToggle("##vis", c.visible)) scene.sketch().touch();
                     ImGui::SameLine(0, 6);
-                    if (ImGui::Selectable(c.name.c_str(), st.selectedCurve == i)) {
-                        st.selectedCurve = st.selectedCurve == i ? -1 : i;
+                    if (ImGui::Selectable(c.name.c_str(), std::find(curveSel.begin(), curveSel.end(), i) != curveSel.end())) {
+                        if (ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper) { // Ctrl / Cmd+click: into or out of the selection
+                            toggleCurve(scene.sketch(), st.selectedCurve, st.curveSelection, i);
+                        } else {
+                            st.selectedCurve = st.selectedCurve == i && curveSel.size() == 1 ? -1 : i;
+                            st.curveSelection = {};
+                        }
                         st.selectedBody = st.selectedImage = -1;
+                        st.bodySelection = {};
                     }
                     ImGui::SameLine(ImGui::GetWindowWidth() - 52);
                     ImGui::TextColored(theme::vec(theme::kTextFaint), "%s", c.spatial() ? "3D" : shortPlaneName(c.plane));
@@ -3425,10 +3433,11 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
             if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) cmd.commands.push_back(io.KeyShift ? "REDO" : "UNDO");
             if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) cmd.commands.push_back("REDO");
             // Copy, cut, paste and duplicate the selected bodies.
-            if (ImGui::IsKeyPressed(ImGuiKey_C, false) && st.selectedBody >= 0) cmd.commands.push_back("COPY");
-            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && st.selectedBody >= 0) cmd.commands.push_back("CUT");
+            const bool some = st.selectedBody >= 0 || st.selectedCurve >= 0; // bodies or sketch curves
+            if (ImGui::IsKeyPressed(ImGuiKey_C, false) && some) cmd.commands.push_back("COPY");
+            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && some) cmd.commands.push_back("CUT");
             if (ImGui::IsKeyPressed(ImGuiKey_V, false)) cmd.commands.push_back("PASTE");
-            if (ImGui::IsKeyPressed(ImGuiKey_D, false) && st.selectedBody >= 0) cmd.commands.push_back("DUPLICATE");
+            if (ImGui::IsKeyPressed(ImGuiKey_D, false) && some) cmd.commands.push_back("DUPLICATE");
         }
     }
 
@@ -3791,9 +3800,9 @@ void LandingUI::drawControlsWindow(UiState& st) {
                 {"Enter", "Finish polyline"},
                 {"Esc", "Cancel drawing / clear selection"},
                 {"Delete / Backspace", "Delete the selected bodies or curve"},
-                {"Ctrl + click", "Add a body to / take it from the selection"},
-                {"Ctrl + drag (empty space)", "Box select: left to right inside, right to left touching"},
-                {"Ctrl + A", "Select every visible body"},
+                {"Ctrl + click", "Add a body or sketch curve to / take it from the selection"},
+                {"Ctrl + drag (empty space)", "Box select (2D: curves): left to right inside, right to left touching"},
+                {"Ctrl + A", "Select every visible body (2D: every sketch curve)"},
                 {"Ctrl + C / X / V", "Copy / cut / paste bodies"},
                 {"Ctrl + D", "Duplicate the selected bodies"},
                 {"F2 / double-click in tree", "Rename the selected body"},

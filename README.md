@@ -957,6 +957,12 @@ Details: [docs/plugins.md](docs/plugins.md).
   or opening it on another computer gives the same bodies without the clipboard.
 - `Ctrl/⌘ D`: duplicate the selected bodies beside them (`DUPLICATE [name...] [OFFSET x,y,z]`).
   The copies are selected, ready to move. These are all in the **Edit** menu too.
+- Sketch curves select, copy and paste the same way: `Ctrl/⌘ + click` a curve (in either window
+  or the model tree) to add it, `Ctrl/⌘ + drag` in the 2D window for a box of them, `Ctrl/⌘ A`
+  there for all; Delete, `Ctrl/⌘ C`, `X`, `V`, `D` then act on the curves
+  (`SELECT "Line 1" "Circle 2"`, `SELECT ALL CURVES`). Copies go beside them in their plane; an
+  OFFSET partly out of the plane puts a flat curve on the parallel plane that far away.
+  Constraints stay with the originals.
 - `F2`, or double-click a body in the model tree: rename it (`RENAME "old" TO "new"`). Mates,
   drawings, CAM setups, stack-ups and the rest that refer to it follow the new name.
 - Right-click a body (in the 3D window, without dragging, or in the model tree): a menu with

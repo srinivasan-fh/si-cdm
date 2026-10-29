@@ -773,7 +773,7 @@ bool sketchCommand(const std::string& cmd) {
     static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",
                                           "ELLIPSE",  "SKETCHSLOT",   "POLYGON", "TRIM",  "EXTEND",    "OFFSET",     "CONSTRUCTION",
                                           "CONSTRAIN", "DIM",         "CONSTRAINT", "DRAG",  "ERASE",     "SKETCHFILLET", "SKETCHCHAMFER",
-                                          "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT", "PATH3D"};
+                                          "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT", "PATH3D", "DUPLICATE", "PASTE", "CUT"};
     for (const char* k : kSketch)
         if (cmd == k) return true;
     return false;
@@ -5117,9 +5117,17 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             else if (sel.size() == 1) out.say(std::string(verb) + ": " + doc.scene.bodies()[static_cast<std::size_t>(sel[0])].name);
             else out.say(std::string(verb) + ": " + std::to_string(sel.size()) + " bodies," + quotedList(sel) + " (the first is the active one)");
         };
+        const auto& curves = doc.scene.sketch().curves();
+        auto sayCurves = [&]() {
+            const std::vector<int> sel = doc.selectedCurves();
+            std::string list;
+            for (int c : sel) list += " \"" + curves[static_cast<std::size_t>(c)].name + "\"";
+            if (sel.size() == 1) out.say("Selected: " + curves[static_cast<std::size_t>(sel[0])].name);
+            else out.say("Selected: " + std::to_string(sel.size()) + " sketch curves," + list + " (the first is the active one)");
+        };
         if (a.empty()) {
-            if (doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(doc.scene.sketch().curves().size()))
-                out.say("Selected: " + doc.scene.sketch().curves()[static_cast<std::size_t>(doc.selectedCurve)].name);
+            if (doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(curves.size()))
+                sayCurves();
             else if (doc.selectedImage >= 0 && doc.selectedImage < static_cast<int>(doc.scene.images().size()))
                 out.say("Selected: " + doc.scene.images()[static_cast<std::size_t>(doc.selectedImage)].name);
             else say("Selected");
@@ -5142,9 +5150,38 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             say("Selected");
             return out;
         }
+        if (first == "all" && a.size() == 2 && !quotedArg(1) && (iequal(a[1], "curves") || iequal(a[1], "curve"))) { // every visible sketch curve
+            std::vector<int> list;
+            for (std::size_t i = 0; i < curves.size(); ++i)
+                if (curves[i].visible) list.push_back(static_cast<int>(i));
+            doc.clearSelection();
+            selectCurves(doc.scene.sketch(), doc.selectedCurve, doc.curveSelection, list);
+            if (list.empty()) out.say("No sketch curves to select");
+            else sayCurves();
+            return out;
+        }
         const bool adding = first == "add", removing = first == "remove";
         const std::vector<std::string> names = namesFrom(adding || removing ? 1 : 0);
         if (names.empty()) return usage();
+        // Names that are all sketch curves (none a body): the curves' selection.
+        if (std::all_of(names.begin(), names.end(), [&](const std::string& n) { return findBody(doc, n) < 0 && findCurve(doc, n) >= 0; })) {
+            std::vector<int> list = adding || removing ? doc.selectedCurves() : std::vector<int>{};
+            for (const std::string& n : names) {
+                const int c = findCurve(doc, n);
+                const auto it = std::find(list.begin(), list.end(), c);
+                if (removing) {
+                    if (it != list.end()) list.erase(it);
+                } else if (it == list.end()) {
+                    list.insert(adding ? list.begin() : list.end(), c); // an added curve becomes the active one
+                }
+            }
+            doc.selectedBody = doc.selectedImage = -1;
+            doc.selection = BodySelection{};
+            selectCurves(doc.scene.sketch(), doc.selectedCurve, doc.curveSelection, list);
+            if (list.empty()) out.say("Selected: nothing");
+            else sayCurves();
+            return out;
+        }
         // One name that is a sketch curve or an image (not a body): select that.
         if (!adding && !removing && names.size() == 1 && findBody(doc, names[0]) < 0) {
             doc.clearSelection();
@@ -5177,32 +5214,37 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "ERASE") {
         // ERASE [name...]: the named bodies, curves or images, else everything selected.
         auto& s = doc.scene;
-        std::vector<int> bodies;
-        int curve = -1, image = -1;
+        std::vector<int> bodies, curves;
+        int image = -1;
         if (!a.empty()) {
             for (const std::string& n : namesFrom(0)) {
                 if (const int b = findBody(doc, n); b >= 0) {
                     if (std::find(bodies.begin(), bodies.end(), b) == bodies.end()) bodies.push_back(b);
-                } else if (const int c = findCurve(doc, n); c >= 0 && curve < 0) {
-                    curve = c;
+                } else if (const int c = findCurve(doc, n); c >= 0) {
+                    if (std::find(curves.begin(), curves.end(), c) == curves.end()) curves.push_back(c);
                 } else if (const int im = findImage(doc, n); im >= 0 && image < 0) {
                     image = im;
                 } else {
                     return out.fail("Nothing named " + n);
                 }
             }
-            if (curve >= 0 && (!bodies.empty() || image >= 0)) return out.fail("Erase a sketch curve on its own");
-        } else if (doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(s.sketch().curves().size())) {
-            curve = doc.selectedCurve;
+            if (!curves.empty() && (!bodies.empty() || image >= 0)) return out.fail("Erase sketch curves on their own");
+        } else if (!(curves = doc.selectedCurves()).empty()) {
+            if (curves.size() > 1) { // replayed by name
+                std::string q;
+                for (int c : curves) q += " \"" + s.sketch().curves()[static_cast<std::size_t>(c)].name + "\"";
+                doc.recordAs = "ERASE" + q;
+            }
         } else if (!(bodies = doc.selectedBodies()).empty()) {
             if (bodies.size() > 1) doc.recordAs = "ERASE" + quotedList(bodies); // replayed by name
         } else if (doc.selectedImage >= 0 && doc.selectedImage < static_cast<int>(s.images().size())) {
             image = doc.selectedImage;
         }
         std::string gone;
-        if (curve >= 0) {
-            gone = s.sketch().curves()[static_cast<std::size_t>(curve)].name;
-            s.sketch().remove(static_cast<std::size_t>(curve));
+        if (!curves.empty()) {
+            gone = curves.size() == 1 ? s.sketch().curves()[static_cast<std::size_t>(curves[0])].name : std::to_string(curves.size()) + " sketch curves";
+            std::sort(curves.begin(), curves.end(), std::greater<int>());
+            for (int c : curves) s.sketch().remove(static_cast<std::size_t>(c));
         } else if (!bodies.empty()) {
             gone = bodies.size() == 1 ? s.bodies()[static_cast<std::size_t>(bodies[0])].name : std::to_string(bodies.size()) + " bodies";
             s.pushUndo("ERASE " + gone); // one step brings them all back
@@ -5308,6 +5350,126 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         std::string clipId;
         if (cmd == "PASTE" && end == 2 && !quotedArg(0) && iequal(a[0], "clip")) clipId = a[1], end = 0;
         if (cmd == "PASTE" && end > 0) return usage();
+        // PASTE CLIP: what the project kept of that paste (bodies, or sketch curves).
+        std::optional<Scene> kept;
+        if (cmd == "PASTE" && !clipId.empty()) {
+            const auto it = std::find_if(doc.state.pastes.begin(), doc.state.pastes.end(), [&](const PastedBodies& p) { return p.id == clipId; });
+            if (it == doc.state.pastes.end()) return out.fail("This project has no pasted bodies " + clipId);
+            ProjectState keptState;
+            std::string why;
+            kept.emplace();
+            if (!projectFromText(it->project, doc.path, *kept, keptState, &why)) return out.fail("Pasted bodies " + clipId + " can't be read: " + why);
+        }
+        // Sketch curves: named (all of them curves), or the selected ones when no body is, or
+        // the curves on the clipboard.
+        std::vector<int> curveList;
+        bool curveMode = false;
+        if (cmd == "PASTE") {
+            curveMode = kept ? !kept->sketch().curves().empty() : !curveClipboard().empty();
+        } else if (end > 0) {
+            const std::vector<std::string> names = namesFrom(0, end);
+            curveMode = std::all_of(names.begin(), names.end(), [&](const std::string& n) { return findBody(doc, n) < 0 && findCurve(doc, n) >= 0; });
+            if (curveMode)
+                for (const std::string& n : names)
+                    if (const int c = findCurve(doc, n); std::find(curveList.begin(), curveList.end(), c) == curveList.end()) curveList.push_back(c);
+        } else if (doc.selectedBodies().empty() && !(curveList = doc.selectedCurves()).empty()) {
+            curveMode = true;
+        }
+        if (curveMode) {
+            Sketch& sk = doc.scene.sketch();
+            auto quoted = [&](const std::vector<int>& list) {
+                std::string q;
+                for (int c : list) q += " \"" + sk.curves()[static_cast<std::size_t>(c)].name + "\"";
+                return q;
+            };
+            if (cmd == "COPY" || cmd == "CUT") {
+                std::vector<SketchCurve>& clip = curveClipboard();
+                clip.clear();
+                bodyClipboard().clear(); // one clipboard: what was copied last
+                for (int c : curveList) clip.push_back(sk.curves()[static_cast<std::size_t>(c)]);
+                const std::string what = clip.size() == 1 ? clip[0].name : std::to_string(clip.size()) + " sketch curves";
+                if (cmd == "COPY") {
+                    out.say("Copied " + what + ": PASTE puts them in, here or in another file");
+                    return out;
+                }
+                doc.recordAs = "ERASE" + quoted(curveList); // the history keeps what was taken out
+                std::sort(curveList.begin(), curveList.end(), std::greater<int>());
+                for (int c : curveList) sk.remove(static_cast<std::size_t>(c));
+                doc.clearSelection();
+                markChanged(doc);
+                out.say("Cut " + what + " (PASTE puts them back in)");
+                return out;
+            }
+            std::vector<SketchCurve> fresh;
+            if (cmd == "PASTE") fresh = kept ? kept->sketch().curves() : curveClipboard();
+            else
+                for (int c : curveList) fresh.push_back(sk.curves()[static_cast<std::size_t>(c)]);
+            std::vector<std::string> newNames;
+            bool clash = false;
+            for (const SketchCurve& c : fresh) {
+                const std::string n = copyCurveName(sk, c.name, newNames, cmd == "PASTE");
+                clash = clash || n != c.name;
+                newNames.push_back(n);
+            }
+            // Where: OFFSET (x,y,z), else in place when the names are free, else beside them in
+            // their plane: along its first axis by their width and a tenth more.
+            Vec3 d{};
+            bool beside = false;
+            float width = 0;
+            if (offset) {
+                d = *offset;
+            } else if (cmd == "DUPLICATE" || clash) {
+                beside = true;
+                float lo = 1e30f, hi = -1e30f;
+                for (const SketchCurve& c : fresh) {
+                    const PlaneFrame f = curveFrame(c);
+                    for (const Vec3& p : c.worldStrip(48)) lo = std::min(lo, dot(p, f.u)), hi = std::max(hi, dot(p, f.u));
+                }
+                width = hi > lo ? std::max((hi - lo) * 1.1f, 1.0f) : 10.0f;
+            }
+            std::vector<int> made;
+            for (std::size_t k = 0; k < fresh.size(); ++k) {
+                SketchCurve c = std::move(fresh[k]);
+                c.name = newNames[k];
+                PlaneFrame f = curveFrame(c);
+                const Vec3 w = beside ? f.u * width : d;
+                const Vec2 inPlane{dot(w, f.u), dot(w, f.v)};
+                for (Vec2& p : c.pts) p = {p.x + inPlane.x, p.y + inPlane.y};
+                const float up = dot(w, f.normal);
+                if (std::fabs(up) > 1e-6f) {
+                    if (c.spatial()) { // a 3D curve rises off its plane
+                        for (float& r : c.rise) r += up;
+                    } else { // a flat one goes to the plane that far off its own
+                        f.origin = f.origin + f.normal * up;
+                        c.plane = SketchPlane::Custom;
+                        c.frame = f;
+                    }
+                }
+                sk.add(std::move(c));
+                made.push_back(static_cast<int>(sk.curves().size()) - 1);
+            }
+            doc.clearSelection();
+            selectCurves(sk, doc.selectedCurve, doc.curveSelection, made);
+            if (cmd == "PASTE") {
+                if (clipId.empty()) { // kept with the project, for the history (as for bodies)
+                    Scene keep;
+                    for (const SketchCurve& c : curveClipboard()) keep.sketch().add(SketchCurve(c));
+                    int n = 0;
+                    for (const PastedBodies& p : doc.state.pastes)
+                        if (p.id.size() > 1 && p.id[0] == 'P') n = std::max(n, std::atoi(p.id.c_str() + 1));
+                    clipId = "P" + std::to_string(n + 1);
+                    doc.state.pastes.push_back({clipId, projectText(keep, ProjectState{}, doc.path)});
+                }
+                const Vec3 rec = beside ? Vec3{} : d; // beside: worked out again the same way
+                doc.recordAs = "PASTE CLIP " + clipId + (beside ? std::string() : " OFFSET " + mmVec(rec));
+            } else if (curveList.size() > 1 || end == 0) {
+                doc.recordAs = "DUPLICATE" + quoted(curveList) + (offset ? " OFFSET " + mmVec(d) : std::string());
+            }
+            markChanged(doc);
+            const std::string what = made.size() == 1 ? newNames[0] : std::to_string(made.size()) + " sketch curves";
+            out.say((cmd == "PASTE" ? "Pasted " : "Duplicated as ") + what);
+            return out;
+        }
         // The bodies: the named ones, else every selected body.
         std::vector<int> list;
         if (end > 0) {
@@ -5337,6 +5499,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (cmd == "COPY" || cmd == "CUT") {
             std::vector<Body>& clip = bodyClipboard();
             clip.clear();
+            curveClipboard().clear(); // one clipboard: what was copied last
             for (int b : list) clip.push_back(bodies[static_cast<std::size_t>(b)]);
             if (cmd == "COPY") {
                 out.say(fmt("Copied %g ", static_cast<double>(clip.size())) + (clip.size() == 1 ? "body (" + clip[0].name + ")" : std::string("bodies")) +
@@ -5355,14 +5518,8 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         }
         // DUPLICATE / PASTE: copies, with names of their own, beside the originals.
         std::vector<Body> fresh;
-        if (cmd == "PASTE" && !clipId.empty()) {
-            const auto it = std::find_if(doc.state.pastes.begin(), doc.state.pastes.end(), [&](const PastedBodies& p) { return p.id == clipId; });
-            if (it == doc.state.pastes.end()) return out.fail("This project has no pasted bodies " + clipId);
-            Scene kept;
-            ProjectState keptState;
-            std::string why;
-            if (!projectFromText(it->project, doc.path, kept, keptState, &why)) return out.fail("Pasted bodies " + clipId + " can't be read: " + why);
-            fresh = kept.bodies();
+        if (cmd == "PASTE" && kept) {
+            fresh = kept->bodies();
         } else if (cmd == "PASTE") {
             fresh = bodyClipboard();
             if (fresh.empty()) return out.fail("Nothing to paste: COPY (Ctrl+C) bodies first");
@@ -5403,13 +5560,13 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (cmd == "PASTE" && clipId.empty()) {
             // Keep what was pasted with the project, so the history can put it in again
             // (REGEN, another session, another computer): PASTE CLIP id OFFSET d.
-            Scene kept;
-            for (const Body& b : bodyClipboard()) kept.add(Body(b));
+            Scene keep;
+            for (const Body& b : bodyClipboard()) keep.add(Body(b));
             int n = 0;
             for (const PastedBodies& p : doc.state.pastes)
                 if (p.id.size() > 1 && p.id[0] == 'P') n = std::max(n, std::atoi(p.id.c_str() + 1));
             clipId = "P" + std::to_string(n + 1);
-            doc.state.pastes.push_back({clipId, projectText(kept, ProjectState{}, doc.path)});
+            doc.state.pastes.push_back({clipId, projectText(keep, ProjectState{}, doc.path)});
             doc.recordAs = "PASTE CLIP " + clipId + " OFFSET " + mmVec(d);
         } else if (cmd == "PASTE") {
             doc.recordAs = "PASTE CLIP " + clipId + " OFFSET " + mmVec(d);
