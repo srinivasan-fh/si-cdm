@@ -692,6 +692,30 @@ Json McpServer::toolDefinitions() {
                             return c;
                         }(),
                         {"operation"}));
+        tools.push(tool("weldment",
+                        "Weldments: structural members (SHS, RHS, CHS, FLAT, ROUND, ANGLE, UPE, IPE, custom I and C sections) along the "
+                        "straight segments of sketch curves or through 3D points, their ends mitred, butted or cut to the side they meet, "
+                        "and the cut list (lengths, end angles, masses; the drawing parts list counts members alike together).",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "profiles | member | joint | edit | list | cutlist"));
+                            c.set("profile", prop("string", "member / edit: \"SHS 40x40x3\", \"RHS 60x40x3\", \"CHS 48.3x3.2\", \"FLAT 40x6\", \"ROUND 20\", "
+                                                            "\"ANGLE 50x50x5\", \"UPE 120\", \"IPE 200\", \"I 200x100x6x9\"; profiles: a family to list"));
+                            c.set("curves", prop("array", "member: sketch curves (lines, polylines, rectangles) to follow"));
+                            c.set("points", prop("array", "member: instead of curves, points [[x,y,z], ...] the members run between"));
+                            c.set("angle", prop("number", "member / edit: the profile turned about its line (degrees)"));
+                            c.set("align", prop("string", "member / edit: center, top, bottom, left, right, top-left... (where the line runs on the profile)"));
+                            c.set("mirror", prop("boolean", "member / edit: the profile flipped left to right"));
+                            c.set("corner", prop("string", "member: MITER (default), BUTT or NONE"));
+                            c.set("group", prop("string", "member / list / cutlist: the weldment"));
+                            c.set("material", prop("string", "member / edit: steel (default), stainless, aluminium..."));
+                            c.set("at", prop("array", "joint: the point [x, y, z] where members meet"));
+                            c.set("type", prop("string", "joint: MITER, BUTT, THROUGH or SQUARE"));
+                            c.set("member", prop("string", "joint: the member that stops (BUTT) or runs on (THROUGH); edit: the member"));
+                            c.set("path", prop("string", "cutlist: also write it to this .csv file"));
+                            return c;
+                        }(),
+                        {"operation"}));
         tools.push(tool("section",
                         "Live section view of the 3D window: a plane through the model takes away the material on one side so the "
                         "inside shows, the cut faces filled and hatched (the model doesn't change); reports each body's section area "
@@ -1332,6 +1356,52 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return textResult("operation is one of revolve, sweep, loft, pattern, mirror, edges, fillet, chamfer, massprops, measure, history, regen, "
                           "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete, drag",
                           true);
+    }
+    if (name == "weldment") {
+        const std::string op = a["operation"].asString();
+        const auto vec = [&](const Json& v) {
+            std::string t;
+            for (std::size_t i = 0; i < 3; ++i) t += (i ? "," : "") + num(v.isArray() && i < v.size() ? v[i].asNumber() : 0.0);
+            return t;
+        };
+        std::string opts;
+        if (a["angle"].isNumber()) opts += " ANGLE " + num(a["angle"].asNumber());
+        if (a["align"].isString()) opts += " ALIGN " + a["align"].asString();
+        if (a["material"].isString()) opts += " MATERIAL " + quote(a["material"].asString());
+        if (op == "profiles") return runLine("WELDMENT PROFILES" + (a["profile"].isString() ? " " + a["profile"].asString() : std::string()));
+        if (op == "list") return runLine("WELDMENT LIST" + (a["group"].isString() ? " " + quote(a["group"].asString()) : std::string()));
+        if (op == "cutlist")
+            return runLine("WELDMENT CUTLIST" + (a["group"].isString() ? " " + quote(a["group"].asString()) : std::string()) +
+                           (a["path"].isString() ? " EXPORT " + quote(a["path"].asString()) : std::string()));
+        if (op == "member") {
+            if (!a["profile"].isString()) return textResult("member needs 'profile'", true);
+            std::string line = "WELDMENT MEMBER " + quote(a["profile"].asString());
+            if (a["curves"].isArray() && a["curves"].size() > 0) {
+                line += " ALONG";
+                for (std::size_t i = 0; i < a["curves"].size(); ++i) line += " " + quote(a["curves"][i].asString());
+            } else if (a["points"].isArray() && a["points"].size() >= 2) {
+                line += " FROM " + vec(a["points"][0]);
+                for (std::size_t i = 1; i < a["points"].size(); ++i) line += " TO " + vec(a["points"][i]);
+            } else {
+                return textResult("member needs 'curves' or 'points'", true);
+            }
+            if (a["mirror"].isBool() && a["mirror"].asBool()) line += " MIRROR";
+            if (a["corner"].isString()) line += " CORNER " + a["corner"].asString();
+            if (a["group"].isString()) line += " GROUP " + quote(a["group"].asString());
+            return runLine(line + opts);
+        }
+        if (op == "joint") {
+            if (!a["at"].isArray() || !a["type"].isString()) return textResult("joint needs 'at' and 'type'", true);
+            return runLine("WELDMENT JOINT " + vec(a["at"]) + " " + a["type"].asString() + (a["member"].isString() ? " " + quote(a["member"].asString()) : std::string()));
+        }
+        if (op == "edit") {
+            if (!a["member"].isString()) return textResult("edit needs 'member'", true);
+            std::string line = "WELDMENT EDIT " + quote(a["member"].asString());
+            if (a["profile"].isString()) line += " PROFILE " + quote(a["profile"].asString());
+            if (a["mirror"].isBool()) line += std::string(" MIRROR ") + (a["mirror"].asBool() ? "ON" : "OFF");
+            return runLine(line + opts);
+        }
+        return textResult("weldment operations: profiles, member, joint, edit, list, cutlist", true);
     }
     if (name == "section") {
         const std::string op = a["operation"].asString();

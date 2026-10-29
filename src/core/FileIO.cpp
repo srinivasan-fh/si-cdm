@@ -497,6 +497,25 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                                .set("vertices", static_cast<double>(b.link.vertices))
                                .set("stamp", std::to_string(b.link.stamp)));
         }
+        if (b.isMember()) { // a weldment member: how to make it again (its mesh is saved as it is)
+            const Body::Member& m = b.member;
+            Json cuts = Json::array();
+            for (const Vec4& c : m.cut) cuts.push(Json(Json::Array{c.x, c.y, c.z, c.w}));
+            jb.set("member", Json::object()
+                                 .set("profile", m.profile)
+                                 .set("group", m.group)
+                                 .set("material", m.material)
+                                 .set("start", vec3Json(m.start))
+                                 .set("end", vec3Json(m.end))
+                                 .set("up", vec3Json(m.up))
+                                 .set("angle", m.angle)
+                                 .set("align", m.align)
+                                 .set("mirror", m.mirror)
+                                 .set("corner", m.corner)
+                                 .set("style", Json(Json::Array{m.style[0], m.style[1]}))
+                                 .set("cut", cuts)
+                                 .set("pristine", m.key == 0 || m.key == meshKey(b.mesh)));
+        }
         if (!b.field.empty()) jb.set("field", b.field);
         if (b.multires && !b.multires->levels.empty()) { // the cage's triangles and each level's positions (finer triangles follow)
             std::vector<unsigned char> tri;
@@ -1029,6 +1048,24 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             b.link.vertices = static_cast<std::size_t>(std::max(jl["vertices"].asNumber(), 0.0));
             b.link.stamp = std::strtoull(jl["stamp"].asString().c_str(), nullptr, 10);
         }
+        if (const Json& jm = jb["member"]; jm.isObject() && !jm["profile"].asString().empty()) {
+            Body::Member& m = b.member;
+            m.profile = jm["profile"].asString();
+            m.group = jm["group"].asString();
+            m.material = jm["material"].asString("Steel");
+            m.start = jsonVec3(jm["start"]), m.end = jsonVec3(jm["end"]), m.up = jsonVec3(jm["up"], {0, 0, 1});
+            m.angle = jm["angle"].asFloat(0);
+            m.align = jm["align"].asString("center");
+            m.mirror = jm["mirror"].asBool(false);
+            m.corner = std::clamp(jm["corner"].asInt(0), 0, 2);
+            for (std::size_t e = 0; e < 2; ++e) {
+                m.style[e] = std::clamp(jm["style"][e].asInt(-1), -1, 3);
+                const Json& c = jm["cut"][e];
+                if (c.size() == 4) m.cut[e] = Vec4{c[0].asFloat(), c[1].asFloat(), c[2].asFloat(), c[3].asFloat()};
+            }
+            // (Set once the mesh is in: as made, or changed since.)
+            m.key = jm["pristine"].asBool(true) ? 1 : 2;
+        }
         b.field = jb["field"].asString();
         if (const Json& jm = jb["multires"]; jm.isObject()) { // levels that don't fit together are left out
             auto md = std::make_shared<MultiresData>();
@@ -1100,6 +1137,10 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         if (const Json& jp = jb["properties"]; jp.isObject())
             for (const auto& [k, v] : jp.members())
                 if (v.isString()) b.properties[k] = v.asString();
+        if (b.isMember()) { // its mesh as made (the joints may remake it), or changed since (kept)
+            const std::uint64_t k = meshKey(b.mesh);
+            b.member.key = b.member.key == 1 ? (k ? k : 1) : (k ^ 1 ? k ^ 1 : 2);
+        }
         loaded.add(std::move(b));
     }
 

@@ -240,6 +240,10 @@ constexpr CommandSpec kCommands[] = {
      "Direct editing of any solid by its faces, picked by a point on them: OFFSET pushes or pulls a face (its neighbours follow; "
      "a round face makes a hole or boss larger or smaller), DELETE takes away a hole, boss, fillet or chamfer, MOVE moves a hole or boss, "
      "INFO says what the face is"},
+    {"WELDMENT", "WELD FRAME", "WELDMENT PROFILES [family] | MEMBER profile ALONG curve... | MEMBER profile FROM x,y,z TO x,y,z [TO ...] [ANGLE deg] [ALIGN where] [MIRROR] [UP x,y,z] "
+                             "[CORNER MITER|BUTT|NONE] [GROUP name] [MATERIAL m] | JOINT x,y,z MITER|BUTT|THROUGH|SQUARE [member] | EDIT member ... | LIST | CUTLIST [EXPORT file.csv]",
+     "Weldments: structural members (SHS, RHS, CHS, FLAT, ROUND, ANGLE, UPE, IPE, custom I and C) along the straight segments of sketch curves, their "
+     "ends mitred, butted or cut to the side they meet; the cut list counts members alike with their lengths, angles and masses"},
     {"SECTION", "CLIP XSECTION", "SECTION [X|Y|Z|-X|-Y|-Z|PLANE nx,ny,nz] [AT d | AT x,y,z] | MOVE d | FLIP | ON | OFF | CAP ON|OFF | ONLY body... | ALL",
      "Live section view: a plane through the model takes away the material on one side in the 3D window, the cut faces filled and "
      "hatched, so the inside shows (nothing in the model changes). It reports each body's section area and centroid"},

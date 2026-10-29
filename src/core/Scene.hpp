@@ -63,6 +63,23 @@ struct Body {
         std::uint64_t stamp = 0;           // the file's size and time then (fileStamp())
     } link;
     bool linked() const noexcept { return !link.file.empty(); }
+    // A weldment's structural member (Weldment.hpp): its profile along a centre line, its
+    // ends cut where it meets the others. profile "": not a member.
+    struct Member {
+        std::string profile;              // "SHS 40x40x3"
+        std::string group;                // the weldment it belongs to
+        std::string material = "Steel";
+        Vec3 start{}, end{};              // the centre line, in the mesh's frame
+        Vec3 up{0, 0, 1};                 // the profile's +y before it is turned (its sketch plane's normal)
+        float angle = 0;                  // the profile turned about the line (degrees)
+        std::string align = "center";     // where the line runs on the profile: center, top, bottom, left, right...
+        bool mirror = false;              // the profile flipped left to right
+        int corner = 0;                   // its corners by default: 0 miter, 1 butt, 2 none
+        std::array<int, 2> style{-1, -1}; // per end (start, end), set at the joint: -1 the default, 0 miter, 1 butt (stops at the other), 2 through, 3 square
+        std::array<Vec4, 2> cut{};        // the end planes found: outward normal and dot(n, p) = w
+        std::uint64_t key = 0;            // meshKey() of the mesh it made (another: edited since, kept as it is)
+    } member;
+    bool isMember() const noexcept { return !member.profile.empty(); }
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
     MaterialProps material; // how it looks rendered (RENDER): metal, glass, roughness, maps
     std::map<std::string, std::string> properties; // part number, description, vendor... (PROPERTY)

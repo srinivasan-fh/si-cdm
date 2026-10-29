@@ -22,6 +22,7 @@
 #include "core/FaceCommand.hpp"
 #include "core/MeshImport.hpp"
 #include "core/SectionView.hpp"
+#include "core/WeldmentCommand.hpp"
 #include "core/Components.hpp"
 #include "core/DrawingCommand.hpp"
 #include "core/PdmCommand.hpp"
@@ -800,7 +801,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -816,7 +817,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -842,7 +843,8 @@ std::string releasedRefusal(const Document& doc, const std::string& cmd, const P
         for (const char* k : kAskEmpty)
             if (cmd == k) return {};
     if (cmd == "PLANE" && pc.args.size() == 1) return {}; // only picks the sketch plane
-    static const char* const kAsk[] = {"list", "info", "show", "report", "tree", "bom", "parts", "interference", "export", "check", "status", "dof", "hide", "pack", "open"};
+    static const char* const kAsk[] = {"list", "info", "show", "report", "tree", "bom", "parts", "interference", "export", "check", "status", "dof", "hide", "pack", "open",
+                                       "cutlist", "profiles"};
     for (std::size_t i = 0; i < pc.args.size(); ++i) {
         if (i < pc.quoted.size() && pc.quoted[i]) continue;
         const std::string w = lower(pc.args[i]);
@@ -893,6 +895,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (!historyCommand(cmd)) return;
     if ((cmd == "PLANE" || cmd == "REFAXIS" || cmd == "REFPOINT") && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (cmd == "SHEETMETAL" && !pc.args.empty() && (iequal(pc.args[0], "edges") || iequal(pc.args[0], "info"))) return;
+    if (cmd == "WELDMENT" && !pc.args.empty() && (iequal(pc.args[0], "list") || iequal(pc.args[0], "cutlist") || iequal(pc.args[0], "profiles"))) return; // only looks
     if ((cmd == "POLYGROUP" || cmd == "LAYER" || cmd == "MULTIRES") &&
         std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); }))
         return;
@@ -967,6 +970,12 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     const bool bodyEdit = spec && bodyCommand(spec->name) && !doc.replaying;
     if (bodyEdit) doc.scene.beginBodyEdit(std::string(line.substr(0, std::min<std::size_t>(line.size(), 48))));
     CommandOutput out = runCommand(doc, line, view);
+    // A member moved, turned or erased: the weldment's joints found again (in the same undo
+    // step; nothing is remade where no end changed).
+    if (out.ok && spec) {
+        const std::string name = spec->name;
+        if ((bodyCommand(name) || historyCommand(name)) && name != "WELDMENT") refreshWeldments(doc.scene);
+    }
     if (bodyEdit) doc.scene.endBodyEdit();
     if (sketchEdit) {
         if (out.ok && doc.scene.sketch().revision() != sketchBefore) doc.scene.keepSketchUndo();
@@ -2664,6 +2673,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
     if (cmd == "EXPLODE") return runExplodeCommand(doc, a, pc.quoted);
     if (cmd == "SECTION") return runSectionCommand(doc, a, pc.quoted);
+    if (cmd == "WELDMENT") return runWeldmentCommand(doc, a, pc.quoted);
     if (cmd == "FACE") return runFaceCommand(doc, a, pc.quoted);
     if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
     if (cmd == "COMPONENT") {

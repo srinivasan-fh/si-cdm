@@ -70,6 +70,8 @@ add_library(sicdm_core STATIC
     src/core/Zip.cpp
     src/core/Xml.cpp
     src/core/MeshImport.cpp
+    src/core/Weldment.cpp
+    src/core/WeldmentCommand.cpp
     src/core/Bvh.cpp
     src/core/SketchEdit.cpp
     src/core/AssemblyCommand.cpp

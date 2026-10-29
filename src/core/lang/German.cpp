@@ -982,7 +982,19 @@ const char* const kGerman[][2] = {
     {"Position", "Position"},
     {"Section Areas", "Schnittflächen"},
     {"Section View...", "Schnittansicht..."},
+    // Weldments
+    {"Butt corners", "Stumpfe Ecken"},
+    {"Cut List", "Zuschnittliste"},
+    {"List the Members", "Profile auflisten"},
+    {"Members Along the Selected Line", "Profile entlang der ausgewählten Linie"},
+    {"Mitred corners", "Gehrungsecken"},
+    {"Profile", "Profil"},
+    {"Select a line, polyline or rectangle in the sketch first", "Zuerst eine Linie, Polylinie oder ein Rechteck in der Skizze auswählen"},
+    {"Square ends", "Gerade Enden"},
+    {"WELDMENT JOINT x,y,z MITER|BUTT|THROUGH changes a joint", "WELDMENT JOINT x,y,z MITER|BUTT|THROUGH ändert eine Verbindung"},
+    {"Weldment", "Schweißkonstruktion"},
 };
+
 
 
 

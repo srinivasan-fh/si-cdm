@@ -1,4 +1,5 @@
 #include "ui/LandingUI.hpp"
+#include "core/Weldment.hpp"
 #include "core/Translate.hpp"
 #include "core/Render.hpp"
 
@@ -751,6 +752,51 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::BeginMenu(tr("Mass Properties"), body)) {
             for (const char* m : {"steel", "aluminium", "brass", "titanium", "abs", "pla", "wood"})
                 if (ImGui::MenuItem(m)) cmd.commands.push_back(std::string("MASSPROPS MATERIAL ") + m);
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        // Weldments: a profile, then members along the selected lines.
+        if (m_menuScene && ImGui::BeginMenu(tr("Weldment"))) {
+            const Scene& scene = *m_menuScene;
+            const std::vector<std::string> fams = weldProfileFamilies();
+            m_weldFamily = std::clamp(m_weldFamily, 0, static_cast<int>(fams.size()) - 1);
+            ImGui::SetNextItemWidth(140);
+            if (ImGui::BeginCombo(tr("Profile"), fams[static_cast<std::size_t>(m_weldFamily)].c_str())) {
+                for (int k = 0; k < static_cast<int>(fams.size()); ++k)
+                    if (!weldProfileSizes(fams[static_cast<std::size_t>(k)]).empty() && ImGui::Selectable(fams[static_cast<std::size_t>(k)].c_str(), k == m_weldFamily))
+                        m_weldFamily = k, m_weldSize = 0;
+                ImGui::EndCombo();
+            }
+            const std::vector<std::string> sizes = weldProfileSizes(fams[static_cast<std::size_t>(m_weldFamily)]);
+            if (!sizes.empty()) {
+                m_weldSize = std::clamp(m_weldSize, 0, static_cast<int>(sizes.size()) - 1);
+                ImGui::SetNextItemWidth(140);
+                if (ImGui::BeginCombo(tr("Size"), sizes[static_cast<std::size_t>(m_weldSize)].c_str())) {
+                    for (int k = 0; k < static_cast<int>(sizes.size()); ++k)
+                        if (ImGui::Selectable(sizes[static_cast<std::size_t>(k)].c_str(), k == m_weldSize)) m_weldSize = k;
+                    ImGui::EndCombo();
+                }
+            }
+            static const char* const kCorners[] = {SICDM_TR_NOOP("Mitred corners"), SICDM_TR_NOOP("Butt corners"), SICDM_TR_NOOP("Square ends")};
+            static const char* const kCornerWords[] = {"MITER", "BUTT", "NONE"};
+            for (int k = 0; k < 3; ++k)
+                if (ImGui::RadioButton(tr(kCorners[k]), m_weldCorner == k)) m_weldCorner = k;
+            const bool line = curve && st.selectedCurve < static_cast<int>(scene.sketch().curves().size()) &&
+                              [&] {
+                                  const CurveKind k = scene.sketch().curves()[static_cast<std::size_t>(st.selectedCurve)].kind;
+                                  return k == CurveKind::Line || k == CurveKind::Polyline || k == CurveKind::Rectangle;
+                              }();
+            if (ImGui::MenuItem(tr("Members Along the Selected Line"), nullptr, false, line && !sizes.empty())) {
+                const SketchCurve& c = scene.sketch().curves()[static_cast<std::size_t>(st.selectedCurve)];
+                cmd.commands.push_back("WELDMENT MEMBER \"" + fams[static_cast<std::size_t>(m_weldFamily)] + " " + sizes[static_cast<std::size_t>(m_weldSize)] + "\" ALONG \"" + c.name +
+                                       "\" CORNER " + kCornerWords[m_weldCorner]);
+            }
+            if (!line && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("Select a line, polyline or rectangle in the sketch first"));
+            const bool members = std::any_of(scene.bodies().begin(), scene.bodies().end(), [](const Body& b) { return b.isMember(); });
+            ImGui::Separator();
+            if (ImGui::MenuItem(tr("Cut List"), nullptr, false, members)) cmd.commands.push_back("WELDMENT CUTLIST");
+            if (ImGui::MenuItem(tr("List the Members"), nullptr, false, members)) cmd.commands.push_back("WELDMENT LIST");
+            ImGui::TextDisabled("%s", tr("WELDMENT JOINT x,y,z MITER|BUTT|THROUGH changes a joint"));
             ImGui::EndMenu();
         }
         ImGui::Separator();

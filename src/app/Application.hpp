@@ -246,6 +246,7 @@ private:
     std::vector<DVec3> m_explodeShifts;    // the same as moves
     float m_explodeT = 0.0f;               // 0 together .. 1 exploded
     bool m_explodeMoving = false;          // opening or shutting
+    bool m_viewMoving = false;             // a view change (Fit, a standard view) still under way
     // Chains / belts travelling along their loop: shape per body for this frame.
     struct LoopShape {
         float travel = 0.0f;

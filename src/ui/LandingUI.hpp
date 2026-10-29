@@ -305,6 +305,7 @@ private:
     std::string m_makeComponentBody; // the body FileMakeComponent saves as a part file
     // Design menu inputs.
     float m_revolveAngle = 360.0f, m_filletRadius = 2.0f, m_patternSpacing = 20.0f, m_patternAngle = 360.0f;
+    int m_weldFamily = 0, m_weldSize = 6, m_weldCorner = 0; // the Weldment menu's profile (family, size) and corners
     int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;

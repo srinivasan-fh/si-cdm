@@ -1739,6 +1739,7 @@ void Application::frame(float dt) {
     const bool anim3D = m_cam3D.update(dt);
     const bool anim2D = m_cam2D.update(dt);
     if (anim3D || anim2D) m_framesToRender = std::max(m_framesToRender, 2);
+    m_viewMoving = anim3D || anim2D;
 
     // Sketch preview and crosshair, drawn over the canvas.
     const ImGuiIO& io = ImGui::GetIO();
@@ -3601,6 +3602,7 @@ int Application::run() {
 
         if (m_uiState.renderRunning || m_uiState.renderStart) screenshotCountdown = std::max(screenshotCountdown, 5); // the picture first (and its window grown)
         if (m_explodeMoving) screenshotCountdown = std::max(screenshotCountdown, 2);                                  // the exploded view opened (or shut)
+        if (m_viewMoving) screenshotCountdown = std::max(screenshotCountdown, 2);                                     // the view arrived (Fit, a standard view)
         if (!m_options.screenshotPath.empty() && --screenshotCountdown == 0) {
             const bool ok = saveScreenshot(m_options.screenshotPath);
             std::printf("%s screenshot: %s\n", ok ? "Saved" : "Failed to save", m_options.screenshotPath.c_str());

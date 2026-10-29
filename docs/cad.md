@@ -16,6 +16,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
 | Direct editing | `FACE`: push / pull, move and delete faces of any solid, without a history |
 | Looking inside | `SECTION`: a live section view of the 3D window, with section areas |
+| Frames | `WELDMENT`: structural members along sketch lines, their joints, the cut list |
 | Analysis | `MASSPROPS`, `MEASURE` and `FEA` (stress analysis) |
 | Design intent | `VAR`: global variables and equations; `CONFIG`: configurations and design tables |
 
@@ -885,6 +886,92 @@ which bodies are cut. The section works with exploded views and simulations.
 
 ![A filleted block and a pin cut open on the XZ plane, and the Section window](section-view.png)
 
+## Weldments
+
+`WELDMENT` builds frames from structural members: tubes, pipes, bars, angles, channels and
+beams. Each member follows a straight segment of a sketch line, polyline or rectangle, or runs
+between points. Where members meet, their ends are cut to fit. The cut list says what to saw.
+
+```text
+RECT 0,0 1200,600
+WELDMENT MEMBER RHS 60x40x3 ALONG "Rectangle 1" GROUP Table     the top frame, mitred
+WELDMENT MEMBER SHS 40x40x3 FROM 0,0,-720 TO 0,0,0               a leg up to a corner
+LINE 600,0 600,600
+WELDMENT MEMBER FLAT 40x6 ALONG "Line 2" ALIGN top               a bar across, cut to the sides
+WELDMENT CUTLIST
+```
+
+```text
+  1. FLAT 40x6  1 x 540 mm, 1.017 kg each (Steel)
+  2. RHS 60x40x3  2 x 1260 mm, ends 45 and 45 deg off square, 5.095 kg each (Steel)
+  3. RHS 60x40x3  2 x 660 mm, ends 45 and 45 deg off square, 2.547 kg each (Steel)
+  4. SHS 40x40x3  4 x 700 mm, 2.312 kg each (Steel)
+  FLAT 40x6: 0.54 m in all
+  RHS 60x40x3: 3.84 m in all
+  SHS 40x40x3: 2.8 m in all
+  Mass: 25.55 kg
+```
+
+![The table frame: mitred top, legs under its corners, a bar across](weldment.png)
+
+**Profiles** (`WELDMENT PROFILES` lists the standard sizes):
+
+| Family | Size | Standard |
+| --- | --- | --- |
+| `SHS`, `RHS` | width x height x wall | EN 10219: corners 2t outside and t inside (2.5t and 1.5t over 6 mm walls) |
+| `CHS` | diameter x wall | EN 10219 pipe sizes |
+| `FLAT`, `ROUND` | width x thickness; diameter | bar |
+| `ANGLE` (`L`) | leg x leg x thickness | EN 10056-1 root radii (the toes square) |
+| `UPE` | 80 to 200 | DIN 1026-2 parallel flange channels |
+| `IPE` | 80 to 300 | EN 10365 |
+| `I`, `C` | h x b x web x flange [x root radius] | any |
+
+Any size of the parametric families can be given by its dimensions (`SHS 45x45x2.5`). Areas
+and masses use the exact section with its rounds, and match the standards' tables (an angle
+comes out about 1% heavy, its toe radii left off).
+
+**Placing a member:**
+
+- The profile's up is the sketch plane's normal. For members by points, it is +Z (or +Y for a
+  vertical member).
+- `ALIGN top`, `bottom`, `left`, `right` or a corner puts the line on that edge of the profile
+  instead of its middle.
+- `ANGLE` turns the profile about its line. `MIRROR` flips it (an angle's legs the other way).
+  `UP x,y,z` sets its up.
+- `GROUP` names the weldment. It is the members' sub-assembly in the Model panel. Without it,
+  a member goes in the last weldment.
+- `MATERIAL` sets the material for the masses: steel (the default), stainless, aluminium...
+
+**Joints:**
+
+| Where | What happens |
+| --- | --- |
+| Two members' ends meet | mitred (`CORNER MITER`, the default); or `CORNER BUTT`: the first member runs through and the other stops at its face; or `CORNER NONE`: left square |
+| An end on another member's side | cut to that member's face (a T), at any angle |
+| A post at a frame's corner (three members, one square to the other two) | the frame keeps its corner, and the post stops under it |
+| Members in line | square ends, butting |
+
+`WELDMENT JOINT x,y,z MITER|BUTT|THROUGH|SQUARE [member]` changes one joint. With BUTT the
+member named stops at the other; with THROUGH it runs past.
+
+When a member is moved, remade (`WELDMENT EDIT`) or erased, the joints are found again: a
+member left alone gets square ends. Undo takes back both.
+
+**Editing and the cut list:**
+
+- `WELDMENT EDIT member PROFILE "SHS 50x50x3"` remakes a member, as do `ANGLE`, `ALIGN`,
+  `MIRROR` and `MATERIAL`. Its joints follow.
+- A member that was drilled, cut, turned or otherwise changed keeps its shape. Its joints are
+  left as they are, and it stays in the cut list.
+- `WELDMENT CUTLIST [EXPORT cut.csv]` counts members alike (profile, length tip to tip, end
+  angles, material) together, longest first. It also gives each profile's total length and the
+  mass.
+- Members alike share a part number (`Table-2`) and a description (`RHS 60x40x3, 1260 mm`).
+  The drawing's parts list therefore counts them together.
+
+The members are exact solids: planes, cylinders for the rounds, and the end cuts. They are
+saved with the project.
+
 ## Mass properties
 
 ```text
@@ -1124,6 +1211,9 @@ The `cad` tool has these operations:
 - `pattern`, `mirror`, `edges`, `fillet`, `chamfer`;
 - `massprops`, `measure`;
 - `history`, `regen`, `history_edit`, `history_insert`, `history_delete`.
+
+The `weldment` tool adds members (`profile` with `curves` or `points`), changes a `joint`,
+`edit`s a member and gives the `cutlist`.
 
 The `section` tool sets the section view: `set` (with `axis` or `normal`, and `at` or `point`),
 `move`, `flip`, `on`, `off`, `cap`, `only`, `all` and `info`.
