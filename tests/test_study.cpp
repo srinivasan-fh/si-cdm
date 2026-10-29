@@ -213,21 +213,24 @@ TEST_CASE("STUDY writes a CSV table and an SVG chart; contact motions are saved 
     const std::string csv = (dir / "sicdm_study_test.csv").string(), svg = (dir / "sicdm_study_test.svg").string();
     REQUIRE(run(d, "STUDY Follower TO 4 STEP 0.01 CSV \"" + csv + "\" SVG \"" + svg + "\" TITLE \"Cam & follower\"").ok);
     CHECK(d.studyCommand.rfind("STUDY Follower", 0) == 0);
-    std::ifstream c(csv);
-    std::string header, line;
-    std::getline(c, header);
-    CHECK(header == "t (s),Follower travel (mm),Follower velocity (mm/s),Follower acceleration (mm/s2),Follower contact force (N)");
-    std::size_t rows = 0;
-    while (std::getline(c, line)) ++rows;
-    CHECK(rows == 401);
+    {
+        std::ifstream c(csv); // closed before the file is removed (Windows won't remove an open file)
+        std::string header, line;
+        std::getline(c, header);
+        CHECK(header == "t (s),Follower travel (mm),Follower velocity (mm/s),Follower acceleration (mm/s2),Follower contact force (N)");
+        std::size_t rows = 0;
+        while (std::getline(c, line)) ++rows;
+        CHECK(rows == 401);
+    }
     std::stringstream s;
     s << std::ifstream(svg).rdbuf();
     const std::string chart = s.str();
     CHECK(chart.rfind("<svg", 0) == 0 || chart.find("<svg") != std::string::npos);
     CHECK(chart.find("Cam &amp; follower") != std::string::npos);
     CHECK(chart.find("</svg>") != std::string::npos);
-    std::filesystem::remove(csv);
-    std::filesystem::remove(svg);
+    std::error_code ec;
+    std::filesystem::remove(csv, ec);
+    std::filesystem::remove(svg, ec);
 
     const std::string path = (dir / "sicdm_study_test.sicdm").string();
     std::string err;
@@ -243,7 +246,7 @@ TEST_CASE("STUDY writes a CSV table and an SVG chart; contact motions are saved 
     CHECK_NEAR(m->spring, 1.5, 1e-6);
     CHECK_NEAR(m->preload, 4, 1e-6);
     CHECK_NEAR(m->mass, 0.2, 1e-6);
-    std::filesystem::remove(path);
+    std::filesystem::remove(path, ec);
 }
 
 TEST_CASE("STUDY over MCP, and a contact motion made over MCP") {
