@@ -145,7 +145,7 @@ GizmoHandle gizmoPick(GizmoMode mode, const Vec3& pivot, float size, const Vec3&
 }
 
 GizmoDelta gizmoDrag(GizmoMode mode, const GizmoHandle& h, const Vec3& P, const Vec3& view, const GizmoProject& project, const GizmoRay& start,
-                     const GizmoRay& now, float step) {
+                     const GizmoRay& now, float step, const GizmoDelta* previous) {
     GizmoDelta d;
     if (h.kind == GizmoHandle::None) return d;
     const Vec3 e = kAxis[std::clamp(h.axis, 0, 2)];
@@ -179,7 +179,12 @@ GizmoDelta gizmoDrag(GizmoMode mode, const GizmoHandle& h, const Vec3& P, const 
             d.axis = e;
             if (dot(e, view) > 0) da = -da;
         }
-        d.angle = snapTo(degrees(da), step);
+        // On from the last frame: the whole turns the mouse has gone round, not just the angle
+        // between where it started and where it is.
+        float raw = degrees(da);
+        if (previous) raw += 360.0f * std::round((previous->rawAngle - raw) / 360.0f);
+        d.rawAngle = raw;
+        d.angle = snapTo(raw, step);
         return d;
     }
     // Scale

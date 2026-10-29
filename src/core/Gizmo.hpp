@@ -45,19 +45,21 @@ std::vector<GizmoStroke> gizmoStrokes(GizmoMode mode, const Vec3& pivot, float s
 struct GizmoDelta {
     Vec3 move{0, 0, 0};       // Move: mm
     Vec3 axis{0, 0, 1};       // Rotate: about this, through the pivot
-    float angle = 0;          // degrees
+    float angle = 0;          // degrees (snapped)
+    float rawAngle = 0;       // degrees as the mouse went, unsnapped and wound on past a half turn
     Vec3 scale{1, 1, 1};      // Scale: factors along X, Y, Z (all equal: uniform)
     bool uniform = true;
 };
 
 // A drag from `start` to `now` (rays from the camera through the mouse, and the mouse in
-// pixels), on `handle`. `step` > 0 snaps: mm, degrees or a factor.
+// pixels), on `handle`. `step` > 0 snaps: mm, degrees or a factor. `previous`: the drag's
+// last result, so a turn goes on past 180 degrees (any number of turns) instead of flipping.
 struct GizmoRay {
     Vec3 origin, dir;
     Vec2 mouse;
 };
 GizmoDelta gizmoDrag(GizmoMode mode, const GizmoHandle& handle, const Vec3& pivot, const Vec3& viewDir, const GizmoProject& project,
-                     const GizmoRay& start, const GizmoRay& now, float step = 0);
+                     const GizmoRay& start, const GizmoRay& now, float step = 0, const GizmoDelta* previous = nullptr);
 
 // The command that does it to body `name`, or to several bodies together (empty: nothing to do).
 std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::string& name, const Vec3& pivot);

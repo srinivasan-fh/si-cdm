@@ -132,3 +132,34 @@ TEST_CASE("gizmo commands do what the drag showed, and are undone") {
     CHECK(!run(d, "GIZMO ROTATE").ok); // needs the app's window
     CHECK(!run(d, "GIZMO SPIN").ok);
 }
+
+TEST_CASE("gizmo: a turn goes on past half a turn, frame by frame, any number of turns") {
+    const Vec3 P{0, 0, 0};
+    // The mouse goes round the pivot anticlockwise on screen, one and a half times, a frame
+    // every 10 degrees.
+    const GizmoRay start = rayAt(600, 500);
+    GizmoDelta d;
+    for (int k = 1; k <= 54; ++k) {
+        const float a = static_cast<float>(k) * 10.0f * 3.14159265f / 180.0f;
+        d = gizmoDrag(GizmoMode::Rotate, {GizmoHandle::Ring, 2}, P, kDown, topView, start,
+                      rayAt(500 + 100 * std::cos(a), 500 - 100 * std::sin(a)), 0, &d);
+        if (k == 18) CHECK(std::fabs(std::fabs(d.angle) - 180) < 1e-2f);
+        if (k == 27) CHECK(std::fabs(d.angle - 270) < 1e-2f); // not -90
+    }
+    CHECK(std::fabs(d.angle - 540) < 1e-2f);
+    // And back the other way, through zero to -90.
+    for (int k = 53; k >= -9; --k) {
+        const float a = static_cast<float>(k) * 10.0f * 3.14159265f / 180.0f;
+        d = gizmoDrag(GizmoMode::Rotate, {GizmoHandle::Ring, 2}, P, kDown, topView, start,
+                      rayAt(500 + 100 * std::cos(a), 500 - 100 * std::sin(a)), 15, &d);
+    }
+    CHECK(std::fabs(d.angle + 90) < 1e-2f);
+    // Without the last frame (one jump), it is the short way round, as before.
+    d = gizmoDrag(GizmoMode::Rotate, {GizmoHandle::Ring, 2}, P, kDown, topView, start, rayAt(500, 600));
+    CHECK(std::fabs(d.angle + 90) < 1e-2f);
+    // The command turns the body that far: 450 degrees ends where 90 does.
+    Document doc;
+    REQUIRE(run(doc, "BOX 20 10 10").ok);
+    REQUIRE(run(doc, "ROTATE \"Block 1\" BY 450 AXIS Z").ok);
+    CHECK(std::fabs(named(doc, "Block 1")->rotation.z - 90) < 1e-3f);
+}

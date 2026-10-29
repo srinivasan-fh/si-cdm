@@ -706,7 +706,8 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
     - In *Move* mode, an arrow slides the body along X, Y or Z; a square slides it in that plane;
       the dot slides it in the view.
     - In *Rotate* mode, a ring turns it about X, Y or Z through its centre, and the outer ring
-      turns it about the line of sight.
+      turns it about the line of sight. It turns as far as the mouse goes round: past half a
+      turn and on through any number of turns.
     - In *Scale* mode, a cube stretches it along one axis, and the centre scales it evenly (it
       stays the primitive it was).
     - `V` again switches mode. *Snap* (or holding Ctrl) moves in steps (1 mm, 15°, ×0.1 by

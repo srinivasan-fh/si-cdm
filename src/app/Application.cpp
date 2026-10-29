@@ -1605,7 +1605,7 @@ void Application::handleViewportInput() {
             const Ray r = cam.screenRay(mx, my, io.DisplaySize.x, wh);
             const bool snap = m_uiState.gizmoSnap || commandModifierHeld();
             const float step = !snap ? 0.0f : gizmoMode == GizmoMode::Move ? m_uiState.gizmoMoveStep : gizmoMode == GizmoMode::Rotate ? m_uiState.gizmoAngleStep : m_uiState.gizmoScaleStep;
-            m_gizmoDelta = gizmoDrag(gizmoMode, m_gizmoHandle, m_gizmoPivot, cam.forward(), gizmoProjector(), m_gizmoFrom, {r.origin, r.dir, {mx, my}}, step);
+            m_gizmoDelta = gizmoDrag(gizmoMode, m_gizmoHandle, m_gizmoPivot, cam.forward(), gizmoProjector(), m_gizmoFrom, {r.origin, r.dir, {mx, my}}, step, &m_gizmoDelta);
             // The preview: the body as it began, done to as the drag says so far.
             for (std::size_t k = 0; k < m_gizmoBodies.size(); ++k) {
                 Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBodies[k])];
