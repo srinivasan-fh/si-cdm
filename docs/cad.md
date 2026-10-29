@@ -722,7 +722,7 @@ On a 40 × 30 × 20 box with R3 on every edge, the volume is within 0.03% of the
 Where a cut meets the rounds already made almost tangent, as at a corner of three rounds, the
 boolean can leave holes. FILLET then tries again with the cutter's facets laid differently. At
 a three-round corner it also stops the cutter just short of the corner, and the corner's ball
-fills that gap. In a stress run of 240 boxes (6 sizes, 8 positions, 5 radii, every edge), 238
+fills that gap. In a stress run of 240 boxes (6 sizes, 8 positions, 5 radii, every edge), 239
 came out whole. When one doesn't, FILLET says which edge failed and leaves the body as it was.
 Round that edge separately, or change the radius by a hair.
 

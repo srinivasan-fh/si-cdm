@@ -1325,8 +1325,13 @@ std::vector<EdgeChain> edgeChains(const MeshData& m, float angleDeg) {
     };
     std::vector<Feature> feats;
     std::unordered_map<std::uint32_t, std::vector<std::size_t>> at;
-    for (const auto& [key, c] : count) {
-        if (c != 2) continue;
+    // In key order, not the hash map's (which differs between standard libraries): the
+    // chains, where they start and which way they run come out the same everywhere.
+    std::vector<std::uint64_t> shared;
+    for (const auto& [key, c] : count)
+        if (c == 2) shared.push_back(key);
+    std::sort(shared.begin(), shared.end());
+    for (const std::uint64_t key : shared) {
         const auto a = static_cast<std::uint32_t>(key >> 32), b = static_cast<std::uint32_t>(key & 0xFFFFFFFFu);
         const auto ia = directed.find(dkey(a, b)), ib = directed.find(dkey(b, a));
         if (ia == directed.end() || ib == directed.end()) continue;
@@ -1404,6 +1409,18 @@ std::vector<EdgeChain> edgeChains(const MeshData& m, float angleDeg) {
             segL[k] = n[il->second], segR[k] = n[ir->second];
         }
         if (!ok) continue;
+        // An open chain runs from its end that sorts first (highest, then nearest -Y, then
+        // -X), so its start doesn't depend on where the walk began.
+        if (!closed) {
+            const Vec3 f = p[verts.front()], b = p[verts.back()];
+            const bool backFirst = std::fabs(f.z - b.z) > 1e-4f ? b.z > f.z : std::fabs(f.y - b.y) > 1e-4f ? b.y < f.y : b.x < f.x;
+            if (backFirst) {
+                std::reverse(verts.begin(), verts.end());
+                std::reverse(segL.begin(), segL.end());
+                std::reverse(segR.begin(), segR.end());
+                std::swap(segL, segR); // walking the other way swaps left and right
+            }
+        }
         for (std::size_t k = 0; k < nv; ++k) {
             c.pts.push_back(p[verts[k]]);
             Vec3 l{}, r{};

@@ -8,6 +8,7 @@
 #include "core/Sculpt.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <string>
 #include <tuple>
@@ -205,7 +206,12 @@ TEST_CASE("mold split: cavity and core close round the part and fill the block, 
         CHECK(closes(h));
     }
     REQUIRE(run(d, "BOX 80 60 30 @300,900,0").ok);
-    REQUIRE(run(d, "FILLET \"Block 8\" RADIUS 5 EDGES ALL").ok);
+    {
+        const CommandOutput f = run(d, "FILLET \"Block 8\" RADIUS 5 EDGES ALL");
+        if (!f.ok)
+            for (const std::string& l : f.lines) std::printf("  FILLET: %s\n", l.c_str());
+        REQUIRE(f.ok);
+    }
     o = MoldOptions{};
     REQUIRE(splitMold(worldMesh(*named(d, "Block 8")), o, h, &why));
     CHECK(closes(h));

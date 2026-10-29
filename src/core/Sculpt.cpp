@@ -3655,7 +3655,9 @@ bool meshBoolean(MeshData& a, const MeshData& b, BooleanOp op) {
         const std::vector<std::uint32_t> reg = regions(tris, cut, arr);
         // Each region is tested at the incentre of its fattest triangle (largest inradius),
         // the point furthest from its edges, and so from the seams.
-        std::unordered_map<std::uint32_t, std::pair<double, std::uint32_t>> biggest;
+        // (Ordered: the regions are visited, and slivers labelled from their neighbours, the
+        // same way with every standard library.)
+        std::map<std::uint32_t, std::pair<double, std::uint32_t>> biggest;
         auto inradius = [&](const std::array<std::uint32_t, 3>& t) {
             const D3 &p0 = arr.P[t[0]], &p1 = arr.P[t[1]], &p2 = arr.P[t[2]];
             const double per = dlen(p1 - p0) + dlen(p2 - p1) + dlen(p0 - p2);
