@@ -2,6 +2,7 @@
 #include "core/Units.hpp"
 
 #include "core/Command.hpp"
+#include "core/Document.hpp"
 #include "core/Library.hpp"
 #include "core/Physics.hpp"
 #include "core/Pose.hpp"
@@ -1338,18 +1339,8 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                 if (a["visible"].isBool()) b.visible = a["visible"].asBool();
                 if (a["color"].isArray()) b.color = v3("color");
                 if (a["rename"].isString() && !a["rename"].asString().empty()) {
-                    const std::string old = b.name, now = a["rename"].asString();
-                    m_doc.scene.renameBody(bi, now);
-                    for (Mate& m : m_doc.state.assembly.mates) {
-                        if (m.a.body == old) m.a.body = now;
-                        if (m.b.body == old) m.b.body = now;
-                    }
-                    for (ToleranceStack& st : m_doc.state.stacks) {
-                        for (StackItem& it : st.items)
-                            if (it.body == old) it.body = now;
-                        if (st.gapFrom == old) st.gapFrom = now;
-                        if (st.gapTo == old) st.gapTo = now;
-                    }
+                    std::string why;
+                    if (!renameBodyEverywhere(m_doc, bi, a["rename"].asString(), &why)) return textResult(why, true);
                 }
                 m_doc.dirty = m_changed = true;
                 return textResult("Updated body " + b.name, false);

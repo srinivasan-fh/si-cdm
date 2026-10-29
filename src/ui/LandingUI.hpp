@@ -117,6 +117,7 @@ struct UiState {
     bool snapPoints = true;
     int selectedBody = -1;
     BodySelection bodySelection; // other bodies selected with selectedBody (Selection.hpp)
+    int renameBody = -1;         // asks for a new name for this body (F2, double-click in the tree)
     int selectedCurve = -1;
     int selectedImage = -1;
 
@@ -267,6 +268,7 @@ private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawRenderWindow(UiCommands& cmd, UiState& st);
     void drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene);
+    void drawRenamePopup(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawArmatureWindow(UiCommands& cmd, UiState& st, const Scene& scene);
@@ -343,6 +345,8 @@ private:
     bool m_showHistory = false;
     double m_showRecentUntil = 0.0;
     std::size_t m_seenLog = 0;
+    char m_renameText[128] = {};
+    int m_renameShown = -1; // the body the rename box was filled for
     std::vector<std::string> m_recall; // previous inputs for Up / Down
     int m_recallPos = -1;
 

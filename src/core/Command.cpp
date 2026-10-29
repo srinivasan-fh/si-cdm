@@ -353,6 +353,8 @@ constexpr CommandSpec kCommands[] = {
     {"SELECT", "SEL", "SELECT [name... | ADD name... | REMOVE name... | ALL | INVERT | NONE]",
      "Select bodies by name (several: the first is the active one), add to or take from the selection, all visible bodies, the others, or none; alone: what is selected"},
     {"ERASE", "E DEL DELETE", "ERASE [name...]", "Delete the selection (every selected body), or the named items"},
+    {"RENAME", "REN", "RENAME [old] TO new | RENAME new",
+     "Rename a body (the selected one when no old name is given); mates, drawings, CAM, robots, stacks and motions that name it follow"},
     {"COPY", "", "COPY [name...]", "Copy the selected bodies (or the named ones), for PASTE here or in another open file"},
     {"CUT", "", "CUT [name...]", "Copy the selected bodies and take them out (PASTE puts them back in)"},
     {"PASTE", "", "PASTE [OFFSET x,y,z]", "Put in the bodies copied: in place, or beside the originals when they are there (or moved by OFFSET); they are selected"},

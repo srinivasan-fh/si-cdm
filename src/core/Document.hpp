@@ -174,4 +174,10 @@ Body defaultPrimitive(const std::string& kind, int serial);
 // Text summary of the document (bodies, curves, images) used by LIST and MCP.
 std::vector<std::string> describeDocument(const Document& doc);
 
+// Renames a body and everything in the project that names it: what the scene keeps
+// (attachments, motions, skins), mates, exploded-view steps, the CAM and lathe parts, the
+// drawing's bodies, views and balloons, robot tags, sensors and forces, tolerance stacks and
+// the selection. False (why) when the name is empty, has a quote, or another body has it.
+bool renameBodyEverywhere(Document& doc, std::size_t body, const std::string& name, std::string* why = nullptr);
+
 } // namespace sicdm

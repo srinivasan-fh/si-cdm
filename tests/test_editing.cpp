@@ -164,7 +164,8 @@ TEST_CASE("DUPLICATE: copies beside the originals, named, selected, undone in on
     // The copies are separate: moving one leaves the original.
     REQUIRE(run(d, "DUPLICATE \"Block 3\"").ok);
     REQUIRE(run(d, "MOVE 0,100,0 \"Block 3 copy\"").ok);
-    CHECK(std::fabs(d.scene.bodies()[2].bounds().center().y) < 1e-3f);
+    CHECK(std::fabs(d.scene.bodies()[2].offset.y) < 1e-6f);
+    CHECK(std::fabs(d.scene.bodies().back().offset.y - 100.0f) < 1e-4f);
     // REGEN replays it by name.
     REQUIRE(run(d, "REGEN").ok);
     CHECK(bodyNamed(d, "Block 3 copy") >= 0);
@@ -206,4 +207,71 @@ TEST_CASE("COPY, CUT, PASTE: in place in another file, beside the originals in t
     CHECK(c.scene.bodies().size() == 4);
     CHECK(!run(c, "PASTE \"Block 1\"").ok);
     CHECK(!run(c, "DUPLICATE OFFSET 1,2").ok);
+}
+
+TEST_CASE("RENAME: the body and everything that refers to it, undone, replayed, refused when unclear") {
+    Document d;
+    fourBlocks(d);
+    REQUIRE(run(d, "MATE DISTANCE 5 \"Block 1\" AT 5,5,10 \"Block 2\" AT 25,5,0").ok);
+    REQUIRE(run(d, "STACK NEW Blocks GAP \"Block 1\" \"Block 2\" ALONG X").ok);
+    REQUIRE(run(d, "STACK Blocks ADD BODY \"Block 1\" ALONG X MINUS").ok);
+    REQUIRE(run(d, "CAM SETUP \"Block 1\" STOCK 3").ok);
+    REQUIRE(run(d, "SELECT \"Block 3\" \"Block 1\"").ok);
+    const auto r = run(d, "RENAME \"Block 1\" TO \"Base plate\"");
+    REQUIRE(r.ok);
+    CHECK(r.lines[0] == "Renamed Block 1 to Base plate");
+    CHECK(d.scene.bodies()[0].name == "Base plate");
+    REQUIRE(!d.state.assembly.mates.empty());
+    CHECK(d.state.assembly.mates[0].a.body == "Base plate");
+    REQUIRE(!d.state.stacks.empty());
+    CHECK(d.state.stacks[0].gapFrom == "Base plate");
+    REQUIRE(!d.state.stacks[0].items.empty());
+    CHECK(d.state.stacks[0].items[0].body == "Base plate");
+    CHECK(d.state.cam.setup.body == "Base plate");
+    CHECK((selectedNames(d) == std::vector<std::string>{"Block 3", "Base plate"})); // still both selected
+    CHECK(d.state.history.back().line == "RENAME \"Block 1\" TO \"Base plate\"");
+    // The selected body, unquoted words.
+    REQUIRE(run(d, "SELECT \"Block 2\"").ok);
+    REQUIRE(run(d, "RENAME Side plate").ok);
+    CHECK(d.scene.bodies()[1].name == "Side plate");
+    CHECK(d.state.assembly.mates[0].b.body == "Side plate");
+    CHECK(d.state.stacks[0].gapTo == "Side plate");
+    // Refused: taken, a quote, empty, no such body.
+    CHECK(!run(d, "RENAME \"Block 3\" TO \"Base plate\"").ok);
+    CHECK(!run(d, "RENAME \"Block 3\" TO bad\"name").ok);
+    CHECK(!run(d, "RENAME \"Block 3\" TO").ok);
+    CHECK(!run(d, "RENAME \"Nope\" TO Fine").ok);
+    CHECK(bodyNamed(d, "Block 3") == 2);
+    // Undo puts the name and the references back together.
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.bodies()[1].name == "Block 2");
+    CHECK(d.state.assembly.mates[0].b.body == "Block 2");
+    CHECK(d.state.stacks[0].gapTo == "Block 2");
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(d.scene.bodies()[1].name == "Side plate");
+    // REGEN replays both by name; later steps on the new name still work.
+    const float zBefore = d.scene.bodies()[1].offset.z; // where the mate put it
+    REQUIRE(run(d, "MOVE 0,0,30 \"Side plate\"").ok);
+    REQUIRE(run(d, "REGEN").ok);
+    CHECK(bodyNamed(d, "Base plate") == 0);
+    REQUIRE(bodyNamed(d, "Side plate") == 1);
+    CHECK(std::fabs(d.scene.bodies()[1].offset.z - zBefore - 30.0f) < 1e-4f);
+    // The same name again (or with spaces round it) is fine and changes nothing.
+    CHECK(run(d, "RENAME \"Side plate\" TO \" Side plate \"").ok);
+    CHECK(d.scene.bodies()[1].name == "Side plate");
+}
+
+TEST_CASE("MCP modify rename: references follow, a taken name is an error") {
+    Document d;
+    fourBlocks(d);
+    REQUIRE(run(d, "STACK NEW Blocks GAP \"Block 1\" \"Block 2\" ALONG X").ok);
+    McpServer server(d, nullptr);
+    auto call = [&](const std::string& args) {
+        const auto r = Json::parse(server.handle(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"modify","arguments":)" + args + "}}"));
+        return r ? (*r)["result"] : Json();
+    };
+    CHECK(!call(R"({"name":"Block 2","rename":"Lid"})")["isError"].asBool());
+    CHECK(d.state.stacks[0].gapTo == "Lid");
+    CHECK(call(R"({"name":"Block 3","rename":"Lid"})")["isError"].asBool());
+    CHECK(bodyNamed(d, "Block 3") == 2);
 }

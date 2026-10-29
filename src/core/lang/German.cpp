@@ -1182,6 +1182,12 @@ const char* const kGerman[][2] = {
     {"Paste", "Einfügen"},
     {"Select All", "Alles auswählen"},
     {"Select None", "Nichts auswählen"},
+    {"A name can't contain quotes", "Ein Name darf keine Anführungszeichen enthalten"},
+    {"Another body has this name", "Ein anderer Körper hat diesen Namen"},
+    {"Rename", "Umbenennen"},
+    {"Rename Body", "Körper umbenennen"},
+    {"Rename...", "Umbenennen..."},
+    {"Type a name", "Namen eingeben"},
 };
 
 

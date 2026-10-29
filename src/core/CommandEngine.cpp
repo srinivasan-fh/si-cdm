@@ -669,6 +669,49 @@ std::string Document::displayName() const { return path.empty() ? name : fs::pat
 
 std::string Document::title() const { return dirty ? displayName() + " *" : displayName(); }
 
+bool renameBodyEverywhere(Document& doc, std::size_t body, const std::string& name, std::string* why) {
+    auto fail = [&](const std::string& w) {
+        if (why) *why = w;
+        return false;
+    };
+    auto& bodies = doc.scene.bodies();
+    if (body >= bodies.size()) return fail("No such body");
+    std::string n = name;
+    while (!n.empty() && std::isspace(static_cast<unsigned char>(n.back()))) n.pop_back();
+    while (!n.empty() && std::isspace(static_cast<unsigned char>(n.front()))) n.erase(n.begin());
+    if (n.empty()) return fail("A body needs a name");
+    if (n.find('"') != std::string::npos) return fail("A name can't have a quote (\") in it");
+    const std::string old = bodies[body].name;
+    if (n == old) return true;
+    for (std::size_t i = 0; i < bodies.size(); ++i)
+        if (i != body && bodies[i].name == n) return fail("There is already a body named " + n);
+    doc.scene.renameBody(body, n);
+    auto fix = [&](std::string& s) {
+        if (s == old) s = n;
+    };
+    ProjectState& st = doc.state;
+    for (Mate& m : st.assembly.mates) fix(m.a.body), fix(m.b.body);
+    for (ExplodeStep& e : st.assembly.explode.steps)
+        for (std::string& p : e.parts) fix(p);
+    fix(st.cam.setup.body);
+    fix(st.lathe.setup.body);
+    for (std::string& b : st.drawing.bodies) fix(b);
+    for (DrawingView& v : st.drawing.views) fix(v.parent), fix(v.body);
+    for (DrawingBalloon& b : st.drawing.balloons) fix(b.body);
+    for (RigSettings& r : doc.scene.rigs().robots) {
+        for (auto& t : r.tags) fix(t.first);
+        for (SensorSpec& sp : r.sensors) fix(sp.body);
+        for (ForceSpec& f : r.forces) fix(f.body);
+    }
+    for (ToleranceStack& stack : st.stacks) {
+        for (StackItem& it : stack.items) fix(it.body);
+        fix(stack.gapFrom), fix(stack.gapTo);
+    }
+    if (doc.selection.anchor == old) doc.selection.anchor = n;
+    for (std::string& o : doc.selection.others) fix(o);
+    return true;
+}
+
 Body defaultPrimitive(const std::string& kind, int serial) {
     Body b;
     if (kind == "box") b = makeBody("", kind, {-20, -20, 0, 20, 20, 40});
@@ -742,7 +785,7 @@ bool sketchCommand(const std::string& cmd) {
 // Document::JobsUndo): around them that state is compared, and kept for UNDO when changed.
 bool sideCommand(const std::string& cmd) {
     static const char* const kSide[] = {"CAM",  "LATHE",  "MATE", "ASSEMBLY", "SHEET",   "VAR", "CONFIG", "PLANE", "REFAXIS",
-                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM", "PROPERTY", "EXPLODE", "STACK"};
+                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM", "PROPERTY", "EXPLODE", "STACK", "RENAME"};
     for (const char* k : kSide)
         if (cmd == k) return true;
     return false;
@@ -819,7 +862,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "PASTE", "CUT"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "PASTE", "CUT", "RENAME"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -835,7 +878,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "CUT"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "CUT", "RENAME"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -5109,6 +5152,29 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.clearSelection();
         markChanged(doc);
         out.say("Deleted " + gone);
+        return out;
+    }
+    if (cmd == "RENAME") {
+        // RENAME [old] TO new  |  RENAME new (the selected body)
+        std::size_t to = a.size();
+        for (std::size_t i = 0; i < a.size(); ++i)
+            if (!quotedArg(i) && iequal(a[i], "to")) to = i;
+        std::string from, now;
+        if (to < a.size()) {
+            from = joinArgs({a.begin(), a.begin() + static_cast<std::ptrdiff_t>(to)});
+            now = joinArgs({a.begin() + static_cast<std::ptrdiff_t>(to) + 1, a.end()});
+        } else {
+            now = joinArgs(a);
+        }
+        if (now.empty()) return usage();
+        const int b = from.empty() ? doc.selectedBody : findBody(doc, from);
+        if (b < 0 || b >= static_cast<int>(doc.scene.bodies().size())) return out.fail(from.empty() ? "Select a body first, or name it: RENAME old TO new" : "No body named " + from);
+        const std::string old = doc.scene.bodies()[static_cast<std::size_t>(b)].name;
+        std::string why;
+        if (!renameBodyEverywhere(doc, static_cast<std::size_t>(b), now, &why)) return out.fail(why);
+        doc.recordAs = "RENAME \"" + old + "\" TO \"" + doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\""; // replayed by name
+        markChanged(doc);
+        out.say("Renamed " + old + " to " + doc.scene.bodies()[static_cast<std::size_t>(b)].name);
         return out;
     }
     if (cmd == "COPY" || cmd == "CUT" || cmd == "DUPLICATE" || cmd == "PASTE") {

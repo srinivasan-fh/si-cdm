@@ -938,5 +938,7 @@ Details: [docs/plugins.md](docs/plugins.md).
   places; pasted where the originals are, they go beside them as "... copy".
 - `Ctrl/⌘ D`: duplicate the selected bodies beside them (`DUPLICATE [name...] [OFFSET x,y,z]`).
   The copies are selected, ready to move. These are all in the **Edit** menu too.
+- `F2`, or double-click a body in the model tree: rename it (`RENAME "old" TO "new"`). Mates,
+  drawings, CAM setups, stack-ups and the rest that refer to it follow the new name.
 - `F`: fit to view
 - `1` / `3` / `7` / `0`: Front / Right / Top / Isometric (in 2D: pick the drawing plane)

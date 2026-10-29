@@ -377,6 +377,8 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showHelp) drawHelpWindow(cmd, st);
     if (st.showPreferences) drawPreferencesWindow(cmd, st);
     if (st.showRender) drawRenderWindow(cmd, st);
+    if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F2, false) && st.selectedBody >= 0) st.renameBody = st.selectedBody;
+    if (st.renameBody >= 0) drawRenamePopup(cmd, st, scene);
     if (st.showProduct) drawProductWindow(cmd, st);
     if (st.showAppearance) drawAppearanceWindow(cmd, st);
     if (st.showSection && st.project && st.mode != ViewMode::Drawing2D) drawSectionWindow(cmd, st, scene);
@@ -830,6 +832,53 @@ void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene
 
 // The live section view: which plane, where along it (dragged live), which side, the cut
 // faces filled or not, which bodies.
+// A new name for a body (F2, Edit > Rename, double-click in the model tree): RENAME, which
+// also changes the name where mates, drawings, CAM setups and the rest refer to it.
+void LandingUI::drawRenamePopup(UiCommands& cmd, UiState& st, const Scene& scene) {
+    const auto& bodies = scene.bodies();
+    if (st.renameBody >= static_cast<int>(bodies.size())) {
+        st.renameBody = m_renameShown = -1;
+        return;
+    }
+    const std::string& old = bodies[static_cast<std::size_t>(st.renameBody)].name;
+    const bool first = m_renameShown != st.renameBody;
+    if (first) {
+        std::snprintf(m_renameText, sizeof(m_renameText), "%s", old.c_str());
+        m_renameShown = st.renameBody;
+        ImGui::OpenPopup("###rename");
+    }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
+    bool open = true;
+    if (ImGui::BeginPopupModal((std::string(tr("Rename Body")) + "###rename").c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (first) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(320);
+        const bool enter = ImGui::InputText("##name", m_renameText, sizeof(m_renameText), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        // Same rules as RENAME: not empty, no quotes, not another body's name.
+        std::string name = m_renameText;
+        name.erase(0, name.find_first_not_of(" \t"));
+        name.erase(name.find_last_not_of(" \t") + 1);
+        const char* problem = nullptr;
+        if (name.empty()) problem = tr("Type a name");
+        else if (name.find('"') != std::string::npos) problem = tr("A name can't contain quotes");
+        else if (name != old && std::any_of(bodies.begin(), bodies.end(), [&](const Body& b) { return b.name == name; })) problem = tr("Another body has this name");
+        if (problem) ImGui::TextColored(theme::vec(theme::kError), "%s", problem);
+        bool done = ImGui::IsKeyPressed(ImGuiKey_Escape);
+        ImGui::BeginDisabled(problem != nullptr);
+        if ((ImGui::Button(tr("Rename")) || enter) && !problem) {
+            if (name != old) cmd.commands.push_back("RENAME \"" + old + "\" TO \"" + name + "\"");
+            done = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(tr("Cancel"))) done = true;
+        if (done) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        if (done) st.renameBody = m_renameShown = -1;
+    } else if (!first || !open) {
+        st.renameBody = m_renameShown = -1; // closed with its X
+    }
+}
+
 void LandingUI::drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene) {
     if (!ImGui::Begin(tr("Section"), &st.showSection, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
@@ -1246,6 +1295,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem(tr("Paste"), "Ctrl+V", false, !bodyClipboard().empty())) cmd.commands.push_back("PASTE");
         if (ImGui::MenuItem(tr("Duplicate"), "Ctrl+D", false, any)) cmd.commands.push_back("DUPLICATE");
         if (ImGui::MenuItem(tr("Delete"), "Del", false, any)) cmd.commands.push_back("ERASE");
+        if (ImGui::MenuItem(tr("Rename..."), "F2", false, st.selectedBody >= 0)) st.renameBody = st.selectedBody;
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Select All"), "Ctrl+A")) cmd.commands.push_back("SELECT ALL");
         if (ImGui::MenuItem(tr("Invert Selection"))) cmd.commands.push_back("SELECT INVERT");
@@ -2850,6 +2900,10 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                                 st.bodySelection = {};
                             }
                             st.selectedCurve = st.selectedImage = -1;
+                        }
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { // rename it (selected: the second click took it out)
+                            st.selectedBody = st.renameBody = i;
+                            st.bodySelection = {};
                         }
                         if (b.linked()) { // from a part file: say which
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s %s", tr("Linked from"), b.link.file.c_str());
