@@ -226,7 +226,9 @@ MeshData marchTets(const std::vector<float>& f, int nx, int ny, int nz, const Ve
                 bool anyIn = false, anyOut = false;
                 for (int c = 0; c < 8; ++c) {
                     ci[c] = idx(x + kCorner[c][0], y + kCorner[c][1], z + kCorner[c][2]);
-                    cv[c] = f[ci[c]];
+                    // A sample on the surface itself would put several vertices on one point
+                    // (zero-length edges, triangles facing anywhere): it counts as a hair inside.
+                    cv[c] = std::fabs(f[ci[c]]) < 1e-4f * h ? 1e-4f * h : f[ci[c]];
                     cp[c] = at(x + kCorner[c][0], y + kCorner[c][1], z + kCorner[c][2]);
                     (cv[c] > 0 ? anyIn : anyOut) = true;
                 }
