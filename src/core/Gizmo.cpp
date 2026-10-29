@@ -68,6 +68,8 @@ std::string num(double v) {
 }
 
 std::string vec(const Vec3& v) { return num(v.x) + "," + num(v.y) + "," + num(v.z); }
+// A point or a distance in mm, marked so: bare numbers are read in the document's units.
+std::string mmVec(const Vec3& v) { return num(v.x) + "mm," + num(v.y) + "mm," + num(v.z) + "mm"; }
 
 } // namespace
 
@@ -210,15 +212,15 @@ std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::vector<
     for (const std::string& n : names) q += (q.empty() ? "\"" : " \"") + n + "\"";
     if (mode == GizmoMode::Move) {
         if (length(d.move) < 1e-6f) return {};
-        return "MOVE " + vec(d.move) + " " + q;
+        return "MOVE " + mmVec(d.move) + " " + q;
     }
     if (mode == GizmoMode::Rotate) {
         if (std::fabs(d.angle) < 1e-6f) return {};
-        return "ROTATE " + q + " BY " + num(d.angle) + " AXIS " + vec(d.axis) + " ABOUT " + vec(pivot);
+        return "ROTATE " + q + " BY " + num(d.angle) + " AXIS " + vec(d.axis) + " ABOUT " + mmVec(pivot);
     }
     if (std::fabs(d.scale.x - 1) < 1e-6f && std::fabs(d.scale.y - 1) < 1e-6f && std::fabs(d.scale.z - 1) < 1e-6f) return {};
-    if (d.uniform) return "SCALE " + q + " " + num(d.scale.x) + " ABOUT " + vec(pivot);
-    return "SCALE " + q + " " + vec(d.scale) + " ABOUT " + vec(pivot);
+    if (d.uniform) return "SCALE " + q + " " + num(d.scale.x) + " ABOUT " + mmVec(pivot);
+    return "SCALE " + q + " " + vec(d.scale) + " ABOUT " + mmVec(pivot);
 }
 
 bool turnBody(Body& b, const Vec3& axis, float deg, const Vec3& about, std::string* why) {

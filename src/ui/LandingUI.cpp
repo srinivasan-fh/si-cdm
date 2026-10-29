@@ -2492,7 +2492,72 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         else if (st.gizmoMode == 1) ImGui::DragFloat("##astep", &st.gizmoAngleStep, 0.5f, 0.1f, 180.0f, "%.1f deg");
         else ImGui::DragFloat("##sstep", &st.gizmoScaleStep, 0.01f, 0.001f, 10.0f, "x%.3f");
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", st.selectedBody >= 0 ? tr("Drag a handle, or the body to slide it in the view") : tr("Click a body to move it, or select one for the gizmo"));
+        const std::vector<int> sel = m_menuScene ? selectedBodies(*m_menuScene, st.selectedBody, st.bodySelection) : std::vector<int>{};
+        if (sel.empty()) {
+            ImGui::TextDisabled("%s", tr("Click a body to move it, or select one for the gizmo"));
+        } else {
+            // Exact values, typed: one command on every selected body (about the gizmo's centre).
+            std::string names;
+            AABB box;
+            for (int b : sel) {
+                const Body& body = m_menuScene->bodies()[static_cast<std::size_t>(b)];
+                names += " \"" + body.name + "\"";
+                box.expand(body.bounds());
+            }
+            auto mm = [](double v) {
+                char t[40];
+                std::snprintf(t, sizeof t, "%.9gmm", v);
+                return std::string(t);
+            };
+            const Vec3 c = box.valid() ? box.center() : Vec3{0, 0, 0};
+            const std::string about = " ABOUT " + mm(c.x) + "," + mm(c.y) + "," + mm(c.z);
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            bool apply = false;
+            if (st.gizmoMode == 0) {
+                static const char* const kAxes[] = {"X", "Y", "Z"};
+                float* v[] = {&st.typedMove.x, &st.typedMove.y, &st.typedMove.z};
+                for (int k = 0; k < 3; ++k) {
+                    ImGui::TextUnformatted(kAxes[k]);
+                    ImGui::SameLine(0, 3);
+                    ImGui::SetNextItemWidth(72);
+                    char id[8];
+                    std::snprintf(id, sizeof id, "##tm%d", k);
+                    lengthField(id, v[k]);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("How far to move along this axis (any unit: 12.5  1in  -3mm)"));
+                    ImGui::SameLine();
+                }
+                apply = ImGui::Button(tr("Move##typed"));
+                if (apply && length(st.typedMove) > 0)
+                    cmd.commands.push_back("MOVE " + mm(st.typedMove.x) + "," + mm(st.typedMove.y) + "," + mm(st.typedMove.z) + names);
+            } else if (st.gizmoMode == 1) {
+                ImGui::SetNextItemWidth(70);
+                apply = ImGui::InputFloat("##tangle", &st.typedAngle, 0, 0, "%.2f deg", ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(46);
+                ImGui::Combo("##taxis", &st.typedAxis, "X\0Y\0Z\0");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The axis it turns about, through the gizmo's centre"));
+                ImGui::SameLine();
+                apply = ImGui::Button(tr("Rotate##typed")) || apply;
+                if (apply && st.typedAngle != 0.0f && std::isfinite(st.typedAngle)) {
+                    char line[64];
+                    std::snprintf(line, sizeof line, " BY %.9g AXIS %c", static_cast<double>(st.typedAngle), "XYZ"[std::clamp(st.typedAxis, 0, 2)]);
+                    cmd.commands.push_back("ROTATE" + names + line + about);
+                }
+            } else {
+                ImGui::SetNextItemWidth(70);
+                apply = ImGui::InputFloat("##tscale", &st.typedScale, 0, 0, "x%.4g", ImGuiInputTextFlags_EnterReturnsTrue);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The factor: 2 doubles, 0.5 halves"));
+                ImGui::SameLine();
+                apply = ImGui::Button(tr("Scale##typed")) || apply;
+                if (apply && st.typedScale > 0.0f && std::isfinite(st.typedScale) && st.typedScale != 1.0f) {
+                    char k[32];
+                    std::snprintf(k, sizeof k, " %.9g", static_cast<double>(st.typedScale));
+                    cmd.commands.push_back("SCALE" + names + k + about);
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Apply to the selected bodies (one undo step); or drag a handle"));
+        }
     } else if (tool.id == ToolId::Move || tool.id == ToolId::Select) {
         ImGui::TextDisabled("%s", tr("Auto-select:"));
         ImGui::SameLine();

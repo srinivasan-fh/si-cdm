@@ -87,6 +87,11 @@ struct UiState {
     int gizmoMode = 0;
     bool gizmoSnap = false;
     float gizmoMoveStep = 1.0f, gizmoAngleStep = 15.0f, gizmoScaleStep = 0.1f;
+    // Typed in the Move tool's bar and applied to the selection: a move (mm), a turn, a scale.
+    Vec3 typedMove{0, 0, 0};
+    float typedAngle = 90.0f;
+    int typedAxis = 2; // X, Y, Z
+    float typedScale = 2.0f;
     std::string armatureName;
     int armatureBall = 0, armatureMirror = 0;
     // The 3D Path window: points for a new 3D path (clicks on the model add them while

@@ -1193,6 +1193,10 @@ const char* const kGerman[][2] = {
     {"Select the bodies to hide first", "Zuerst die auszublendenden Körper wählen"},
     {"Select the bodies to isolate first", "Zuerst die zu isolierenden Körper wählen"},
     {"Show All", "Alle einblenden"},
+    {"Apply to the selected bodies (one undo step); or drag a handle", "Auf die gewählten Körper anwenden (ein Rückgängig-Schritt); oder einen Griff ziehen"},
+    {"How far to move along this axis (any unit: 12.5  1in  -3mm)", "Wie weit entlang dieser Achse verschieben (jede Einheit: 12.5  1in  -3mm)"},
+    {"The axis it turns about, through the gizmo's centre", "Die Drehachse, durch die Mitte des Gizmos"},
+    {"The factor: 2 doubles, 0.5 halves", "Der Faktor: 2 verdoppelt, 0.5 halbiert"},
 };
 
 

@@ -4657,6 +4657,9 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (list.empty()) why = "Select a body first, or give its name";
         return list;
     };
+    // A length or point (mm) for a command line written here: marked mm, as bare numbers are
+    // read in the document's units.
+    auto mmVec = [&](const Vec3& v) { return fmt("%.9gmm,", v.x) + fmt("%.9gmm,", v.y) + fmt("%.9gmm", v.z); };
     // The middle of their bounds: what several bodies turn and scale about.
     auto groupCentre = [&](const std::vector<int>& list) {
         AABB box;
@@ -4695,8 +4698,8 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             }
             for (int bi : group) turnBody(doc.scene.bodies()[static_cast<std::size_t>(bi)], axis, *angle, about);
             if (group.size() > 1)
-                doc.recordAs = "ROTATE" + quotedList(group) + " BY " + fmt("%g", *angle) + " AXIS " + fmt("%g,", axis.x) + fmt("%g,", axis.y) + fmt("%g", axis.z) +
-                               " ABOUT " + fmt("%g,", about.x) + fmt("%g,", about.y) + fmt("%g", about.z); // replayed by name
+                doc.recordAs = "ROTATE" + quotedList(group) + " BY " + fmt("%.9g", *angle) + " AXIS " + fmt("%g,", axis.x) + fmt("%g,", axis.y) + fmt("%g", axis.z) +
+                               " ABOUT " + mmVec(about); // replayed by name
             doc.scene.touchBodies();
             markChanged(doc);
             out.say("Turned " + (group.size() == 1 ? first.name : std::to_string(group.size()) + " bodies") + fmt(" %g deg about (", *angle) + fmt("%g, ", axis.x) +
@@ -4761,7 +4764,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             if (to) return out.fail("SCALE TO is for one body; scale several by a factor");
             if (a.size() == 1) {
                 const Vec3 c = groupCentre(sel);
-                return runCommand(doc, "SCALE" + quotedList(sel) + " " + a[0] + " ABOUT " + fmt("%g,", c.x) + fmt("%g,", c.y) + fmt("%g", c.z), view);
+                return runCommand(doc, "SCALE" + quotedList(sel) + " " + a[0] + " ABOUT " + mmVec(c), view);
             }
         }
     }
@@ -5411,7 +5414,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                     b.offset += *d;
                 }
             }
-            if (group.size() > 1) doc.recordAs = "MOVE " + fmt("%g,", d->x) + fmt("%g,", d->y) + fmt("%g", d->z) + quotedList(group); // replayed by name
+            if (group.size() > 1) doc.recordAs = "MOVE " + mmVec(*d) + quotedList(group); // replayed by name
             s.touchBodies();
             markChanged(doc);
             const Body& b = s.bodies()[static_cast<std::size_t>(group[0])];

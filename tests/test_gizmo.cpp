@@ -93,7 +93,7 @@ TEST_CASE("gizmo commands do what the drag showed, and are undone") {
     GizmoDelta turn;
     turn.axis = {0, 0, 1}, turn.angle = 90;
     const std::string line = gizmoCommand(GizmoMode::Rotate, turn, "Block 1", pivot);
-    CHECK(line == "ROTATE \"Block 1\" BY 90 AXIS 0,0,1 ABOUT 10,0,5");
+    CHECK(line == "ROTATE \"Block 1\" BY 90 AXIS 0,0,1 ABOUT 10mm,0mm,5mm");
     REQUIRE(run(d, line).ok);
     b = named(d, "Block 1");
     CHECK(near(b->bounds().min, preview.bounds().min, 1e-4f) && near(b->bounds().max, preview.bounds().max, 1e-4f));
@@ -118,7 +118,7 @@ TEST_CASE("gizmo commands do what the drag showed, and are undone") {
     // Moving.
     GizmoDelta m;
     m.move = {5, -2, 1};
-    CHECK(gizmoCommand(GizmoMode::Move, m, "Block 1", pivot) == "MOVE 5,-2,1 \"Block 1\"");
+    CHECK(gizmoCommand(GizmoMode::Move, m, "Block 1", pivot) == "MOVE 5mm,-2mm,1mm \"Block 1\"");
     REQUIRE(run(d, gizmoCommand(GizmoMode::Move, m, "Block 1", pivot)).ok);
     CHECK(near(named(d, "Block 1")->bounds().center(), pivot + Vec3{5, -2, 1}, 1e-3f));
     // Nothing done, nothing to run.

@@ -352,7 +352,7 @@ TEST_CASE("Group transforms: MOVE, ROTATE BY and SCALE act on every selected bod
     CHECK(near3(at("Block 1"), {0, 0, 20}));
     CHECK(near3(at("Block 2"), {30, 0, 20}));
     CHECK(near3(at("Block 3"), {60, 0, 0}));
-    CHECK(d.state.history.back().line == "MOVE 0,0,20 \"Block 1\" \"Block 2\"");
+    CHECK(d.state.history.back().line == "MOVE 0mm,0mm,20mm \"Block 1\" \"Block 2\"");
     CHECK(d.selectedBodies().size() == 2); // still both selected
     REQUIRE(run(d, "UNDO").ok); // one step puts both back
     CHECK(near3(at("Block 1"), {0, 0, 0}));
@@ -369,7 +369,7 @@ TEST_CASE("Group transforms: MOVE, ROTATE BY and SCALE act on every selected bod
     CHECK(near3(at("Block 1"), {15, -15, 0}));
     CHECK(near3(at("Block 2"), {15, 15, 0}));
     CHECK(std::fabs(d.scene.bodies()[0].rotation.z - 90.0f) < 1e-3f);
-    CHECK(d.state.history.back().line == "ROTATE \"Block 1\" \"Block 2\" BY 90 AXIS 0,0,1 ABOUT 15,0,5");
+    CHECK(d.state.history.back().line == "ROTATE \"Block 1\" \"Block 2\" BY 90 AXIS 0,0,1 ABOUT 15mm,0mm,5mm");
     REQUIRE(run(d, "UNDO").ok);
     CHECK(near3(at("Block 2"), {30, 0, 0}));
     CHECK(std::fabs(d.scene.bodies()[1].rotation.z) < 1e-3f);
@@ -396,14 +396,57 @@ TEST_CASE("Group transforms: MOVE, ROTATE BY and SCALE act on every selected bod
 TEST_CASE("Gizmo command for several bodies names them all") {
     GizmoDelta m;
     m.move = {1, 2, 3};
-    CHECK(gizmoCommand(GizmoMode::Move, m, std::vector<std::string>{"A", "B c"}, {0, 0, 0}) == "MOVE 1,2,3 \"A\" \"B c\"");
+    CHECK(gizmoCommand(GizmoMode::Move, m, std::vector<std::string>{"A", "B c"}, {0, 0, 0}) == "MOVE 1mm,2mm,3mm \"A\" \"B c\"");
     GizmoDelta t;
     t.axis = {0, 0, 1};
     t.angle = 45;
-    CHECK(gizmoCommand(GizmoMode::Rotate, t, std::vector<std::string>{"A", "B"}, {1, 0, 0}) == "ROTATE \"A\" \"B\" BY 45 AXIS 0,0,1 ABOUT 1,0,0");
+    CHECK(gizmoCommand(GizmoMode::Rotate, t, std::vector<std::string>{"A", "B"}, {1, 0, 0}) == "ROTATE \"A\" \"B\" BY 45 AXIS 0,0,1 ABOUT 1mm,0mm,0mm");
     CHECK(gizmoCommand(GizmoMode::Move, m, std::vector<std::string>{}, {0, 0, 0}).empty());
     Document d;
     fourBlocks(d);
     REQUIRE(run(d, gizmoCommand(GizmoMode::Rotate, t, std::vector<std::string>{"Block 1", "Block 2"}, {15, 0, 5})).ok);
     CHECK(std::fabs(d.scene.bodies()[1].rotation.z - 45.0f) < 1e-3f);
+}
+
+TEST_CASE("Gizmo and group commands keep millimetres in an inch document") {
+    Document d;
+    REQUIRE(run(d, "UNITS IN").ok);
+    fourBlocks(d); // 10 in blocks, 30 in apart
+    auto at = [&](int i) { return d.scene.bodies()[static_cast<std::size_t>(i)].offset; };
+    GizmoDelta m;
+    m.move = {25.4f, 0, 0}; // one inch, as the drag measured it (mm)
+    REQUIRE(run(d, gizmoCommand(GizmoMode::Move, m, std::vector<std::string>{"Block 1", "Block 2"}, {0, 0, 0})).ok);
+    CHECK(std::fabs(at(0).x - 25.4f) < 1e-3f);
+    CHECK(std::fabs(at(1).x - (762.0f + 25.4f)) < 1e-3f);
+    // Recorded so that REGEN, in inches, does the same.
+    REQUIRE(run(d, "REGEN").ok);
+    CHECK(std::fabs(at(0).x - 25.4f) < 1e-3f);
+    // Several scaled about their middle: the middle is in mm too.
+    REQUIRE(run(d, "SELECT \"Block 3\" \"Block 4\"").ok);
+    const float mid = (at(2).x + at(3).x) * 0.5f;
+    REQUIRE(run(d, "SCALE 2").ok);
+    CHECK(std::fabs((at(2).x + at(3).x) * 0.5f - mid) < 1e-2f);
+    CHECK(std::fabs(at(3).x - at(2).x - 2 * 762.0f) < 1e-2f);
+}
+
+TEST_CASE("Typed transforms (the Move tool's bar): the lines it sends work in any units") {
+    Document d;
+    REQUIRE(run(d, "UNITS IN").ok);
+    fourBlocks(d);
+    auto at = [&](int i) { return d.scene.bodies()[static_cast<std::size_t>(i)].offset; };
+    // Move: lengths typed in any unit, sent in mm.
+    REQUIRE(run(d, "MOVE 0mm,0mm,25.4mm \"Block 1\" \"Block 2\"").ok);
+    CHECK(std::fabs(at(0).z - 25.4f) < 1e-3f);
+    CHECK(std::fabs(at(1).z - 25.4f) < 1e-3f);
+    // Rotate about the gizmo's centre, given in mm.
+    REQUIRE(run(d, "ROTATE \"Block 3\" BY 90 AXIS Z ABOUT 1524mm,0mm,0mm").ok);
+    CHECK(std::fabs(d.scene.bodies()[2].rotation.z - 90.0f) < 1e-3f);
+    CHECK(length(at(2) - Vec3{1524, 0, 0}) < 1e-2f); // its origin was already on the axis
+    // Scale two about their middle.
+    REQUIRE(run(d, "SCALE \"Block 3\" \"Block 4\" 0.5 ABOUT 1905mm,0mm,0mm").ok);
+    CHECK(std::fabs(at(2).x - (1905.0f - 190.5f)) < 1e-2f);
+    CHECK(std::fabs(at(3).x - (1905.0f + 190.5f)) < 1e-2f);
+    // Each was one step.
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(std::fabs(at(3).x - 2286.0f) < 1e-2f);
 }

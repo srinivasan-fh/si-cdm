@@ -720,6 +720,10 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
       From the command line `MOVE dx,dy,dz "A" "B"`, `ROTATE "A" "B" BY a AXIS Z` and
       `SCALE "A" "B" k ABOUT x,y,z` do the same, and with no names they act on the selection
       (turning and scaling about its middle).
+    - Exact values: with bodies selected, the tool's bar has fields for the mode — X, Y, Z
+      distances (any unit: `12.5`, `1in`, `-3mm`) for *Move*, an angle and an axis for *Rotate*,
+      a factor for *Scale* — and a button that applies them to the selection as one step,
+      about the gizmo's centre.
 
     ![The gizmo's three modes on a block: move arrows and plane squares, rotation rings, scale cubes](docs/gizmo.png)
 - **2D sketch:** the drawing tools work on the active plane, in either window.
