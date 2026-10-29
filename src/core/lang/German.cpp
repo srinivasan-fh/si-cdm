@@ -1198,6 +1198,9 @@ const char* const kGerman[][2] = {
     {"The axis it turns about, through the gizmo's centre", "Die Drehachse, durch die Mitte des Gizmos"},
     {"The factor: 2 doubles, 0.5 halves", "Der Faktor: 2 verdoppelt, 0.5 halbiert"},
     {"%d bodies", "%d Körper"},
+    {"A move lands on another body's corner, edge or face middle when it comes near one on screen", "Eine Verschiebung rastet an Ecke, Kanten- oder Flächenmitte eines anderen Körpers ein, wenn sie auf dem Bildschirm nahe kommt"},
+    {"Points", "Punkte"},
+    {"snap", "Fang"},
 };
 
 

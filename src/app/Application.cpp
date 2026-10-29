@@ -1009,6 +1009,7 @@ void Application::finishMoveDrag(bool commit) {
         body.offset = m_moveStarts[k];
         names.push_back(body.name);
     }
+    m_snapHit.reset();
     const int grabbed = m_moveBodies.empty() ? -1 : m_moveBodies.front();
     m_moveBodies.clear();
     m_moveStarts.clear();
@@ -1035,6 +1036,7 @@ void Application::finishGizmoDrag(bool commit) {
     }
     m_doc.scene.touchBodies();
     m_gizmoBody = -1;
+    m_snapHit.reset();
     m_gizmoBodies.clear();
     m_gizmoStarts.clear();
     if (!commit) {
@@ -1536,6 +1538,7 @@ void Application::handleViewportInput() {
             m_gizmoBodies = selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection);
             m_gizmoStarts.clear();
             for (int b : m_gizmoBodies) m_gizmoStarts.push_back(m_doc.scene.bodies()[static_cast<std::size_t>(b)]);
+            if (gizmoMode == GizmoMode::Move) startSnap(m_gizmoBodies);
             m_gizmoPivot = gizmoPivot;
             m_gizmoSize = gizmoSize;
             const Ray r = cam.screenRay(mx, my, io.DisplaySize.x, wh);
@@ -1558,6 +1561,7 @@ void Application::handleViewportInput() {
                 m_movePlanePoint = hit->point;
                 m_moveStarts.clear();
                 for (int b : m_moveBodies) m_moveStarts.push_back(m_doc.scene.bodies()[static_cast<std::size_t>(b)].offset);
+                startSnap(m_moveBodies);
             } else if (const int img = pickImage(mx, my, &grab); img >= 0) {
                 // Images slide within their own plane.
                 m_leftDrag = DragMode::MoveImage;
@@ -1594,9 +1598,14 @@ void Application::handleViewportInput() {
             const Ray ray = cam.screenRay(mx, my, io.DisplaySize.x, wh);
             float t = 0.0f;
             if (!intersectPlane(ray, m_movePlanePoint, cam.forward(), t)) break;
+            Vec3 by = ray.at(t) - m_movePlanePoint;
+            m_snapHit.reset();
+            // It slides in the view, so it snaps in the view: never towards or away from it.
+            if (m_uiState.snapMoveToPoints && (m_snapHit = gizmoSnap(m_snapMoving, m_snapTargets, by, gizmoProjector(), 12.0f, {}, cam.forward())))
+                by = m_snapHit->move;
             for (std::size_t k = 0; k < m_moveBodies.size(); ++k)
                 if (m_moveBodies[k] >= 0 && m_moveBodies[k] < static_cast<int>(m_doc.scene.bodies().size()))
-                    m_doc.scene.bodies()[static_cast<std::size_t>(m_moveBodies[k])].offset = m_moveStarts[k] + (ray.at(t) - m_movePlanePoint);
+                    m_doc.scene.bodies()[static_cast<std::size_t>(m_moveBodies[k])].offset = m_moveStarts[k] + by;
             m_doc.scene.touchBodies();
             break;
         }
@@ -1606,6 +1615,15 @@ void Application::handleViewportInput() {
             const bool snap = m_uiState.gizmoSnap || commandModifierHeld();
             const float step = !snap ? 0.0f : gizmoMode == GizmoMode::Move ? m_uiState.gizmoMoveStep : gizmoMode == GizmoMode::Rotate ? m_uiState.gizmoAngleStep : m_uiState.gizmoScaleStep;
             m_gizmoDelta = gizmoDrag(gizmoMode, m_gizmoHandle, m_gizmoPivot, cam.forward(), gizmoProjector(), m_gizmoFrom, {r.origin, r.dir, {mx, my}}, step, &m_gizmoDelta);
+            m_snapHit.reset();
+            if (gizmoMode == GizmoMode::Move && m_uiState.snapMoveToPoints) { // onto another body's corner, edge or face middle
+                const Vec3 e = m_gizmoHandle.axis == 0 ? Vec3{1, 0, 0} : m_gizmoHandle.axis == 1 ? Vec3{0, 1, 0} : Vec3{0, 0, 1};
+                const bool along = m_gizmoHandle.kind == GizmoHandle::Axis, inPlane = m_gizmoHandle.kind == GizmoHandle::Plane;
+                // The centre slides in the view: it snaps in the view too, never towards or away from it.
+                const Vec3 plane = inPlane ? e : along ? Vec3{} : cam.forward();
+                m_snapHit = gizmoSnap(m_snapMoving, m_snapTargets, m_gizmoDelta.move, gizmoProjector(), 12.0f, along ? e : Vec3{}, plane);
+                if (m_snapHit) m_gizmoDelta.move = m_snapHit->move;
+            }
             // The preview: the body as it began, done to as the drag says so far.
             for (std::size_t k = 0; k < m_gizmoBodies.size(); ++k) {
                 Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBodies[k])];
@@ -2113,6 +2131,7 @@ void Application::frame(float dt) {
     if (m_explodeT > 0 && m_doc.state.assembly.explode.trails) drawExplodeOverlay();
     if (m_leftDrag == DragMode::PushPull) drawPushPullOverlay();
     drawGizmo();
+    drawSnapMarker();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active()) || m_leftDrag == DragMode::BoxSelect))
         drawSculptOverlay(); // (and the selection box)
@@ -3004,6 +3023,37 @@ GizmoProject Application::gizmoProjector() const {
         if (!s) return std::nullopt;
         return Vec2{s->x, s->y};
     };
+}
+
+void Application::startSnap(const std::vector<int>& moving) {
+    // What moves: the points of the bodies dragged; what it can land on: every other visible
+    // body's (a few thousand of each at most, so a frame stays quick).
+    m_snapMoving.clear();
+    m_snapTargets.clear();
+    m_snapHit.reset();
+    const auto& bodies = m_doc.scene.bodies();
+    for (int b : moving)
+        if (b >= 0 && b < static_cast<int>(bodies.size())) {
+            const std::vector<Vec3> p = snapPoints(bodies[static_cast<std::size_t>(b)], 4000 / std::max<std::size_t>(1, moving.size()));
+            m_snapMoving.insert(m_snapMoving.end(), p.begin(), p.end());
+        }
+    for (std::size_t i = 0; i < bodies.size(); ++i) {
+        if (!bodies[i].visible || std::find(moving.begin(), moving.end(), static_cast<int>(i)) != moving.end()) continue;
+        const std::vector<Vec3> p = snapPoints(bodies[i], 20000);
+        m_snapTargets.insert(m_snapTargets.end(), p.begin(), p.end());
+        if (m_snapTargets.size() > 200000) break;
+    }
+}
+
+void Application::drawSnapMarker() {
+    if (!m_snapHit || (m_leftDrag != DragMode::Gizmo && m_leftDrag != DragMode::MoveBody)) return;
+    const auto at = gizmoProjector()(m_snapHit->to);
+    if (!at) return;
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    const ImU32 col = IM_COL32(80, 230, 255, 255);
+    fg->AddRect({at->x - 6, at->y - 6}, {at->x + 6, at->y + 6}, col, 0.0f, 0, 2.0f);
+    fg->AddCircleFilled({at->x, at->y}, 2.5f, col);
+    fg->AddText({at->x + 9, at->y - 18}, col, tr("snap"));
 }
 
 void Application::drawGizmo() {

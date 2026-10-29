@@ -320,6 +320,12 @@ private:
     float m_gizmoSize = 0;
     GizmoRay m_gizmoFrom{};
     GizmoDelta m_gizmoDelta{};
+    // Snapping a move to other bodies' points: what moves and what it can land on (taken as
+    // the drag starts), and the pair it snapped to this frame.
+    std::vector<Vec3> m_snapMoving, m_snapTargets;
+    std::optional<GizmoSnapHit> m_snapHit;
+    void startSnap(const std::vector<int>& moving);
+    void drawSnapMarker();
     void applyCutTool(ToolId tool, float x, float y);
     void applyWearableTool(ToolId tool, float x, float y);
     void finishCutDrag(ToolId tool, float x, float y);

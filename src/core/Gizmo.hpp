@@ -65,6 +65,20 @@ GizmoDelta gizmoDrag(GizmoMode mode, const GizmoHandle& handle, const Vec3& pivo
 std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::string& name, const Vec3& pivot);
 std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::vector<std::string>& names, const Vec3& pivot);
 
+// Snapping a move to other bodies: their corners, the middles of their faces and edges, the
+// ends of their edges. snapPoints gives a body's (model space; at most `cap`, the bounding
+// box's first), gizmoSnap the closest pair on screen within `reach` pixels: a point of what
+// moves (`from`, moved by `move`) and a point to put it on (`to`). `axis` (when not zero)
+// keeps the move along that line, `plane` (when not zero) in the plane square to it; the
+// result is the whole move that puts `from` there (or nothing: no pair close enough).
+std::vector<Vec3> snapPoints(const Body& b, std::size_t cap = 20000);
+struct GizmoSnapHit {
+    Vec3 move{}; // the move with the snap
+    Vec3 from{}, to{};
+};
+std::optional<GizmoSnapHit> gizmoSnap(const std::vector<Vec3>& moving, const std::vector<Vec3>& targets, const Vec3& move,
+                                      const GizmoProject& project, float reach = 12.0f, const Vec3& axis = {}, const Vec3& plane = {});
+
 // The transforms themselves (the commands and the live preview use these).
 // Turns a body by `degrees` about `axis` through `about` (model space): its orientation and
 // where its origin is. False (why) for a body that can't turn on its own.

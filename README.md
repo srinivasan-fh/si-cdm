@@ -710,6 +710,11 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
       turn and on through any number of turns.
     - In *Scale* mode, a cube stretches it along one axis, and the centre scales it evenly (it
       stays the primitive it was).
+    - *Points* (on by default): a move lands on another body's corner, the middle of one of its
+      edges or faces, or its centre, when a point of what moves comes within a few pixels of one
+      on screen; a square marks it. On an arrow or plane square it stays on that line or plane
+      (so two blocks meet face to face exactly); the dot and a drag on the body snap within the
+      view, never towards or away from you.
     - `V` again switches mode. *Snap* (or holding Ctrl) moves in steps (1 mm, 15°, ×0.1 by
       default). Esc cancels a drag.
     - Each drag is recorded as a command, so it is in the history and UNDO takes it back:

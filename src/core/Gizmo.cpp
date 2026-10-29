@@ -6,6 +6,9 @@
 #include "core/Scene.hpp"
 
 #include <algorithm>
+#include <array>
+#include <map>
+#include <set>
 #include <cmath>
 #include <cstdio>
 
@@ -226,6 +229,84 @@ std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::vector<
     if (std::fabs(d.scale.x - 1) < 1e-6f && std::fabs(d.scale.y - 1) < 1e-6f && std::fabs(d.scale.z - 1) < 1e-6f) return {};
     if (d.uniform) return "SCALE " + q + " " + num(d.scale.x) + " ABOUT " + mmVec(pivot);
     return "SCALE " + q + " " + vec(d.scale) + " ABOUT " + mmVec(pivot);
+}
+
+std::vector<Vec3> snapPoints(const Body& b, std::size_t cap) {
+    std::vector<Vec3> out;
+    const AABB box = b.bounds();
+    if (!box.valid()) return out;
+    // The bounding box: its corners, the middles of its faces, its centre.
+    const Vec3 lo = box.min, hi = box.max, c = box.center();
+    for (int k = 0; k < 8; ++k) out.push_back({(k & 1) ? hi.x : lo.x, (k & 2) ? hi.y : lo.y, (k & 4) ? hi.z : lo.z});
+    out.push_back(c);
+    out.push_back({lo.x, c.y, c.z}), out.push_back({hi.x, c.y, c.z});
+    out.push_back({c.x, lo.y, c.z}), out.push_back({c.x, hi.y, c.z});
+    out.push_back({c.x, c.y, lo.z}), out.push_back({c.x, c.y, hi.z});
+    // The shape's own edges (the ones drawn): their ends and middles, each end once.
+    const auto& e = b.mesh.edgeVertices;
+    auto key = [](const Vec3& p) {
+        const auto q = [](float v) { return static_cast<long long>(std::llround(static_cast<double>(v) * 1000.0)); };
+        return std::array<long long, 3>{q(p.x), q(p.y), q(p.z)};
+    };
+    std::set<std::array<long long, 3>> seen;
+    for (std::size_t i = 0; i + 1 < e.size() && out.size() + 2 <= cap; i += 2) {
+        const Vec3 a = e[i] + b.offset, z = e[i + 1] + b.offset;
+        for (const Vec3& p : {a, z})
+            if (seen.insert(key(p)).second) out.push_back(p);
+        out.push_back((a + z) * 0.5f);
+    }
+    return out;
+}
+
+std::optional<GizmoSnapHit> gizmoSnap(const std::vector<Vec3>& moving, const std::vector<Vec3>& targets, const Vec3& move,
+                                      const GizmoProject& project, float reach, const Vec3& axis, const Vec3& plane) {
+    if (moving.empty() || targets.empty() || !(reach > 0)) return std::nullopt;
+    // The targets on screen, in cells as wide as the reach: a moving point looks only in the
+    // nine cells round it.
+    struct Seen {
+        Vec2 at;
+        std::size_t i;
+    };
+    std::map<std::pair<long long, long long>, std::vector<Seen>> cells;
+    auto cell = [&](const Vec2& p) { return std::make_pair(static_cast<long long>(std::floor(p.x / reach)), static_cast<long long>(std::floor(p.y / reach))); };
+    for (std::size_t i = 0; i < targets.size(); ++i)
+        if (const auto p = project(targets[i])) cells[cell(*p)].push_back({*p, i});
+    // Closest on screen; between points that look the same (one behind the other), the one
+    // nearest in the model.
+    float best = reach + 1e9f;
+    std::optional<std::pair<std::size_t, std::size_t>> pick;
+    for (std::size_t m = 0; m < moving.size(); ++m) {
+        const auto p = project(moving[m] + move);
+        if (!p) continue;
+        const auto [cx, cy] = cell(*p);
+        for (long long dx = -1; dx <= 1; ++dx)
+            for (long long dy = -1; dy <= 1; ++dy) {
+                const auto it = cells.find({cx + dx, cy + dy});
+                if (it == cells.end()) continue;
+                for (const Seen& t : it->second) {
+                    const float px = std::sqrt((t.at.x - p->x) * (t.at.x - p->x) + (t.at.y - p->y) * (t.at.y - p->y));
+                    if (px > reach) continue;
+                    const float score = px + 0.01f * length(targets[t.i] - (moving[m] + move));
+                    if (score < best) best = score, pick = std::make_pair(m, t.i);
+                }
+            }
+    }
+    if (!pick) return std::nullopt;
+    GizmoSnapHit hit;
+    hit.from = moving[pick->first];
+    hit.to = targets[pick->second];
+    Vec3 want = hit.to - hit.from; // the move that puts one on the other
+    if (length(axis) > 0) { // only along the arrow: as far along it as gets closest
+        const Vec3 u = normalize(axis);
+        want = u * dot(want, u);
+        hit.to = hit.from + want;
+    } else if (length(plane) > 0) { // only in the plane
+        const Vec3 n = normalize(plane);
+        want = want - n * dot(want, n);
+        hit.to = hit.from + want;
+    }
+    hit.move = want;
+    return hit;
 }
 
 bool turnBody(Body& b, const Vec3& axis, float deg, const Vec3& about, std::string* why) {

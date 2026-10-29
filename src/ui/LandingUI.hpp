@@ -86,6 +86,7 @@ struct UiState {
     // these steps (mm, degrees, a factor).
     int gizmoMode = 0;
     bool gizmoSnap = false;
+    bool snapMoveToPoints = true; // moves land on other bodies' corners, edge and face middles near the mouse
     float gizmoMoveStep = 1.0f, gizmoAngleStep = 15.0f, gizmoScaleStep = 0.1f;
     // Typed in the Move tool's bar and applied to the selection: a move (mm), a turn, a scale.
     Vec3 typedMove{0, 0, 0};

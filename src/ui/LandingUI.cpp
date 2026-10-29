@@ -2530,6 +2530,11 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         ImGui::SameLine();
         ImGui::Checkbox(tr("Snap"), &st.gizmoSnap);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Move, turn and scale in steps (also while Ctrl is held)"));
+        if (st.gizmoMode == 0) {
+            ImGui::SameLine();
+            ImGui::Checkbox(tr("Points"), &st.snapMoveToPoints);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A move lands on another body's corner, edge or face middle when it comes near one on screen"));
+        }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         if (st.gizmoMode == 0) ImGui::DragFloat("##mstep", &st.gizmoMoveStep, 0.1f, 0.01f, 1000.0f, "%.2f mm");

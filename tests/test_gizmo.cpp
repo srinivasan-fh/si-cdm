@@ -163,3 +163,32 @@ TEST_CASE("gizmo: a turn goes on past half a turn, frame by frame, any number of
     REQUIRE(run(doc, "ROTATE \"Block 1\" BY 450 AXIS Z").ok);
     CHECK(std::fabs(named(doc, "Block 1")->rotation.z - 90) < 1e-3f);
 }
+
+TEST_CASE("gizmo: a move snaps to another body's corner, edge or face middle near the mouse") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10").ok);          // Block 1: x -5..5, y -5..5, z 0..10
+    REQUIRE(run(d, "BOX 10 10 10 @30,0,0").ok);  // Block 2: x 25..35
+    const Body& a = d.scene.bodies()[0];
+    const Body& b = d.scene.bodies()[1];
+    const std::vector<Vec3> from = snapPoints(a), to = snapPoints(b);
+    CHECK(from.size() >= 15); // box corners, face middles, centre, and the edges' ends and middles
+    // Dragged 19 mm along X: its right side is 1 mm (10 pixels) short of Block 2's left side.
+    auto hit = gizmoSnap(from, to, {19, 0, 0}, topView, 12.0f);
+    REQUIRE(hit.has_value());
+    CHECK(near(hit->move, {20, 0, 0}, 1e-4f)); // face to face, not up or down
+    CHECK(std::fabs(hit->to.x - 25) < 1e-4f);
+    // Too far (3 mm: 30 pixels): no snap.
+    CHECK(!gizmoSnap(from, to, {17, 0, 0}, topView, 12.0f));
+    // Along the X arrow only: the Y part of the gap is not taken.
+    hit = gizmoSnap(from, to, {19, 0.6f, 0}, topView, 12.0f, {1, 0, 0});
+    REQUIRE(hit.has_value());
+    CHECK(near(hit->move, {20, 0, 0}, 1e-4f));
+    // In the XY plane only: no Z.
+    hit = gizmoSnap(from, to, {19, 0.5f, 0}, topView, 12.0f, {}, {0, 0, 1});
+    REQUIRE(hit.has_value());
+    CHECK(std::fabs(hit->move.z) < 1e-6f);
+    CHECK(std::fabs(hit->move.x - 20) < 1e-4f);
+    // A sculpted body (no edges drawn) still has its box's points; the caps hold.
+    CHECK(snapPoints(b, 10).size() <= 16);
+    CHECK(gizmoSnap({}, to, {}, topView) == std::nullopt);
+}
