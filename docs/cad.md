@@ -15,6 +15,7 @@ from *Design* in the menu, the command line, or the `cad` MCP tool.
 | Sheet metal | `SHEETMETAL`: base plate, flanges, flat pattern |
 | Edge rounds and bevels | `EDGES`, `FILLET` and `CHAMFER` |
 | Direct editing | `FACE`: push / pull, move and delete faces of any solid, without a history |
+| Looking inside | `SECTION`: a live section view of the 3D window, with section areas |
 | Analysis | `MASSPROPS`, `MEASURE` and `FEA` (stress analysis) |
 | Design intent | `VAR`: global variables and equations; `CONFIG`: configurations and design tables |
 
@@ -844,6 +845,46 @@ FACE OFFSET AT 0,20,10 DISTANCE 10           a side out 10
 
 ![The block after the edits above](direct-edit.png)
 
+## Section view
+
+`SECTION` cuts the model open in the 3D window, so its inside shows. A plane takes away the
+material on one side, and where it cuts a solid the cut is filled and hatched, as on a
+drawing. Neighbouring parts are hatched in opposite directions. Nothing in the model
+changes, and the section is saved with the project.
+
+```text
+SECTION X | Y | Z | -X | -Y | -Z [AT d | AT x,y,z]   a plane square to an axis (default: through the middle)
+SECTION PLANE nx,ny,nz [AT x,y,z]                    any plane
+SECTION AT d | MOVE d | FLIP                         where it is; move it; keep the other side
+SECTION ON | OFF                                     show or hide it (the plane is kept)
+SECTION CAP ON | OFF                                 fill the cut faces, or see into the parts
+SECTION ONLY body... | ALL                           cut only some bodies
+SECTION                                              what it cuts: each body's section area and centroid
+```
+
+- The axis names the side taken away: `SECTION X AT 10` keeps x < 10, and `SECTION -X AT 10`
+  keeps x > 10.
+- Clicks go through what is taken away: they pick the cut faces and the parts behind them.
+- Only closed solids are filled. An open surface is cut, but shows no fill.
+- The report gives each solid's section area and centroid, a quick check of a wall or a rib:
+
+```text
+> BOX 60 40 20 @0,0,0
+> HOLE "Block 1" AT 10,0,20 DIR 0,0,-1 DIAMETER 10 THROUGH
+> FILLET "Block 1" RADIUS 5 EDGES NEAR 30,0,20
+> CYLINDER 6 40 @-15,0,20
+> SECTION Y AT 0
+Section view on y = 0, keeping y < 0
+  Block 1: section area 995 mm2, centroid (-2.163, 0, 9.952), 2 loops
+  Cylinder 2: section area 480 mm2, centroid (-15, 0, 40)
+```
+
+In the window, *View → Section View...* opens the Section window. It has the plane's axis,
+a slider that moves the plane through the model as it is dragged, *Flip*, the fill, and
+which bodies are cut. The section works with exploded views and simulations.
+
+![A filleted block and a pin cut open on the XZ plane, and the Section window](section-view.png)
+
 ## Mass properties
 
 ```text
@@ -1083,6 +1124,9 @@ The `cad` tool has these operations:
 - `pattern`, `mirror`, `edges`, `fillet`, `chamfer`;
 - `massprops`, `measure`;
 - `history`, `regen`, `history_edit`, `history_insert`, `history_delete`.
+
+The `section` tool sets the section view: `set` (with `axis` or `normal`, and `at` or `point`),
+`move`, `flip`, `on`, `off`, `cap`, `only`, `all` and `info`.
 
 The `face` tool edits faces directly: `info`, `offset`, `move` and `delete`, with `at` a
 point on the face (and `body`, `distance` or `by`).

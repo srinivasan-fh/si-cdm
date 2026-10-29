@@ -239,6 +239,9 @@ constexpr CommandSpec kCommands[] = {
      "Direct editing of any solid by its faces, picked by a point on them: OFFSET pushes or pulls a face (its neighbours follow; "
      "a round face makes a hole or boss larger or smaller), DELETE takes away a hole, boss, fillet or chamfer, MOVE moves a hole or boss, "
      "INFO says what the face is"},
+    {"SECTION", "CLIP XSECTION", "SECTION [X|Y|Z|-X|-Y|-Z|PLANE nx,ny,nz] [AT d | AT x,y,z] | MOVE d | FLIP | ON | OFF | CAP ON|OFF | ONLY body... | ALL",
+     "Live section view: a plane through the model takes away the material on one side in the 3D window, the cut faces filled and "
+     "hatched, so the inside shows (nothing in the model changes). It reports each body's section area and centroid"},
     {"EXPLODE", "EXPLODED", "EXPLODE [LIST] | AUTO [ALONG X|Y|Z|RADIAL] [FACTOR f] [part...] | ADD part... ALONG Z|DIR x,y,z DISTANCE d | EDIT n ... | DELETE n | CLEAR | SHOW | HIDE | TRAILS ON|OFF",
      "Exploded view: steps that move parts (bodies, component instances, sub-assemblies) apart along a direction, one after another. "
      "AUTO stacks the parts apart along an axis (or out from the middle); SHOW and HIDE explode and collapse the 3D view (the parts "
@@ -314,7 +317,7 @@ constexpr CommandSpec kCommands[] = {
     {"DISPLAY", "SHADE", "DISPLAY SHADED|EDGES|WIRE|HIDDEN", "Display mode of the 3D window"},
     {"GRID", "", "GRID [ON|OFF]", "Show or hide the grid"},
     {"SNAP", "", "SNAP [ON|OFF]", "Grid and point snapping for sketches"},
-    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data or appearance window"},
+    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE|SECTION", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data, appearance or section window"},
     // Session
     {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF]",
      "Units for typing and showing lengths (the model stays exact in mm)"},

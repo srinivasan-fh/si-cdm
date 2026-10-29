@@ -323,6 +323,9 @@ The *Design* menu (or the command line) adds part features to sketches and solid
   including inside corners, round rims and ball corners. Or use rolling-ball rounds of every edge.
 - **Direct editing:** push or pull a face of any solid, imported or not; holes and bosses made
   larger, moved or deleted; fillets and chamfers taken off (`FACE`, or the Push / Pull Face tool).
+- **Section view:** cut the model open in the 3D window with a plane, the cuts filled and
+  hatched, and drag the plane through it (`SECTION Y AT 0`, or *View → Section View...*). It
+  also gives each part's section area.
 - **Mass properties:** volume, mass, centre of mass and the inertia tensor.
 - **Measure:** distances between points and between bodies.
 

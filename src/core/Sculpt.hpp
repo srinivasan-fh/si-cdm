@@ -376,6 +376,9 @@ MeshData worldMesh(const Body& body);
 double meshVolume(const MeshData& m);
 // Edges not shared by exactly two triangles (0: closed, ready for 3D printing).
 std::size_t openEdgeCount(const MeshData& m);
+// Closed as a shape: points a hair apart (a seam's two sides) taken as one, every edge
+// shared by an even number of triangles. A section through it has an inside to fill.
+bool watertight(const MeshData& m);
 
 // Generalised winding number of a mesh (about 1 inside, 0 outside, robust for open
 // and overlapping shells): exact near the query point, clustered far from it.

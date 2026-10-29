@@ -480,7 +480,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (!b.attachedTo.empty()) jb.set("attached_to", b.attachedTo);
         if (!b.assembly.empty()) jb.set("assembly", b.assembly);
         if (b.linked()) { // a part file's body: the file relative to this one (the pair moves together)
-            const fs::path rel = fs::path(b.link.file).lexically_relative(projectDir); // empty: another drive
+            // (Between the real folders, links followed: the same whichever way the project's folder
+            // is spelled when it is opened.)
+            std::error_code ec1, ec2;
+            const fs::path realDir = fs::weakly_canonical(projectDir, ec1), realFile = fs::weakly_canonical(fs::path(b.link.file), ec2);
+            const fs::path rel = ec1 || ec2 ? fs::path(b.link.file).lexically_relative(projectDir) : realFile.lexically_relative(realDir); // empty: another drive
             const std::string file = rel.empty() ? fs::path(b.link.file).generic_string() : rel.generic_string();
             jb.set("link", Json::object()
                                .set("file", file)
@@ -749,6 +753,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     if (!state.cam.empty()) doc.set("cam", camToJson(state.cam));
     if (!state.lathe.empty()) doc.set("lathe", latheToJson(state.lathe));
     if (!state.assembly.empty()) doc.set("assembly", assemblyToJson(state.assembly));
+    if (!(state.section == SectionView{})) doc.set("section", sectionToJson(state.section));
     {
         const RenderSettings& r = state.render;
         doc.set("render", Json::object()
@@ -1004,7 +1009,16 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         b.assembly = jb["assembly"].asString();
         if (const Json& jl = jb["link"]; jl.isObject() && !jl["file"].asString().empty()) {
             fs::path f = jl["file"].asString();
-            if (f.is_relative()) f = fs::absolute(fs::path(path)).parent_path() / f;
+            if (f.is_relative()) {
+                // From the project's real folder (as links are written); a file written relative
+                // to the folder as it was spelled, through a link, from that.
+                const fs::path spelled = fs::absolute(fs::path(path)).parent_path();
+                std::error_code ec;
+                const fs::path real = fs::weakly_canonical(spelled, ec);
+                fs::path resolved = ((ec ? spelled : real) / f).lexically_normal();
+                if (std::error_code e2; !fs::exists(resolved, e2) && fs::exists((spelled / f).lexically_normal(), e2)) resolved = (spelled / f).lexically_normal();
+                f = resolved;
+            }
             b.link.file = f.lexically_normal().string();
             b.link.body = jl["body"].asString();
             b.link.partOffset = jsonVec3(jl["part_offset"]);
@@ -1179,6 +1193,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     if (const Json& cj = (*doc)["cam"]; cj.isObject()) camFromJson(cj, st.cam);
     if (const Json& lj = (*doc)["lathe"]; lj.isObject()) latheFromJson(lj, st.lathe);
     if (const Json& aj = (*doc)["assembly"]; aj.isObject()) assemblyFromJson(aj, st.assembly);
+    if (const Json& sj = (*doc)["section"]; sj.isObject()) st.section = sectionFromJson(sj);
     if (const Json& rj = (*doc)["render"]; rj.isObject()) {
         RenderSettings& r = st.render;
         const std::string env = rj["environment"].asString(r.environment);

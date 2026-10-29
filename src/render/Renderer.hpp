@@ -37,6 +37,15 @@ struct ViewportSettings {
     };
     std::vector<BodyTexture> textures;
     std::uint64_t textureRevision = 0;
+    // The live section view: what lies on the normal's side of the plane isn't drawn, and
+    // where the plane cuts a closed body the cut is filled and hatched.
+    struct Section {
+        bool on = false;
+        Vec3 normal{1, 0, 0};
+        float offset = 0; // the plane: dot(normal, p) == offset
+        bool cap = true;
+        std::vector<char> cut; // per body: cut by it (empty: every body)
+    } section;
 };
 
 // GPU-side copy of one body.
@@ -89,6 +98,7 @@ private:
     Shader m_grid;
     Shader m_sketchShader;
     Shader m_imageShader;
+    Shader m_capShader; // the filled, hatched cut of the section view
     std::vector<GLuint> m_imageTextures; // parallel to scene.images(); 0 = no pixels
     std::vector<std::pair<GLuint, GLuint>> m_bodyTextures; // parallel to settings.textures: colour, normal map
     std::uint64_t m_bodyTextureRevision = ~std::uint64_t{0};
@@ -118,6 +128,7 @@ private:
         GpuMesh full;
         std::size_t triangles = 0;
         std::size_t uses = 1; // bodies of this shape (pattern copies, repeated parts)
+        int closed = -1;      // a section through it can be filled (1) or not (0); -1: not yet known
         AABB box; // mesh coordinates
         std::chrono::steady_clock::time_point born;
         bool lodStarted = false;

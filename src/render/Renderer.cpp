@@ -1,5 +1,7 @@
 #include "render/Renderer.hpp"
 
+#include "core/Sculpt.hpp"
+
 #include <map>
 #include <tuple>
 #include <unordered_map>
@@ -50,6 +52,7 @@ uniform mat4 uViewProj;
 uniform mat4 uModel; // body offset and simulated motion (rigid)
 uniform vec3 uColor;
 uniform float uInstanced; // 1: many copies of one shape in one draw
+uniform vec4 uClip;       // the section plane: kept where dot(uClip, (p, 1)) >= 0
 out vec3 vWorldPos;
 out vec3 vNormal;
 out float vMask;
@@ -65,6 +68,7 @@ void main() {
     vColor = aColor;
     vTex = aUV;
     gl_Position = uViewProj * vec4(vWorldPos, 1.0);
+    gl_ClipDistance[0] = dot(uClip, vec4(vWorldPos, 1.0));
 }
 )";
 
@@ -215,7 +219,62 @@ layout(location = 5) in mat4 aInstModel; // drawn instanced: each copy's placeme
 uniform mat4 uViewProj;
 uniform mat4 uModel;
 uniform float uInstanced;
-void main() { gl_Position = uViewProj * (uInstanced > 0.5 ? aInstModel : uModel) * vec4(aPos, 1.0); }
+uniform vec4 uClip; // the section plane: kept where dot(uClip, (p, 1)) >= 0
+void main() {
+    vec4 w = (uInstanced > 0.5 ? aInstModel : uModel) * vec4(aPos, 1.0);
+    gl_Position = uViewProj * w;
+    gl_ClipDistance[0] = dot(uClip, w);
+}
+)";
+
+// The section view's cut: a square on the plane, drawn only where the stencil says a closed
+// body is cut, hatched like a drawing's section.
+constexpr const char* kCapVS = R"(#version 410 core
+uniform mat4 uViewProj;
+uniform vec3 uCorners[4];
+out vec3 vWorldPos;
+void main() {
+    const int idx[6] = int[](0, 1, 2, 0, 2, 3);
+    vWorldPos = uCorners[idx[gl_VertexID]];
+    gl_Position = uViewProj * vec4(vWorldPos, 1.0);
+}
+)";
+
+constexpr const char* kCapFS = R"(#version 410 core
+in vec3 vWorldPos;
+uniform vec3 uColor;
+uniform vec3 uNormal;   // the plane's
+uniform vec3 uU;        // across it
+uniform vec3 uV;
+uniform float uSpacing; // between hatch lines (mm)
+uniform float uAngle;   // of the hatch lines in the plane (radians)
+uniform vec3 uCamPos;
+uniform vec3 uCamDir;
+uniform float uOrtho;
+uniform float uHiddenLine;
+uniform vec3 uPaper;
+uniform vec3 uInk;
+uniform float uHighlight;
+out vec4 fragColor;
+void main() {
+    vec3 V = uOrtho > 0.5 ? -uCamDir : normalize(uCamPos - vWorldPos);
+    vec3 N = dot(uNormal, V) < 0.0 ? -uNormal : uNormal;
+    vec2 q = vec2(dot(vWorldPos, uU), dot(vWorldPos, uV));
+    float s = (q.x * cos(uAngle) + q.y * sin(uAngle)) / uSpacing;
+    float w = max(fwidth(s), 1e-4);
+    float d = abs(fract(s) - 0.5) * 2.0;     // 0 on a line, 1 half way between
+    float lw = max(0.10, w * 0.8);
+    float line = 1.0 - smoothstep(lw - w, lw + w, d);
+    if (uHiddenLine > 0.5) {
+        vec3 ink = dot(uPaper, vec3(0.30, 0.59, 0.11)) < 0.5 ? vec3(0.62, 0.65, 0.70) : uInk; // seen on dark paper too
+        fragColor = vec4(mix(uPaper, ink, line * 0.85), 1.0);
+        return;
+    }
+    vec3 base = mix(uColor * 0.85, vec3(0.30, 0.65, 1.00), uHighlight * 0.5);
+    vec3 c = base * (0.55 + 0.45 * max(dot(N, V), 0.0));
+    c = mix(c, c * 0.30, line);
+    fragColor = vec4(pow(c, vec3(1.0 / 1.1)), 1.0);
+}
 )";
 
 constexpr const char* kLinesFS = R"(#version 410 core
@@ -409,7 +468,8 @@ Renderer::Renderer()
       m_lines(kLinesVS, kLinesFS),
       m_grid(kGridVS, kGridFS),
       m_sketchShader(kSketchVS, kSketchFS),
-      m_imageShader(kImageVS, kImageFS) {
+      m_imageShader(kImageVS, kImageFS),
+      m_capShader(kCapVS, kCapFS) {
     glGenBuffers(1, &m_outlineVbo);
     glGenVertexArrays(1, &m_outlineVao);
     glBindVertexArray(m_outlineVao);
@@ -441,7 +501,7 @@ Renderer::~Renderer() {
 
 bool Renderer::valid() const noexcept {
     return m_background.valid() && m_mesh.valid() && m_lines.valid() && m_grid.valid() && m_sketchShader.valid() &&
-           m_imageShader.valid();
+           m_imageShader.valid() && m_capShader.valid();
 }
 
 namespace {
@@ -806,7 +866,8 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                       const std::vector<Mat4>* motion, const std::vector<const MeshData*>* overrides) {
     glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(s.backgroundBottom.x, s.backgroundBottom.y, s.backgroundBottom.z, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     glEnable(GL_MULTISAMPLE);
 
     drawBackground(s);
@@ -844,6 +905,11 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         const Mat4 at = translate(bodies[i].offset);
         return motion && i < motion->size() ? (*motion)[i] * at : at;
     };
+    // The section view: the bodies it cuts are clipped by its plane (kept where
+    // dot(clip, (p, 1)) >= 0); the others are drawn whole.
+    const ViewportSettings::Section& sec = s.section;
+    auto cutBody = [&](std::size_t i) { return sec.on && (sec.cut.empty() || (i < sec.cut.size() && sec.cut[i])); };
+    const Vec4 noClip{0, 0, 0, 1}, cutClip{-sec.normal.x, -sec.normal.y, -sec.normal.z, sec.offset};
     // What each body is drawn from: its streamed shape, or the coarsest copy whose cells
     // come out under a pixel at its size on screen, or its own shape.
     std::vector<const GpuMesh*> drawn(count, nullptr);
@@ -890,8 +956,12 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                 continue;
             }
         }
+        if (cutBody(i) && !m_streamed[i].vao && e.box.valid()) { // wholly on the side taken away
+            const Vec3 c = model(i).transformPoint((e.box.min + e.box.max) * 0.5f);
+            if (dot(sec.normal, c) - sec.offset > 0.5f * length(e.box.max - e.box.min)) continue;
+        }
         shown[i] = 1;
-        if (!m_streamed[i].vao && !e.lods.empty() && e.box.valid()) {
+        if (!m_streamed[i].vao && !e.lods.empty() && e.box.valid() && !cutBody(i)) { // (a cut body: its own closed shape)
             const Mat4 mdl = model(i);
             const Vec3 c = mdl.transformPoint((e.box.min + e.box.max) * 0.5f);
             const float R = 0.5f * length(e.box.max - e.box.min);
@@ -928,9 +998,9 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         return true;
     };
     // Grouped by shape and material (metallic, roughness: uniforms for the whole draw).
-    std::map<std::tuple<const GpuMesh*, float, float>, std::vector<std::size_t>> byShape;
+    std::map<std::tuple<const GpuMesh*, float, float, bool>, std::vector<std::size_t>> byShape;
     for (std::size_t i = 0; i < count; ++i)
-        if (plain(i)) byShape[{&gpu(i), bodies[i].material.metallic, bodies[i].material.roughness}].push_back(i);
+        if (plain(i)) byShape[{&gpu(i), bodies[i].material.metallic, bodies[i].material.roughness, cutBody(i)}].push_back(i);
     std::vector<char> instanced(count, 0);
     struct Batch {
         const GpuMesh* mesh;
@@ -938,6 +1008,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         GLuint edgeVao;
         GLsizei edgeCount;
         float metallic, roughness;
+        bool cut; // by the section plane
     };
     std::vector<Batch> batches;
     std::vector<float> inst; // 20 floats a copy: the placement (column by column), the colour
@@ -946,7 +1017,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         // The edges come from the full shape (a coarser copy keeps the full edges).
         const GpuMesh& full = m_entries[members[0]]->full;
         batches.push_back({std::get<0>(key), static_cast<GLsizei>(inst.size() / 20), static_cast<GLsizei>(members.size()), full.edgeVao, full.edgeVertexCount,
-                           std::get<1>(key), std::get<2>(key)});
+                           std::get<1>(key), std::get<2>(key), std::get<3>(key)});
         for (std::size_t i : members) {
             instanced[i] = 1;
             const Mat4 m = model(i);
@@ -985,6 +1056,81 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
 
     // Solid pass, pushed back slightly so edges win the depth test.
     const bool hidden = s.displayMode == DisplayMode::HiddenLine;
+    // The section's cut faces, one closed body at a time: the stencil counts the body's
+    // (clipped) surfaces behind each pixel of the plane, all of them; an odd count means the
+    // plane is inside the body there, and a square on the plane is drawn on just those pixels,
+    // at the plane's depth, clearing the count as it goes.
+    auto drawSectionCaps = [&]() {
+        AABB all; // what is cut, for one hatch spacing for all
+        for (std::size_t i = 0; i < count; ++i)
+            if (shown[i] && cutBody(i) && m_entries[i]->box.valid()) {
+                const Mat4 m = model(i);
+                all.expand(m.transformPoint(m_entries[i]->box.min));
+                all.expand(m.transformPoint(m_entries[i]->box.max));
+            }
+        if (!all.valid()) return;
+        const float spacing = std::max(length(all.max - all.min) / 70.0f, 0.05f);
+        const Vec3 n = normalize(sec.normal);
+        const Vec3 u = normalize(cross(n, std::fabs(n.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0}));
+        const Vec3 v = cross(n, u);
+        glEnable(GL_STENCIL_TEST);
+        for (std::size_t i = 0; i < count; ++i) {
+            MeshEntry& e = *m_entries[i];
+            if (!shown[i] || !cutBody(i) || m_streamed[i].vao || !e.box.valid()) continue;
+            const Mat4 mdl = model(i);
+            const Vec3 c = mdl.transformPoint((e.box.min + e.box.max) * 0.5f);
+            const float R = 0.51f * length(e.box.max - e.box.min);
+            const float dc = dot(n, c) - sec.offset;
+            if (std::fabs(dc) >= R) continue; // the plane misses it
+            if (e.closed < 0) e.closed = watertight(bodies[i].mesh) ? 1 : 0; // once a shape, when a section first needs it
+            if (!e.closed) continue;
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            glDepthMask(GL_FALSE);
+            glDisable(GL_DEPTH_TEST);
+            glStencilFunc(GL_ALWAYS, 0, 0xFF);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_INVERT);
+            m_lines.bind();
+            m_lines.set("uViewProj", vp);
+            m_lines.set("uInstanced", 0.0f);
+            m_lines.set("uModel", mdl);
+            m_lines.set("uClip", cutClip);
+            glBindVertexArray(e.full.vao);
+            glDrawElements(GL_TRIANGLES, e.full.indexCount, GL_UNSIGNED_INT, nullptr);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDepthMask(GL_TRUE);
+            glEnable(GL_DEPTH_TEST);
+            glDisable(GL_CLIP_DISTANCE0);
+            glStencilFunc(GL_NOTEQUAL, 0, 0xFF);
+            glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+            m_capShader.bind();
+            const Vec3 o = c - n * dc;
+            const Vec3 q[4] = {o - u * R - v * R, o + u * R - v * R, o + u * R + v * R, o - u * R + v * R};
+            float corners[12];
+            for (int k = 0; k < 4; ++k) corners[3 * k] = q[k].x, corners[3 * k + 1] = q[k].y, corners[3 * k + 2] = q[k].z;
+            glUniform3fv(glGetUniformLocation(m_capShader.program(), "uCorners"), 4, corners);
+            m_capShader.set("uViewProj", vp);
+            m_capShader.set("uColor", bodies[i].color);
+            m_capShader.set("uNormal", n);
+            m_capShader.set("uU", u);
+            m_capShader.set("uV", v);
+            m_capShader.set("uSpacing", spacing);
+            m_capShader.set("uAngle", i % 2 ? 2.35619449f : 0.78539816f); // neighbouring parts hatched the other way
+            m_capShader.set("uCamPos", cam.position());
+            m_capShader.set("uCamDir", cam.forward());
+            m_capShader.set("uOrtho", cam.projection() == Projection::Orthographic ? 1.0f : 0.0f);
+            m_capShader.set("uHiddenLine", hidden ? 1.0f : 0.0f);
+            m_capShader.set("uPaper", s.backgroundBottom);
+            m_capShader.set("uInk", s.edgeColor);
+            m_capShader.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
+            glBindVertexArray(m_emptyVao);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glEnable(GL_CLIP_DISTANCE0);
+        }
+        glStencilFunc(GL_ALWAYS, 0, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+        glDisable(GL_STENCIL_TEST);
+    };
+    if (sec.on) glEnable(GL_CLIP_DISTANCE0);
     if (s.displayMode != DisplayMode::Wireframe) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
@@ -1008,6 +1154,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             for (const Batch& b : batches) {
                 m_mesh.set("uMetallic", b.metallic);
                 m_mesh.set("uRoughness", b.roughness);
+                m_mesh.set("uClip", b.cut ? cutClip : noClip);
                 glBindVertexArray(b.mesh->vao);
                 bindInstances(b, true);
                 glDrawElementsInstanced(GL_TRIANGLES, b.mesh->indexCount, GL_UNSIGNED_INT, nullptr, b.count);
@@ -1022,6 +1169,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_mesh.set("uRoughness", bodies[i].material.roughness);
             m_mesh.set("uField", bodies[i].field.empty() ? 0.0f : bodies[i].field.rfind("zebra", 0) == 0 ? 2.0f : 1.0f);
             m_mesh.set("uModel", model(i));
+            m_mesh.set("uClip", cutBody(i) ? cutClip : noClip);
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
             const bool groups = s.showPolygroups && gpu(i).groupTex;
             m_mesh.set("uPolygroups", groups ? 1.0f : 0.0f);
@@ -1056,6 +1204,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             glDrawElements(GL_TRIANGLES, gpu(i).indexCount, GL_UNSIGNED_INT, nullptr);
         }
         glDisable(GL_POLYGON_OFFSET_FILL);
+        if (sec.on && sec.cap) drawSectionCaps();
     }
 
     // Edge / wireframe pass.
@@ -1068,6 +1217,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_lines.set("uColor", Vec4{s.edgeColor.x, s.edgeColor.y, s.edgeColor.z, 1.0f});
             for (const Batch& b : batches) {
                 if (!b.edgeVao) continue;
+                m_lines.set("uClip", b.cut ? cutClip : noClip);
                 glBindVertexArray(b.edgeVao);
                 bindInstances(b, false);
                 glDrawArraysInstanced(GL_LINES, 0, b.edgeCount, b.count);
@@ -1079,6 +1229,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             if (!shown[i] || (instanced[i] && !wire)) continue;
             const bool sel = static_cast<int>(i) == selectedBody;
             m_lines.set("uModel", model(i));
+            m_lines.set("uClip", cutBody(i) ? cutClip : noClip);
             if (wire) {
                 const Vec3 c = sel ? Vec3{0.35f, 0.70f, 1.0f} : bodies[i].color;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
@@ -1094,6 +1245,8 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             }
         }
     }
+
+    glDisable(GL_CLIP_DISTANCE0);
 
     if (s.showGrid) drawGrid(cam, s);
     drawImages(scene, cam, s, selectedImage);

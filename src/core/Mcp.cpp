@@ -692,6 +692,23 @@ Json McpServer::toolDefinitions() {
                             return c;
                         }(),
                         {"operation"}));
+        tools.push(tool("section",
+                        "Live section view of the 3D window: a plane through the model takes away the material on one side so the "
+                        "inside shows, the cut faces filled and hatched (the model doesn't change); reports each body's section area "
+                        "and centroid.",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "set | move | flip | on | off | cap | only | all | info"));
+                            c.set("axis", prop("string", "set: X, Y, Z, -X, -Y or -Z (the side taken away is the one the axis points to)"));
+                            c.set("normal", prop("array", "set: any plane's normal [nx, ny, nz] instead of axis"));
+                            c.set("at", prop("number", "set: where along the axis (mm; default the middle of the model)"));
+                            c.set("point", prop("array", "set: a point [x, y, z] on the plane instead of at"));
+                            c.set("distance", prop("number", "move: how far along the normal (mm; more is taken away)"));
+                            c.set("on", prop("boolean", "cap: fill the cut faces"));
+                            c.set("bodies", prop("array", "only: the bodies to cut"));
+                            return c;
+                        }(),
+                        {"operation"}));
         tools.push(tool("face",
                         "Direct editing: change a solid by its faces, whatever made it (a STEP import, a mesh, a feature), without "
                         "history. Offset (push / pull) a face along its normal, its neighbours following; make a hole or boss larger "
@@ -1313,6 +1330,39 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return textResult("operation is one of revolve, sweep, loft, pattern, mirror, edges, fillet, chamfer, massprops, measure, history, regen, "
                           "history_edit, history_insert, history_delete, constrain, dim, constraints, constraint_edit, constraint_delete, drag",
                           true);
+    }
+    if (name == "section") {
+        const std::string op = a["operation"].asString();
+        const auto vec = [&](const Json& v) {
+            std::string t;
+            for (std::size_t i = 0; i < 3; ++i) t += (i ? "," : "") + num(v.isArray() && i < v.size() ? v[i].asNumber() : 0.0);
+            return t;
+        };
+        if (op == "info") return runLine("SECTION");
+        if (op == "on") return runLine("SECTION ON");
+        if (op == "off") return runLine("SECTION OFF");
+        if (op == "flip") return runLine("SECTION FLIP");
+        if (op == "all") return runLine("SECTION ALL");
+        if (op == "cap") return runLine(std::string("SECTION CAP ") + (a["on"].isBool() && !a["on"].asBool() ? "OFF" : "ON"));
+        if (op == "move") {
+            if (!a["distance"].isNumber()) return textResult("move needs 'distance'", true);
+            return runLine("SECTION MOVE " + num(a["distance"].asNumber()));
+        }
+        if (op == "only") {
+            if (!a["bodies"].isArray() || a["bodies"].size() == 0) return textResult("only needs 'bodies'", true);
+            std::string line = "SECTION ONLY";
+            for (std::size_t i = 0; i < a["bodies"].size(); ++i) line += " " + quote(a["bodies"][i].asString());
+            return runLine(line);
+        }
+        if (op == "set") {
+            std::string line = "SECTION";
+            if (a["normal"].isArray()) line += " PLANE " + vec(a["normal"]);
+            else line += " " + (a["axis"].isString() ? a["axis"].asString() : std::string("X"));
+            if (a["point"].isArray()) line += " AT " + vec(a["point"]);
+            else if (a["at"].isNumber()) line += " AT " + num(a["at"].asNumber());
+            return runLine(line);
+        }
+        return textResult("section operations: set, move, flip, on, off, cap, only, all, info", true);
     }
     if (name == "face") {
         const std::string op = a["operation"].asString();

@@ -2828,6 +2828,80 @@ std::size_t openEdgeCount(const MeshData& m) {
     return open;
 }
 
+bool watertight(const MeshData& m) {
+    if (m.indices.size() < 12) return false;
+    // Points at the same place are one; edges used other than twice are open.
+    struct Key {
+        float x, y, z;
+        bool operator==(const Key& o) const { return x == o.x && y == o.y && z == o.z; }
+    };
+    struct KeyHash {
+        std::size_t operator()(const Key& k) const {
+            std::uint32_t a, b, c;
+            std::memcpy(&a, &k.x, 4);
+            std::memcpy(&b, &k.y, 4);
+            std::memcpy(&c, &k.z, 4);
+            return (static_cast<std::size_t>(a) * 73856093u) ^ (static_cast<std::size_t>(b) * 19349663u) ^ (static_cast<std::size_t>(c) * 83492791u);
+        }
+    };
+    std::unordered_map<Key, std::uint32_t, KeyHash> id;
+    id.reserve(m.vertices.size());
+    std::vector<std::uint32_t> r(m.vertices.size());
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+        const Vec3& p = m.vertices[i].position;
+        r[i] = id.try_emplace(Key{p.x + 0.0f, p.y + 0.0f, p.z + 0.0f}, static_cast<std::uint32_t>(id.size())).first->second;
+    }
+    // The edges each used an even number of times (a closed shape; four where two solids
+    // touch along an edge)? Those used oddly, else.
+    auto oddEdges = [&](std::vector<std::uint64_t>* odd) {
+        std::vector<std::uint64_t> keys;
+        keys.reserve(m.indices.size());
+        for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) {
+            const std::uint32_t t[3] = {r[m.indices[k]], r[m.indices[k + 1]], r[m.indices[k + 2]]};
+            if (t[0] == t[1] || t[1] == t[2] || t[2] == t[0]) continue; // collapsed: no surface
+            for (std::size_t e = 0; e < 3; ++e) keys.push_back(edgeKey(t[e], t[(e + 1) % 3]));
+        }
+        std::sort(keys.begin(), keys.end());
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < keys.size();) {
+            std::size_t j = i + 1;
+            while (j < keys.size() && keys[j] == keys[i]) ++j;
+            if ((j - i) % 2) {
+                ++n;
+                if (odd) odd->push_back(keys[i]);
+            }
+            i = j;
+        }
+        return keys.empty() ? std::size_t{1} : n;
+    };
+    std::vector<std::uint64_t> odd;
+    if (oddEdges(&odd) == 0) return true;
+    if (odd.size() > 20000) return false; // an open sheet, not a seam
+    // A seam: the points on those edges within a hair of one another become one.
+    const AABB box = m.bounds();
+    const double eps = 1e-5 * std::max(1e-3, static_cast<double>(length(box.max - box.min)));
+    std::vector<char> loose(id.size(), 0);
+    for (std::uint64_t k : odd) loose[static_cast<std::size_t>(k >> 32)] = loose[static_cast<std::size_t>(k & 0xffffffffu)] = 1;
+    std::vector<Vec3> where(id.size());
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) where[r[i]] = m.vertices[i].position;
+    std::map<std::tuple<long long, long long, long long>, std::uint32_t> cells;
+    std::vector<std::uint32_t> to(id.size());
+    for (std::uint32_t v = 0; v < to.size(); ++v) {
+        to[v] = v;
+        if (!loose[v]) continue;
+        const Vec3& p = where[v];
+        const long long ix = std::llround(p.x / eps), iy = std::llround(p.y / eps), iz = std::llround(p.z / eps);
+        bool found = false;
+        for (long long dx = -1; dx <= 1 && !found; ++dx)
+            for (long long dy = -1; dy <= 1 && !found; ++dy)
+                for (long long dz = -1; dz <= 1 && !found; ++dz)
+                    if (const auto it = cells.find({ix + dx, iy + dy, iz + dz}); it != cells.end()) to[v] = it->second, found = true;
+        if (!found) cells[{ix, iy, iz}] = v;
+    }
+    for (std::uint32_t& x : r) x = to[x];
+    return oddEdges(nullptr) == 0;
+}
+
 struct WindingNumber::Impl {
     explicit Impl(std::vector<DTri> t) : field(std::move(t)) {}
     WindingField field;

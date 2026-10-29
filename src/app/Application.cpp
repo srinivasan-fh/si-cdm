@@ -2,6 +2,7 @@
 #include "app/PenInput.hpp"
 #include "core/Components.hpp"
 #include "core/DirectEdit.hpp"
+#include "core/SectionView.hpp"
 #include "core/Translate.hpp"
 #include "app/OpenFiles.hpp"
 
@@ -73,6 +74,7 @@ bool Application::init() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // required on macOS
     glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_STENCIL_BITS, 8); // the section view's filled cuts
 #if defined(__APPLE__)
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
 #endif
@@ -389,7 +391,10 @@ void Application::setPlane(SketchPlane plane) {
 
 std::optional<RayHit> Application::pick(float x, float y) const {
     const ImGuiIO& io = ImGui::GetIO();
-    auto hit = m_doc.scene.raycast(camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y), bodyTransforms());
+    const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+    // Sectioned: what is taken away can't be picked, and a cut face can.
+    auto hit = m_uiState.mode == ViewMode::Drawing2D ? m_doc.scene.raycast(ray, bodyTransforms())
+                                                     : sectionRaycast(m_doc.scene, m_doc.state.section, ray, bodyTransforms());
     // Exploded: the point where the part really is (tools work on the assembly as it stands).
     if (hit && !simulating() && hit->body >= 0 && static_cast<std::size_t>(hit->body) < m_explodeShifts.size())
         hit->point = hit->point - m_explodeShifts[static_cast<std::size_t>(hit->body)].f();
@@ -1572,6 +1577,10 @@ void Application::handleCommands(const UiCommands& cmd) {
         m_cam3D.fitToBounds(viewBounds());
     }
     if (cmd.fit) camera().fitToBounds(viewBounds());
+    if (cmd.section) {
+        m_doc.state.section = *cmd.section;
+        m_framesToRender = std::max(m_framesToRender, 2);
+    }
     if (cmd.toggleProjection && !is2D)
         m_cam3D.setProjection(m_cam3D.projection() == Projection::Perspective ? Projection::Orthographic
                                                                                : Projection::Perspective);
@@ -1804,6 +1813,15 @@ void Application::frame(float dt) {
         m_aspect = static_cast<float>(fbw) / static_cast<float>(fbh);
         m_cam3D.setAspect(m_aspect);
         m_cam2D.setAspect(m_aspect);
+        {
+            // The section view (SECTION) of the 3D window.
+            const SectionView& sv = m_doc.state.section;
+            ViewportSettings::Section& v = m_vp3D.section;
+            v.on = sv.on, v.normal = sv.normal, v.offset = static_cast<float>(sv.offset), v.cap = sv.cap;
+            v.cut.clear();
+            if (!sv.only.empty())
+                for (const Body& b : m_doc.scene.bodies()) v.cut.push_back(sv.cuts(b) ? 1 : 0);
+        }
         m_renderer->render(m_doc.scene, camera(), viewport(), fbw, fbh, m_uiState.selectedBody, m_uiState.selectedCurve,
                            m_uiState.selectedImage, bodyTransforms(),
                            simulating() && !m_loopOverrides.empty() ? &m_loopOverrides
@@ -3444,6 +3462,7 @@ void Application::setPanelPage(int page) {
     if (page == 8 || page == 9) m_uiState.showRender = true, m_uiState.renderStart = m_uiState.renderStart || page == 9;
     else if (page == 10) m_uiState.showProduct = true;
     else if (page == 11) m_uiState.showAppearance = true;
+    else if (page == 12) m_uiState.showSection = true;
     else if (page == 7) m_uiState.showLicence = true;
     else if (page == 6) m_uiState.showPreferences = true;
     else if (page == 5) m_uiState.showHelp = true;

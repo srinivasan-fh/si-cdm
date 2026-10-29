@@ -144,7 +144,8 @@ TEST_CASE("components: a part file inserted twice, moved, turned, updated when t
     Document asm3;
     REQUIRE(run(asm3, "OPEN " + q(packed / "frame.sicdm")).ok);
     REQUIRE(named(asm3, "spacer-1") != nullptr);
-    CHECK(fs::path(named(asm3, "spacer-1")->link.file).parent_path() == fs::absolute(packed).lexically_normal());
+    std::error_code ec;
+    CHECK(fs::equivalent(fs::path(named(asm3, "spacer-1")->link.file).parent_path(), packed, ec)); // (the folder however it is spelled)
 
     // A missing file: listed as such, and the bodies keep their last shape.
     fs::remove(packed / "spacer.sicdm");

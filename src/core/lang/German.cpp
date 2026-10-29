@@ -969,7 +969,21 @@ const char* const kGerman[][2] = {
     {"Drag a face along its normal (Shift: whole millimetres). FACE OFFSET body AT x,y,z DISTANCE d types it", "Eine Fläche entlang ihrer Normalen ziehen (Umschalt: ganze Millimeter). FACE OFFSET Körper AT x,y,z DISTANCE d tippt es"},
     {"Drag a face of any solid along its normal: a flat face moves and its neighbours follow; a hole or boss gets larger or smaller. Shift: whole millimetres.", "Eine Fläche eines beliebigen Volumenkörpers entlang ihrer Normalen ziehen: eine ebene Fläche verschiebt sich und ihre Nachbarn folgen; eine Bohrung oder ein Zapfen wird größer oder kleiner. Umschalt: ganze Millimeter."},
     {"Push / Pull Face", "Fläche drücken / ziehen"},
+    // Section view
+    {"Cut every body", "Alle Körper schneiden"},
+    {"Cut the model open", "Modell aufschneiden"},
+    {"Cut the model open with a plane to see inside (the model doesn't change)", "Das Modell mit einer Ebene aufschneiden, um hineinzusehen (das Modell ändert sich nicht)"},
+    {"Each body's section area and centroid, in the command log", "Schnittfläche und Schwerpunkt jedes Körpers, im Befehlsprotokoll"},
+    {"Fill the cut faces", "Schnittflächen füllen"},
+    {"Keep the other side", "Die andere Seite behalten"},
+    {"Nothing to cut", "Nichts zu schneiden"},
+    {"Only the selected", "Nur den ausgewählten"},
+    {"Plane square to", "Ebene senkrecht zu"},
+    {"Position", "Position"},
+    {"Section Areas", "Schnittflächen"},
+    {"Section View...", "Schnittansicht..."},
 };
+
 
 
 const std::size_t kGermanCount = sizeof(kGerman) / sizeof(kGerman[0]);

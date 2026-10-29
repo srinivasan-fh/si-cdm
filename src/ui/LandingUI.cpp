@@ -374,6 +374,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showRender) drawRenderWindow(cmd, st);
     if (st.showProduct) drawProductWindow(cmd, st);
     if (st.showAppearance) drawAppearanceWindow(cmd, st);
+    if (st.showSection && st.project && st.mode != ViewMode::Drawing2D) drawSectionWindow(cmd, st, scene);
     if (st.showLicence) drawLicenceWindow(cmd, st);
     if (st.showCamMachine && st.cam) drawCamMachineWindow(cmd, st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
@@ -388,6 +389,69 @@ std::string fmtNumber(float v) {
     return b;
 }
 } // namespace
+
+// The live section view: which plane, where along it (dragged live), which side, the cut
+// faces filled or not, which bodies.
+void LandingUI::drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene) {
+    if (!ImGui::Begin(tr("Section"), &st.showSection, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+    const SectionView& sv = st.project->section;
+    bool on = sv.on;
+    if (ImGui::Checkbox(tr("Cut the model open"), &on)) cmd.commands.push_back(on ? "SECTION ON" : "SECTION OFF");
+    // The plane: square to X, Y or Z (or any, set by command).
+    const Vec3 n = sv.normal;
+    const int axis = std::fabs(std::fabs(n.x) - 1) < 1e-6f ? 0 : std::fabs(std::fabs(n.y) - 1) < 1e-6f ? 1 : std::fabs(std::fabs(n.z) - 1) < 1e-6f ? 2 : -1;
+    const float sign = axis >= 0 && n.x + n.y + n.z < 0 ? -1.0f : 1.0f;
+    ImGui::TextUnformatted(tr("Plane square to"));
+    static const char* const kAxes[] = {"X", "Y", "Z"};
+    for (int a = 0; a < 3; ++a) {
+        ImGui::SameLine();
+        if (ImGui::RadioButton(kAxes[a], axis == a)) cmd.commands.push_back(std::string("SECTION ") + (sign < 0 ? "-" : "") + kAxes[a]);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(tr("Flip"))) cmd.commands.push_back("SECTION FLIP");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Keep the other side"));
+    // Where: from one end of what is shown to the other, along the plane's normal.
+    double lo = 0, hi = 0;
+    bool any = false;
+    for (const Body& b : scene.bodies()) {
+        if (!b.visible || b.mesh.indices.empty()) continue;
+        const AABB box = b.bounds();
+        for (int k = 0; k < 8; ++k) {
+            const Vec3 c{k & 1 ? box.max.x : box.min.x, k & 2 ? box.max.y : box.min.y, k & 4 ? box.max.z : box.min.z};
+            const double d = (axis >= 0 ? static_cast<double>(dot(n, c)) * sign : static_cast<double>(dot(n, c)));
+            lo = any ? std::min(lo, d) : d, hi = any ? std::max(hi, d) : d;
+            any = true;
+        }
+    }
+    float at = static_cast<float>(axis >= 0 ? sv.offset * sign : sv.offset);
+    if (any) {
+        const float margin = static_cast<float>(hi - lo) * 0.02f + 0.01f;
+        ImGui::SetNextItemWidth(260);
+        const std::string label = axis >= 0 ? std::string(tr("Position")) + " (" + kAxes[axis] + ", mm)" : std::string(tr("Position")) + " (mm)";
+        if (ImGui::SliderFloat(label.c_str(), &at, static_cast<float>(lo) - margin, static_cast<float>(hi) + margin, "%.2f")) {
+            SectionView next = sv;
+            next.on = true;
+            next.offset = axis >= 0 ? static_cast<double>(at) * sign : static_cast<double>(at);
+            cmd.section = next;
+        }
+    } else {
+        ImGui::TextDisabled("%s", tr("Nothing to cut"));
+    }
+    bool cap = sv.cap;
+    if (ImGui::Checkbox(tr("Fill the cut faces"), &cap)) cmd.commands.push_back(cap ? "SECTION CAP ON" : "SECTION CAP OFF");
+    // Which bodies.
+    const bool body = st.selectedBody >= 0 && static_cast<std::size_t>(st.selectedBody) < scene.bodies().size();
+    if (ImGui::RadioButton(tr("Cut every body"), sv.only.empty())) cmd.commands.push_back("SECTION ALL");
+    ImGui::SameLine();
+    if (ImGui::RadioButton(tr("Only the selected"), !sv.only.empty()) && body)
+        cmd.commands.push_back("SECTION ONLY \"" + scene.bodies()[static_cast<std::size_t>(st.selectedBody)].name + "\"");
+    if (ImGui::Button(tr("Section Areas"))) cmd.commands.push_back("SECTION");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Each body's section area and centroid, in the command log"));
+    ImGui::End();
+}
 
 void LandingUI::drawRenderWindow(UiCommands& cmd, UiState& st) {
     if (!ImGui::Begin(tr("Render"), &st.showRender, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -579,6 +643,11 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (!is2D && ImGui::MenuItem(tr("Appearance..."))) st.showAppearance = true;
         if (!is2D && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The selected body's material: metals, colours, finishes"));
         if (!is2D && ImGui::MenuItem(tr("Render..."))) st.showRender = true;
+        if (!is2D && ImGui::MenuItem(tr("Section View..."), nullptr, st.project && st.project->section.on)) {
+            st.showSection = true;
+            if (st.project && !st.project->section.on) cmd.commands.push_back("SECTION ON");
+        }
+        if (!is2D && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Cut the model open with a plane to see inside (the model doesn't change)"));
         if (!is2D) {
             if (ImGui::MenuItem(tr("Orthographic"), "P", cam.projection() == Projection::Orthographic))
                 cmd.toggleProjection = true;

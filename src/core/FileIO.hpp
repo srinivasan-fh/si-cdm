@@ -12,6 +12,7 @@
 #include "core/Lathe.hpp"
 #include "core/Pdm.hpp"
 #include "core/Assembly.hpp"
+#include "core/SectionView.hpp"
 #include "core/Drawing.hpp"
 #include "core/Render.hpp"
 #include "core/Scene.hpp"
@@ -60,6 +61,7 @@ struct ProjectState {
     Drawing drawing;          // the drawing sheet: views, dimensions, title block
     AssemblyState assembly;   // mates between the parts
     RenderSettings render;    // RENDER: environment, lights, size, samples
+    SectionView section;      // SECTION: the live section view of the 3D window
     ProductData product;      // properties, the revision and its state, the vault item (PROPERTY, REVISION, VAULT)
     std::vector<HistoryStep> history;     // the feature history
     std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)

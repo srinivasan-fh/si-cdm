@@ -20,6 +20,7 @@
 #include "core/Collide.hpp"
 #include "core/ComponentCommand.hpp"
 #include "core/FaceCommand.hpp"
+#include "core/SectionView.hpp"
 #include "core/Components.hpp"
 #include "core/DrawingCommand.hpp"
 #include "core/PdmCommand.hpp"
@@ -1489,6 +1490,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.state.config.clear();
         doc.state.product = ProductData{};
         doc.state.render = RenderSettings{};
+        doc.state.section = SectionView{};
         if (doc.state.plane == SketchPlane::Custom) doc.state.plane = SketchPlane::Top;
         if (const auto u = parseUnitName(preferences().units)) doc.state.units.unit = *u; // Preferences: units for new projects
         out.documentReplaced = true;
@@ -2660,6 +2662,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "SHEET") return runSheetCommand(doc, a, pc.quoted, view);
     if (cmd == "MATE" || cmd == "ASSEMBLY") return runAssemblyCommand(doc, cmd, a, pc.quoted);
     if (cmd == "EXPLODE") return runExplodeCommand(doc, a, pc.quoted);
+    if (cmd == "SECTION") return runSectionCommand(doc, a, pc.quoted);
     if (cmd == "FACE") return runFaceCommand(doc, a, pc.quoted);
     if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
     if (cmd == "COMPONENT") {
@@ -4918,12 +4921,12 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {
-        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE: open that page or window.
+        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION: open that page or window.
         const std::string page = toUpper(a[0]);
         const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5
                     : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7
                     : page == "PRODUCT" || page == "PDM" || page == "VAULT" ? 10
-                    : page == "APPEARANCE" || page == "MATERIALS" ? 11 : -1;
+                    : page == "APPEARANCE" || page == "MATERIALS" ? 11 : page == "SECTION" ? 12 : -1;
         if (p >= 0) {
             if (auto o = needView(view, "PANEL"); !o.ok) return o;
             view->setPanelPage(p);

@@ -8,6 +8,7 @@
 #include "core/Lathe.hpp"
 #include "core/Pdm.hpp"
 #include "core/Scene.hpp"
+#include "core/SectionView.hpp"
 #include "render/Renderer.hpp"
 #include "ui/FileDialog.hpp"
 #include "ui/Toolbox.hpp"
@@ -63,6 +64,7 @@ struct UiState {
     bool showRender = false;
     bool showProduct = false; // the Product data window: properties, revision, vault
     bool showAppearance = false; // the Appearance window: the selected body's material from swatches
+    bool showSection = false;    // the Section window: the live section view's plane
     bool renderStart = false, renderCancel = false, renderRunning = false;
     float renderProgress = 0;
     unsigned renderTexture = 0;
@@ -198,6 +200,7 @@ struct UiCommands {
     std::optional<int> switchFile; // file tab id; applied first
     std::optional<int> closeFile;  // file tab id; applied last, only if saved unless closeDiscard
     bool closeDiscard = false;
+    std::optional<SectionView> section; // the section plane dragged in the Section window (set as it moves)
 };
 
 // Workbench chrome around the canvas: menu bar, options bar (tool options and
@@ -216,6 +219,7 @@ public:
 private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawRenderWindow(UiCommands& cmd, UiState& st);
+    void drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawProductWindow(UiCommands& cmd, UiState& st); // ProductWindow.cpp
     void drawAppearanceWindow(UiCommands& cmd, UiState& st); // AppearanceWindow.cpp
     void drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
