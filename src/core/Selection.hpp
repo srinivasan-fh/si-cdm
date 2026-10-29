@@ -1,7 +1,7 @@
 #pragma once
 
 // More than one body selected: the selected body (Document::selectedBody, the active one the
-// gizmo and single-body commands act on) and others with it, picked by Shift / Ctrl+click, a
+// gizmo and single-body commands act on) and others with it, picked by Ctrl/Cmd+click, a
 // box, or SELECT ADD. The others are kept by name, so deleting or adding bodies doesn't
 // mix them up, and only while the active body is still the one they were picked with:
 // anything that selects another body on its own (a new body, a click) drops them.
@@ -12,6 +12,7 @@
 namespace sicdm {
 
 class Scene;
+struct Body;
 
 struct BodySelection {
     std::vector<std::string> others; // besides the active body
@@ -25,7 +26,14 @@ std::vector<int> selectedBodies(const Scene& scene, int active, const BodySelect
 void selectBodies(const Scene& scene, int& active, BodySelection& selection, const std::vector<int>& bodies);
 
 // Adds a body (it becomes the active one), or takes it out when it was selected
-// (Shift / Ctrl+click). Hidden bodies can be selected (from the model tree).
+// (Ctrl/Cmd+click). Hidden bodies can be selected (from the model tree).
 void toggleBody(const Scene& scene, int& active, BodySelection& selection, int body);
+
+// Bodies copied (COPY, CUT), for PASTE: one for the whole program, so they can be pasted
+// into another open file.
+std::vector<Body>& bodyClipboard();
+
+// A name not used in the scene (nor in `taken`): `base`, else "base copy", "base copy 2"...
+std::string copyName(const Scene& scene, const std::string& base, const std::vector<std::string>& taken = {}, bool keepIfFree = false);
 
 } // namespace sicdm

@@ -8,6 +8,7 @@
 #include "core/Selection.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 using namespace sicdm;
 
@@ -130,4 +131,79 @@ TEST_CASE("MCP delete: one name or several") {
     CHECK(!call(R"({"name":"Block 3"})")["isError"].asBool());
     CHECK(d.scene.bodies().size() == 1);
     CHECK(call(R"({})")["isError"].asBool());
+    const auto dup = Json::parse(server.handle(R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"duplicate","arguments":{"names":["Block 4"],"offset":[0,0,20]}}})"));
+    REQUIRE(dup.has_value());
+    CHECK(!(*dup)["result"]["isError"].asBool());
+    CHECK(bodyNamed(d, "Block 4 copy") >= 0);
+}
+
+TEST_CASE("DUPLICATE: copies beside the originals, named, selected, undone in one step, replayed") {
+    Document d;
+    fourBlocks(d);
+    REQUIRE(run(d, "SELECT \"Block 1\" \"Block 2\"").ok);
+    const auto r = run(d, "DUPLICATE");
+    REQUIRE(r.ok);
+    REQUIRE(d.scene.bodies().size() == 6);
+    const int c1 = bodyNamed(d, "Block 1 copy"), c2 = bodyNamed(d, "Block 2 copy");
+    REQUIRE(c1 >= 0);
+    REQUIRE(c2 >= 0);
+    // Beside them: the pair's width (40 mm) and a tenth more along +X.
+    const Vec3 shift = d.scene.bodies()[static_cast<std::size_t>(c1)].bounds().min - d.scene.bodies()[0].bounds().min;
+    CHECK(std::fabs(shift.x - 44.0f) < 1e-3f);
+    CHECK(std::fabs(shift.y) < 1e-6f);
+    CHECK((selectedNames(d) == std::vector<std::string>{"Block 1 copy", "Block 2 copy"}));
+    // Again: new names, not the same ones.
+    REQUIRE(run(d, "DUPLICATE \"Block 1\" OFFSET 0,0,50").ok);
+    CHECK(bodyNamed(d, "Block 1 copy 2") >= 0);
+    CHECK(copyName(d.scene, "Block 1 copy") == "Block 1 copy 3"); // a copy of a copy: numbered from the original
+    CHECK(copyName(d.scene, "Bracket copy holder") == "Bracket copy holder copy");
+    CHECK(std::fabs(d.scene.bodies().back().bounds().min.z - 50.0f) < 1e-3f);
+    REQUIRE(run(d, "UNDO").ok);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(d.scene.bodies().size() == 4);
+    // The copies are separate: moving one leaves the original.
+    REQUIRE(run(d, "DUPLICATE \"Block 3\"").ok);
+    REQUIRE(run(d, "MOVE 0,100,0 \"Block 3 copy\"").ok);
+    CHECK(std::fabs(d.scene.bodies()[2].bounds().center().y) < 1e-3f);
+    // REGEN replays it by name.
+    REQUIRE(run(d, "REGEN").ok);
+    CHECK(bodyNamed(d, "Block 3 copy") >= 0);
+    CHECK(!run(d, "DUPLICATE \"Nope\"").ok);
+    REQUIRE(run(d, "SELECT NONE").ok);
+    CHECK(!run(d, "DUPLICATE").ok); // nothing selected
+}
+
+TEST_CASE("COPY, CUT, PASTE: in place in another file, beside the originals in the same one") {
+    Document a, b;
+    fourBlocks(a);
+    REQUIRE(run(a, "MATERIAL \"Block 2\" Gold").ok);
+    REQUIRE(run(a, "COPY \"Block 2\" \"Block 3\"").ok);
+    // Another file: same names, same place.
+    REQUIRE(run(b, "PASTE").ok);
+    REQUIRE(b.scene.bodies().size() == 2);
+    CHECK(b.scene.bodies()[0].name == "Block 2");
+    CHECK(b.scene.bodies()[0].material.preset == "gold");
+    CHECK(length(b.scene.bodies()[0].bounds().center() - a.scene.bodies()[1].bounds().center()) < 1e-4f);
+    CHECK(b.selectedBodies().size() == 2);
+    // The same file: names of their own, beside them.
+    REQUIRE(run(a, "PASTE").ok);
+    CHECK(bodyNamed(a, "Block 2 copy") >= 0);
+    CHECK(a.scene.bodies().back().bounds().min.x > a.scene.bodies()[2].bounds().max.x);
+    REQUIRE(run(a, "PASTE OFFSET 0,0,100").ok);
+    CHECK(std::fabs(a.scene.bodies().back().bounds().min.z - 100.0f) < 1e-3f);
+    // CUT: taken out (one undo puts them back), and pasted back in place.
+    Document c;
+    fourBlocks(c);
+    REQUIRE(run(c, "SELECT \"Block 1\" \"Block 4\"").ok);
+    REQUIRE(run(c, "CUT").ok);
+    CHECK(c.scene.bodies().size() == 2);
+    CHECK(c.state.history.back().line == "ERASE \"Block 1\" \"Block 4\"");
+    REQUIRE(run(c, "PASTE").ok);
+    CHECK(c.scene.bodies().size() == 4);
+    CHECK(bodyNamed(c, "Block 1") >= 0); // the name was free again
+    REQUIRE(run(c, "UNDO").ok);
+    REQUIRE(run(c, "UNDO").ok);
+    CHECK(c.scene.bodies().size() == 4);
+    CHECK(!run(c, "PASTE \"Block 1\"").ok);
+    CHECK(!run(c, "DUPLICATE OFFSET 1,2").ok);
 }

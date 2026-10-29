@@ -933,5 +933,10 @@ Details: [docs/plugins.md](docs/plugins.md).
 - `SELECT "A" "B"`, `SELECT ADD "C"`, `SELECT REMOVE "A"`, `SELECT ALL`, `SELECT INVERT`,
   `SELECT NONE`; `SELECT` alone says what is selected
 - Delete: remove the selected bodies (one undo brings them all back), sketch curve or image
+- `Ctrl/⌘ C`, `X`, `V`: copy, cut and paste the selected bodies, in this file or another open one
+  (`COPY`, `CUT`, `PASTE [OFFSET x,y,z]`). Pasted into another file they keep their names and
+  places; pasted where the originals are, they go beside them as "... copy".
+- `Ctrl/⌘ D`: duplicate the selected bodies beside them (`DUPLICATE [name...] [OFFSET x,y,z]`).
+  The copies are selected, ready to move. These are all in the **Edit** menu too.
 - `F`: fit to view
 - `1` / `3` / `7` / `0`: Front / Right / Top / Isometric (in 2D: pick the drawing plane)

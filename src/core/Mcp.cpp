@@ -219,6 +219,16 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("names", [] {
+            Json j = Json::object();
+            j.set("type", "array").set("items", Json::object().set("type", "string")).set("description", "The bodies to copy");
+            return j;
+        }());
+        p.set("offset", numberArray(3, "Move the copies by [dx,dy,dz] mm (default: beside the originals along +X)"));
+        tools.push(tool("duplicate", "Copies of bodies, with names of their own (\"... copy\"); the copies become the selection.", p, {"names"}));
+    }
+    {
+        Json p = Json::object();
         p.set("window", enumProp({"2d", "3d", "simulation"}, "2D Drawing, 3D Model or Simulation window"));
         p.set("plane", enumProp({"top", "front", "right"}, "Sketch / drawing plane"));
         p.set("view", enumProp({"top", "bottom", "front", "back", "left", "right", "iso"}, "Standard view (3D)"));
@@ -1367,6 +1377,14 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                 return textResult("Updated image " + img.name, false);
             }
         return textResult("Nothing named '" + target + "' (see get_scene)", true);
+    }
+    if (name == "duplicate") {
+        std::string line = "DUPLICATE";
+        for (std::size_t i = 0; i < a["names"].size(); ++i) line += " " + quote(a["names"][i].asString());
+        if (line == "DUPLICATE") return textResult("Give 'names'", true);
+        if (a["offset"].isArray() && a["offset"].size() == 3)
+            line += " OFFSET " + num(a["offset"][0].asNumber()) + "," + num(a["offset"][1].asNumber()) + "," + num(a["offset"][2].asNumber());
+        return runLine(line);
     }
     if (name == "delete") { // one name, or several in one step (one undo)
         std::string line = "ERASE";

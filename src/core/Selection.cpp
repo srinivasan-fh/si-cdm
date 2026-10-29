@@ -49,4 +49,29 @@ void toggleBody(const Scene& scene, int& active, BodySelection& sel, int body) {
     selectBodies(scene, active, sel, now);
 }
 
+std::vector<Body>& bodyClipboard() {
+    static std::vector<Body> clipboard;
+    return clipboard;
+}
+
+std::string copyName(const Scene& scene, const std::string& base, const std::vector<std::string>& taken, bool keepIfFree) {
+    auto used = [&](const std::string& n) {
+        if (std::find(taken.begin(), taken.end(), n) != taken.end()) return true;
+        for (const Body& b : scene.bodies())
+            if (b.name == n) return true;
+        return false;
+    };
+    if (keepIfFree && !used(base)) return base;
+    // A copy of a copy is numbered from the original: "Block copy 2", not "Block copy copy".
+    std::string root = base;
+    if (const std::size_t at = root.rfind(" copy"); at != std::string::npos && at > 0) {
+        const std::string tail = root.substr(at + 5);
+        if (tail.empty() || (tail.size() > 1 && tail[0] == ' ' && std::all_of(tail.begin() + 1, tail.end(), [](char c) { return c >= '0' && c <= '9'; })))
+            root = root.substr(0, at);
+    }
+    if (!used(root + " copy")) return root + " copy";
+    for (int k = 2;; ++k)
+        if (const std::string n = root + " copy " + std::to_string(k); !used(n)) return n;
+}
+
 } // namespace sicdm

@@ -1236,6 +1236,22 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem(tr("Quit"), "Ctrl+Q")) cmd.quit = true;
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu(tr("Edit"))) {
+        const bool any = m_menuScene && !selectedBodies(*m_menuScene, st.selectedBody, st.bodySelection).empty();
+        if (ImGui::MenuItem(tr("Undo"), "Ctrl+Z")) cmd.commands.push_back("UNDO");
+        if (ImGui::MenuItem(tr("Redo"), "Ctrl+Shift+Z")) cmd.commands.push_back("REDO");
+        ImGui::Separator();
+        if (ImGui::MenuItem(tr("Cut"), "Ctrl+X", false, any)) cmd.commands.push_back("CUT");
+        if (ImGui::MenuItem(tr("Copy"), "Ctrl+C", false, any)) cmd.commands.push_back("COPY");
+        if (ImGui::MenuItem(tr("Paste"), "Ctrl+V", false, !bodyClipboard().empty())) cmd.commands.push_back("PASTE");
+        if (ImGui::MenuItem(tr("Duplicate"), "Ctrl+D", false, any)) cmd.commands.push_back("DUPLICATE");
+        if (ImGui::MenuItem(tr("Delete"), "Del", false, any)) cmd.commands.push_back("ERASE");
+        ImGui::Separator();
+        if (ImGui::MenuItem(tr("Select All"), "Ctrl+A")) cmd.commands.push_back("SELECT ALL");
+        if (ImGui::MenuItem(tr("Invert Selection"))) cmd.commands.push_back("SELECT INVERT");
+        if (ImGui::MenuItem(tr("Select None"), "Esc", false, any)) cmd.commands.push_back("SELECT NONE");
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu(tr("View"))) {
         if (ImGui::MenuItem(tr("3D Model Window"), "Tab", st.mode == ViewMode::Model3D)) cmd.mode = ViewMode::Model3D;
         if (ImGui::MenuItem(tr("Simulation Window"), "Shift+Tab", st.mode == ViewMode::Simulation)) cmd.mode = ViewMode::Simulation;
@@ -3225,6 +3241,11 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
         if (!io.WantTextInput) {
             if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) cmd.commands.push_back(io.KeyShift ? "REDO" : "UNDO");
             if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) cmd.commands.push_back("REDO");
+            // Copy, cut, paste and duplicate the selected bodies.
+            if (ImGui::IsKeyPressed(ImGuiKey_C, false) && st.selectedBody >= 0) cmd.commands.push_back("COPY");
+            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && st.selectedBody >= 0) cmd.commands.push_back("CUT");
+            if (ImGui::IsKeyPressed(ImGuiKey_V, false)) cmd.commands.push_back("PASTE");
+            if (ImGui::IsKeyPressed(ImGuiKey_D, false) && st.selectedBody >= 0) cmd.commands.push_back("DUPLICATE");
         }
     }
 

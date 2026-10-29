@@ -1175,6 +1175,13 @@ const char* const kGerman[][2] = {
     {"Turntable: the camera goes round the model. Motions: the motions, robots and physics played as the simulation shows them", "Drehteller: Die Kamera umkreist das Modell. Bewegungen: Bewegungen, Roboter und Physik abgespielt, wie die Simulation sie zeigt"},
     {"Video", "Video"},
     {"Render / Video...", "Rendern / Video..."},
+    // The Edit menu.
+    {"Cut", "Ausschneiden"},
+    {"Edit", "Bearbeiten"},
+    {"Invert Selection", "Auswahl umkehren"},
+    {"Paste", "Einfügen"},
+    {"Select All", "Alles auswählen"},
+    {"Select None", "Nichts auswählen"},
 };
 
 

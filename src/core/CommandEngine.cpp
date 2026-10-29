@@ -819,7 +819,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "PASTE", "CUT"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -835,7 +835,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "CUT"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -5109,6 +5109,113 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.clearSelection();
         markChanged(doc);
         out.say("Deleted " + gone);
+        return out;
+    }
+    if (cmd == "COPY" || cmd == "CUT" || cmd == "DUPLICATE" || cmd == "PASTE") {
+        // COPY [name...] | CUT [name...] | DUPLICATE [name...] [OFFSET x,y,z] | PASTE [OFFSET x,y,z]
+        std::size_t end = a.size();
+        std::optional<Vec3> offset;
+        for (std::size_t i = 0; i < a.size(); ++i)
+            if (!quotedArg(i) && iequal(a[i], "offset")) {
+                if (cmd == "COPY" || cmd == "CUT" || i + 1 >= a.size()) return usage();
+                offset = parseVec3(a[i + 1]);
+                if (!offset || i + 2 != a.size()) return out.fail("OFFSET is x,y,z (mm), at the end");
+                end = i;
+                break;
+            }
+        if (cmd == "PASTE" && end > 0) return usage();
+        // The bodies: the named ones, else every selected body.
+        std::vector<int> list;
+        if (end > 0) {
+            std::vector<std::string> names;
+            {
+                std::string run;
+                for (std::size_t i = 0; i < end; ++i) {
+                    if (quotedArg(i)) {
+                        if (!run.empty()) names.push_back(run), run.clear();
+                        names.push_back(a[i]);
+                    } else {
+                        run += (run.empty() ? "" : " ") + a[i];
+                    }
+                }
+                if (!run.empty()) names.push_back(run);
+            }
+            for (const std::string& n : names) {
+                const int b = findBody(doc, n);
+                if (b < 0) return out.fail("No body named " + n);
+                if (std::find(list.begin(), list.end(), b) == list.end()) list.push_back(b);
+            }
+        } else if (cmd != "PASTE") {
+            list = doc.selectedBodies();
+            if (list.empty()) return out.fail("Select the bodies first (Ctrl+click adds more), or name them");
+        }
+        auto& bodies = doc.scene.bodies();
+        if (cmd == "COPY" || cmd == "CUT") {
+            std::vector<Body>& clip = bodyClipboard();
+            clip.clear();
+            for (int b : list) clip.push_back(bodies[static_cast<std::size_t>(b)]);
+            if (cmd == "COPY") {
+                out.say(fmt("Copied %g ", static_cast<double>(clip.size())) + (clip.size() == 1 ? "body (" + clip[0].name + ")" : std::string("bodies")) +
+                        ": PASTE puts them in, here or in another file");
+                return out;
+            }
+            std::string names;
+            for (int b : list) names += " \"" + bodies[static_cast<std::size_t>(b)].name + "\"";
+            doc.recordAs = "ERASE" + names; // the history keeps what was taken out
+            std::sort(list.begin(), list.end(), std::greater<int>());
+            for (int b : list) doc.scene.remove(static_cast<std::size_t>(b));
+            doc.clearSelection();
+            markChanged(doc);
+            out.say(fmt("Cut %g ", static_cast<double>(clip.size())) + (clip.size() == 1 ? "body" : "bodies") + " (PASTE puts them back in)");
+            return out;
+        }
+        // DUPLICATE / PASTE: copies, with names of their own, beside the originals.
+        std::vector<Body> fresh;
+        if (cmd == "PASTE") {
+            fresh = bodyClipboard();
+            if (fresh.empty()) return out.fail("Nothing to paste: COPY (Ctrl+C) bodies first");
+        } else {
+            for (int b : list) fresh.push_back(bodies[static_cast<std::size_t>(b)]);
+        }
+        // Their names: kept when free (pasting into another file), else "... copy".
+        std::vector<std::string> oldNames, newNames;
+        bool clash = false;
+        for (const Body& b : fresh) {
+            oldNames.push_back(b.name);
+            const std::string n = copyName(doc.scene, b.name, newNames, cmd == "PASTE");
+            clash = clash || n != b.name;
+            newNames.push_back(n);
+        }
+        // Where: OFFSET, else in place when nothing is in the way, else beside them (along +X,
+        // their width and a tenth more).
+        Vec3 d{};
+        if (offset) {
+            d = *offset;
+        } else if (cmd == "DUPLICATE" || clash) {
+            AABB box;
+            for (const Body& b : fresh)
+                if (const AABB bb = b.bounds(); bb.valid()) box.expand(bb.min), box.expand(bb.max);
+            const float w = box.valid() ? box.max.x - box.min.x : 10.0f;
+            d = {std::max(w * 1.1f, 1.0f), 0, 0};
+        }
+        const std::size_t first = bodies.size();
+        for (std::size_t k = 0; k < fresh.size(); ++k) {
+            Body b = std::move(fresh[k]);
+            b.name = newNames[k];
+            b.offset = b.offset + d;
+            // Parts attached to a copied part follow the copy.
+            if (const auto it = std::find(oldNames.begin(), oldNames.end(), b.attachedTo); !b.attachedTo.empty() && it != oldNames.end())
+                b.attachedTo = newNames[static_cast<std::size_t>(it - oldNames.begin())];
+            doc.scene.add(std::move(b));
+        }
+        std::vector<int> made;
+        for (std::size_t i = first; i < bodies.size(); ++i) made.push_back(static_cast<int>(i));
+        doc.clearSelection();
+        selectBodies(doc.scene, doc.selectedBody, doc.selection, made);
+        markChanged(doc);
+        std::string what = made.size() == 1 ? newNames[0] : fmt("%g bodies", static_cast<double>(made.size()));
+        if (d.x != 0 || d.y != 0 || d.z != 0) what += " moved by " + vecText(d);
+        out.say((cmd == "PASTE" ? "Pasted " : "Duplicated as ") + what);
         return out;
     }
     if (cmd == "MOVE") {
