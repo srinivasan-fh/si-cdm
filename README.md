@@ -940,5 +940,8 @@ Details: [docs/plugins.md](docs/plugins.md).
   The copies are selected, ready to move. These are all in the **Edit** menu too.
 - `F2`, or double-click a body in the model tree: rename it (`RENAME "old" TO "new"`). Mates,
   drawings, CAM setups, stack-ups and the rest that refer to it follow the new name.
+- `Alt H`: hide the selected bodies; `Alt I`: isolate them (hide every other body);
+  `Alt Shift H`: show every body (`HIDE`, `ISOLATE`, `SHOW [name...|ALL]`). These are steps in the
+  history, so they undo, and features and exports, which use the visible bodies, replay the same.
 - `F`: fit to view
 - `1` / `3` / `7` / `0`: Front / Right / Top / Isometric (in 2D: pick the drawing plane)

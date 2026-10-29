@@ -1737,6 +1737,20 @@ void Application::handleViewportInput() {
             m_uiState.bodySelection = {};
         }
     }
+    if (ImGui::GetIO().KeyAlt && m_leftDrag == DragMode::None) { // Alt+H hide, Alt+Shift+H show all, Alt+I isolate
+        std::string bodies; // the selected bodies, by name (as Delete)
+        for (int b : selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection))
+            bodies += " \"" + m_doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\"";
+        if (ImGui::IsKeyPressed(ImGuiKey_H, false)) {
+            if (ImGui::GetIO().KeyShift) runCommandLine("SHOW ALL");
+            else if (!bodies.empty()) runCommandLine("HIDE" + bodies);
+            else setStatus(tr("Select the bodies to hide first"));
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_I, false)) {
+            if (!bodies.empty()) runCommandLine("ISOLATE" + bodies);
+            else setStatus(tr("Select the bodies to isolate first"));
+        }
+    }
     if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && m_leftDrag == DragMode::None) {
         // By the ERASE command, so it is in the history and undoes.
         const auto& curves = m_doc.scene.sketch().curves();

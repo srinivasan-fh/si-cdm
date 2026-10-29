@@ -230,6 +230,16 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("action", enumProp({"hide", "show", "isolate", "show_all"}, "hide or show the bodies, isolate them (hide every other body), or show every body"));
+        p.set("names", [] {
+            Json j = Json::object();
+            j.set("type", "array").set("items", Json::object().set("type", "string")).set("description", "The bodies (not for show_all)");
+            return j;
+        }());
+        tools.push(tool("visibility", "Hide, show or isolate bodies in one undoable step. Features, exports and SELECT ALL use only the visible bodies.", p, {"action"}));
+    }
+    {
+        Json p = Json::object();
         p.set("window", enumProp({"2d", "3d", "simulation"}, "2D Drawing, 3D Model or Simulation window"));
         p.set("plane", enumProp({"top", "front", "right"}, "Sketch / drawing plane"));
         p.set("view", enumProp({"top", "bottom", "front", "back", "left", "right", "iso"}, "Standard view (3D)"));
@@ -1375,6 +1385,16 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (line == "DUPLICATE") return textResult("Give 'names'", true);
         if (a["offset"].isArray() && a["offset"].size() == 3)
             line += " OFFSET " + num(a["offset"][0].asNumber()) + "," + num(a["offset"][1].asNumber()) + "," + num(a["offset"][2].asNumber());
+        return runLine(line);
+    }
+    if (name == "visibility") {
+        const std::string act = a["action"].asString();
+        if (act == "show_all") return runLine("SHOW ALL");
+        if (act != "hide" && act != "show" && act != "isolate") return textResult("'action' is hide, show, isolate or show_all", true);
+        std::string line = act == "hide" ? "HIDE" : act == "show" ? "SHOW" : "ISOLATE";
+        const std::size_t bare = line.size();
+        for (std::size_t i = 0; i < a["names"].size(); ++i) line += " " + quote(a["names"][i].asString());
+        if (line.size() == bare) return textResult("Give 'names'", true);
         return runLine(line);
     }
     if (name == "delete") { // one name, or several in one step (one undo)

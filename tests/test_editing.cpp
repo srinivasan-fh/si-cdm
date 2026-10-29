@@ -275,3 +275,68 @@ TEST_CASE("MCP modify rename: references follow, a taken name is an error") {
     CHECK(call(R"({"name":"Block 3","rename":"Lid"})")["isError"].asBool());
     CHECK(bodyNamed(d, "Block 3") == 2);
 }
+
+TEST_CASE("HIDE, SHOW, ISOLATE: named or selected, one undo step, replayed, left out of SELECT") {
+    Document d;
+    fourBlocks(d);
+    auto shown = [&] {
+        std::vector<std::string> out;
+        for (const Body& b : d.scene.bodies())
+            if (b.visible) out.push_back(b.name);
+        return out;
+    };
+    REQUIRE(run(d, "SELECT \"Block 1\" \"Block 2\"").ok);
+    const auto r = run(d, "HIDE");
+    REQUIRE(r.ok);
+    CHECK(r.lines[0] == "Hid 2 bodies");
+    CHECK((shown() == std::vector<std::string>{"Block 3", "Block 4"}));
+    CHECK(d.selectedBodies().empty()); // hidden bodies don't stay selected
+    CHECK(d.state.history.back().line == "HIDE \"Block 1\" \"Block 2\"");
+    REQUIRE(run(d, "SELECT ALL").ok);
+    CHECK(d.selectedBodies().size() == 2); // the visible ones
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(shown().size() == 4);
+    REQUIRE(run(d, "REDO").ok);
+    CHECK(shown().size() == 2);
+    REQUIRE(run(d, "SHOW \"Block 2\"").ok);
+    CHECK((shown() == std::vector<std::string>{"Block 2", "Block 3", "Block 4"}));
+    CHECK(run(d, "SHOW \"Block 2\"").lines[0].find("no change") != std::string::npos);
+    // ISOLATE: only these; SHOW ALL: everything again.
+    const auto iso = run(d, "ISOLATE \"Block 4\"");
+    REQUIRE(iso.ok);
+    CHECK(iso.lines[0].find("3 other bodies hidden") != std::string::npos);
+    CHECK((shown() == std::vector<std::string>{"Block 4"}));
+    // REGEN keeps what was hidden (the steps are in the history).
+    REQUIRE(run(d, "REGEN").ok);
+    CHECK((shown() == std::vector<std::string>{"Block 4"}));
+    REQUIRE(run(d, "SHOW ALL").ok);
+    CHECK(shown().size() == 4);
+    // Refused: nothing selected, an unknown name.
+    REQUIRE(run(d, "SELECT NONE").ok);
+    CHECK(!run(d, "HIDE").ok);
+    CHECK(!run(d, "ISOLATE").ok);
+    CHECK(!run(d, "HIDE \"Nope\"").ok);
+    // Selecting the others takes only what can be seen.
+    REQUIRE(run(d, "HIDE \"Block 1\" \"Block 2\" \"Block 3\"").ok);
+    REQUIRE(run(d, "SELECT INVERT").ok);
+    CHECK((selectedNames(d) == std::vector<std::string>{"Block 4"}));
+}
+
+TEST_CASE("MCP visibility: hide, isolate, show_all") {
+    Document d;
+    fourBlocks(d);
+    McpServer server(d, nullptr);
+    auto call = [&](const std::string& args) {
+        const auto r = Json::parse(server.handle(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"visibility","arguments":)" + args + "}}"));
+        return r ? (*r)["result"] : Json();
+    };
+    CHECK(!call(R"({"action":"hide","names":["Block 1"]})")["isError"].asBool());
+    CHECK(!d.scene.bodies()[0].visible);
+    CHECK(!call(R"({"action":"isolate","names":["Block 3"]})")["isError"].asBool());
+    CHECK(d.scene.bodies()[2].visible);
+    CHECK(!d.scene.bodies()[1].visible);
+    CHECK(!call(R"({"action":"show_all"})")["isError"].asBool());
+    for (const Body& b : d.scene.bodies()) CHECK(b.visible);
+    CHECK(call(R"({"action":"hide"})")["isError"].asBool());
+    CHECK(call(R"({"action":"blink","names":["Block 1"]})")["isError"].asBool());
+}

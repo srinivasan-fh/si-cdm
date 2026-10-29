@@ -1297,6 +1297,10 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem(tr("Delete"), "Del", false, any)) cmd.commands.push_back("ERASE");
         if (ImGui::MenuItem(tr("Rename..."), "F2", false, st.selectedBody >= 0)) st.renameBody = st.selectedBody;
         ImGui::Separator();
+        if (ImGui::MenuItem(tr("Hide"), "Alt+H", false, any)) cmd.commands.push_back("HIDE");
+        if (ImGui::MenuItem(tr("Isolate"), "Alt+I", false, any)) cmd.commands.push_back("ISOLATE");
+        if (ImGui::MenuItem(tr("Show All"), "Alt+Shift+H")) cmd.commands.push_back("SHOW ALL");
+        ImGui::Separator();
         if (ImGui::MenuItem(tr("Select All"), "Ctrl+A")) cmd.commands.push_back("SELECT ALL");
         if (ImGui::MenuItem(tr("Invert Selection"))) cmd.commands.push_back("SELECT INVERT");
         if (ImGui::MenuItem(tr("Select None"), "Esc", false, any)) cmd.commands.push_back("SELECT NONE");
@@ -2886,7 +2890,9 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                         Body& b = bodies[static_cast<std::size_t>(i)];
                         if (b.assembly != path) continue;
                         ImGui::PushID(i);
-                        eyeToggle("##vis", b.visible);
+                        // By HIDE / SHOW, so it undoes and the history keeps it (features use the visible bodies).
+                        if (bool shown = b.visible; eyeToggle("##vis", shown))
+                            cmd.commands.push_back(std::string(shown ? "SHOW" : "HIDE") + " \"" + b.name + "\"");
                         ImGui::SameLine(0, 4);
                         ImGui::ColorButton("##col", {b.color.x, b.color.y, b.color.z, 1.0f},
                                            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder, {10, 10});
@@ -3661,7 +3667,15 @@ void LandingUI::drawControlsWindow(UiState& st) {
                 {"G", "Toggle grid"},
                 {"Enter", "Finish polyline"},
                 {"Esc", "Cancel drawing / clear selection"},
-                {"Delete / Backspace", "Delete selected body or curve"},
+                {"Delete / Backspace", "Delete the selected bodies or curve"},
+                {"Ctrl + click", "Add a body to / take it from the selection"},
+                {"Ctrl + drag (empty space)", "Box select: left to right inside, right to left touching"},
+                {"Ctrl + A", "Select every visible body"},
+                {"Ctrl + C / X / V", "Copy / cut / paste bodies"},
+                {"Ctrl + D", "Duplicate the selected bodies"},
+                {"F2 / double-click in tree", "Rename the selected body"},
+                {"Alt + H / Alt + I", "Hide / isolate the selected bodies"},
+                {"Alt + Shift + H", "Show every body"},
                 {"M  K  J", "Show / hide the Model, Library and CAM panels"},
                 {"V  S  O  H  Z", "Move / Select / Orbit / Pan / Zoom tools"},
                 {"L  C  R", "Line / Circle / Rectangle sketch tools"},

@@ -1188,6 +1188,11 @@ const char* const kGerman[][2] = {
     {"Rename Body", "Körper umbenennen"},
     {"Rename...", "Umbenennen..."},
     {"Type a name", "Namen eingeben"},
+    {"Hide", "Ausblenden"},
+    {"Isolate", "Isolieren"},
+    {"Select the bodies to hide first", "Zuerst die auszublendenden Körper wählen"},
+    {"Select the bodies to isolate first", "Zuerst die zu isolierenden Körper wählen"},
+    {"Show All", "Alle einblenden"},
 };
 
 

@@ -862,7 +862,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "PASTE", "CUT", "RENAME"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "PASTE", "CUT", "RENAME", "HIDE", "SHOW", "ISOLATE"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -878,7 +878,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "CUT", "RENAME"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "CUT", "RENAME", "HIDE", "SHOW", "ISOLATE"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -5175,6 +5175,56 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.recordAs = "RENAME \"" + old + "\" TO \"" + doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\""; // replayed by name
         markChanged(doc);
         out.say("Renamed " + old + " to " + doc.scene.bodies()[static_cast<std::size_t>(b)].name);
+        return out;
+    }
+    if (cmd == "HIDE" || cmd == "SHOW" || cmd == "ISOLATE") {
+        // HIDE [name...] | SHOW [name... | ALL] | ISOLATE [name...]: the named bodies, else the
+        // selected ones. ISOLATE shows them and hides every other body.
+        auto& bodies = doc.scene.bodies();
+        std::vector<int> list;
+        const bool all = cmd == "SHOW" && a.size() == 1 && !quotedArg(0) && iequal(a[0], "all");
+        if (all) {
+            for (std::size_t i = 0; i < bodies.size(); ++i) list.push_back(static_cast<int>(i));
+        } else if (!a.empty()) {
+            for (const std::string& n : namesFrom(0)) {
+                const int b = findBody(doc, n);
+                if (b < 0) return out.fail("No body named " + n);
+                if (std::find(list.begin(), list.end(), b) == list.end()) list.push_back(b);
+            }
+        } else {
+            list = doc.selectedBodies();
+        }
+        if (list.empty()) return out.fail(all ? "There are no bodies" : "Select bodies first, or name them: " + cmd + " \"name\"");
+        int changed = 0;
+        auto set = [&](std::size_t i, bool visible) {
+            if (bodies[i].visible == visible) return;
+            bodies[i].visible = visible;
+            ++changed;
+        };
+        if (cmd == "ISOLATE") {
+            for (std::size_t i = 0; i < bodies.size(); ++i) set(i, std::find(list.begin(), list.end(), static_cast<int>(i)) != list.end());
+        } else {
+            for (int b : list) set(static_cast<std::size_t>(b), cmd == "SHOW");
+        }
+        if (!all && (a.empty() || list.size() > 1)) doc.recordAs = cmd + quotedList(list); // replayed by name
+        if (cmd == "HIDE") { // what can't be seen can't stay selected
+            const std::vector<int> sel = doc.selectedBodies();
+            std::vector<int> keep;
+            for (int b : sel)
+                if (bodies[static_cast<std::size_t>(b)].visible) keep.push_back(b);
+            if (keep.size() != sel.size()) selectBodies(doc.scene, doc.selectedBody, doc.selection, keep);
+        }
+        if (changed) {
+            doc.scene.touchBodies();
+            markChanged(doc);
+        }
+        const std::string what = list.size() == 1 ? bodies[static_cast<std::size_t>(list[0])].name : std::to_string(list.size()) + " bodies";
+        if (cmd == "ISOLATE") {
+            const std::size_t hidden = static_cast<std::size_t>(std::count_if(bodies.begin(), bodies.end(), [](const Body& b) { return !b.visible; }));
+            out.say("Isolated " + what + " (" + std::to_string(hidden) + (hidden == 1 ? " other body hidden; " : " other bodies hidden; ") + "SHOW ALL brings them back)");
+        } else {
+            out.say(std::string(cmd == "HIDE" ? "Hid " : "Showing ") + (all ? std::string("all bodies") : what) + (changed ? "" : " (no change)"));
+        }
         return out;
     }
     if (cmd == "COPY" || cmd == "CUT" || cmd == "DUPLICATE" || cmd == "PASTE") {
