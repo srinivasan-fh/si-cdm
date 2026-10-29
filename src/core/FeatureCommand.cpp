@@ -79,6 +79,12 @@ bool curvePath(const SketchCurve& c, std::vector<Vec3>& path, bool& closed) {
     const PlaneFrame f = curveFrame(c);
     path.clear();
     closed = false;
+    if (c.spatial()) { // a 3D path: its bends or its spline, finely
+        spacePoints(c, &closed);
+        path = c.worldStrip(96);
+        if (closed && path.size() > 1) path.pop_back();
+        return path.size() >= 2;
+    }
     switch (c.kind) {
     case CurveKind::Line:
     case CurveKind::Polyline:
@@ -633,7 +639,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             if (pathName.empty() || pi < 0) return out.fail("Give the path: SWEEP profile ALONG \"path curve\", or HELIX PITCH p TURNS n");
             if (pi == ci) return out.fail("The profile and the path must be different curves");
             const SketchCurve pathCurve = doc.scene.sketch().curves()[static_cast<std::size_t>(pi)];
-            if (!curvePath(pathCurve, path, closed)) return out.fail(pathCurve.name + " can't be a path (a line, polyline, rectangle or circle)");
+            if (!curvePath(pathCurve, path, closed)) return out.fail(pathCurve.name + " can't be a path (a line, polyline, rectangle, circle or 3D path)");
             along = pathCurve.name;
         }
         auto mesh = sweepProfile(*profile, pf, path, closed, &why);

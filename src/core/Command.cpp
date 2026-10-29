@@ -244,6 +244,15 @@ constexpr CommandSpec kCommands[] = {
                              "[CORNER MITER|BUTT|NONE] [GROUP name] [MATERIAL m] | JOINT x,y,z MITER|BUTT|THROUGH|SQUARE [member] | EDIT member ... | LIST | CUTLIST [EXPORT file.csv]",
      "Weldments: structural members (SHS, RHS, CHS, FLAT, ROUND, ANGLE, UPE, IPE, custom I and C) along the straight segments of sketch curves, their "
      "ends mitred, butted or cut to the side they meet; the cut list counts members alike with their lengths, angles and masses"},
+    {"PATH3D", "3DPATH SKETCH3D 3DSKETCH", "PATH3D x,y,z x,y,z|@dx,dy,dz|refpoint ... [SPLINE] [CLOSE] [BEND r] | POINT curve n x,y,z | INSERT curve n x,y,z | DELETE curve n | "
+                                            "BEND curve r | INFO [curve]",
+     "3D sketches: a polyline (its corners bent at a radius) or a spline through points in space, for routes, sweeps and weldment frames; "
+     "POINT moves a point (@dx,dy,dz: by that much), INSERT adds one before point n, DELETE takes one out, INFO lists them"},
+    {"ROUTE", "ROUTING PIPING", "ROUTE [path] PIPE DN20 | PIPE NPS 3/4 [SCH 40|80] | PIPE od x wall | TUBE od x wall | ROD d | CABLE d | HOSE od x wall [BEND r] [MATERIAL m] [NAME n] | "
+                                "LIST | BENDS [route] [EXPORT file.csv] | UPDATE [route | ALL] | EDIT route [size] [BEND r] [MATERIAL m] | SIZES [PIPE|TUBE|ROD|CABLE|HOSE]",
+     "Routes: pipes, tubes, bars, cables and hoses along a path (a 3D sketch, or a line, polyline, rectangle or spline), exact, bent at the "
+     "corners (BEND, else the path's own radius, else 1.5 x OD for pipe, 2 x OD for tube and rod, 6 x OD for cable and hose); BENDS gives the "
+     "bend table (feed, rotation, bend angle) and the length to cut; UPDATE refits routes to paths changed since"},
     {"SECTION", "CLIP XSECTION", "SECTION [X|Y|Z|-X|-Y|-Z|PLANE nx,ny,nz] [AT d | AT x,y,z] | MOVE d | FLIP | ON | OFF | CAP ON|OFF | ONLY body... | ALL",
      "Live section view: a plane through the model takes away the material on one side in the 3D window, the cut faces filled and "
      "hatched, so the inside shows (nothing in the model changes). It reports each body's section area and centroid"},
@@ -322,7 +331,7 @@ constexpr CommandSpec kCommands[] = {
     {"DISPLAY", "SHADE", "DISPLAY SHADED|EDGES|WIRE|HIDDEN", "Display mode of the 3D window"},
     {"GRID", "", "GRID [ON|OFF]", "Show or hide the grid"},
     {"SNAP", "", "SNAP [ON|OFF]", "Grid and point snapping for sketches"},
-    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE|SECTION", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data, appearance or section window"},
+    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE|SECTION|PATH3D", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data, appearance, section or 3D path and route window"},
     // Session
     {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF]",
      "Units for typing and showing lengths (the model stays exact in mm)"},

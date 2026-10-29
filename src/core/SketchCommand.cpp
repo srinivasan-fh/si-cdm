@@ -76,6 +76,10 @@ bool parseRefs(const Sketch& s, const std::vector<std::string>& a, const std::ve
             why = "No sketch curve named " + a[i];
             return false;
         }
+        if (c->spatial()) {
+            why = c->name + " is a 3D curve: it takes no constraints or dimensions (PATH3D edits its points)";
+            return false;
+        }
         i += used;
         SketchRef r;
         r.curve = c->name;
@@ -144,6 +148,12 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         if (name.empty() && doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(sketch.curves().size())) return doc.selectedCurve;
         return found;
     };
+    // 3D curves (PATH3D) are edited by their points, not by the flat sketch tools.
+    auto flatOnly = [&](int ci) {
+        return ci >= 0 && ci < static_cast<int>(sketch.curves().size()) && sketch.curves()[static_cast<std::size_t>(ci)].spatial()
+                   ? sketch.curves()[static_cast<std::size_t>(ci)].name + " is a 3D curve: " + cmd + " works on flat sketch curves (PATH3D edits its points)"
+                   : std::string();
+    };
     auto replaceCurve = [&](std::size_t index, const std::vector<SketchCurve>& with) {
         const std::string gone = sketch.curves()[index].name;
         sketch.remove(index);
@@ -190,6 +200,7 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         std::size_t i = 0;
         const int ci = leadingCurve(i, {"at"});
         if (ci < 0) return out.fail("TRIM \"curve\" AT x,y (a point on the piece to cut away)");
+        if (const std::string w = flatOnly(ci); !w.empty()) return out.fail(w);
         if (i >= a.size() || lower(a[i]) != "at" || i + 1 >= a.size()) return out.fail("TRIM \"curve\" AT x,y");
         const auto p = parsePointInput(a[i + 1]);
         if (!p) return out.fail("AT takes the point x,y on the piece to cut away");
@@ -207,6 +218,7 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         std::size_t i = 0;
         const int ci = leadingCurve(i, {"at", "start", "end"});
         if (ci < 0) return out.fail(a.empty() ? std::string("EXTEND \"curve\" [START | END | AT x,y]") : "No sketch curve named " + a[0]);
+        if (const std::string w = flatOnly(ci); !w.empty()) return out.fail(w);
         const SketchCurve& c = sketch.curves()[static_cast<std::size_t>(ci)];
         if (c.pts.empty()) return out.fail(c.name + " has no ends");
         Vec2 pick = c.pts.back();
@@ -294,6 +306,8 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         }
         if (which.empty() && doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(sketch.curves().size())) which.push_back(doc.selectedCurve);
         if (which.empty() || which.size() > 2) return out.fail(usage);
+        for (const int w : which)
+            if (const std::string why3 = flatOnly(w); !why3.empty()) return out.fail(why3);
         const float r = static_cast<float>(*size);
         std::string why;
         if (which.size() == 2) {
@@ -532,6 +546,7 @@ CommandOutput runSketchCommand(Document& doc, const std::string& cmd, const std:
         const int ci = leadingCurve(i, {"side", "toward", "towards"});
         if (ci < 0 && !a.empty() && !parseLength(a[0])) return out.fail("No sketch curve named " + a[0]);
         if (ci < 0 || i >= a.size()) return out.fail("OFFSET \"curve\" distance [SIDE x,y]");
+        if (const std::string w = flatOnly(ci); !w.empty()) return out.fail(w);
         const auto dist = parseLength(a[i]);
         if (!dist) return out.fail("OFFSET \"curve\" distance [SIDE x,y]");
         const SketchCurve c = sketch.curves()[static_cast<std::size_t>(ci)];

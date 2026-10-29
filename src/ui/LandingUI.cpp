@@ -1,5 +1,6 @@
 #include "ui/LandingUI.hpp"
 #include "core/Weldment.hpp"
+#include "core/Route.hpp"
 #include "core/Translate.hpp"
 #include "core/Render.hpp"
 
@@ -376,6 +377,8 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showProduct) drawProductWindow(cmd, st);
     if (st.showAppearance) drawAppearanceWindow(cmd, st);
     if (st.showSection && st.project && st.mode != ViewMode::Drawing2D) drawSectionWindow(cmd, st, scene);
+    if (st.showPath3d && st.mode != ViewMode::Drawing2D) drawPath3dWindow(cmd, st, scene);
+    if (!st.showPath3d) st.pathPick = false;
     if (st.showLicence) drawLicenceWindow(cmd, st);
     if (st.showCamMachine && st.cam) drawCamMachineWindow(cmd, st);
     if (st.showSheet && st.sheet) drawSheetWindow(cmd, st);
@@ -451,6 +454,113 @@ void LandingUI::drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& sce
         cmd.commands.push_back("SECTION ONLY \"" + scene.bodies()[static_cast<std::size_t>(st.selectedBody)].name + "\"");
     if (ImGui::Button(tr("Section Areas"))) cmd.commands.push_back("SECTION");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Each body's section area and centroid, in the command log"));
+    ImGui::End();
+}
+
+// 3D paths and routes: the points of a new path (typed, or clicked on the model), then a
+// pipe, tube, bar, cable or hose along the selected path, its bend table.
+void LandingUI::drawPath3dWindow(UiCommands& cmd, UiState& st, const Scene& scene) {
+    ImGui::SetNextWindowSize(ImVec2(430, 0), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(tr("3D Path and Route"), &st.showPath3d)) {
+        ImGui::End();
+        return;
+    }
+    auto mm = [](float v) {
+        char b[32];
+        std::snprintf(b, sizeof b, "%.6gmm", static_cast<double>(v));
+        return std::string(b);
+    };
+    theme::caption(tr("New 3D path"));
+    ImGui::Checkbox(tr("Pick points on the model"), &st.pathPick);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Click a body to add the point there; clicking beside it adds one level with the last point"));
+    int remove = -1;
+    if (ImGui::BeginTable("##pathpoints", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+        for (std::size_t k = 0; k < st.pathPoints.size(); ++k) {
+            ImGui::PushID(static_cast<int>(k));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%zu", k + 1);
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(300);
+            ImGui::InputFloat3("##xyz", &st.pathPoints[k].x, "%.2f");
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("x")) remove = static_cast<int>(k);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (remove >= 0) st.pathPoints.erase(st.pathPoints.begin() + remove);
+    if (ImGui::Button(tr("Add Point"))) st.pathPoints.push_back(st.pathPoints.empty() ? Vec3{} : st.pathPoints.back() + Vec3{100, 0, 0});
+    ImGui::SameLine();
+    if (ImGui::Button(tr("Clear"))) st.pathPoints.clear();
+    ImGui::Checkbox(tr("Smooth (spline)"), &st.pathSpline);
+    ImGui::SameLine();
+    ImGui::Checkbox(tr("Closed"), &st.pathClosed);
+    if (!st.pathSpline) {
+        ImGui::SetNextItemWidth(120);
+        ImGui::InputFloat(tr("Bend radius (mm, 0: sharp)"), &st.pathBend, 0, 0, "%.2f");
+        st.pathBend = std::max(st.pathBend, 0.0f);
+    }
+    const bool enough = st.pathPoints.size() >= (st.pathClosed ? 3u : 2u);
+    ImGui::BeginDisabled(!enough);
+    if (ImGui::Button(tr("Make the Path"))) {
+        std::string line = "PATH3D";
+        for (const Vec3& p : st.pathPoints) line += " " + mm(p.x) + "," + mm(p.y) + "," + mm(p.z);
+        if (st.pathSpline) line += " SPLINE";
+        if (st.pathClosed) line += " CLOSE";
+        if (!st.pathSpline && st.pathBend > 0) line += " BEND " + mm(st.pathBend);
+        cmd.commands.push_back(line);
+        st.pathPoints.clear();
+        st.pathPick = false;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+    theme::caption(tr("Route along the selected path"));
+    static const char* const kKinds[] = {"PIPE", "TUBE", "ROD", "CABLE", "HOSE"};
+    static const char* const kKindNames[] = {SICDM_TR_NOOP("Pipe"), SICDM_TR_NOOP("Tube"), SICDM_TR_NOOP("Rod"), SICDM_TR_NOOP("Cable"), SICDM_TR_NOOP("Hose")};
+    m_routeKind = std::clamp(m_routeKind, 0, 4);
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::BeginCombo(tr("Kind"), tr(kKindNames[m_routeKind]))) {
+        for (int k = 0; k < 5; ++k)
+            if (ImGui::Selectable(tr(kKindNames[k]), k == m_routeKind)) m_routeKind = k, m_routeSize = 0;
+        ImGui::EndCombo();
+    }
+    const std::vector<std::string> sizes = routeSizes(kKinds[m_routeKind]);
+    m_routeSize = std::clamp(m_routeSize, 0, static_cast<int>(sizes.size()) - 1);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::BeginCombo(tr("Size"), sizes[static_cast<std::size_t>(m_routeSize)].c_str())) {
+        for (int k = 0; k < static_cast<int>(sizes.size()); ++k)
+            if (ImGui::Selectable(sizes[static_cast<std::size_t>(k)].c_str(), k == m_routeSize)) m_routeSize = k;
+        ImGui::EndCombo();
+    }
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputFloat(tr("Bends (mm, 0: default)"), &m_routeBend, 0, 0, "%.2f");
+    m_routeBend = std::max(m_routeBend, 0.0f);
+    const auto& curves = scene.sketch().curves();
+    const bool path = st.selectedCurve >= 0 && st.selectedCurve < static_cast<int>(curves.size());
+    ImGui::BeginDisabled(!path);
+    if (ImGui::Button(tr("Route"))) {
+        std::string line = "ROUTE \"" + curves[static_cast<std::size_t>(st.selectedCurve)].name + "\" " + kKinds[m_routeKind] + " " + sizes[static_cast<std::size_t>(m_routeSize)];
+        if (m_routeBend > 0) line += " BEND " + mm(m_routeBend);
+        cmd.commands.push_back(line);
+    }
+    ImGui::EndDisabled();
+    if (!path && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("Select the path (a 3D path, line, polyline or spline) first"));
+    const bool route = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size()) && scene.bodies()[static_cast<std::size_t>(st.selectedBody)].isRoute();
+    const bool any = std::any_of(scene.bodies().begin(), scene.bodies().end(), [](const Body& b) { return b.isRoute(); });
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!route);
+    if (ImGui::Button(tr("Bend Table"))) cmd.commands.push_back("ROUTE BENDS \"" + scene.bodies()[static_cast<std::size_t>(st.selectedBody)].name + "\"");
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!any);
+    if (ImGui::Button(tr("List Routes"))) cmd.commands.push_back("ROUTE LIST");
+    ImGui::SameLine();
+    if (ImGui::Button(tr("Update Routes"))) cmd.commands.push_back("ROUTE UPDATE ALL");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("Refit routes to the paths changed since they were made"));
+    ImGui::EndDisabled();
     ImGui::End();
 }
 
@@ -799,6 +909,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::TextDisabled("%s", tr("WELDMENT JOINT x,y,z MITER|BUTT|THROUGH changes a joint"));
             ImGui::EndMenu();
         }
+        if (ImGui::MenuItem(tr("3D Path and Route..."))) st.showPath3d = true;
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Feature History"))) cmd.commands.push_back("HISTORY");
         if (ImGui::MenuItem(tr("Regenerate"))) cmd.commands.push_back("REGEN");
@@ -2093,7 +2204,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                         st.selectedBody = st.selectedImage = -1;
                     }
                     ImGui::SameLine(ImGui::GetWindowWidth() - 52);
-                    ImGui::TextColored(theme::vec(theme::kTextFaint), "%s", shortPlaneName(c.plane));
+                    ImGui::TextColored(theme::vec(theme::kTextFaint), "%s", c.spatial() ? "3D" : shortPlaneName(c.plane));
                     ImGui::PopID();
                 }
                 ImGui::TreePop();
@@ -2217,7 +2328,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
             if (beginPropertyGrid("##curveprops")) {
                 propertyRow("Name", "%s", c.name.c_str());
                 propertyRow("Type", "%s", curveKindName(c.kind));
-                propertyRow("Plane", "%s", planeName(c.plane));
+                propertyRow("Plane", "%s", c.spatial() ? tr("None: a 3D curve") : planeName(c.plane));
                 propertyRow("Size", "%s", c.measure().c_str());
                 ImGui::EndTable();
             }

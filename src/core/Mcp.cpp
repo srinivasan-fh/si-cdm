@@ -716,6 +716,28 @@ Json McpServer::toolDefinitions() {
                             return c;
                         }(),
                         {"operation"}));
+        tools.push(tool("route",
+                        "3D sketches and routes: a 3D path (a polyline whose corners bend at a radius, or a spline) through points in space, "
+                        "and pipes (EN 10255 DN, ASME NPS sch 40/80), tubes, bars, cables and hoses along it as exact solids, with the bend "
+                        "table (feed, rotation, bend angle) and the developed length to cut.",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "path | path_point | path_insert | path_delete | path_bend | path_info | route | list | bends | update | edit | sizes"));
+                            c.set("points", prop("array", "path: the points [[x,y,z], ...] it runs through"));
+                            c.set("spline", prop("boolean", "path: a smooth curve through the points (else a polyline)"));
+                            c.set("closed", prop("boolean", "path: back to the first point"));
+                            c.set("bend", prop("number", "path / path_bend: the polyline's corners rounded to this radius; route / edit: the bends' centre-line radius"));
+                            c.set("curve", prop("string", "path_* / route: the 3D path (sketch curve)"));
+                            c.set("index", prop("number", "path_point / path_insert / path_delete: the point's number (1-based)"));
+                            c.set("point", prop("array", "path_point / path_insert: [x, y, z]"));
+                            c.set("relative", prop("boolean", "path_point / path_insert: point is an offset (from the point, or the one before)"));
+                            c.set("size", prop("string", "route / edit: \"PIPE DN20\", \"PIPE NPS 3/4 SCH 80\", \"PIPE 26.9x2.6\", \"TUBE 12x1\", \"ROD 10\", \"CABLE 8\", \"HOSE 19x3.5\"; sizes: a kind"));
+                            c.set("material", prop("string", "route / edit: steel (default for pipe, tube, rod), plastic (cable, hose), copper, stainless..."));
+                            c.set("name", prop("string", "route: the new body's name; bends / update / edit: the route"));
+                            c.set("path", prop("string", "bends: also write the table to this .csv file"));
+                            return c;
+                        }(),
+                        {"operation"}));
         tools.push(tool("section",
                         "Live section view of the 3D window: a plane through the model takes away the material on one side so the "
                         "inside shows, the cut faces filled and hatched (the model doesn't change); reports each body's section area "
@@ -932,6 +954,15 @@ Json McpServer::sceneJson() const {
         Json pts = Json::array();
         for (const Vec2& p : c.pts) pts.push(Json(Json::Array{p.x, p.y}));
         jc.set("name", c.name).set("kind", curveKindKey(c.kind)).set("plane", planeKey(c.plane)).set("points", pts);
+        if (c.spatial()) { // a 3D curve: its points in space, and its bend radius
+            Json p3 = Json::array();
+            for (std::size_t k = 0; k < c.pts.size(); ++k) {
+                const Vec3 q = c.point3(k);
+                p3.push(Json(Json::Array{q.x, q.y, q.z}));
+            }
+            jc.set("space_points", p3).set("spatial", true);
+            if (c.radius > 0) jc.set("bend_radius", c.radius);
+        }
         if (c.kind == CurveKind::Circle) jc.set("radius", c.radius);
         jc.set("measure", c.measure()).set("visible", c.visible);
         jc.set("selected", static_cast<int>(i) == m_doc.selectedCurve);
@@ -1402,6 +1433,56 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine(line + opts);
         }
         return textResult("weldment operations: profiles, member, joint, edit, list, cutlist", true);
+    }
+    if (name == "route") {
+        const std::string op = a["operation"].asString();
+        const auto vec = [&](const Json& v) {
+            std::string t;
+            for (std::size_t i = 0; i < 3; ++i) t += (i ? "," : "") + num(v.isArray() && i < v.size() ? v[i].asNumber() : 0.0);
+            return t;
+        };
+        const std::string curve = a["curve"].isString() ? " " + quote(a["curve"].asString()) : std::string();
+        const std::string index = a["index"].isNumber() ? " " + num(a["index"].asNumber()) : std::string();
+        const std::string point = a["point"].isArray() ? std::string(" ") + (a["relative"].isBool() && a["relative"].asBool() ? "@" : "") + vec(a["point"]) : std::string();
+        if (op == "path") {
+            if (!a["points"].isArray() || a["points"].size() < 2) return textResult("path needs 'points' (two or more [x,y,z])", true);
+            std::string line = "PATH3D";
+            for (std::size_t i = 0; i < a["points"].size(); ++i) line += " " + vec(a["points"][i]);
+            if (a["spline"].isBool() && a["spline"].asBool()) line += " SPLINE";
+            if (a["closed"].isBool() && a["closed"].asBool()) line += " CLOSE";
+            if (a["bend"].isNumber()) line += " BEND " + num(a["bend"].asNumber());
+            return runLine(line);
+        }
+        if (op == "path_point" || op == "path_insert") {
+            if (curve.empty() || index.empty() || point.empty()) return textResult(op + " needs 'curve', 'index' and 'point'", true);
+            return runLine(std::string("PATH3D ") + (op == "path_point" ? "POINT" : "INSERT") + curve + index + point);
+        }
+        if (op == "path_delete") {
+            if (curve.empty() || index.empty()) return textResult("path_delete needs 'curve' and 'index'", true);
+            return runLine("PATH3D DELETE" + curve + index);
+        }
+        if (op == "path_bend") {
+            if (curve.empty() || !a["bend"].isNumber()) return textResult("path_bend needs 'curve' and 'bend'", true);
+            return runLine("PATH3D BEND" + curve + " " + num(a["bend"].asNumber()));
+        }
+        if (op == "path_info") return runLine("PATH3D INFO" + curve);
+        std::string opts;
+        if (a["bend"].isNumber()) opts += " BEND " + num(a["bend"].asNumber());
+        if (a["material"].isString()) opts += " MATERIAL " + quote(a["material"].asString());
+        const std::string who = a["name"].isString() ? " " + quote(a["name"].asString()) : std::string();
+        if (op == "route") {
+            if (curve.empty() || !a["size"].isString()) return textResult("route needs 'curve' and 'size'", true);
+            return runLine("ROUTE" + curve + " " + a["size"].asString() + opts + (a["name"].isString() ? " NAME " + quote(a["name"].asString()) : std::string()));
+        }
+        if (op == "list") return runLine("ROUTE LIST");
+        if (op == "sizes") return runLine("ROUTE SIZES" + (a["size"].isString() ? " " + a["size"].asString() : std::string()));
+        if (op == "bends") return runLine("ROUTE BENDS" + who + (a["path"].isString() ? " EXPORT " + quote(a["path"].asString()) : std::string()));
+        if (op == "update") return runLine("ROUTE UPDATE" + (who.empty() ? std::string(" ALL") : who));
+        if (op == "edit") {
+            if (who.empty()) return textResult("edit needs 'name' (the route)", true);
+            return runLine("ROUTE EDIT" + who + (a["size"].isString() ? " " + a["size"].asString() : std::string()) + opts);
+        }
+        return textResult("route operations: path, path_point, path_insert, path_delete, path_bend, path_info, route, list, bends, update, edit, sizes", true);
     }
     if (name == "section") {
         const std::string op = a["operation"].asString();

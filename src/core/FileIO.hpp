@@ -100,7 +100,10 @@ std::string activePlaneName(const ProjectState& st);
 //      wizard callouts ("holes"), and the project its variables ("variables"),
 //      configurations ("configs", "config") and reference axes and points
 //      ("ref_axes", "ref_points")
-constexpr int kProjectVersion = 10;
+//   11 adds 3D sketch curves: a polyline or spline whose points "rise" off its plane (one
+//      height per point); a file with one has reader_version 11 (an older reader would lay
+//      it flat). Bodies keep their weldment "member" and pipe "route" data
+constexpr int kProjectVersion = 11;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

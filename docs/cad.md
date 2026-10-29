@@ -972,6 +972,82 @@ member left alone gets square ends. Undo takes back both.
 The members are exact solids: planes, cylinders for the rounds, and the end cuts. They are
 saved with the project.
 
+## 3D sketches and routes
+
+`PATH3D` draws a path through points in space: a polyline whose corners bend at a radius, or a
+smooth spline. `ROUTE` runs a pipe, tube, bar, cable or hose along it, and gives the bend table
+a tube bender works from.
+
+```text
+BOX 400 300 200 @200,150,100
+PATH3D -60,40,40 -60,40,320 250,40,320 250,380,320 250,380,60 520,380,60 BEND 60
+ROUTE "3D Polyline 1" PIPE DN25                       a steel pipe over the block
+PATH3D 460,-40,20 420,-60,150 300,-50,260 120,-80,240 -20,-40,180 SPLINE
+ROUTE "3D Spline 2" CABLE 12                          a cable along a smooth curve
+ROUTE BENDS "Pipe 1"
+```
+
+```text
+  Pipe 1: Pipe DN25 (33.7 x 3.2), cut 1356.991 mm, 4 bends at R 60 mm (feed, rotate, bend):
+    1. feed 220 mm, rotate 0 deg, bend 90 deg  (at (-60, 40, 320) mm)
+    2. feed 190 mm, rotate 90 deg, bend 90 deg  (at (250, 40, 320) mm)
+    3. feed 220 mm, rotate -90 deg, bend 90 deg  (at (250, 380, 320) mm)
+    4. feed 140 mm, rotate -90 deg, bend 90 deg  (at (250, 380, 60) mm)
+    then feed 210 mm
+```
+
+![A pipe bent round a block, and a cable along a spline](route.png)
+
+**3D paths:**
+
+- Points are `x,y,z`, `@dx,dy,dz` (from the point before) or a reference point's name
+  (`REFPOINT Port AT 0,0,100`, then `PATH3D Port ...`).
+- `BEND r` rounds every corner of a polyline to radius r. The arcs must fit on the segments
+  between them, or the path is refused with the length they need. `SPLINE` makes a smooth
+  curve through the points instead, and `CLOSE` closes either.
+- `PATH3D POINT path n x,y,z` moves point n (`@dx,dy,dz`: by that much). `INSERT path n x,y,z`
+  adds one before point n, `DELETE path n` takes one out, and `BEND path r` changes the
+  radius. `INFO` lists the points, the segments' lengths and how much each corner turns.
+  Undo takes each edit back.
+- When a 3D path is selected, its points show in the 3D window, numbered.
+- 3D paths lie on no sketch plane. They make no profiles and take no constraints, and the flat
+  tools (trim, extend, offset, fillet) leave them alone. They can be a path for `SWEEP ...
+  ALONG`, for `ROUTE` and for weldment members (which follow their corners).
+- *Design → 3D Path and Route...* (or `PANEL PATH3D`) opens a window: type the points, or turn
+  on *Pick points on the model* and click. A click near a 3D path's point or a reference
+  point takes that point; on a body, the point clicked; beside the model, a point level with
+  the last one.
+
+**Routes:**
+
+| Size | What it is | Bends by default |
+| --- | --- | --- |
+| `PIPE DN6` to `PIPE DN150` | EN 10255 medium series | 1.5 x OD |
+| `PIPE NPS 1/8` to `PIPE NPS 8` `[SCH 40\|80]` | ASME B36.10M (STD = 40, XS = 80) | 1.5 x OD |
+| `PIPE od x wall`, `TUBE od x wall` | any size | 1.5 x OD (pipe), 2 x OD (tube) |
+| `ROD d` | solid bar | 2 x OD |
+| `CABLE d`, `HOSE od x wall` | flexible | 6 x OD |
+
+- A route bends at `BEND r` if given, else at the path's own radius, else at the default above.
+  The bends must be wider than half the outside diameter.
+- A route along a spline follows its curve. A pipe there has no bend table; one that folds
+  over itself is refused.
+- Routes follow 3D paths, and flat lines, polylines, rectangles and splines too.
+- `ROUTE LIST` gives each route's size, length, bends and mass. It also says when a route's
+  path changed since it was made. `ROUTE UPDATE [route | ALL]` refits routes to their paths
+  (one undo step).
+- `ROUTE EDIT route [size] [BEND r] [MATERIAL m]` remakes a route.
+- `ROUTE BENDS route [EXPORT bends.csv]` gives the bend table:
+  - the straight fed before each bend;
+  - the turn of the tube about its axis since the last bend (right hand about the feed);
+  - the bend angle;
+  - the last straight;
+  - the developed length, the length to cut.
+- Routes are exact: cylinders along the straights, tori round the bends, and flat ends. A
+  route along a spline is a mesh.
+- Masses use the true section: steel for pipe, tube and rod, plastic for cable and hose
+  (`MATERIAL` changes it). The parts list shows each route's size, length and bends.
+
 ## Mass properties
 
 ```text
@@ -1214,6 +1290,11 @@ The `cad` tool has these operations:
 
 The `weldment` tool adds members (`profile` with `curves` or `points`), changes a `joint`,
 `edit`s a member and gives the `cutlist`.
+
+The `route` tool makes 3D paths (`path` with `points`, `spline`, `closed`, `bend`) and edits
+them (`path_point`, `path_insert`, `path_delete`, `path_bend`, `path_info`). It also lays
+routes along them (`route` with `curve` and `size`), and gives their `list`, `bends`,
+`update`, `edit` and `sizes`.
 
 The `section` tool sets the section view: `set` (with `axis` or `normal`, and `at` or `point`),
 `move`, `flip`, `on`, `off`, `cap`, `only`, `all` and `info`.

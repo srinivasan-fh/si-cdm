@@ -516,6 +516,22 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                                  .set("cut", cuts)
                                  .set("pristine", m.key == 0 || m.key == meshKey(b.mesh)));
         }
+        if (b.isRoute()) { // a route: its size and path (its mesh is saved as it is)
+            const Body::Route& r = b.route;
+            Json pts = Json::array();
+            for (const Vec3& p : r.points) pts.push(vec3Json(p));
+            jb.set("route", Json::object()
+                                .set("spec", r.spec)
+                                .set("path", r.path)
+                                .set("material", r.material)
+                                .set("points", pts)
+                                .set("spline", r.spline)
+                                .set("closed", r.closed)
+                                .set("od", r.od)
+                                .set("wall", r.wall)
+                                .set("bend", r.bend)
+                                .set("pristine", r.key == 0 || r.key == meshKey(b.mesh)));
+        }
         if (!b.field.empty()) jb.set("field", b.field);
         if (b.multires && !b.multires->levels.empty()) { // the cage's triangles and each level's positions (finer triangles follow)
             std::vector<unsigned char> tri;
@@ -697,6 +713,8 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
     for (const Body& b : scene.bodies())
         customPlanes = customPlanes || (b.kind == "extrude" && !b.params.empty() && b.params[0] == static_cast<float>(SketchPlane::Custom));
     if (customPlanes) doc.set("reader_version", 10);
+    for (const SketchCurve& c : scene.sketch().curves())
+        if (c.spatial()) doc.set("reader_version", 11);
 
     Json curves = Json::array();
     for (const SketchCurve& c : scene.sketch().curves()) {
@@ -708,6 +726,11 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         jc.set("points", pts).set("radius", c.radius).set("visible", c.visible);
         if (c.closed) jc.set("closed", true);
         if (c.construction) jc.set("construction", true);
+        if (c.spatial()) {
+            Json rise = Json::array();
+            for (float h : c.rise) rise.push(Json(h));
+            jc.set("rise", rise);
+        }
         curves.push(jc);
     }
     doc.set("sketch", curves);
@@ -1066,6 +1089,18 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             // (Set once the mesh is in: as made, or changed since.)
             m.key = jm["pristine"].asBool(true) ? 1 : 2;
         }
+        if (const Json& jr = jb["route"]; jr.isObject() && !jr["spec"].asString().empty()) {
+            Body::Route& r = b.route;
+            r.spec = jr["spec"].asString();
+            r.path = jr["path"].asString();
+            r.material = jr["material"].asString("Steel");
+            for (const Json& p : jr["points"].items()) r.points.push_back(jsonVec3(p));
+            r.spline = jr["spline"].asBool(false);
+            r.closed = jr["closed"].asBool(false);
+            r.od = jr["od"].asFloat(0), r.wall = jr["wall"].asFloat(0), r.bend = jr["bend"].asFloat(0);
+            r.key = jr["pristine"].asBool(true) ? 1 : 2;
+            if (!(r.od > 0) || r.points.size() < 2) r = Body::Route{}; // not one this reads
+        }
         b.field = jb["field"].asString();
         if (const Json& jm = jb["multires"]; jm.isObject()) { // levels that don't fit together are left out
             auto md = std::make_shared<MultiresData>();
@@ -1141,6 +1176,10 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             const std::uint64_t k = meshKey(b.mesh);
             b.member.key = b.member.key == 1 ? (k ? k : 1) : (k ^ 1 ? k ^ 1 : 2);
         }
+        if (b.isRoute()) { // the same for a route
+            const std::uint64_t k = meshKey(b.mesh);
+            b.route.key = b.route.key == 1 ? (k ? k : 1) : (k ^ 1 ? k ^ 1 : 2);
+        }
         loaded.add(std::move(b));
     }
 
@@ -1157,6 +1196,8 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         c.visible = jc["visible"].asBool(true);
         c.closed = jc["closed"].asBool(false);
         c.construction = jc["construction"].asBool(false);
+        for (const Json& h : jc["rise"].items()) c.rise.push_back(h.asFloat());
+        if (!c.rise.empty() && (c.rise.size() != c.pts.size() || (c.kind != CurveKind::Polyline && c.kind != CurveKind::Spline))) continue; // not a 3D curve this reads
         const std::size_t need = c.kind == CurveKind::Arc ? 3 : (c.kind == CurveKind::Ellipse || c.kind == CurveKind::Slot || c.kind == CurveKind::Spline) ? 2 : 1;
         if (c.pts.size() < need) continue;
         loaded.sketch().add(std::move(c));

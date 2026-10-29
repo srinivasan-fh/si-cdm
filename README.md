@@ -326,6 +326,9 @@ The *Design* menu (or the command line) adds part features to sketches and solid
 - **Weldments:** frames of tube, pipe, bar, angle, channel and beam (EN and DIN sizes, or any
   dimensions) along sketch lines, mitred, butted or cut to the side they meet, with a cut list
   of lengths, angles and masses (`WELDMENT MEMBER SHS 40x40x3 ALONG "Rectangle 1"`).
+- **3D sketches and routes:** paths through points in space, bent at a radius or smooth, and
+  pipes (EN 10255, ASME B36.10M), tubes, bars, cables and hoses along them as exact solids,
+  with the bend table and the length to cut (`PATH3D ... BEND 60`, `ROUTE "3D Polyline 1" PIPE DN25`).
 - **Section view:** cut the model open in the 3D window with a plane, the cuts filled and
   hatched, and drag the plane through it (`SECTION Y AT 0`, or *View → Section View...*). It
   also gives each part's section area.

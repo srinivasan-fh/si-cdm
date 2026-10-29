@@ -92,6 +92,137 @@ Vec2 splinePoint(const std::vector<Vec2>& pts, bool closed, std::size_t span, fl
     return lerp(r1, r2, t1, t2, u);
 }
 
+Vec3 splinePoint3(const std::vector<Vec3>& pts, bool closed, std::size_t span, float t) {
+    const std::size_t n = pts.size();
+    if (n == 0) return {};
+    if (n == 1) return pts[0];
+    auto at = [&](long i) -> Vec3 {
+        if (closed) return pts[static_cast<std::size_t>(((i % static_cast<long>(n)) + static_cast<long>(n)) % static_cast<long>(n))];
+        if (i < 0) return pts[0] * 2.0f - pts[1]; // the ends carry on straight
+        if (i >= static_cast<long>(n)) return pts[n - 1] * 2.0f - pts[n - 2];
+        return pts[static_cast<std::size_t>(i)];
+    };
+    const long i = static_cast<long>(span);
+    const Vec3 p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    // Centripetal knots (alpha 1/2), as splinePoint.
+    auto knot = [](Vec3 a, Vec3 b) { return std::max(std::sqrt(length(b - a)), 1e-6f); };
+    const float t0 = 0, t1 = t0 + knot(p0, p1), t2 = t1 + knot(p1, p2), t3 = t2 + knot(p2, p3);
+    const float u = t1 + (t2 - t1) * t;
+    auto lerp = [](Vec3 a, Vec3 b, float ta, float tb, float x) { return a * ((tb - x) / (tb - ta)) + b * ((x - ta) / (tb - ta)); };
+    const Vec3 q1 = lerp(p0, p1, t0, t1, u), q2 = lerp(p1, p2, t1, t2, u), q3 = lerp(p2, p3, t2, t3, u);
+    const Vec3 r1 = lerp(q1, q2, t0, t2, u), r2 = lerp(q2, q3, t1, t3, u);
+    return lerp(r1, r2, t1, t2, u);
+}
+
+bool pathBends(const std::vector<Vec3>& pts, bool closed, float radius, std::vector<PathBend>& bends, std::string* why) {
+    bends.clear();
+    auto fail = [&](const std::string& w) {
+        if (why) *why = w;
+        bends.clear();
+        return false;
+    };
+    const std::size_t n = pts.size();
+    if (n < 2 || (closed && n < 3)) return fail(closed ? "A closed path needs three points" : "A path needs two points");
+    const std::size_t segs = closed ? n : n - 1;
+    for (std::size_t k = 0; k < segs; ++k)
+        if (!(length(pts[(k + 1) % n] - pts[k]) > 1e-6f)) return fail("Points " + std::to_string(k + 1) + " and " + std::to_string((k + 1) % n + 1) + " are the same");
+    if (!(radius > 0)) return true;
+    std::vector<float> tangent(n, 0.0f);
+    for (std::size_t c = closed ? 0 : 1; c < (closed ? n : n - 1); ++c) {
+        const Vec3 P = pts[c], prev = pts[(c + n - 1) % n], next = pts[(c + 1) % n];
+        const Vec3 a = normalize(P - prev), b = normalize(next - P);
+        const double angle = std::acos(std::clamp(static_cast<double>(dot(a, b)), -1.0, 1.0));
+        if (angle < 2e-4) continue; // straight on
+        if (angle > 3.14159265358979 - 1e-3) return fail("The path turns back on itself at point " + std::to_string(c + 1));
+        PathBend bd;
+        bd.corner = c;
+        bd.angle = static_cast<float>(angle);
+        bd.radius = radius;
+        bd.tangent = static_cast<float>(radius * std::tan(angle / 2));
+        bd.axis = normalize(cross(a, b));
+        bd.centre = P + normalize(b - a) * static_cast<float>(radius / std::cos(angle / 2));
+        bd.from = P - a * bd.tangent;
+        bd.to = P + b * bd.tangent;
+        tangent[c] = bd.tangent;
+        bends.push_back(bd);
+    }
+    for (std::size_t k = 0; k < segs; ++k) {
+        const std::size_t j = (k + 1) % n;
+        const float len = length(pts[j] - pts[k]), need = tangent[k] + tangent[j];
+        if (need > len * (1 + 1e-5f) + 1e-5f)
+            return fail("The bends at a radius of " + lengthText(radius) + " need " + lengthText(need) + " of the segment from point " + std::to_string(k + 1) +
+                        " to " + std::to_string(j + 1) + ", which is " + lengthText(len) + " long");
+    }
+    return true;
+}
+
+std::vector<Vec3> spacePoints(const SketchCurve& c, bool* closed) {
+    std::vector<Vec3> p;
+    for (std::size_t i = 0; i < c.pts.size(); ++i) p.push_back(c.point3(i));
+    bool cl = false;
+    if (c.kind == CurveKind::Spline) cl = c.closed && p.size() >= 3;
+    else if (p.size() > 3 && length(p.front() - p.back()) < 1e-6f) cl = true, p.pop_back();
+    if (closed) *closed = cl;
+    return p;
+}
+
+std::vector<Vec3> spaceStrip(const SketchCurve& c, float chord) {
+    bool closed = false;
+    const std::vector<Vec3> p = spacePoints(c, &closed);
+    std::vector<Vec3> out;
+    const std::size_t n = p.size();
+    if (n < 2) return p;
+    if (c.kind == CurveKind::Spline) {
+        const std::size_t spans = closed ? n : n - 1;
+        out.push_back(p[0]);
+        for (std::size_t sp = 0; sp < spans; ++sp) {
+            const float len = length(p[(sp + 1) % n] - p[sp]);
+            const int steps = std::clamp(static_cast<int>(std::ceil(len / std::max(std::sqrt(8.0f * std::max(chord, 1e-3f) * len), 1e-3f) * 2.0f)), 4, 64);
+            for (int i = 1; i <= steps; ++i) out.push_back(splinePoint3(p, closed, sp, static_cast<float>(i) / static_cast<float>(steps)));
+        }
+        return out;
+    }
+    std::vector<PathBend> bends;
+    if (!pathBends(p, closed, c.radius, bends)) bends.clear(); // drawn with its corners sharp
+    std::vector<const PathBend*> at(n, nullptr);
+    for (const PathBend& b : bends) at[b.corner] = &b;
+    auto corner = [&](std::size_t k) {
+        const PathBend* b = at[k];
+        if (!b) {
+            out.push_back(p[k]);
+            return;
+        }
+        float step = 0.3f;
+        if (chord > 0 && chord < b->radius) step = std::min(step, 2.0f * std::acos(1.0f - chord / b->radius));
+        const int segs = std::clamp(static_cast<int>(std::ceil(b->angle / std::max(step, 1e-3f))), 1, 1024);
+        const Vec3 v = b->from - b->centre;
+        out.push_back(b->from);
+        for (int i = 1; i < segs; ++i) {
+            const float phi = b->angle * static_cast<float>(i) / static_cast<float>(segs);
+            const float cs = std::cos(phi), sn = std::sin(phi);
+            out.push_back(b->centre + v * cs + cross(b->axis, v) * sn + b->axis * (dot(b->axis, v) * (1 - cs)));
+        }
+        out.push_back(b->to);
+    };
+    if (closed) {
+        for (std::size_t k = 0; k < n; ++k) corner(k);
+        out.push_back(out.front());
+    } else {
+        out.push_back(p[0]);
+        for (std::size_t k = 1; k + 1 < n; ++k) corner(k);
+        out.push_back(p[n - 1]);
+    }
+    return out;
+}
+
+Vec3 SketchCurve::point3(std::size_t i) const {
+    if (i >= pts.size()) return {};
+    const PlaneFrame f = curveFrame(*this);
+    Vec3 p = f.toWorld(pts[i]);
+    if (i < rise.size()) p += f.normal * rise[i];
+    return p;
+}
+
 bool arcThrough(Vec2 a, Vec2 m, Vec2 b, Vec2& centre, float& radius, bool& ccw) {
     const double ax = a.x, ay = a.y, bx = m.x, by = m.y, cx = b.x, cy = b.y;
     const double d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
@@ -119,7 +250,9 @@ bool SketchCurve::isClosed() const {
     case CurveKind::Circle:
     case CurveKind::Ellipse:
     case CurveKind::Slot: return true;
-    case CurveKind::Polyline: return pts.size() > 3 && std::hypot(pts.front().x - pts.back().x, pts.front().y - pts.back().y) < 1e-6f;
+    case CurveKind::Polyline:
+        if (spatial()) return pts.size() > 3 && length(point3(0) - point3(pts.size() - 1)) < 1e-6f;
+        return pts.size() > 3 && std::hypot(pts.front().x - pts.back().x, pts.front().y - pts.back().y) < 1e-6f;
     case CurveKind::Spline: return closed && pts.size() >= 3;
     default: return false;
     }
@@ -205,6 +338,12 @@ std::vector<Vec2> SketchCurve::planeStrip(float chord) const {
 std::vector<Vec3> SketchCurve::worldStrip(int circleSegments) const {
     const PlaneFrame f = curveFrame(*this);
     std::vector<Vec3> out;
+    if (spatial()) { // round parts as finely as a circle of `circleSegments`
+        AABB box;
+        for (std::size_t i = 0; i < pts.size(); ++i) box.expand(point3(i));
+        const float size = std::max({radius, box.valid() ? 0.5f * length(box.max - box.min) : 0.0f, 1e-3f});
+        return spaceStrip(*this, (kind == CurveKind::Spline ? size : std::max(radius, 1e-3f)) * (1.0f - std::cos(kPi / static_cast<float>(std::max(circleSegments, 3)))));
+    }
     switch (kind) {
     case CurveKind::Point:
         if (!pts.empty()) out.push_back(f.toWorld(pts[0]));
@@ -277,6 +416,16 @@ std::string SketchCurve::measure() const {
         if (pts.size() >= 2) return "L " + lengthText(len(pts[0], pts[1]));
         break;
     case CurveKind::Polyline: {
+        if (spatial()) { // exactly: the segments, less what the bends cut off, plus their arcs
+            bool closedPath = false;
+            const std::vector<Vec3> p = spacePoints(*this, &closedPath);
+            double total = 0.0;
+            for (std::size_t i = 0; i + (closedPath ? 0 : 1) < p.size(); ++i) total += length(p[(i + 1) % p.size()] - p[i]);
+            std::vector<PathBend> bends;
+            if (pathBends(p, closedPath, radius, bends))
+                for (const PathBend& b : bends) total += static_cast<double>(b.radius) * b.angle - 2.0 * b.tangent;
+            return "L " + lengthText(total) + " (" + std::to_string(pts.empty() ? 0 : pts.size() - 1) + " seg" + (radius > 0 ? ", bends R " + lengthText(radius) : "") + ")";
+        }
         double total = 0.0;
         for (std::size_t i = 1; i < pts.size(); ++i) total += len(pts[i - 1], pts[i]);
         return "L " + lengthText(total) + " (" + std::to_string(pts.empty() ? 0 : pts.size() - 1) + " seg)";
@@ -295,6 +444,12 @@ std::string SketchCurve::measure() const {
         }
         break;
     case CurveKind::Spline: {
+        if (spatial()) {
+            const std::vector<Vec3> s = spaceStrip(*this, 0.01f);
+            double total = 0.0;
+            for (std::size_t i = 1; i < s.size(); ++i) total += length(s[i] - s[i - 1]);
+            return "L " + lengthText(total) + " (" + std::to_string(pts.size()) + " points" + (closed ? ", closed)" : ")");
+        }
         const std::vector<Vec2> s = planeStrip(0.01f);
         double total = 0.0;
         for (std::size_t i = 1; i < s.size(); ++i) total += len(s[i - 1], s[i]);
@@ -313,7 +468,7 @@ std::string SketchCurve::measure() const {
 SketchCurve& Sketch::add(SketchCurve c) {
     // Numbering continues past loaded curves so new names stay unique.
     ++m_serial;
-    if (c.name.empty()) c.name = std::string(curveKindName(c.kind)) + " " + std::to_string(m_serial);
+    if (c.name.empty()) c.name = std::string(c.spatial() ? "3D " : "") + curveKindName(c.kind) + " " + std::to_string(m_serial);
     m_revision = nextRevision();
     return m_curves.emplace_back(std::move(c));
 }

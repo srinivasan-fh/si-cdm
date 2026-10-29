@@ -78,6 +78,15 @@ struct SketchCurve {
     bool visible = true;
     bool closed = false;       // Spline: a closed loop
     bool construction = false; // a reference curve: drawn dashed, not part of profiles
+    // A 3D sketch curve (PATH3D): a polyline or spline whose points rise off its plane by
+    // these heights along the plane's normal, one per point (empty: a flat curve). Its
+    // pts are the points seen on the plane. A 3D polyline's `radius` rounds its corners
+    // (a bend). 3D curves are on no sketch plane: they make no profiles and take no
+    // constraints.
+    std::vector<float> rise;
+    bool spatial() const noexcept { return !rise.empty(); }
+    // Point i in space (on the plane for a flat curve).
+    Vec3 point3(std::size_t i) const;
 
     // Line-strip vertices in world space (closed shapes repeat the first point).
     std::vector<Vec3> worldStrip(int circleSegments = 96) const;
@@ -132,7 +141,7 @@ const char* curveKindName(CurveKind k) noexcept;
 inline PlaneFrame curveFrame(const SketchCurve& c) noexcept { return c.plane == SketchPlane::Custom ? c.frame : planeFrame(c.plane); }
 // Whether curve `c` lies on `plane` (`custom`: that plane's frame when it is Custom).
 inline bool onPlane(const SketchCurve& c, SketchPlane plane, const PlaneFrame& custom) noexcept {
-    return c.plane == plane && (plane != SketchPlane::Custom || sameFrame(c.frame, custom));
+    return !c.spatial() && c.plane == plane && (plane != SketchPlane::Custom || sameFrame(c.frame, custom));
 }
 inline bool samePlane(const SketchCurve& a, const SketchCurve& b) noexcept { return onPlane(a, b.plane, b.frame); }
 
@@ -140,6 +149,29 @@ inline bool samePlane(const SketchCurve& a, const SketchCurve& b) noexcept { ret
 // between close points), at t in [0, 1] along span `span` (pts[span] to pts[span + 1];
 // a closed curve's last span runs back to pts[0]).
 Vec2 splinePoint(const std::vector<Vec2>& pts, bool closed, std::size_t span, float t);
+// The same through points in space (a 3D spline).
+Vec3 splinePoint3(const std::vector<Vec3>& pts, bool closed, std::size_t span, float t);
+
+// A corner of a 3D polyline rounded off: the arc of `radius` from `from` (on the segment
+// coming in) to `to` (on the one going out) about `centre`, turning by `angle` (radians,
+// the change of direction) about `axis` (unit, in by out).
+struct PathBend {
+    std::size_t corner = 0; // the polyline point it rounds
+    Vec3 centre, from, to, axis;
+    float angle = 0, radius = 0;
+    float tangent = 0; // from the corner back to `from` and on to `to`
+};
+// The bends of a 3D polyline (a closed one's points don't repeat the first) at `radius`:
+// corners turning by less than about 0.01 degrees are none. False (with why) when a
+// corner turns back on itself or the arcs don't fit on the segments between them.
+bool pathBends(const std::vector<Vec3>& pts, bool closed, float radius, std::vector<PathBend>& bends, std::string* why = nullptr);
+// A 3D curve's points in space (a closed polyline's without its repeated first point), and
+// whether it closes.
+std::vector<Vec3> spacePoints(const SketchCurve& c, bool* closed = nullptr);
+// The line a 3D curve draws: its corners rounded where they bend, a spline sampled to
+// within `chord` mm (closed: the first point repeated).
+std::vector<Vec3> spaceStrip(const SketchCurve& c, float chord = 0.05f);
+
 // The arc through three points (start, a point on it, end): its centre and radius, and
 // whether it runs counter-clockwise from start to end. False when they are in line.
 bool arcThrough(Vec2 a, Vec2 m, Vec2 b, Vec2& centre, float& radius, bool& ccw);

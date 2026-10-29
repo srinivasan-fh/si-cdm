@@ -80,6 +80,19 @@ struct Body {
         std::uint64_t key = 0;            // meshKey() of the mesh it made (another: edited since, kept as it is)
     } member;
     bool isMember() const noexcept { return !member.profile.empty(); }
+    // A route (Route.hpp): a pipe, tube, bar, cable or hose along a 3D path. spec "": none.
+    struct Route {
+        std::string spec;            // "Pipe DN20", "Tube 12x1", "Cable 8"
+        std::string path;            // the sketch curve it was made along
+        std::string material = "Steel";
+        std::vector<Vec3> points;    // the path's points when made (the mesh's frame)
+        bool spline = false;         // the points are a smooth curve's (else a polyline's corners)
+        bool closed = false;
+        float od = 0, wall = 0;      // outside diameter and wall (0: solid)
+        float bend = 0;              // the bends' centre-line radius (a polyline's)
+        std::uint64_t key = 0;       // meshKey() of the mesh it made
+    } route;
+    bool isRoute() const noexcept { return !route.spec.empty(); }
     PhysicsProps physics;   // mass, velocity, charge, temperature... (Simulation physics)
     MaterialProps material; // how it looks rendered (RENDER): metal, glass, roughness, maps
     std::map<std::string, std::string> properties; // part number, description, vendor... (PROPERTY)

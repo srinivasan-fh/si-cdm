@@ -65,6 +65,11 @@ struct UiState {
     bool showProduct = false; // the Product data window: properties, revision, vault
     bool showAppearance = false; // the Appearance window: the selected body's material from swatches
     bool showSection = false;    // the Section window: the live section view's plane
+    // The 3D Path window: points for a new 3D path (clicks on the model add them while
+    // pathPick is on), and a route along the selected path.
+    bool showPath3d = false, pathPick = false, pathSpline = false, pathClosed = false;
+    std::vector<Vec3> pathPoints;
+    float pathBend = 0.0f;
     bool renderStart = false, renderCancel = false, renderRunning = false;
     float renderProgress = 0;
     unsigned renderTexture = 0;
@@ -220,6 +225,7 @@ private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawRenderWindow(UiCommands& cmd, UiState& st);
     void drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene);
+    void drawPath3dWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawProductWindow(UiCommands& cmd, UiState& st); // ProductWindow.cpp
     void drawAppearanceWindow(UiCommands& cmd, UiState& st); // AppearanceWindow.cpp
     void drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
@@ -306,6 +312,8 @@ private:
     // Design menu inputs.
     float m_revolveAngle = 360.0f, m_filletRadius = 2.0f, m_patternSpacing = 20.0f, m_patternAngle = 360.0f;
     int m_weldFamily = 0, m_weldSize = 6, m_weldCorner = 0; // the Weldment menu's profile (family, size) and corners
+    int m_routeKind = 0, m_routeSize = 4;                    // the 3D Path window's route: kind and size
+    float m_routeBend = 0.0f;                                // its bends (0: the path's own, else the size's default)
     int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;

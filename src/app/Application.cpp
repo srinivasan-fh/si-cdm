@@ -432,7 +432,7 @@ std::optional<Application::SketchGripHit> Application::pickSketchGrip(float x, f
     float bestD = kGripPickPx;
     for (std::size_t i = 0; i < curves.size(); ++i) {
         const SketchCurve& c = curves[i];
-        if (!c.visible || c.pts.empty()) continue;
+        if (!c.visible || c.pts.empty() || c.spatial()) continue; // a 3D curve's points move with PATH3D POINT
         const std::vector<std::pair<int, Vec2>> pts = gripPoints(c);
         const PlaneFrame f = curveFrame(c);
         for (const auto& [k, q] : pts) {
@@ -578,6 +578,44 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         line += " \"" + m_uiState.mateFirst + "\" AT " + first + " \"" + b.name + "\" AT " + at;
         m_uiState.mateFirst.clear(); // ready for the next pair
         runCommandLine(line);
+        return;
+    }
+
+    // The 3D Path window picking points: a 3D path's or reference point under the cursor, a
+    // point on a body, else level with the last point (or the ground).
+    if (m_uiState.showPath3d && m_uiState.pathPick && !is2D) {
+        const ImGuiIO& io = ImGui::GetIO();
+        std::optional<Vec3> at;
+        float best = 10.0f;
+        auto consider = [&](const Vec3& p) {
+            if (const auto sp = projectToScreen(camera(), p, io.DisplaySize)) {
+                const float d = std::hypot(sp->x - x, sp->y - y);
+                if (d < best) best = d, at = p;
+            }
+        };
+        for (const SketchCurve& c : m_doc.scene.sketch().curves())
+            if (c.visible && c.spatial())
+                for (const Vec3& p : spacePoints(c)) consider(p);
+        for (const DatumPoint& r : m_doc.state.refPoints) consider(r.at);
+        if (!at)
+            if (const auto hit = pick(x, y)) at = hit->point;
+        if (!at) {
+            const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
+            const float level = m_uiState.pathPoints.empty() ? 0.0f : m_uiState.pathPoints.back().z;
+            if (std::fabs(ray.dir.z) > 1e-6f) {
+                const float t = (level - ray.origin.z) / ray.dir.z;
+                if (t > 0) at = ray.at(t);
+            }
+        }
+        if (!at) {
+            setStatus("Click a body, a 3D path's point, or the space level with the last point");
+            return;
+        }
+        m_uiState.pathPoints.push_back(*at);
+        char b[160];
+        std::snprintf(b, sizeof b, "Point %zu of the new path at (%.2f, %.2f, %.2f) mm", m_uiState.pathPoints.size(), static_cast<double>(at->x), static_cast<double>(at->y),
+                      static_cast<double>(at->z));
+        setStatus(b);
         return;
     }
 
@@ -1758,7 +1796,19 @@ void Application::frame(float dt) {
             fg->AddRect({sp->x - h, sp->y - h}, {sp->x + h, sp->y + h}, lit ? IM_COL32(255, 255, 255, 255) : IM_COL32(120, 200, 255, 255));
         };
         const int sel = m_uiState.selectedCurve;
-        if (sel >= 0 && sel < static_cast<int>(curves.size()))
+        if (sel >= 0 && sel < static_cast<int>(curves.size()) && curves[static_cast<std::size_t>(sel)].spatial()) {
+            // A 3D curve: its points where they are in space, numbered (PATH3D POINT n).
+            const SketchCurve& c = curves[static_cast<std::size_t>(sel)];
+            bool closed = false;
+            const std::vector<Vec3> pts = spacePoints(c, &closed);
+            for (std::size_t k = 0; k < pts.size(); ++k) {
+                const auto sp = projectToScreen(camera(), pts[k], io.DisplaySize);
+                if (!sp) continue;
+                fg->AddCircleFilled({sp->x, sp->y}, 4.0f, IM_COL32(20, 24, 32, 230));
+                fg->AddCircle({sp->x, sp->y}, 4.0f, IM_COL32(120, 200, 255, 255));
+                fg->AddText({sp->x + 6, sp->y - 16}, IM_COL32(200, 230, 255, 230), std::to_string(k + 1).c_str());
+            }
+        } else if (sel >= 0 && sel < static_cast<int>(curves.size()))
             for (const auto& [k, q] : gripPoints(curves[static_cast<std::size_t>(sel)])) mark(curves[static_cast<std::size_t>(sel)], q, false);
         if (hot && hot->curve >= 0 && hot->curve < static_cast<int>(curves.size())) {
             const SketchCurve& c = curves[static_cast<std::size_t>(hot->curve)];
@@ -1768,6 +1818,22 @@ void Application::frame(float dt) {
             } else if (c.kind == CurveKind::Point)
                 mark(c, c.pts[0], true);
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        }
+    }
+    // The 3D Path window's points so far, joined in order.
+    if (m_uiState.showPath3d && !m_uiState.pathPoints.empty() && m_uiState.mode != ViewMode::Drawing2D) {
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        std::optional<ImVec2> prev;
+        const auto& pts = m_uiState.pathPoints;
+        for (std::size_t k = 0; k <= pts.size(); ++k) {
+            if (k == pts.size() && !(m_uiState.pathClosed && pts.size() > 2)) break;
+            const auto sp = projectToScreen(camera(), pts[k % pts.size()], io.DisplaySize);
+            if (sp && prev) fg->AddLine(*prev, *sp, IM_COL32(255, 196, 64, 220), 2.0f);
+            if (sp && k < pts.size()) {
+                fg->AddCircleFilled(*sp, 4.5f, IM_COL32(255, 196, 64, 255));
+                fg->AddText({sp->x + 6, sp->y - 16}, IM_COL32(255, 230, 170, 240), std::to_string(k + 1).c_str());
+            }
+            prev = sp;
         }
     }
     if (isSketchTool(m_ui.toolbox().active()) && !io.WantCaptureMouse && !simulating()) {
@@ -3464,6 +3530,7 @@ void Application::setPanelPage(int page) {
     else if (page == 10) m_uiState.showProduct = true;
     else if (page == 11) m_uiState.showAppearance = true;
     else if (page == 12) m_uiState.showSection = true;
+    else if (page == 13) m_uiState.showPath3d = true;
     else if (page == 7) m_uiState.showLicence = true;
     else if (page == 6) m_uiState.showPreferences = true;
     else if (page == 5) m_uiState.showHelp = true;

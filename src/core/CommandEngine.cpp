@@ -23,6 +23,7 @@
 #include "core/MeshImport.hpp"
 #include "core/SectionView.hpp"
 #include "core/WeldmentCommand.hpp"
+#include "core/RouteCommand.hpp"
 #include "core/Components.hpp"
 #include "core/DrawingCommand.hpp"
 #include "core/PdmCommand.hpp"
@@ -715,7 +716,7 @@ bool sketchCommand(const std::string& cmd) {
     static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",
                                           "ELLIPSE",  "SKETCHSLOT",   "POLYGON", "TRIM",  "EXTEND",    "OFFSET",     "CONSTRUCTION",
                                           "CONSTRAIN", "DIM",         "CONSTRAINT", "DRAG",  "ERASE",     "SKETCHFILLET", "SKETCHCHAMFER",
-                                          "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT"};
+                                          "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT", "PATH3D"};
     for (const char* k : kSketch)
         if (cmd == k) return true;
     return false;
@@ -801,7 +802,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -817,7 +818,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -844,7 +845,7 @@ std::string releasedRefusal(const Document& doc, const std::string& cmd, const P
             if (cmd == k) return {};
     if (cmd == "PLANE" && pc.args.size() == 1) return {}; // only picks the sketch plane
     static const char* const kAsk[] = {"list", "info", "show", "report", "tree", "bom", "parts", "interference", "export", "check", "status", "dof", "hide", "pack", "open",
-                                       "cutlist", "profiles"};
+                                       "cutlist", "profiles", "bends", "sizes"};
     for (std::size_t i = 0; i < pc.args.size(); ++i) {
         if (i < pc.quoted.size() && pc.quoted[i]) continue;
         const std::string w = lower(pc.args[i]);
@@ -896,6 +897,8 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if ((cmd == "PLANE" || cmd == "REFAXIS" || cmd == "REFPOINT") && !pc.args.empty() && iequal(pc.args[0], "list")) return; // only looks
     if (cmd == "SHEETMETAL" && !pc.args.empty() && (iequal(pc.args[0], "edges") || iequal(pc.args[0], "info"))) return;
     if (cmd == "WELDMENT" && !pc.args.empty() && (iequal(pc.args[0], "list") || iequal(pc.args[0], "cutlist") || iequal(pc.args[0], "profiles"))) return; // only looks
+    if (cmd == "PATH3D" && !pc.args.empty() && iequal(pc.args[0], "info")) return;
+    if (cmd == "ROUTE" && !pc.args.empty() && (iequal(pc.args[0], "list") || iequal(pc.args[0], "bends") || iequal(pc.args[0], "sizes"))) return;
     if ((cmd == "POLYGROUP" || cmd == "LAYER" || cmd == "MULTIRES") &&
         std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); }))
         return;
@@ -2674,6 +2677,8 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "EXPLODE") return runExplodeCommand(doc, a, pc.quoted);
     if (cmd == "SECTION") return runSectionCommand(doc, a, pc.quoted);
     if (cmd == "WELDMENT") return runWeldmentCommand(doc, a, pc.quoted);
+    if (cmd == "PATH3D") return runPath3dCommand(doc, a, pc.quoted);
+    if (cmd == "ROUTE") return runRouteCommand(doc, a, pc.quoted);
     if (cmd == "FACE") return runFaceCommand(doc, a, pc.quoted);
     if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
     if (cmd == "COMPONENT") {
@@ -4965,12 +4970,12 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {
-        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION: open that page or window.
+        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION | PATH3D: open that page or window.
         const std::string page = toUpper(a[0]);
         const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5
                     : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7
                     : page == "PRODUCT" || page == "PDM" || page == "VAULT" ? 10
-                    : page == "APPEARANCE" || page == "MATERIALS" ? 11 : page == "SECTION" ? 12 : -1;
+                    : page == "APPEARANCE" || page == "MATERIALS" ? 11 : page == "SECTION" ? 12 : page == "PATH3D" || page == "ROUTE" ? 13 : -1;
         if (p >= 0) {
             if (auto o = needView(view, "PANEL"); !o.ok) return o;
             view->setPanelPage(p);

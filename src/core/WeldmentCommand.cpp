@@ -19,6 +19,15 @@ namespace sicdm {
 
 namespace {
 
+// The corners a member line runs through: a 3D polyline's own points (not its bends).
+std::vector<Vec3> straightPath(const SketchCurve& c) {
+    if (!c.spatial()) return c.worldStrip();
+    bool closed = false;
+    std::vector<Vec3> p = spacePoints(c, &closed);
+    if (closed && !p.empty()) p.push_back(p.front());
+    return p;
+}
+
 std::string lowerOf(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
@@ -150,7 +159,7 @@ CommandOutput runWeldmentCommand(Document& doc, const std::vector<std::string>& 
                     const SketchCurve& c = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
                     if (c.kind != CurveKind::Line && c.kind != CurveKind::Polyline && c.kind != CurveKind::Rectangle)
                         return out.fail(c.name + " isn't straight: members follow lines, polylines and rectangles");
-                    paths.push_back({c.worldStrip(), curveFrame(c).normal});
+                    paths.push_back({straightPath(c), curveFrame(c).normal});
                     i = j;
                 }
                 --i;
@@ -199,7 +208,7 @@ CommandOutput runWeldmentCommand(Document& doc, const std::vector<std::string>& 
             const SketchCurve& c = doc.scene.sketch().curves()[static_cast<std::size_t>(doc.selectedCurve)];
             if (c.kind != CurveKind::Line && c.kind != CurveKind::Polyline && c.kind != CurveKind::Rectangle)
                 return out.fail(c.name + " isn't straight: members follow lines, polylines and rectangles");
-            paths.push_back({c.worldStrip(), curveFrame(c).normal});
+            paths.push_back({straightPath(c), curveFrame(c).normal});
         }
         if (group.empty()) { // the weldment the last member went in, else a new one
             for (auto it = bodies.rbegin(); it != bodies.rend() && group.empty(); ++it)

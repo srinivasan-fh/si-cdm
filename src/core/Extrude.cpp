@@ -118,6 +118,7 @@ std::optional<Profile> profileFromCurve(const SketchCurve& c, std::string* why) 
         return std::nullopt;
     };
     if (c.construction) return fail(c.name + " is a construction curve: it guides the sketch but is no profile");
+    if (c.spatial()) return fail(c.name + " is a 3D curve, on no plane: a profile is a flat curve (a 3D curve can be a path: SWEEP ... ALONG, ROUTE)");
     Profile p;
     switch (c.kind) {
     case CurveKind::Circle:
