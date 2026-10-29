@@ -325,14 +325,16 @@ constexpr CommandSpec kCommands[] = {
      "Sketch a form as balls joined by tapered links (like ZSpheres): add balls on balls, mirrored across the root's plane; "
      "SKIN fuses them into one smooth closed mesh bound to the armature, and POSE turns a ball and everything on it, bending "
      "the skin (edits to the skin are kept)"},
-    {"STACK", "STACKUP TOLSTACK", "STACK | STACK NEW name [NOTE text] [SPEC lo hi | MIN lo | MAX hi] [GAP from to ALONG dir] [SAMPLES n] | "
+    {"STACK", "STACKUP TOLSTACK", "STACK | STACK NEW name [NOTE text] [SPEC lo hi | MIN lo | MAX hi] [GAP from to ALONG dir] [SAMPLES n] [VECTOR] [MEASURE dir | DISTANCE] | "
      "STACK name ADD [label] nominal | BODY body ALONG dir | DIM n [TOL t | TOL upper lower | LIMITS hi lo | FIT code | GENERAL f|m|c|v] "
-     "[MINUS] [SENS k] [NORMAL [CP c] | UNIFORM | TRIANGULAR] | STACK name EDIT n ... | REMOVE n | SPEC ... | GAP ... | NOTE text | UPDATE | "
+     "[MINUS] [SENS k] [NORMAL [CP c] | UNIFORM | TRIANGULAR] [DIR dir | ANGLE [AXIS dir]] | STACK name EDIT n ... | REMOVE n | SPEC ... | GAP ... | "
+     "NOTE text | VECTOR | LINEAR | MEASURE dir | DISTANCE | UPDATE | "
      "LIST | RENAME new | DELETE | STACK name [REPORT] [SAMPLES n] [CSV file] [SVG file]",
      "Tolerance stack-up: a chain of dimensions (typed, a body's size along a direction, or a drawing dimension, with a +- or "
      "two-sided tolerance, an ISO 286 fit or an ISO 2768 general class) adding up to a gap; its range by worst case, RSS, "
      "modified RSS and Monte Carlo, against the spec, with each dimension's share and what to tighten. GAP checks the "
-     "chain against the model; UPDATE measures again"},
+     "chain against the model; UPDATE measures again. VECTOR: a 2D/3D loop of lengths along directions and angles, the result its "
+     "closing distance or that along MEASURE"},
     {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t] | SIM CHECK [FROM t0] [TO t1] [STEP dt] [ALL] [body...]",
      "Open the Simulation window and control playback; SIM AT t reports body poses at time t; SIM CHECK finds parts that run into each other as it plays"},
     // Library

@@ -8,6 +8,12 @@
 //
 //   result = sum of  sign x sensitivity x dimension
 //
+// A vector stack (2D or 3D) is a loop of lengths, each along its own direction, and angles that
+// turn the directions after them: the result is how far the loop's end is from its start, or
+// that along a direction (MEASURE). It isn't a straight sum, so worst case and RSS use each
+// dimension's sensitivity at the nominal sizes (worked out numerically), and the Monte Carlo
+// run uses the loop itself.
+//
 // A dimension's tolerance is its band, upper and lower deviation from the nominal. A normal
 // distribution fills the band at +-3 sigma x Cp (Cp 1: +-3 sigma); a uniform one evenly; a
 // triangular one peaks at its middle. All lengths are mm.
@@ -41,6 +47,10 @@ struct StackItem {
     int dim = -1;                  // a drawing dimension (index)
     std::string fit;               // an ISO 286 fit code: the deviations follow the nominal
     char general = 0;              // an ISO 2768-1 class (f m c v): likewise
+    // In a vector stack:
+    Vec3 dir{1, 0, 0};             // a length's direction (turned by the angles before it)
+    bool angle = false;            // an angle (degrees, its tolerance too), turning what follows ...
+    Vec3 axis{0, 0, 1};            // ... about this
 };
 
 struct ToleranceStack {
@@ -54,6 +64,10 @@ struct ToleranceStack {
     std::string gapFrom, gapTo;
     Vec3 gapAlong{1, 0, 0};
     int samples = 100000;          // Monte Carlo samples
+    // A vector stack (a loop in 2D or 3D): the result is the distance from the loop's start
+    // to its end, or (when `measure` isn't zero) that along `measure`.
+    bool vector = false;
+    Vec3 measure{0, 0, 0};
 };
 
 struct StackResult {
@@ -85,6 +99,12 @@ struct StackResult {
 // The band of an ISO 2768-1 general tolerance (class f m c v) or ISO 286 fit code on a size.
 bool stackItemFromFit(StackItem& item, std::string* why = nullptr);
 bool stackItemFromGeneral(StackItem& item, std::string* why = nullptr);
+
+// The result for these values of the items (in order): the sum, or the vector loop.
+double stackValue(const ToleranceStack& stack, const std::vector<double>& values);
+// How much the result moves for each item's change at the nominal sizes (a straight stack:
+// sign x sensitivity; a vector one: worked out numerically).
+std::vector<double> stackSensitivities(const ToleranceStack& stack);
 
 // Each item's standard deviation (mm), before its sign and sensitivity.
 double stackItemSigma(const StackItem& item);

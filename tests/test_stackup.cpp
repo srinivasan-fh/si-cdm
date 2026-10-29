@@ -283,3 +283,87 @@ TEST_CASE("STACK: undo, saved with the project, CSV and SVG, over MCP") {
     CHECK(!tool(R"({"operation":"delete","stack":"Lid"})")["isError"].asBool());
     CHECK(m.state.stacks.empty());
 }
+
+TEST_CASE("Vector stacks: a 2D loop with an angle, by its sensitivities and the loop itself") {
+    // 100 along X, turn 90 deg, 50 along (the turned) X: the far end is at (100, 50).
+    ToleranceStack st;
+    st.name = "L";
+    st.vector = true;
+    StackItem base;
+    base.name = "Base", base.nominal = 100, base.upper = 0.1, base.lower = -0.1, base.dir = {1, 0, 0};
+    StackItem turn;
+    turn.name = "Turn", turn.nominal = 90, turn.upper = 0.5, turn.lower = -0.5, turn.angle = true, turn.axis = {0, 0, 1};
+    StackItem arm;
+    arm.name = "Arm", arm.nominal = 50, arm.upper = 0.1, arm.lower = -0.1, arm.dir = {1, 0, 0};
+    st.items = {base, turn, arm};
+    st.samples = 200000;
+    StackResult r = analyzeStack(st);
+    const double R = std::sqrt(100.0 * 100 + 50.0 * 50);
+    CHECK(std::fabs(r.nominal - R) < 1e-6);
+    const std::vector<double> s = stackSensitivities(st);
+    CHECK(std::fabs(s[0] - 100 / R) < 1e-5);
+    CHECK(std::fabs(s[2] - 50 / R) < 1e-5);
+    CHECK(std::fabs(s[1] + 100 * 50 * (3.14159265358979 / 180) / R) < 1e-4); // mm per degree
+    const double wc = 0.1 * 100 / R + 0.1 * 50 / R + 0.5 * 100 * 50 * (3.14159265358979 / 180) / R;
+    CHECK(std::fabs(r.wcHigh - (R + wc)) < 1e-4);
+    CHECK(std::fabs(r.wcLow - (R - wc)) < 1e-4);
+    CHECK(std::fabs(r.mcMean - R) < 0.01); // nearly straight here: the loop agrees
+    CHECK(r.mcP0 > r.wcLow); // the 99.73% points inside the worst case (normal tails reach past it)
+    CHECK(r.mcP1 < r.wcHigh);
+    // Along X only: the arm, square to X, doesn't count; the angle swings its end.
+    st.measure = {1, 0, 0};
+    r = analyzeStack(st);
+    CHECK(std::fabs(r.nominal - 100) < 1e-6);
+    CHECK(std::fabs(stackSensitivities(st)[2]) < 1e-6);
+    CHECK(std::fabs(r.wcHigh - (100 + 0.1 + 0.5 * 50 * 3.14159265358979 / 180)) < 1e-4);
+    // Folded back on itself (out and back, 180 deg): the straight-line view says it closes to
+    // nothing and doesn't move; the loop itself never goes below zero and opens up.
+    ToleranceStack fold = st;
+    fold.measure = {0, 0, 0};
+    fold.items[1].nominal = 180, fold.items[1].upper = 2, fold.items[1].lower = -2;
+    fold.items[2].nominal = 100;
+    r = analyzeStack(fold);
+    CHECK(std::fabs(r.nominal) < 1e-6);
+    CHECK(r.mcLow >= 0);
+    CHECK(r.mcMean > 0.5);
+    bool noted = false;
+    for (const std::string& n : r.notes) noted = noted || n.find("vector stack") != std::string::npos;
+    CHECK(noted);
+    // A straight stack is as it was: the value is the signed sum.
+    ToleranceStack lin;
+    lin.items = {base, arm};
+    lin.items[1].sign = -1;
+    CHECK(std::fabs(stackValue(lin, {100, 50}) - 50) < 1e-12);
+    // Saved and read back.
+    const std::vector<ToleranceStack> back = stacksFromJson(stacksToJson({st}));
+    REQUIRE(back.size() == 1);
+    CHECK(back[0].vector);
+    CHECK(back[0].items[1].angle);
+    CHECK(std::fabs(back[0].measure.x - 1) < 1e-6f);
+    CHECK(std::fabs(analyzeStack(back[0]).nominal - 100) < 1e-6);
+}
+
+TEST_CASE("STACK VECTOR: lengths along directions and angles, in any units") {
+    Document d;
+    REQUIRE(run(d, "UNITS IN").ok); // lengths typed in inches; angles stay degrees
+    REQUIRE(run(d, "STACK NEW Pin VECTOR DISTANCE SPEC 4.38 4.42").ok);
+    REQUIRE(run(d, "STACK Pin ADD Base 4 TOL 0.004 DIR X").ok);
+    REQUIRE(run(d, "STACK Pin ADD Turn 90 TOL 0.5 ANGLE AXIS Z").ok);
+    REQUIRE(run(d, "STACK Pin ADD Arm 2 TOL 0.004 DIR X").ok);
+    const ToleranceStack& st = d.state.stacks[0];
+    CHECK(st.vector);
+    CHECK(std::fabs(st.items[0].nominal - 101.6) < 1e-6);
+    CHECK(std::fabs(st.items[1].nominal - 90) < 1e-9); // not 90 inches
+    CHECK(std::fabs(st.items[1].upper - 0.5) < 1e-9);
+    const CommandOutput rep = run(d, "STACK Pin REPORT SAMPLES 20000");
+    REQUIRE(rep.ok);
+    const std::string text = joined(rep);
+    CHECK(text.find("vector loop") != std::string::npos);
+    CHECK(text.find("per deg") != std::string::npos);
+    CHECK(std::fabs(analyzeStack(st).nominal - std::sqrt(101.6 * 101.6 + 50.8 * 50.8)) < 1e-6);
+    REQUIRE(run(d, "STACK Pin MEASURE Y").ok);
+    CHECK(std::fabs(analyzeStack(d.state.stacks[0]).nominal - 50.8) < 1e-5);
+    REQUIRE(run(d, "STACK Pin LINEAR").ok);
+    CHECK(!d.state.stacks[0].vector);
+    CHECK(!run(d, "STACK Pin ADD Bad 1 DIR W").ok);
+}

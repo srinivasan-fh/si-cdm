@@ -1201,6 +1201,14 @@ const char* const kGerman[][2] = {
     {"A move lands on another body's corner, edge or face middle when it comes near one on screen", "Eine Verschiebung rastet an Ecke, Kanten- oder Flächenmitte eines anderen Körpers ein, wenn sie auf dem Bildschirm nahe kommt"},
     {"Points", "Punkte"},
     {"snap", "Fang"},
+    {"Add an Angle", "Winkel hinzufügen"},
+    {"Lengths along their own directions, and angles turning those after them: the result is where the loop ends", "Längen in ihren eigenen Richtungen und Winkel, die die folgenden drehen: das Ergebnis ist, wo die Schleife endet"},
+    {"Measure", "Messen"},
+    {"The result: the straight distance across the loop, or how far it goes along X, Y or Z", "Das Ergebnis: der gerade Abstand über die Schleife oder wie weit sie entlang X, Y oder Z reicht"},
+    {"Turns the lengths after it (degrees, about Z: edit with STACK name EDIT n AXIS ...)", "Dreht die Längen danach (Grad, um Z: ändern mit STACK name EDIT n AXIS ...)"},
+    {"Vector loop", "Vektorschleife"},
+    {"along", "entlang"},
+    {"an angle (deg) about", "ein Winkel (Grad) um"},
 };
 
 

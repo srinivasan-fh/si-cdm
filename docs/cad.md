@@ -1200,14 +1200,16 @@ ROUTE BENDS "Pipe 1"
 ![Tolerance Stack-up window](stackup.png)
 
 ```text
-STACK NEW name [NOTE text] [SPEC lo hi | MIN lo | MAX hi] [GAP from to ALONG dir] [SAMPLES n]
+STACK NEW name [NOTE text] [SPEC lo hi | MIN lo | MAX hi] [GAP from to ALONG dir] [SAMPLES n] [VECTOR] [MEASURE dir | DISTANCE]
 STACK name ADD [label] nominal [tolerance] [options]
 STACK name ADD BODY body ALONG X|Y|Z|x,y,z [label] [tolerance] [options]
 STACK name ADD DIM n [label] [options]
     tolerance: TOL t | TOL upper lower | LIMITS high low | FIT H7 | GENERAL f|m|c|v
     options:   MINUS | PLUS, SENS k, NORMAL [CP c] | UNIFORM | TRIANGULAR
+               vector stacks: DIR X|Y|Z|x,y,z (a length's direction) | ANGLE [AXIS dir] (degrees)
 STACK name EDIT n [NAME label] [NOMINAL v] [tolerance] [options]
 STACK name REMOVE n | SPEC ... | SPEC NONE | GAP ... | GAP NONE | NOTE text | UPDATE | LIST | RENAME new | DELETE
+STACK name VECTOR | LINEAR | MEASURE dir | DISTANCE
 STACK name [REPORT] [SAMPLES n] [CSV file] [SVG file]
 STACK                                       every stack, one line each
 ```
@@ -1292,10 +1294,33 @@ are saved with the project, and UNDO takes changes back.
 
 The Monte Carlo σ is within 2% of RSS.
 
+**Vector stacks (2D and 3D):** when the dimensions don't lie along one line, make the stack a
+loop (`VECTOR`): each length goes along its own direction (`DIR`), and an `ANGLE` turns the
+directions of every length after it, about its `AXIS` (Z by default). The result is the
+straight distance from the loop's start to its end (`DISTANCE`, the default), or how far it
+goes along a direction (`MEASURE X`):
+
+```text
+STACK NEW Pin VECTOR DISTANCE SPEC 111.3 112.3
+STACK Pin ADD Base 100 TOL 0.1 DIR X
+STACK Pin ADD Turn 90 TOL 0.5 ANGLE AXIS Z     degrees: what follows turns 90 deg about Z
+STACK Pin ADD Arm 50 TOL 0.1 DIR X             so this goes along Y
+STACK Pin REPORT
+```
+
+- The result isn't a plain sum, so worst case and RSS use each dimension's sensitivity at the
+  nominal sizes, worked out numerically. An angle's is in mm per degree. The report lists
+  them.
+- The Monte Carlo run evaluates the loop itself, so it shows what the straight-line view
+  misses. For example, a loop that folds back on itself never closes to less than nothing.
+- Checked by hand on the example above: nominal √(100² + 50²) = 111.803 mm; sensitivities
+  0.894, 0.447 and −0.781 mm/deg; worst case ±0.524 mm.
+- An angle's size and tolerance are always degrees, whatever the units.
+
 **Limits:**
 
-- The chain is one-dimensional, adding sizes along one direction (with sensitivities for
-  levers and angles).
+- A vector stack's worst case and RSS are linearised at the nominal sizes. Where the loop bends
+  a lot within the tolerances, the Monte Carlo figures are the ones to trust.
 - Geometric tolerances (position, flatness...) aren't turned into contributions on their own.
   Add them as dimensions with their zone as the band.
 

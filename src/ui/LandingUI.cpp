@@ -648,6 +648,8 @@ void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene
         std::snprintf(b, sizeof b, "%.6g", v);
         return std::string(b);
     };
+    // Lengths here are mm, marked so (bare numbers in a command are read in the document's units).
+    auto mm = [&](double v) { return n(v) + "mm"; };
     // Which stack, and a new one.
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo("##stack", cur ? cur->name.c_str() : tr("(no stack yet)"))) {
@@ -701,10 +703,28 @@ void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene
         ImGui::SameLine();
         ImGui::TextDisabled("%s", tr("mm (the spec)"));
         if (changed) {
-            if (hasLo && hasHi) cmd.commands.push_back("STACK " + name + " SPEC " + n(lo) + " " + n(hi));
-            else if (hasLo) cmd.commands.push_back("STACK " + name + " SPEC NONE MIN " + n(lo));
-            else if (hasHi) cmd.commands.push_back("STACK " + name + " SPEC NONE MAX " + n(hi));
+            if (hasLo && hasHi) cmd.commands.push_back("STACK " + name + " SPEC " + mm(lo) + " " + mm(hi));
+            else if (hasLo) cmd.commands.push_back("STACK " + name + " SPEC NONE MIN " + mm(lo));
+            else if (hasHi) cmd.commands.push_back("STACK " + name + " SPEC NONE MAX " + mm(hi));
             else cmd.commands.push_back("STACK " + name + " SPEC NONE");
+        }
+        // Straight (a sum along one line) or a vector loop in 2D/3D, and what it measures.
+        bool vec = cur->vector;
+        if (ImGui::Checkbox(tr("Vector loop"), &vec)) cmd.commands.push_back("STACK " + name + (vec ? " VECTOR" : " LINEAR"));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tr("Lengths along their own directions, and angles turning those after them: the result is where the loop ends"));
+        if (cur->vector) {
+            ImGui::SameLine();
+            static const char* const kMeasure[] = {SICDM_TR_NOOP("Distance"), "X", "Y", "Z"};
+            const Vec3 m = cur->measure;
+            int sel = m.x != 0 && m.y == 0 && m.z == 0 ? 1 : m.y != 0 && m.x == 0 && m.z == 0 ? 2 : m.z != 0 && m.x == 0 && m.y == 0 ? 3 : 0;
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::BeginCombo(tr("Measure"), tr(kMeasure[sel]))) {
+                for (int k = 0; k < 4; ++k)
+                    if (ImGui::Selectable(tr(kMeasure[k]), sel == k)) cmd.commands.push_back("STACK " + name + (k == 0 ? std::string(" DISTANCE") : std::string(" MEASURE ") + kMeasure[k]));
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The result: the straight distance across the loop, or how far it goes along X, Y or Z"));
         }
     }
     // The dimensions.
@@ -738,13 +758,19 @@ void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene
                 std::string tip = !it.body.empty() ? std::string(tr("Measured on the body")) + ": " + it.body : it.dim >= 0 ? tr("A drawing dimension") : tr("Typed");
                 if (!it.fit.empty()) tip += "; ISO 286 " + it.fit;
                 else if (it.general) tip += std::string("; ISO 2768-") + it.general;
+                if (cur->vector) {
+                    char d[96];
+                    if (it.angle) std::snprintf(d, sizeof d, "; %s %g,%g,%g", tr("an angle (deg) about"), it.axis.x, it.axis.y, it.axis.z);
+                    else std::snprintf(d, sizeof d, "; %s %g,%g,%g", tr("along"), it.dir.x, it.dir.y, it.dir.z);
+                    tip += d;
+                }
                 ImGui::SetTooltip("%s", tip.c_str());
             }
             ImGui::TableNextColumn();
             double nom = it.nominal;
             ImGui::SetNextItemWidth(80);
             ImGui::InputDouble("##nom", &nom, 0, 0, "%.4f");
-            if (ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back(edit + " NOMINAL " + n(nom));
+            if (ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back(edit + " NOMINAL " + (it.angle ? n(nom) : mm(nom)));
             if (ImGui::IsItemHovered() && (!it.body.empty() || it.dim >= 0)) ImGui::SetTooltip("%s", tr("Measured: typing a size here unlinks it"));
             double up = it.upper, low = it.lower;
             ImGui::TableNextColumn();
@@ -754,7 +780,9 @@ void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene
             ImGui::TableNextColumn();
             ImGui::SetNextItemWidth(70);
             ImGui::InputDouble("##low", &low, 0, 0, "%+.4f");
-            if (upDone || ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back(edit + " TOL " + (up >= 0 ? "+" : "") + n(up) + " " + (low >= 0 ? "+" : "") + n(low));
+            const auto val = [&](double v) { return it.angle ? n(v) : mm(v); }; // an angle's are degrees
+            if (upDone || ImGui::IsItemDeactivatedAfterEdit())
+                cmd.commands.push_back(edit + " TOL " + (up >= 0 ? "+" : "") + val(up) + " " + (low >= 0 ? "+" : "") + val(low));
             ImGui::TableNextColumn();
             int d = static_cast<int>(it.dist);
             ImGui::SetNextItemWidth(96);
@@ -776,7 +804,13 @@ void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene
         ImGui::EndTable();
     }
     // Adding: typed, or the selected body's size.
-    if (ImGui::Button(tr("Add a Dimension"))) cmd.commands.push_back("STACK " + name + " ADD " + q("Dimension " + std::to_string(cur->items.size() + 1)) + " 10 TOL 0.1");
+    if (ImGui::Button(tr("Add a Dimension")))
+        cmd.commands.push_back("STACK " + name + " ADD " + q("Dimension " + std::to_string(cur->items.size() + 1)) + " 10mm TOL 0.1mm" + (cur->vector ? " DIR X" : ""));
+    if (cur->vector) {
+        ImGui::SameLine();
+        if (ImGui::Button(tr("Add an Angle"))) cmd.commands.push_back("STACK " + name + " ADD " + q("Angle " + std::to_string(cur->items.size() + 1)) + " 90 TOL 0.5 ANGLE AXIS Z");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Turns the lengths after it (degrees, about Z: edit with STACK name EDIT n AXIS ...)"));
+    }
     ImGui::SameLine();
     const bool body = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size());
     static const char* const kAxes[] = {"X", "Y", "Z"};

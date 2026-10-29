@@ -10,6 +10,7 @@
 #include "core/Tolerances.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -153,17 +154,89 @@ double stackItemSigma(const StackItem& it) {
     }
 }
 
+namespace {
+
+// Turns v about the unit axis u by a (radians).
+std::array<double, 3> turned(const std::array<double, 3>& v, const std::array<double, 3>& u, double a) {
+    const double c = std::cos(a), s = std::sin(a), d = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    const std::array<double, 3> x{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
+    return {v[0] * c + x[0] * s + u[0] * d * (1 - c), v[1] * c + x[1] * s + u[1] * d * (1 - c), v[2] * c + x[2] * s + u[2] * d * (1 - c)};
+}
+
+std::array<double, 3> unitOf(const Vec3& v) {
+    const double l = std::sqrt(static_cast<double>(v.x) * v.x + static_cast<double>(v.y) * v.y + static_cast<double>(v.z) * v.z);
+    return l > 0 ? std::array<double, 3>{v.x / l, v.y / l, v.z / l} : std::array<double, 3>{1, 0, 0};
+}
+
+} // namespace
+
+double stackValue(const ToleranceStack& st, const std::vector<double>& x) {
+    if (!st.vector) {
+        double v = 0;
+        for (std::size_t i = 0; i < st.items.size() && i < x.size(); ++i) v += st.items[i].sign * st.items[i].sens * x[i];
+        return v;
+    }
+    // The loop: each length along its direction as turned so far; each angle turns the frame
+    // (the three directions every later length is given in).
+    std::array<double, 3> p{0, 0, 0}, ex{1, 0, 0}, ey{0, 1, 0}, ez{0, 0, 1};
+    for (std::size_t i = 0; i < st.items.size() && i < x.size(); ++i) {
+        const StackItem& it = st.items[i];
+        const double v = it.sign * it.sens * x[i];
+        if (it.angle) {
+            // The axis is given in the frame as turned so far.
+            const std::array<double, 3> a0 = unitOf(it.axis);
+            const std::array<double, 3> a{ex[0] * a0[0] + ey[0] * a0[1] + ez[0] * a0[2], ex[1] * a0[0] + ey[1] * a0[1] + ez[1] * a0[2],
+                                          ex[2] * a0[0] + ey[2] * a0[1] + ez[2] * a0[2]};
+            const double r = v * 3.14159265358979323846 / 180.0;
+            ex = turned(ex, a, r), ey = turned(ey, a, r), ez = turned(ez, a, r);
+        } else {
+            const std::array<double, 3> d = unitOf(it.dir);
+            for (int k = 0; k < 3; ++k) p[static_cast<std::size_t>(k)] += v * (ex[static_cast<std::size_t>(k)] * d[0] + ey[static_cast<std::size_t>(k)] * d[1] + ez[static_cast<std::size_t>(k)] * d[2]);
+        }
+    }
+    if (st.measure.x != 0 || st.measure.y != 0 || st.measure.z != 0) {
+        const std::array<double, 3> m = unitOf(st.measure);
+        return p[0] * m[0] + p[1] * m[1] + p[2] * m[2];
+    }
+    return std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+}
+
+std::vector<double> stackSensitivities(const ToleranceStack& st) {
+    const std::size_t n = st.items.size();
+    std::vector<double> c(n, 0.0);
+    if (!st.vector) {
+        for (std::size_t i = 0; i < n; ++i) c[i] = st.items[i].sign * st.items[i].sens;
+        return c;
+    }
+    std::vector<double> x(n);
+    for (std::size_t i = 0; i < n; ++i) x[i] = st.items[i].nominal;
+    for (std::size_t i = 0; i < n; ++i) {
+        // A central difference, a small part of the band (or of the size) wide.
+        const StackItem& it = st.items[i];
+        const double h = std::max({1e-7, 1e-3 * std::fabs(it.upper - it.lower), 1e-7 * std::fabs(it.nominal)});
+        std::vector<double> up = x, down = x;
+        up[i] += h, down[i] -= h;
+        c[i] = (stackValue(st, up) - stackValue(st, down)) / (2 * h);
+    }
+    return c;
+}
+
 StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
     StackResult r;
     const std::size_t n = st.items.size();
     r.variance.assign(n, 0.0);
     r.wcShare.assign(n, 0.0);
     double var = 0, band = 0;
+    // About the nominal: the result there, and how each dimension moves it.
+    std::vector<double> nominals(n);
+    for (std::size_t i = 0; i < n; ++i) nominals[i] = st.items[i].nominal;
+    const std::vector<double> sens = stackSensitivities(st);
+    r.nominal = stackValue(st, nominals);
+    r.mean = r.wcHigh = r.wcLow = r.nominal;
     for (std::size_t i = 0; i < n; ++i) {
         const StackItem& it = st.items[i];
-        const double c = it.sign * it.sens;
-        const double hi = it.nominal + std::max(it.upper, it.lower), lo = it.nominal + std::min(it.upper, it.lower);
-        r.nominal += c * it.nominal;
+        const double c = sens[i];
+        const double hi = std::max(it.upper, it.lower), lo = std::min(it.upper, it.lower); // from the nominal
         r.mean += c * 0.5 * (hi + lo);
         r.wcHigh += std::max(c * hi, c * lo);
         r.wcLow += std::min(c * hi, c * lo);
@@ -208,19 +281,21 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
         std::vector<double> y(static_cast<std::size_t>(N));
         double sum = 0, sum2 = 0;
         long long outside = 0;
+        std::vector<double> x(n);
         for (int k = 0; k < N; ++k) {
-            double v = 0;
-            for (const StackItem& it : st.items) {
+            for (std::size_t i = 0; i < n; ++i) {
+                const StackItem& it = st.items[i];
                 const double lo = it.nominal + std::min(it.upper, it.lower), hi = it.nominal + std::max(it.upper, it.lower);
                 const double mid = 0.5 * (lo + hi), half = 0.5 * (hi - lo);
-                double x = mid;
+                double xi = mid;
                 switch (it.dist) {
-                case StackDist::Uniform: x = lo + (hi - lo) * unit(g); break;
-                case StackDist::Triangular: x = mid + half * (unit(g) + unit(g) - 1.0); break; // the sum of two uniforms
-                default: x = mid + stackItemSigma(it) * gauss(g); break;
+                case StackDist::Uniform: xi = lo + (hi - lo) * unit(g); break;
+                case StackDist::Triangular: xi = mid + half * (unit(g) + unit(g) - 1.0); break; // the sum of two uniforms
+                default: xi = mid + stackItemSigma(it) * gauss(g); break;
                 }
-                v += it.sign * it.sens * x;
+                x[i] = xi;
             }
+            const double v = stackValue(st, x);
             y[static_cast<std::size_t>(k)] = v;
             sum += v, sum2 += v * v;
             if ((st.hasLow && v < st.low) || (st.hasHigh && v > st.high)) ++outside;
@@ -280,6 +355,8 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
                                   num(100 * fr, 3) + "% would bring it to Cpk 1");
         }
     }
+    if (st.vector)
+        r.notes.push_back("A vector stack: worst case and RSS use each dimension's effect at the nominal sizes (its sensitivity), the Monte Carlo run the loop itself");
     if (rssCapped)
         r.notes.push_back("With so few dimensions, 3 sigma reaches past the worst case: RSS is taken as the worst case there (the Monte Carlo run shows the real spread)");
     // The RSS figure takes the result as normal; the Monte Carlo run draws each dimension
@@ -365,13 +442,23 @@ std::vector<std::string> stackReport(const ToleranceStack& st, const StackResult
     std::vector<std::string> out;
     out.push_back("Stack " + st.name + (st.note.empty() ? "" : " (" + st.note + ")") + ": " + std::to_string(st.items.size()) +
                   (st.items.size() == 1 ? " dimension" : " dimensions"));
+    const std::vector<double> sens = st.vector ? stackSensitivities(st) : std::vector<double>{};
+    if (st.vector)
+        out.push_back(std::string("A vector loop; the result is ") +
+                      (st.measure.x != 0 || st.measure.y != 0 || st.measure.z != 0 ? "its end along " + num(st.measure.x) + "," + num(st.measure.y) + "," + num(st.measure.z)
+                                                                                  : std::string("the distance from its start to its end")));
     for (std::size_t i = 0; i < st.items.size(); ++i) {
         const StackItem& it = st.items[i];
         std::string l = "  " + std::to_string(i + 1) + ". " + (it.sign < 0 ? "- " : "+ ") + it.name + "  " + num(it.nominal) + " " + dev(it.upper) + "/" +
                         dev(it.lower);
         if (!it.fit.empty()) l += " (" + it.fit + ")";
         else if (it.general) l += std::string(" (ISO 2768-") + it.general + ")";
-        if (std::fabs(it.sens - 1) > 1e-12) l += "  x" + num(it.sens);
+        if (st.vector) {
+            l += it.angle ? " deg about " + num(it.axis.x) + "," + num(it.axis.y) + "," + num(it.axis.z) + ", moves the result " + num(sens[i], 4) + " mm per deg"
+                          : " along " + num(it.dir.x) + "," + num(it.dir.y) + "," + num(it.dir.z) + ", sensitivity " + num(sens[i], 4);
+        } else if (std::fabs(it.sens - 1) > 1e-12) {
+            l += "  x" + num(it.sens);
+        }
         l += "  " + std::string(stackDistName(it.dist));
         if (it.dist == StackDist::Normal && std::fabs(it.cp - 1) > 1e-12) l += " Cp " + num(it.cp, 3);
         if (i < r.variance.size()) l += "  [" + num(r.variance[i], 3) + "% of variance, " + num(r.wcShare[i], 3) + "% of worst case]";
@@ -406,10 +493,11 @@ std::vector<std::string> stackReport(const ToleranceStack& st, const StackResult
 std::string stackCsv(const ToleranceStack& st, const StackResult& r) {
     std::string s = "Item,Sign,Name,Nominal (mm),Upper (mm),Lower (mm),Sensitivity,Distribution,Cp,Sigma (mm),Variance (%),Worst case (%)\n";
     char b[320];
+    const std::vector<double> sens = stackSensitivities(st); // a vector stack's: its effect at the nominal sizes (deg for an angle)
     for (std::size_t i = 0; i < st.items.size(); ++i) {
         const StackItem& it = st.items[i];
         std::snprintf(b, sizeof b, "%zu,%c,%s,%.9g,%.9g,%.9g,%.9g,%s,%.6g,%.9g,%.6g,%.6g\n", i + 1, it.sign < 0 ? '-' : '+', csvCell(it.name).c_str(), it.nominal, it.upper,
-                      it.lower, it.sens, stackDistName(it.dist), it.cp, stackItemSigma(it), i < r.variance.size() ? r.variance[i] : 0.0,
+                      it.lower, st.vector ? sens[i] : it.sens, stackDistName(it.dist), it.cp, stackItemSigma(it), i < r.variance.size() ? r.variance[i] : 0.0,
                       i < r.wcShare.size() ? r.wcShare[i] : 0.0);
         s += b;
     }
@@ -534,9 +622,14 @@ Json stacksToJson(const std::vector<ToleranceStack>& stacks) {
             if (it.dim >= 0) i.set("dim", it.dim);
             if (!it.fit.empty()) i.set("fit", it.fit);
             if (it.general) i.set("general", std::string(1, it.general));
+            if (st.vector) {
+                if (it.angle) i.set("angle", true).set("axis", Json::array().push(it.axis.x).push(it.axis.y).push(it.axis.z));
+                else i.set("dir", Json::array().push(it.dir.x).push(it.dir.y).push(it.dir.z));
+            }
             items.push(i);
         }
         j.set("items", items);
+        if (st.vector) j.set("vector", true).set("measure", Json::array().push(st.measure.x).push(st.measure.y).push(st.measure.z));
         a.push(j);
     }
     return a;
@@ -558,6 +651,8 @@ std::vector<ToleranceStack> stacksFromJson(const Json& a) {
         st.gapTo = j["gap_to"].asString(std::string());
         st.gapAlong = vec(j["gap_along"], {1, 0, 0});
         st.samples = std::clamp(j["samples"].asInt(100000), 0, 2000000);
+        st.vector = j["vector"].asBool(false);
+        st.measure = vec(j["measure"], {0, 0, 0});
         for (const Json& i : j["items"].items()) {
             StackItem it;
             it.name = i["name"].asString(std::string("Dimension"));
@@ -576,6 +671,9 @@ std::vector<ToleranceStack> stacksFromJson(const Json& a) {
             it.fit = i["fit"].asString(std::string());
             const std::string g = i["general"].asString(std::string());
             it.general = g.empty() ? 0 : g[0];
+            it.angle = i["angle"].asBool(false);
+            it.axis = vec(i["axis"], {0, 0, 1});
+            it.dir = vec(i["dir"], {1, 0, 0});
             st.items.push_back(it);
         }
         out.push_back(st);

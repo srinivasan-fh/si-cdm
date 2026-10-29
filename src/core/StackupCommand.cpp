@@ -92,17 +92,27 @@ struct ItemOptions {
     std::optional<double> sens;
     std::optional<StackDist> dist;
     std::optional<double> cp;
+    std::optional<Vec3> dir;     // a vector stack's length: its direction
+    std::optional<bool> angle;   // an angle (degrees)
+    std::optional<Vec3> axis;    // ... about this
 };
 
 bool readItemOptions(const std::vector<std::string>& a, const std::vector<bool>& quoted, std::size_t i, ItemOptions& o, std::vector<std::string>& loose,
-                     std::string& why) {
+                     std::string& why, bool angleItem = false) {
     auto unq = [&](std::size_t k) { return !(k < quoted.size() && quoted[k]); };
+    // An ANGLE's size and tolerance are degrees: plain numbers, not lengths in the units.
+    bool degrees = angleItem;
+    for (std::size_t k = i; k < a.size(); ++k) degrees = degrees || (unq(k) && lowerOf(a[k]) == "angle");
     auto len = [&](std::size_t k) -> std::optional<double> {
         if (k >= a.size()) return std::nullopt;
         std::string w = a[k];
         if (w.rfind("+-", 0) == 0) w = w.substr(2);
         else if (w.rfind("\xC2\xB1", 0) == 0) w = w.substr(2); // the plus-minus sign
         else if (!w.empty() && w[0] == '+') w = w.substr(1);
+        if (degrees) {
+            const auto v = parseNumber(w);
+            return v ? std::optional<double>(*v) : std::nullopt;
+        }
         return parseLength(w);
     };
     for (; i < a.size(); ++i) {
@@ -153,6 +163,16 @@ bool readItemOptions(const std::vector<std::string>& a, const std::vector<bool>&
             const auto c = i + 1 < a.size() ? parseFactor(a[i + 1]) : std::nullopt;
             if (!c || !(*c > 0)) return why = "CP needs the process capability (> 0): CP 1.33", false;
             o.cp = *c, ++i, o.dist = StackDist::Normal;
+        } else if (k == "dir" || k == "direction") {
+            const auto d = i + 1 < a.size() ? parseDir(a[i + 1]) : std::nullopt;
+            if (!d) return why = "DIR needs X, Y, Z (-X...) or x,y,z: the length's direction in the loop", false;
+            o.dir = *d, o.angle = false, ++i;
+        } else if (k == "angle") {
+            o.angle = true;
+        } else if (k == "axis") {
+            const auto d = i + 1 < a.size() ? parseDir(a[i + 1]) : std::nullopt;
+            if (!d) return why = "AXIS needs X, Y, Z or x,y,z: what the angle turns about", false;
+            o.axis = *d, ++i;
         } else if (k == "name" || k == "label") {
             if (i + 1 >= a.size()) return why = "NAME needs the dimension's name", false;
             o.name = a[++i];
@@ -179,6 +199,9 @@ bool applyItemOptions(StackItem& it, const ItemOptions& o, std::string& why, boo
     if (o.sens) it.sens = *o.sens;
     if (o.dist) it.dist = *o.dist;
     if (o.cp) it.cp = *o.cp;
+    if (o.dir) it.dir = *o.dir;
+    if (o.angle) it.angle = *o.angle;
+    if (o.axis) it.axis = *o.axis;
     if (o.tol) it.upper = o.tol->first, it.lower = o.tol->second, it.fit.clear(), it.general = 0;
     if (o.limits) {
         if (adding && !o.nominal && it.body.empty() && it.dim < 0) it.nominal = 0.5 * (o.limits->first + o.limits->second);
@@ -192,10 +215,12 @@ bool applyItemOptions(StackItem& it, const ItemOptions& o, std::string& why, boo
     return true;
 }
 
-std::string itemLine(const StackItem& it, std::size_t index) {
+std::string itemLine(const StackItem& it, std::size_t index, bool vector = false) {
     std::string l = std::to_string(index + 1) + ". " + (it.sign < 0 ? "- " : "+ ") + it.name + " " + num(it.nominal) + " " + dev(it.upper) + "/" + dev(it.lower);
     if (!it.fit.empty()) l += " (" + it.fit + ")";
     else if (it.general) l += std::string(" (ISO 2768-") + it.general + ")";
+    if (it.angle) l += " deg, turning about " + dirText(it.axis);
+    else if (vector) l += " along " + dirText(it.dir);
     return l;
 }
 
@@ -247,6 +272,23 @@ bool readGap(const Document& doc, const std::vector<std::string>& a, std::size_t
 
 } // namespace
 
+// VECTOR / LINEAR, MEASURE dir, DISTANCE, at args[i] (moved on past what it reads).
+bool readMode(const std::vector<std::string>& a, std::size_t& i, ToleranceStack& st, std::string& why) {
+    const std::string k = lowerOf(a[i]);
+    if (k == "vector") {
+        st.vector = true;
+    } else if (k == "linear") {
+        st.vector = false;
+    } else if (k == "distance") {
+        st.vector = true, st.measure = {0, 0, 0};
+    } else { // measure
+        const auto d = i + 1 < a.size() ? parseDir(a[i + 1]) : std::nullopt;
+        if (!d) return why = "MEASURE needs the direction the result is taken along: X, Y, Z or x,y,z (DISTANCE: the straight distance)", false;
+        st.vector = true, st.measure = *d, ++i;
+    }
+    return true;
+}
+
 CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, const std::vector<bool>& quoted) {
     CommandOutput out;
     auto unq = [&](std::size_t k) { return !(k < quoted.size() && quoted[k]); };
@@ -279,8 +321,10 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
                 const auto n = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
                 if (!n || *n < 0 || *n > 2000000) return out.fail("SAMPLES is from 0 (no Monte Carlo) to 2000000");
                 st.samples = static_cast<int>(std::lround(*n)), ++i;
+            } else if (k == "vector" || k == "linear" || k == "measure" || k == "distance") {
+                if (!readMode(a, i, st, why)) return out.fail(why);
             } else {
-                return out.fail("STACK NEW doesn't take " + a[i] + " (NOTE, SPEC, MIN, MAX, GAP, SAMPLES)");
+                return out.fail("STACK NEW doesn't take " + a[i] + " (NOTE, SPEC, MIN, MAX, GAP, SAMPLES, VECTOR, MEASURE)");
             }
         }
         stacks.push_back(st);
@@ -320,7 +364,10 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
         if (!readItemOptions(a, quoted, i, o, loose, why)) return out.fail(why);
         // What's left: a name and (by hand) the nominal size.
         for (const std::string& w : loose) {
-            const auto v = it.body.empty() && it.dim < 0 && !o.nominal ? parseLength(w) : std::nullopt;
+            // An angle's size is degrees (a plain number), any other a length in the units.
+            const auto v = it.body.empty() && it.dim < 0 && !o.nominal
+                               ? (o.angle.value_or(false) ? (parseNumber(w) ? std::optional<double>(*parseNumber(w)) : std::nullopt) : parseLength(w))
+                               : std::nullopt;
             if (v) o.nominal = *v;
             else if (!o.name) o.name = w;
             else return out.fail("STACK ADD doesn't know " + w + " (the name, then the size: ADD Spacer 10 TOL 0.05)");
@@ -332,7 +379,7 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
         if (it.name.empty()) it.name = "Dimension " + std::to_string(st->items.size() + 1);
         if (!applyItemOptions(it, o, why, true)) return out.fail(why);
         st->items.push_back(it);
-        out.say("Added " + itemLine(it, st->items.size() - 1) + " to " + st->name);
+        out.say("Added " + itemLine(it, st->items.size() - 1, st->vector) + " to " + st->name);
         out.say(summary(*st));
         return out;
     }
@@ -342,13 +389,14 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
         StackItem it = st->items[static_cast<std::size_t>(std::lround(*n)) - 1];
         ItemOptions o;
         std::vector<std::string> loose;
-        if (!readItemOptions(a, quoted, 3, o, loose, why)) return out.fail(why);
-        if (!loose.empty()) return out.fail("STACK EDIT doesn't know " + loose[0] + " (NAME, NOMINAL, TOL, LIMITS, FIT, GENERAL, MINUS, PLUS, SENS, NORMAL, UNIFORM, TRIANGULAR, CP)");
+        if (!readItemOptions(a, quoted, 3, o, loose, why, it.angle)) return out.fail(why);
+        if (!loose.empty())
+            return out.fail("STACK EDIT doesn't know " + loose[0] + " (NAME, NOMINAL, TOL, LIMITS, FIT, GENERAL, MINUS, PLUS, SENS, NORMAL, UNIFORM, TRIANGULAR, CP, DIR, ANGLE, AXIS)");
         if (o.nominal) it.body.clear(), it.dim = -1; // typed: no longer measured
         if (!applyItemOptions(it, o, why, false)) return out.fail(why);
         const std::size_t k = static_cast<std::size_t>(std::lround(*n)) - 1;
         st->items[k] = it;
-        out.say("Changed " + itemLine(it, k));
+        out.say("Changed " + itemLine(it, k, st->vector));
         out.say(summary(*st));
         return out;
     }
@@ -356,7 +404,7 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
         const auto n = a.size() > 2 ? parseNumber(a[2]) : std::nullopt;
         if (!n || *n < 1 || *n > static_cast<double>(st->items.size())) return out.fail("STACK REMOVE needs the dimension's number (1 to " + std::to_string(st->items.size()) + ")");
         const std::size_t k = static_cast<std::size_t>(std::lround(*n)) - 1;
-        out.say("Removed " + itemLine(st->items[k], k));
+        out.say("Removed " + itemLine(st->items[k], k, st->vector));
         st->items.erase(st->items.begin() + static_cast<std::ptrdiff_t>(k));
         out.say(summary(*st));
         return out;
@@ -374,7 +422,8 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
         st->name = a[2];
         return out;
     }
-    if (sub == "spec" || sub == "min" || sub == "max" || sub == "gap" || sub == "note" || sub == "samples") {
+    if (sub == "spec" || sub == "min" || sub == "max" || sub == "gap" || sub == "note" || sub == "samples" || sub == "vector" || sub == "linear" ||
+        sub == "measure" || sub == "distance") {
         ToleranceStack copy = *st;
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string k = unq(i) ? lowerOf(a[i]) : std::string();
@@ -389,14 +438,17 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
                 const auto n = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
                 if (!n || *n < 0 || *n > 2000000) return out.fail("SAMPLES is from 0 (no Monte Carlo) to 2000000");
                 copy.samples = static_cast<int>(std::lround(*n)), ++i;
+            } else if (k == "vector" || k == "linear" || k == "measure" || k == "distance") {
+                if (!readMode(a, i, copy, why)) return out.fail(why);
             } else {
-                return out.fail("STACK " + st->name + " doesn't take " + a[i] + " here (SPEC, MIN, MAX, GAP, NOTE, SAMPLES)");
+                return out.fail("STACK " + st->name + " doesn't take " + a[i] + " here (SPEC, MIN, MAX, GAP, NOTE, SAMPLES, VECTOR, LINEAR, MEASURE)");
             }
         }
         *st = copy;
         std::string spec = st->hasLow || st->hasHigh ? (st->hasLow ? num(st->low) : std::string("-")) + " to " + (st->hasHigh ? num(st->high) : std::string("-")) + " mm"
                                                      : std::string("none");
-        out.say("Stack " + st->name + ": spec " + spec + (st->gapFrom.empty() ? "" : "; checked against the gap from " + st->gapFrom + " to " + st->gapTo));
+        out.say("Stack " + st->name + ": spec " + spec + (st->gapFrom.empty() ? "" : "; checked against the gap from " + st->gapFrom + " to " + st->gapTo) +
+                (st->vector ? "; a vector loop, measured " + (length(st->measure) > 0 ? "along " + dirText(st->measure) : std::string("as the distance across it")) : ""));
         out.say(summary(*st));
         return out;
     }
@@ -413,7 +465,7 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
     if (sub == "list") {
         out.say("Stack " + st->name + (st->note.empty() ? "" : " (" + st->note + ")") + ":");
         for (std::size_t k = 0; k < st->items.size(); ++k) {
-            std::string l = "  " + itemLine(st->items[k], k);
+            std::string l = "  " + itemLine(st->items[k], k, st->vector);
             if (!st->items[k].body.empty()) l += "  [size of " + st->items[k].body + " along " + dirText(st->items[k].along) + "]";
             if (st->items[k].dim >= 0) l += "  [drawing dimension " + std::to_string(st->items[k].dim + 1) + "]";
             out.say(l);
