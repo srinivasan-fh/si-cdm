@@ -557,8 +557,10 @@ std::string projectText(const Scene& scene, const ProjectState& state, const std
         }
         if (b.skin && !b.skin->rest.empty()) { // its rest pose and bone weights (the armature is a body of its own)
             const SkinData& sk = *b.skin;
-            std::vector<unsigned char> rest, bone, weight;
+            std::vector<unsigned char> rest, bone, weight, base;
             for (const Vec3& q : sk.rest) putF32(rest, q.x), putF32(rest, q.y), putF32(rest, q.z);
+            if (sk.base.size() == sk.rest.size())
+                for (const Vec3& q : sk.base) putF32(base, q.x), putF32(base, q.y), putF32(base, q.z);
             for (const auto& bb : sk.bone)
                 for (const std::int32_t v : bb) putU32(bone, static_cast<std::uint32_t>(v));
             for (const auto& w : sk.weight)
@@ -568,7 +570,11 @@ std::string projectText(const Scene& scene, const ProjectState& state, const std
                                .set("rest_b64", base64(rest))
                                .set("bones_b64", base64(bone))
                                .set("weights_b64", base64(weight))
-                               .set("pristine", sk.key == meshKey(b.mesh)));
+                               .set("pristine", sk.key == meshKey(b.mesh))
+                               .set("voxel", sk.options.voxel)
+                               .set("blend", sk.options.blend)
+                               .set("smooth", sk.options.smooth)
+                               .set("base_b64", base64(base)));
         }
         if (!b.holes.empty()) {
             Json hs = Json::array();
@@ -1200,6 +1206,12 @@ bool projectFromText(const std::string& text, const std::string& path, Scene& sc
                     sk->bone.push_back(bb), sk->weight.push_back(w);
                 }
                 skinPristine = js["pristine"].asBool(true);
+                sk->options.voxel = js["voxel"].asFloat(0);
+                sk->options.blend = js["blend"].asFloat(-1);
+                sk->options.smooth = js["smooth"].asInt(6);
+                std::vector<unsigned char> base;
+                if (unbase64(js["base_b64"].asString(), base) && base.size() == n * 12)
+                    for (std::size_t i = 0; i < n; ++i) sk->base.push_back({getF32(&base[i * 12]), getF32(&base[i * 12 + 4]), getF32(&base[i * 12 + 8])});
                 b.skin = std::move(sk);
             }
         }

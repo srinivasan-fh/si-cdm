@@ -6,6 +6,7 @@
 #include "core/Wearable.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <functional>
 
@@ -326,18 +327,18 @@ bool armatureSkin(const Armature& a, const SkinOptions& o, MeshData& out, SkinDa
     // against the field gets its corners eased to their neighbours' middle, and projected again.
     std::vector<std::vector<std::uint32_t>> around(m.vertices.size());
     for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3)
-        for (int e = 0; e < 3; ++e) {
-            const std::uint32_t a = m.indices[k + static_cast<std::size_t>(e)], b = m.indices[k + static_cast<std::size_t>((e + 1) % 3)];
-            around[a].push_back(b), around[b].push_back(a);
+        for (int corner = 0; corner < 3; ++corner) {
+            const std::uint32_t p = m.indices[k + static_cast<std::size_t>(corner)], q = m.indices[k + static_cast<std::size_t>((corner + 1) % 3)];
+            around[p].push_back(q), around[q].push_back(p);
         }
     for (int pass = 0; pass < 10; ++pass) {
         std::vector<char> bad(m.vertices.size(), 0);
         bool any = false;
         for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) {
-            const std::uint32_t a = m.indices[k], b = m.indices[k + 1], c = m.indices[k + 2];
-            const Vec3 n = cross(m.vertices[b].position - m.vertices[a].position, m.vertices[c].position - m.vertices[a].position);
-            const Vec3 g = m.vertices[a].normal + m.vertices[b].normal + m.vertices[c].normal;
-            if (dot(n, g) <= 0) bad[a] = bad[b] = bad[c] = 1, any = true;
+            const std::uint32_t i0 = m.indices[k], i1 = m.indices[k + 1], i2 = m.indices[k + 2];
+            const Vec3 n = cross(m.vertices[i1].position - m.vertices[i0].position, m.vertices[i2].position - m.vertices[i0].position);
+            const Vec3 g = m.vertices[i0].normal + m.vertices[i1].normal + m.vertices[i2].normal;
+            if (dot(n, g) <= 0) bad[i0] = bad[i1] = bad[i2] = 1, any = true;
         }
         if (!any) break;
         for (std::size_t i = 0; i < m.vertices.size(); ++i) {
@@ -390,6 +391,7 @@ bool armatureSkin(const Armature& a, const SkinOptions& o, MeshData& out, SkinDa
         for (int j = 0; j < k; ++j) weight[static_cast<std::size_t>(j)] /= sum;
         skin.bone.push_back(bone), skin.weight.push_back(weight);
     }
+    skin.base = skin.rest;
     out = std::move(m);
     return true;
 }
@@ -426,6 +428,111 @@ Mat4 blended(const SkinData& s, std::size_t i, const std::vector<Mat4>& pose, co
 }
 
 } // namespace
+
+namespace {
+
+// A point near link a0-b0 (radii ra0, rb0) taken to the same place by link a1-b1 (ra1, rb1):
+// as far along it, turned with it, out from it in proportion to its radius there.
+Vec3 alongLink(const Vec3& x, const Vec3& a0, const Vec3& b0, float ra0, float rb0, const Vec3& a1, const Vec3& b1, float ra1, float rb1) {
+    const Vec3 d0 = b0 - a0, d1 = b1 - a1;
+    const float l0 = length(d0), l1 = length(d1);
+    if (!(l0 > 1e-6f) || !(l1 > 1e-6f)) { // a lone ball: about its centre
+        const float k = ra0 > 0 ? ra1 / ra0 : 1.0f;
+        return a1 + (x - a0) * k;
+    }
+    const float t = std::clamp(dot(x - a0, d0) / (l0 * l0), 0.0f, 1.0f);
+    const Vec3 out = x - (a0 + d0 * t); // from the link out to the point (past the ends: round them)
+    const Vec3 u0 = d0 * (1.0f / l0), u1 = d1 * (1.0f / l1);
+    Vec3 turned = out;
+    const Vec3 ax = cross(u0, u1);
+    const float s = length(ax), c = dot(u0, u1);
+    if (s > 1e-7f) {
+        turned = quatMatrix(quatFromAxisAngle(ax * (1.0f / s), std::atan2(s, c))).transformDir(out);
+    } else if (c < 0) { // turned right round: about any line square to it
+        const Vec3 any = std::fabs(u0.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+        turned = quatMatrix(quatFromAxisAngle(normalize(cross(u0, any)), 3.14159265358979f)).transformDir(out);
+    }
+    const float r0 = ra0 + (rb0 - ra0) * t, r1 = ra1 + (rb1 - ra1) * t;
+    return a1 + d1 * t + turned * (r0 > 0 ? r1 / r0 : 1.0f);
+}
+
+} // namespace
+
+std::vector<Vec3> refitSkinRest(const SkinData& s, const Armature& o, const Armature& n) {
+    std::vector<Vec3> out = s.rest;
+    if (o.balls.size() != n.balls.size()) return out;
+    auto link = [&](const Armature& a, int b, Vec3& from, Vec3& to, float& rf, float& rt) {
+        const ArmatureBall& c = a.balls[static_cast<std::size_t>(b)];
+        const ArmatureBall& p = c.parent >= 0 ? a.balls[static_cast<std::size_t>(c.parent)] : c;
+        from = p.at, to = c.at, rf = p.radius, rt = c.radius;
+    };
+    int root = 0;
+    for (std::size_t k = 0; k < o.balls.size(); ++k)
+        if (o.balls[k].parent < 0) root = static_cast<int>(k);
+    for (std::size_t i = 0; i < s.rest.size(); ++i) {
+        Vec3 sum{0, 0, 0};
+        float total = 0;
+        for (std::size_t k = 0; k < 4 && i < s.bone.size(); ++k) {
+            const int b = s.bone[i][k];
+            const float w = s.weight[i][k];
+            if (b < 0 || b >= static_cast<int>(o.balls.size()) || !(w > 0)) continue;
+            Vec3 a0, b0, a1, b1;
+            float ra0, rb0, ra1, rb1;
+            link(o, b, a0, b0, ra0, rb0);
+            link(n, b, a1, b1, ra1, rb1);
+            sum += alongLink(s.rest[i], a0, b0, ra0, rb0, a1, b1, ra1, rb1) * w;
+            total += w;
+        }
+        if (total > 0) {
+            out[i] = sum * (1.0f / total);
+        } else { // follows no link (a lone root ball): goes with the root
+            const ArmatureBall &r0 = o.balls[static_cast<std::size_t>(root)], &r1 = n.balls[static_cast<std::size_t>(root)];
+            out[i] = alongLink(s.rest[i], r0.at, r0.at, r0.radius, r0.radius, r1.at, r1.at, r1.radius, r1.radius);
+        }
+    }
+    return out;
+}
+
+bool reskinWithDetail(const Armature& n, const SkinOptions& o, const std::vector<Vec3>& oldFresh, const std::vector<Vec3>& detail,
+                      const std::vector<std::uint32_t>& colors, MeshData& out, SkinData& skin, std::string* why) {
+    if (!armatureSkin(n, o, out, skin, why)) return false;
+    skin.options = o;
+    if (oldFresh.empty() || detail.size() != oldFresh.size()) return true;
+    // The old skin's points in cells; each new vertex takes the nearest one's detail (and
+    // paint), when one is near: within a few cells (a new ball's skin has none near it).
+    AABB box;
+    for (const Vec3& p : oldFresh) box.expand(p);
+    const Vec3 ext = box.max - box.min;
+    const float cell = std::max({ext.x, ext.y, ext.z, 1e-3f}) / 64.0f;
+    auto key = [&](const Vec3& p) {
+        return std::array<int, 3>{static_cast<int>(std::floor((p.x - box.min.x) / cell)), static_cast<int>(std::floor((p.y - box.min.y) / cell)),
+                                  static_cast<int>(std::floor((p.z - box.min.z) / cell))};
+    };
+    std::map<std::array<int, 3>, std::vector<std::uint32_t>> cells;
+    for (std::size_t i = 0; i < oldFresh.size(); ++i) cells[key(oldFresh[i])].push_back(static_cast<std::uint32_t>(i));
+    for (std::size_t v = 0; v < out.vertices.size(); ++v) {
+        const Vec3 p = out.vertices[v].position;
+        const auto k = key(p);
+        float best = 2.0f * cell; // nearer than two cells, or nothing
+        std::int64_t pick = -1;
+        for (int dx = -2; dx <= 2; ++dx)
+            for (int dy = -2; dy <= 2; ++dy)
+                for (int dz = -2; dz <= 2; ++dz) {
+                    const auto it = cells.find({k[0] + dx, k[1] + dy, k[2] + dz});
+                    if (it == cells.end()) continue;
+                    for (const std::uint32_t j : it->second)
+                        if (const float d = length(oldFresh[j] - p); d < best) best = d, pick = j;
+                }
+        if (pick < 0) continue;
+        const std::size_t j = static_cast<std::size_t>(pick);
+        out.vertices[v].position += detail[j];
+        skin.rest[v] = out.vertices[v].position;
+        if (j < colors.size()) out.vertices[v].color = colors[j];
+    }
+    smoothVertexNormals(out);
+    out.computeFeatureEdges(60.0f);
+    return true;
+}
 
 std::vector<Vec3> poseSkin(const SkinData& s, const Armature& a) {
     const std::vector<Mat4> pose = armaturePose(a);

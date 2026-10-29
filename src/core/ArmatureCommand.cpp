@@ -128,6 +128,92 @@ void store(Document& doc, int index, const Armature& before, const Armature& arm
     doc.dirty = true;
 }
 
+// The armature as it rests (no ball turned).
+Armature atRest(Armature a) {
+    for (ArmatureBall& b : a.balls) b.turn = {0, 0, 0, 1};
+    return a;
+}
+
+// How an edit to an armature changed it, for the skins bound to it.
+enum class Refit {
+    Moved,    // balls moved or resized: the skin follows its links
+    Inserted, // a ball put on a link: the link's vertices shared between its two halves
+    Rebuilt   // balls added or taken away: skinned again, what was sculpted or painted kept
+};
+
+// Fits the skins bound to the armature to it after an edit, keeping what was sculpted on them.
+void refitSkins(Document& doc, const std::string& armature, const Armature& before, const Armature& arm, CommandOutput& out, Refit how, int mid = -1,
+                int child = -1) {
+    const Armature oldRest = atRest(before), newRest = atRest(arm);
+    for (Body& b : doc.scene.bodies()) {
+        if (!b.skin || b.skin->armature != armature) continue;
+        if (b.mesh.vertices.size() != b.skin->rest.size()) {
+            out.say(b.name + " was remeshed since it was skinned, so it can't follow the edit (SKIN again to bind a new skin)");
+            continue;
+        }
+        auto s = std::make_shared<SkinData>(*b.skin);
+        if (meshKey(b.mesh) != s->key) { // sculpted, smoothed...: its rest pose from how it is now
+            std::vector<Vec3> now(b.mesh.vertices.size());
+            for (std::size_t i = 0; i < now.size(); ++i) now[i] = b.mesh.vertices[i].position;
+            s->rest = unposeSkin(*s, before, now);
+        }
+        if (how == Refit::Moved) {
+            if (s->base.size() == s->rest.size()) { // the unsculpted shape goes the same way
+                SkinData bare = *s;
+                bare.rest = s->base;
+                s->base = refitSkinRest(bare, oldRest, newRest);
+            }
+            s->rest = refitSkinRest(*s, oldRest, newRest);
+        } else if (how == Refit::Inserted && mid >= 0 && child >= 0) {
+            const int parent = before.balls[static_cast<std::size_t>(child)].parent;
+            const Vec3 a0 = oldRest.balls[static_cast<std::size_t>(parent)].at, b0 = oldRest.balls[static_cast<std::size_t>(child)].at;
+            const Vec3 d = b0 - a0;
+            for (std::size_t i = 0; i < s->rest.size(); ++i)
+                for (std::int32_t& bone : s->bone[i])
+                    if (bone == child && dot(s->rest[i] - a0, d) < 0.5f * dot(d, d)) bone = mid; // the near half
+        } else if (how == Refit::Rebuilt) {
+            // What was sculpted: how far each vertex is from where a fresh skin of the old
+            // armature puts it (the same skin, vertex for vertex, unless it was remeshed).
+            std::vector<Vec3> bare = s->base; // kept with the skin; else a fresh skin of the old armature
+            if (bare.size() != s->rest.size()) {
+                MeshData fresh;
+                SkinData freshSkin;
+                bare = armatureSkin(oldRest, s->options, fresh, freshSkin) ? freshSkin.rest : std::vector<Vec3>{};
+            }
+            std::vector<Vec3> detail;
+            std::vector<std::uint32_t> colors;
+            if (bare.size() == s->rest.size()) {
+                detail.resize(s->rest.size());
+                for (std::size_t i = 0; i < detail.size(); ++i) detail[i] = s->rest[i] - bare[i];
+                for (const Vertex& v : b.mesh.vertices) colors.push_back(v.color);
+            } else {
+                bare.clear();
+            }
+            MeshData mesh;
+            auto ns = std::make_shared<SkinData>();
+            std::string why;
+            if (!reskinWithDetail(newRest, s->options, bare, detail, colors, mesh, *ns, &why)) {
+                out.say(b.name + " couldn't be skinned again: " + why);
+                continue;
+            }
+            ns->armature = armature;
+            b.mesh = std::move(mesh);
+            b.multires.reset();
+            s = std::move(ns);
+            if (detail.empty()) out.say(b.name + " was skinned again (what was sculpted on it couldn't be carried over)");
+        }
+        const std::vector<Vec3> posed = poseSkin(*s, arm);
+        for (std::size_t i = 0; i < posed.size(); ++i) b.mesh.vertices[i].position = posed[i];
+        smoothVertexNormals(b.mesh);
+        b.mesh.computeFeatureEdges(60.0f);
+        b.brep.reset();
+        s->key = meshKey(b.mesh);
+        b.skin = std::move(s);
+        out.say(b.name + (how == Refit::Rebuilt ? " skinned again to fit" : " fitted to it"));
+    }
+    doc.scene.touchBodies();
+}
+
 std::string ballLine(const Armature& arm, std::size_t i, const std::vector<Vec3>& posed) {
     const ArmatureBall& b = arm.balls[i];
     std::string l = std::to_string(i + 1) + ". at " + vecText(b.at) + " radius " + num(b.radius);
@@ -269,6 +355,7 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
         }
         store(doc, index, before, arm, out, false);
         out.say(said);
+        refitSkins(doc, name, before, arm, out, Refit::Rebuilt);
         return out;
     }
     if (sub == "insert") {
@@ -282,6 +369,7 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
         store(doc, index, before, arm, out, false);
         out.say("Inserted ball " + std::to_string(arm.balls.size()) + " at " + vecText(mid.at) + ", between " + std::to_string(mid.parent + 1) + " and " +
                 std::to_string(*n + 1));
+        refitSkins(doc, name, before, arm, out, Refit::Inserted, static_cast<int>(arm.balls.size()) - 1, *n);
         return out;
     }
     if (sub == "move" || sub == "radius") {
@@ -298,6 +386,7 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
             for (int w : which) arm.balls[static_cast<std::size_t>(w)].radius = static_cast<float>(*r);
             store(doc, index, before, arm, out, false);
             out.say("Ball " + std::to_string(*n + 1) + (which.size() > 1 ? " and its mirror" : "") + ": radius " + num(*r));
+            refitSkins(doc, name, before, arm, out, Refit::Moved);
             return out;
         }
         std::optional<Vec3> to, by;
@@ -332,9 +421,7 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
         store(doc, index, before, arm, out, false);
         out.say("Moved ball " + std::to_string(*n + 1) + (chain ? " and those on it" : "") + (which.size() > 1 ? ", and its mirror," : "") + " to " +
                 vecText(arm.balls[static_cast<std::size_t>(*n)].at));
-        bool skinned = false;
-        for (const Body& b : bodies) skinned = skinned || (b.skin && b.skin->armature == name);
-        if (skinned) out.say("Its skins keep the old shape: SKIN again to fit them to it");
+        refitSkins(doc, name, before, arm, out, Refit::Moved);
         return out;
     }
     if (sub == "remove" || sub == "delete") {
@@ -354,13 +441,8 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
             if (b.parent >= 0) b.parent = renumber[static_cast<std::size_t>(b.parent)];
         const std::size_t removed = arm.balls.size() - kept.balls.size();
         store(doc, index, before, kept, out, false);
-        // Skins bound to the old numbering can't follow this one.
-        for (Body& b : bodies)
-            if (b.skin && b.skin->armature == name) {
-                b.skin.reset();
-                out.say(b.name + " is no longer bound to " + name + " (SKIN again)");
-            }
         out.say("Removed " + std::to_string(removed) + (removed == 1 ? " ball" : " balls") + " from " + name);
+        refitSkins(doc, name, before, kept, out, Refit::Rebuilt);
         return out;
     }
     if (sub == "pose") {
@@ -441,6 +523,7 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
         auto skin = std::make_shared<SkinData>();
         if (!armatureSkin(rest, o, mesh, *skin, &why)) return out.fail(why);
         skin->armature = name;
+        skin->options = o;
         const std::vector<Vec3> posed = poseSkin(*skin, arm);
         for (std::size_t i = 0; i < posed.size(); ++i) mesh.vertices[i].position = posed[i];
         smoothVertexNormals(mesh);

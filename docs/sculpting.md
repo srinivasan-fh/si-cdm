@@ -358,6 +358,16 @@ Then turn it into a mesh:
   with it.
 - Edits made to the skin since (sculpting, smoothing) are kept: its rest shape is taken back from it
   before each pose.
+- Editing the armature after skinning fits the skin to it, keeping what was sculpted and painted
+  on it:
+  - moving or sizing a ball (`MOVE`, `RADIUS`) carries each skin vertex with the links it follows:
+    the same mesh, reshaped;
+  - `INSERT` shares a link's vertices between its two halves, so the new ball bends what is past it;
+  - adding or removing a ball (`ADD`, `REMOVE`) skins it again with the same settings, and puts
+    back what was sculpted and painted from the old skin's nearest points (a new ball's own skin
+    starts plain).
+  - A skin remeshed since it was skinned (Dynamesh, retopology) can't follow; `SKIN` again for a new
+    one.
 
 ```text
 ARMATURE NEW Body AT 0,0,100 RADIUS 20

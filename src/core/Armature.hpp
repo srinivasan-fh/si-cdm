@@ -44,20 +44,22 @@ std::vector<Vec3> posedBalls(const Armature& a);
 // Balls and links as a light preview mesh, posed.
 MeshData armaturePreview(const Armature& a);
 
+struct SkinOptions {
+    float voxel = 0;  // mm; 0: from the smallest ball (a quarter of its radius), within 256 per side
+    float blend = -1; // mm, the rounding where links meet; < 0: a quarter of the smallest ball's radius
+    int smooth = 6;   // smoothing passes on the marched surface
+};
+
 // The bone weights of a skin: for each vertex up to four links (by the index of the ball at
 // their far end) and how much each moves it.
 struct SkinData {
     std::string armature;                         // the armature body it follows
     std::vector<Vec3> rest;                       // its vertices in the rest pose (the armature's frame)
+    std::vector<Vec3> base;                       // the same unsculpted (as skinned, refitted with it): rest - base is what was sculpted
     std::vector<std::array<std::int32_t, 4>> bone; // -1: none
     std::vector<std::array<float, 4>> weight;
     std::uint64_t key = 0;                        // meshKey() of the mesh it last made
-};
-
-struct SkinOptions {
-    float voxel = 0;  // mm; 0: from the smallest ball (a quarter of its radius), within 256 per side
-    float blend = -1; // mm, the rounding where links meet; < 0: a quarter of the smallest ball's radius
-    int smooth = 6;   // smoothing passes on the marched surface
+    SkinOptions options;                          // what it was skinned with (to skin it again the same)
 };
 
 // The armature's skin as one closed mesh, with its bone weights (`skin`: rest and weights).
@@ -70,6 +72,17 @@ std::vector<Vec3> poseSkin(const SkinData& skin, const Armature& a);
 // The rest pose that `posed` (the skin's vertices as they are now, edited perhaps) would come
 // from in the armature's pose: so edits made to a posed skin are kept when it is posed again.
 std::vector<Vec3> unposeSkin(const SkinData& skin, const Armature& a, const std::vector<Vec3>& posed);
+
+// Fitting a skin to an armature edited since it was skinned (both armatures in their rest
+// pose):
+// - its balls moved or resized, the same balls and links: the rest pose that follows them,
+//   each vertex going with the links it follows (so sculpted detail stays);
+std::vector<Vec3> refitSkinRest(const SkinData& skin, const Armature& oldRest, const Armature& newRest);
+// - balls added or taken away: a new skin, with `detail` (how far each vertex of the old skin
+//   was from where a fresh skin of the old armature puts it: what was sculpted) and `colors`
+//   (polypaint, may be empty) carried over from the old skin's nearest vertices.
+bool reskinWithDetail(const Armature& newRest, const SkinOptions& o, const std::vector<Vec3>& oldFresh, const std::vector<Vec3>& detail,
+                      const std::vector<std::uint32_t>& colors, MeshData& out, SkinData& skin, std::string* why = nullptr);
 
 // Area-weighted vertex normals (a skin's vertices are shared between its triangles).
 void smoothVertexNormals(MeshData& m);

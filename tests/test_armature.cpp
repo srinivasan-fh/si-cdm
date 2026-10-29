@@ -258,3 +258,102 @@ TEST_CASE("armatures and skins are saved, follow a rename, and work over MCP") {
     CHECK(tool(R"({"operation":"pose","armature":"Tail","ball":9,"angle":30})")["isError"].asBool());
     CHECK(tool(R"({"operation":"fly","armature":"Tail"})")["isError"].asBool());
 }
+
+TEST_CASE("armature edits after skinning: the skin follows, what was sculpted on it stays") {
+    // Two of the same arm: one with a bump pulled out at its tip.
+    auto make = [](Document& d) {
+        run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10");
+        run(d, "ARMATURE Arm ADD AT 50,0,0 RADIUS 8");
+        run(d, "ARMATURE Arm ADD AT 100,0,0 RADIUS 6");
+        return run(d, "ARMATURE Arm SKIN").ok;
+    };
+    Document plain, bumped;
+    REQUIRE(make(plain));
+    REQUIRE(make(bumped));
+    Body* skin = named(bumped, "Arm skin");
+    REQUIRE(skin && skin->skin);
+    std::size_t tip = 0;
+    for (std::size_t i = 0; i < skin->mesh.vertices.size(); ++i)
+        if (skin->mesh.vertices[i].position.x > skin->mesh.vertices[tip].position.x) tip = i;
+    skin->mesh.vertices[tip].position += Vec3{3, 0, 0}; // pulled out of the tip, 3 mm
+    auto both = [&](const std::string& line) { return run(plain, line).ok && run(bumped, line).ok; };
+    auto bump = [&]() { // how far the bumped skin's tip vertex is from the plain one's
+        const Body *p = named(plain, "Arm skin"), *b = named(bumped, "Arm skin");
+        return p && b && p->mesh.vertices.size() == b->mesh.vertices.size() ? length(b->mesh.vertices[tip].position - p->mesh.vertices[tip].position) : -1.0f;
+    };
+    const std::size_t count = skin->mesh.vertices.size();
+    // Moving the tip ball up: the same vertices, the tip end goes with it, the root end stays.
+    const std::vector<Vertex> before = named(plain, "Arm skin")->mesh.vertices;
+    REQUIRE(both("ARMATURE Arm MOVE 3 BY 0,30,0"));
+    const Body* moved = named(plain, "Arm skin");
+    REQUIRE(moved->mesh.vertices.size() == count);
+    double rootWorst = 0, tipWorst = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const Vec3 was = before[i].position, now = moved->mesh.vertices[i].position;
+        if (was.x < 5) rootWorst = std::max(rootWorst, static_cast<double>(length(now - was)));
+        if (was.x > 100) tipWorst = std::max(tipWorst, std::fabs(static_cast<double>(length(now - Vec3{100, 30, 0}) - 6))); // on the ball's skin still
+    }
+    CHECK(rootWorst < 0.05);
+    CHECK(tipWorst < 0.6);
+    CHECK(openEdgeCount(moved->mesh) == 0);
+    CHECK(std::fabs(bump() - 3) < 0.3); // the bump went with it
+    // A ball made bigger: its skin grows round it.
+    REQUIRE(both("ARMATURE Arm RADIUS 2 12"));
+    double around = 0;
+    for (const Vertex& v : named(plain, "Arm skin")->mesh.vertices)
+        if (std::fabs(v.position.x - 50) < 1.5f) around = std::max(around, static_cast<double>(std::fabs(v.position.z)));
+    CHECK(std::fabs(around - 12) < 0.8);
+    CHECK(std::fabs(bump() - 3) < 0.3);
+    // A ball put halfway along a link: the skin stays put, and the new ball bends what is past it.
+    REQUIRE(both("ARMATURE Arm INSERT 3"));
+    REQUIRE(named(plain, "Arm skin")->mesh.vertices.size() == count);
+    const std::vector<Vertex> straight = named(plain, "Arm skin")->mesh.vertices;
+    REQUIRE(both("ARMATURE Arm POSE 4 AXIS 0,0,1 ANGLE 30"));
+    double nearBall2 = 0, pastMid = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const double d = length(named(plain, "Arm skin")->mesh.vertices[i].position - straight[i].position);
+        if (straight[i].position.x < 52) nearBall2 = std::max(nearBall2, d);
+        if (straight[i].position.x > 95) pastMid = std::max(pastMid, d);
+    }
+    CHECK(nearBall2 < 0.05);
+    CHECK(pastMid > 5);
+    REQUIRE(both("ARMATURE Arm POSE RESET"));
+    // A ball added: skinned again (more of it), still bound, the bump carried over.
+    REQUIRE(both("ARMATURE Arm ADD TO 2 AT 50,0,50 RADIUS 5"));
+    const Body *ps = named(plain, "Arm skin"), *bs = named(bumped, "Arm skin");
+    REQUIRE(ps && bs && ps->skin && bs->skin);
+    CHECK(ps->mesh.vertices.size() > count);
+    double up = 0;
+    for (const Vertex& v : ps->mesh.vertices) up = std::max(up, static_cast<double>(v.position.z));
+    CHECK(std::fabs(up - 55) < 0.8); // over the new ball
+    REQUIRE(ps->mesh.vertices.size() == bs->mesh.vertices.size());
+    double most = 0, elsewhere = 0;
+    for (std::size_t i = 0; i < ps->mesh.vertices.size(); ++i) {
+        const double d = length(bs->mesh.vertices[i].position - ps->mesh.vertices[i].position);
+        most = std::max(most, d);
+        if (ps->mesh.vertices[i].position.x < 80) elsewhere = std::max(elsewhere, d);
+    }
+    CHECK(most > 2.0);      // the bump is there
+    CHECK(elsewhere < 0.05); // and nowhere else
+    CHECK(openEdgeCount(ps->mesh) == 0);
+    // Taken away again: still bound (it used to be unbound).
+    REQUIRE(both("ARMATURE Arm REMOVE 5"));
+    CHECK(named(plain, "Arm skin")->skin != nullptr);
+    CHECK(named(plain, "Arm skin")->mesh.vertices.size() < ps->mesh.vertices.size() + 1);
+    // Saved and opened again: its unsculpted shape and options come back, so a later edit
+    // still keeps the bump.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_tests" / "refit.sicdm").string();
+    std::string why;
+    REQUIRE(saveProject(bumped.scene, bumped.state, path, &why));
+    Document again;
+    REQUIRE(loadProject(again.scene, again.state, path, &why));
+    std::filesystem::remove(path);
+    const Body* loaded = named(again, "Arm skin");
+    REQUIRE(loaded && loaded->skin);
+    CHECK(loaded->skin->base.size() == loaded->skin->rest.size());
+    CHECK(std::fabs(loaded->skin->options.blend - named(bumped, "Arm skin")->skin->options.blend) < 1e-6f);
+    // UNDO puts the skin back as it was before the last edit.
+    const std::size_t afterRemove = named(plain, "Arm skin")->mesh.vertices.size();
+    REQUIRE(run(plain, "UNDO").ok);
+    CHECK(named(plain, "Arm skin")->mesh.vertices.size() != afterRemove);
+}
