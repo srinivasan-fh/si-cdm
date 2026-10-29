@@ -393,8 +393,18 @@ float getF32(const unsigned char* p) {
 
 // Project
 
-bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error) {
-    const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
+namespace {
+// The folder relative paths in a project are taken from: its file's folder (an unsaved one,
+// "": the working folder).
+fs::path projectFolder(const std::string& path) {
+    std::error_code ec;
+    const fs::path p = path.empty() ? fs::current_path(ec) / "unsaved" : fs::absolute(fs::path(path), ec);
+    return p.parent_path();
+}
+} // namespace
+
+std::string projectText(const Scene& scene, const ProjectState& state, const std::string& path) {
+    const fs::path projectDir = projectFolder(path);
     Json doc = Json::object();
     doc.set("format", "sicdm-project");
     doc.set("version", kProjectVersion);
@@ -867,15 +877,42 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         doc.set("history_complete", state.historyComplete);
         if (state.rollback >= 0) doc.set("history_rollback", state.rollback);
     }
+    // What PASTE steps put in (the history replays them from here): only those it still has.
+    Json pastes = Json::array();
+    for (const PastedBodies& p : state.pastes) {
+        const bool used = std::any_of(state.history.begin(), state.history.end(), [&](const HistoryStep& s) { return pasteId(s.line) == p.id; });
+        if (!used) continue;
+        if (auto j = Json::parse(p.project)) pastes.push(Json::object().set("id", p.id).set("project", *j));
+    }
+    if (pastes.size() > 0) doc.set("pastes", pastes);
+    return doc.dump();
+}
 
-    return writeFile(path, doc.dump() + "\n", error);
+bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error) {
+    return writeFile(path, projectText(scene, state, path) + "\n", error);
+}
+
+std::string pasteId(const std::string& line) {
+    // "PASTE CLIP id ..." (any case): id; else "".
+    std::istringstream in(line);
+    std::string w0, w1, id;
+    in >> w0 >> w1 >> id;
+    auto up = [](std::string w) {
+        for (char& c : w) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return w;
+    };
+    return up(w0) == "PASTE" && up(w1) == "CLIP" ? id : std::string();
 }
 
 bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std::string* error, std::string* warning) {
     const auto text = readFile(path, error);
     if (!text) return false;
+    return projectFromText(*text, path, scene, state, error, warning);
+}
+
+bool projectFromText(const std::string& text, const std::string& path, Scene& scene, ProjectState& state, std::string* error, std::string* warning) {
     std::string parseError;
-    const auto doc = Json::parse(*text, &parseError);
+    const auto doc = Json::parse(text, &parseError);
     if (!doc || !doc->isObject()) {
         setError(error, "Not a valid project file: " + parseError);
         return false;
@@ -1075,7 +1112,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             if (f.is_relative()) {
                 // From the project's real folder (as links are written); a file written relative
                 // to the folder as it was spelled, through a link, from that.
-                const fs::path spelled = fs::absolute(fs::path(path)).parent_path();
+                const fs::path spelled = projectFolder(path);
                 std::error_code ec;
                 const fs::path real = fs::weakly_canonical(spelled, ec);
                 fs::path resolved = ((ec ? spelled : real) / f).lexically_normal();
@@ -1249,7 +1286,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     constraintsFromJson((*doc)["constraints"], loaded.sketch());
 
     std::string missing;
-    const fs::path projectDir = fs::absolute(fs::path(path)).parent_path();
+    const fs::path projectDir = projectFolder(path);
     for (const Json& ji : (*doc)["images"].items()) {
         ImageRef img;
         img.name = ji["name"].asString("Image");
@@ -1381,6 +1418,8 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
     st.units.precision = std::clamp(static_cast<int>(du["precision"].asNumber(-1)), -1, 10);
     st.units.style = du["style"].asString("decimal") == "fractional" ? LengthStyle::Fractional : LengthStyle::Decimal;
     st.units.denominator = std::clamp(static_cast<int>(du["denominator"].asNumber(64)), 2, 256);
+    for (const Json& jp : (*doc)["pastes"].items())
+        if (jp["id"].isString() && jp["project"].isObject()) st.pastes.push_back({jp["id"].asString(), jp["project"].dump()});
 
     scene.assign(std::move(loaded));
     state = st;

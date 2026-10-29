@@ -45,6 +45,13 @@ struct HistoryStep {
     bool suppressed = false; // kept in the history but skipped when the model is rebuilt
 };
 
+// Bodies a PASTE put in, kept so the history can put them in again (PASTE CLIP id): a
+// project holding just them, as text.
+struct PastedBodies {
+    std::string id;
+    std::string project;
+};
+
 struct ProjectState {
     SketchPlane plane = SketchPlane::Top;
     PlaneFrame customFrame = planeFrame(SketchPlane::Top); // the plane when `plane` is Custom
@@ -66,6 +73,7 @@ struct ProjectState {
     ProductData product;      // properties, the revision and its state, the vault item (PROPERTY, REVISION, VAULT)
     std::vector<ToleranceStack> stacks; // tolerance stack-ups (STACK)
     std::vector<HistoryStep> history;     // the feature history
+    std::vector<PastedBodies> pastes;     // what PASTE steps in it put in
     std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)
     bool historyComplete = true;          // false: the model was also changed outside commands
     int rollback = -1;                    // >= 0: the model is built from only that many steps, and new ones go there
@@ -115,6 +123,12 @@ constexpr int kProjectVersion = 12;
 bool writeFile(const std::string& path, const std::string& data, std::string* error);
 
 bool saveProject(const Scene& scene, const ProjectState& state, const std::string& path, std::string* error);
+// The project file's text, and reading one from text (`path`: where it is, for relative files).
+std::string projectText(const Scene& scene, const ProjectState& state, const std::string& path);
+bool projectFromText(const std::string& text, const std::string& path, Scene& scene, ProjectState& state, std::string* error,
+                     std::string* warning = nullptr);
+// The id in a "PASTE CLIP id ..." history line ("" for any other line).
+std::string pasteId(const std::string& line);
 // Replaces `scene`. Missing images are kept (without pixels) and reported in `warning`.
 bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std::string* error,
                  std::string* warning = nullptr);

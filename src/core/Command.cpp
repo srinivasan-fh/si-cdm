@@ -360,7 +360,7 @@ constexpr CommandSpec kCommands[] = {
     {"ISOLATE", "ISO", "ISOLATE [name...]", "Show only the selected (or named) bodies, hiding all the others; SHOW ALL brings them back"},
     {"COPY", "", "COPY [name...]", "Copy the selected bodies (or the named ones), for PASTE here or in another open file"},
     {"CUT", "", "CUT [name...]", "Copy the selected bodies and take them out (PASTE puts them back in)"},
-    {"PASTE", "", "PASTE [OFFSET x,y,z]", "Put in the bodies copied: in place, or beside the originals when they are there (or moved by OFFSET); they are selected"},
+    {"PASTE", "", "PASTE [OFFSET x,y,z]", "Put in the bodies copied: in place, or beside the originals when they are there (or moved by OFFSET); they are selected. The history keeps them (PASTE CLIP id), so REGEN puts the same bodies in again"},
     {"DUPLICATE", "DUP CLONE", "DUPLICATE [name...] [OFFSET x,y,z]", "Copies of the selected bodies (or the named ones), beside them (or moved by OFFSET); the copies are selected"},
     {"MOVE", "M", "MOVE dx,dy[,dz] [name...]", "Move the selected bodies (all together) or image, or the named bodies"},
     {"IMAGE", "IMG", "IMAGE [name] WIDTH mm | OPACITY 0-1 | AT x,y", "Edit a reference image"},

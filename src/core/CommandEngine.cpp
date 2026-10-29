@@ -878,7 +878,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "CUT", "RENAME", "HIDE", "SHOW", "ISOLATE"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "PASTE", "CUT", "RENAME", "HIDE", "SHOW", "ISOLATE"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -5304,6 +5304,9 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 end = i;
                 break;
             }
+        // PASTE CLIP id: the bodies a PASTE put in, as the project keeps them (the history's form).
+        std::string clipId;
+        if (cmd == "PASTE" && end == 2 && !quotedArg(0) && iequal(a[0], "clip")) clipId = a[1], end = 0;
         if (cmd == "PASTE" && end > 0) return usage();
         // The bodies: the named ones, else every selected body.
         std::vector<int> list;
@@ -5352,7 +5355,15 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         }
         // DUPLICATE / PASTE: copies, with names of their own, beside the originals.
         std::vector<Body> fresh;
-        if (cmd == "PASTE") {
+        if (cmd == "PASTE" && !clipId.empty()) {
+            const auto it = std::find_if(doc.state.pastes.begin(), doc.state.pastes.end(), [&](const PastedBodies& p) { return p.id == clipId; });
+            if (it == doc.state.pastes.end()) return out.fail("This project has no pasted bodies " + clipId);
+            Scene kept;
+            ProjectState keptState;
+            std::string why;
+            if (!projectFromText(it->project, doc.path, kept, keptState, &why)) return out.fail("Pasted bodies " + clipId + " can't be read: " + why);
+            fresh = kept.bodies();
+        } else if (cmd == "PASTE") {
             fresh = bodyClipboard();
             if (fresh.empty()) return out.fail("Nothing to paste: COPY (Ctrl+C) bodies first");
         } else {
@@ -5388,6 +5399,20 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             if (const auto it = std::find(oldNames.begin(), oldNames.end(), b.attachedTo); !b.attachedTo.empty() && it != oldNames.end())
                 b.attachedTo = newNames[static_cast<std::size_t>(it - oldNames.begin())];
             doc.scene.add(std::move(b));
+        }
+        if (cmd == "PASTE" && clipId.empty()) {
+            // Keep what was pasted with the project, so the history can put it in again
+            // (REGEN, another session, another computer): PASTE CLIP id OFFSET d.
+            Scene kept;
+            for (const Body& b : bodyClipboard()) kept.add(Body(b));
+            int n = 0;
+            for (const PastedBodies& p : doc.state.pastes)
+                if (p.id.size() > 1 && p.id[0] == 'P') n = std::max(n, std::atoi(p.id.c_str() + 1));
+            clipId = "P" + std::to_string(n + 1);
+            doc.state.pastes.push_back({clipId, projectText(kept, ProjectState{}, doc.path)});
+            doc.recordAs = "PASTE CLIP " + clipId + " OFFSET " + mmVec(d);
+        } else if (cmd == "PASTE") {
+            doc.recordAs = "PASTE CLIP " + clipId + " OFFSET " + mmVec(d);
         }
         std::vector<int> made;
         for (std::size_t i = first; i < bodies.size(); ++i) made.push_back(static_cast<int>(i));

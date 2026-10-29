@@ -2,6 +2,7 @@
 
 #include "core/Command.hpp"
 #include "core/Document.hpp"
+#include "core/FileIO.hpp"
 #include "core/Gizmo.hpp"
 #include "core/Json.hpp"
 #include "core/Mcp.hpp"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 using namespace sicdm;
 
@@ -480,4 +482,46 @@ TEST_CASE("MATERIAL on several bodies: named or selected, one step, all or none,
     CHECK(d.scene.bodies()[3].material.preset == "copper");
     CHECK(run(d, "MATERIAL \"Block 4\"").lines[0].rfind("Block 4: copper", 0) == 0);
     CHECK(!run(d, "MATERIAL \"Nope\" Gold").ok);
+}
+
+TEST_CASE("PASTE is kept with the project: REGEN, a reload and another computer put the same bodies in") {
+    Document a, b;
+    fourBlocks(a);
+    REQUIRE(run(a, "MATERIAL \"Block 2\" Gold").ok);
+    REQUIRE(run(a, "COPY \"Block 2\" \"Block 3\"").ok);
+    REQUIRE(run(b, "SPHERE 5 @0,0,50").ok);
+    REQUIRE(run(b, "PASTE").ok);
+    CHECK(b.state.history.back().line == "PASTE CLIP P1 OFFSET 0mm,0mm,0mm");
+    REQUIRE(run(b, "PASTE").ok); // the same again: beside them, a second set
+    CHECK(b.state.history.back().line.rfind("PASTE CLIP P2 OFFSET ", 0) == 0);
+    REQUIRE(b.scene.bodies().size() == 5);
+    const Vec3 copyAt = b.scene.bodies()[3].offset;
+    bodyClipboard().clear(); // gone, as after a restart
+    REQUIRE(run(b, "REGEN").ok);
+    REQUIRE(b.scene.bodies().size() == 5);
+    CHECK(bodyNamed(b, "Block 2") == 1);
+    CHECK(b.scene.bodies()[1].material.preset == "gold");
+    CHECK(length(b.scene.bodies()[3].offset - copyAt) < 1e-4f);
+    CHECK(b.scene.bodies()[1].mesh.indices == a.scene.bodies()[1].mesh.indices);
+    // Saved and opened again (no clipboard at all): the same.
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_tests" / "paste_kept.sicdm").string();
+    std::string why;
+    REQUIRE(saveProject(b.scene, b.state, path, &why));
+    Document c;
+    REQUIRE(loadProject(c.scene, c.state, path, &why));
+    CHECK(c.state.pastes.size() == 2);
+    REQUIRE(run(c, "REGEN").ok);
+    CHECK(c.scene.bodies().size() == 5);
+    CHECK(bodyNamed(c, "Block 3 copy") >= 0);
+    // A step taken out of the history: what it pasted is no longer kept on the next save.
+    REQUIRE(run(c, "HISTORY DELETE 3").ok);
+    CHECK(c.scene.bodies().size() == 3);
+    REQUIRE(saveProject(c.scene, c.state, path, &why));
+    Document e;
+    REQUIRE(loadProject(e.scene, e.state, path, &why));
+    CHECK(e.state.pastes.size() == 1);
+    std::filesystem::remove(path);
+    CHECK(!run(e, "PASTE CLIP P9").ok);
+    CHECK(pasteId("paste clip P4 OFFSET 1,2,3") == "P4");
+    CHECK(pasteId("PASTE OFFSET 1,2,3").empty());
 }

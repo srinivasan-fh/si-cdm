@@ -946,7 +946,9 @@ Details: [docs/plugins.md](docs/plugins.md).
 - Delete: remove the selected bodies (one undo brings them all back), sketch curve or image
 - `Ctrl/⌘ C`, `X`, `V`: copy, cut and paste the selected bodies, in this file or another open one
   (`COPY`, `CUT`, `PASTE [OFFSET x,y,z]`). Pasted into another file they keep their names and
-  places; pasted where the originals are, they go beside them as "... copy".
+  places; pasted where the originals are, they go beside them as "... copy". The project keeps
+  what each paste put in (`PASTE CLIP P1 OFFSET ...` in the history), so REGEN, reopening the file
+  or opening it on another computer gives the same bodies without the clipboard.
 - `Ctrl/⌘ D`: duplicate the selected bodies beside them (`DUPLICATE [name...] [OFFSET x,y,z]`).
   The copies are selected, ready to move. These are all in the **Edit** menu too.
 - `F2`, or double-click a body in the model tree: rename it (`RENAME "old" TO "new"`). Mates,
