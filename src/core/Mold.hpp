@@ -67,5 +67,8 @@ struct MoldHalves {
 // The cavity and core of a closed part. False (with why) for an open part, one with
 // undercuts along the pull, or a parting line that folds over itself.
 bool splitMold(const MeshData& world, const MoldOptions& o, MoldHalves& out, std::string* why = nullptr);
+// A mould half is sealed: every edge is used as often one way round as the other (two
+// sheets may touch along an edge where the parting line passes a point twice).
+bool moldSealed(const MeshData& half);
 
 } // namespace sicdm

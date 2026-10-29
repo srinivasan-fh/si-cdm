@@ -1034,9 +1034,15 @@ the least shut-off. The loops are added as closed 3D paths (`Parting Line 1`, ..
 
 Meshes from booleans and roundings have their faces a hair off: walls under 0.6 degrees, slivers,
 points a hundred-thousandth of the size apart, specks at creases. These are taken as what they
-should be. One case still fails: where three roundings meet (`FILLET ... EDGES ALL`), the
-corner leaves steps of a few hundredths of a millimetre. Such a part parts along a pull square
-to its base, but not along one through those corners: give another pull, or round fewer edges.
+should be. Where three roundings meet (`FILLET ... EDGES ALL`) the corner leaves steps of a few
+hundredths of a millimetre: they are passed over when the walls are sorted (a face goes with
+part only seen from well clear of it), a sliver goes with the faces along its long sides, and
+a strip of undercut that narrow isn't counted. Two cases still fail:
+
+- a pull through those corners (a rounded block along X, say): give another pull, or round
+  fewer edges;
+- an `AT` height through a rounding's tangent line, or across the rounding itself, where the
+  line must run along those steps: leave `AT` out, or give a height on the straight sides.
 
 ## 3D sketches and routes
 

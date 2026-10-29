@@ -8,7 +8,9 @@
 #include "core/Sculpt.hpp"
 
 #include <cmath>
+#include <map>
 #include <string>
+#include <tuple>
 
 using namespace sicdm;
 
@@ -46,7 +48,7 @@ const SketchCurve* curve(const Document& d, const std::string& n) {
 // A mould that closes round the part: both halves solid, and with the part they fill the block.
 bool closes(const MoldHalves& h) {
     const double vc = meshVolume(h.cavity), vk = meshVolume(h.core);
-    return openEdgeCount(h.cavity) == 0 && openEdgeCount(h.core) == 0 && vc > 0 && vk > 0 && std::fabs(vc + vk + h.part - h.block) <= 1e-5 * h.block;
+    return moldSealed(h.cavity) && moldSealed(h.core) && vc > 0 && vk > 0 && std::fabs(vc + vk + h.part - h.block) <= 1e-5 * h.block;
 }
 
 AABB boundsOf(const MeshData& m) { return m.bounds(); }
@@ -214,6 +216,55 @@ TEST_CASE("mold split: cavity and core close round the part and fill the block, 
     REQUIRE(splitMold(worldMesh(*named(d, "Block 8")), o, h, &why));
     CHECK(closes(h));
     CHECK(near(meshVolume(h.cavity), meshVolume(h.core), 1e-5 * h.block));
+    // The same block with its points a few float steps off, as another maths library makes
+    // them (its corners' crumbs fall differently): still parted, at its own height and at 15.
+    {
+        const MeshData exact = worldMesh(*named(d, "Block 8"));
+        std::uint32_t seed = 12345;
+        auto jitter = [&] {
+            seed = seed * 1664525u + 1013904223u;
+            return static_cast<float>(seed >> 8) / 8388608.0f - 1.0f;
+        };
+        for (int k = 0; k < 4; ++k) {
+            MeshData m = exact;
+            std::map<std::tuple<float, float, float>, Vec3> moved; // a point moves the same way in every triangle
+            for (Vertex& v : m.vertices) {
+                const Vec3 p = v.position;
+                auto it = moved.find({p.x, p.y, p.z});
+                if (it == moved.end()) {
+                    const float s = 2e-7f * std::max({std::fabs(p.x), std::fabs(p.y), std::fabs(p.z), 1.0f});
+                    it = moved.emplace(std::make_tuple(p.x, p.y, p.z), p + Vec3{jitter(), jitter(), jitter()} * s).first;
+                }
+                v.position = it->second;
+            }
+            for (const std::optional<double> at : {std::optional<double>{}, std::optional<double>{15.0}}) {
+                o = MoldOptions{};
+                o.at = at;
+                REQUIRE(splitMold(m, o, h, &why));
+                CHECK(closes(h));
+            }
+        }
+    }
+    // Another rounded block, off the origin: at its own height, mid-way up its sides (an
+    // outline of over a thousand points round the plane), and just under the top rounding
+    // (thin slivers along the corners' edges go with the faces beside them).
+    {
+        Document e;
+        REQUIRE(run(e, "BOX 50 40 20 @10,20,0").ok);
+        REQUIRE(run(e, "FILLET \"Block 1\" RADIUS 6 EDGES ALL").ok);
+        for (const std::optional<double> at : {std::optional<double>{}, std::optional<double>{10.0}, std::optional<double>{13.0}}) {
+            o = MoldOptions{};
+            o.at = at;
+            REQUIRE(splitMold(worldMesh(*named(e, "Block 1")), o, h, &why));
+            CHECK(closes(h));
+        }
+        REQUIRE(run(e, "BOX 50 40 20 @10,100,0").ok);
+        REQUIRE(run(e, "FILLET \"Block 2\" RADIUS 3 EDGES ALL").ok);
+        o = MoldOptions{};
+        o.at = 15;
+        REQUIRE(splitMold(worldMesh(*named(e, "Block 2")), o, h, &why));
+        CHECK(closes(h));
+    }
     // Undercuts refused, with where to look.
     REQUIRE(run(d, "BOX 60 60 30 @0,600,0").ok);
     REQUIRE(run(d, "BOX 30 30 10 @0,600,10").ok);

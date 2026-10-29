@@ -10,6 +10,8 @@
 #include <cstring>
 #include <cstdio>
 #include <functional>
+#include <map>
+#include <tuple>
 #include <unordered_map>
 
 namespace sicdm {
@@ -242,16 +244,22 @@ bool partition(const Part& welded, const DVec3& d, double h, bool split, Partiti
         for (int c : t) probe.indices.push_back(static_cast<std::uint32_t>(c));
     const MeshBvh bvh(probe);
     const float eps = static_cast<float>(1e-4 * m.size);
+    // Seen from just off the face and from further out (past the crumbs a rounding leaves
+    // where it meets a wall, a hundredth or two proud of it): only part both see counts.
     auto looks = [&](const DVec3& at, const DVec3& nn) {
-        const Vec3 o = (at + nn * eps).f();
-        int seen = 0;
-        for (int dir = 0; dir < 2; ++dir) {
-            Ray r;
-            r.origin = o;
-            r.dir = (dir == 0 ? -d : d).f();
-            float t = 1e30f;
-            // 1: part behind (a floor), 2: ahead (a ceiling); grazing a curve close by is neither.
-            if (bvh.raycast(r, t) && t > 2e-3f * static_cast<float>(m.size)) seen |= dir == 0 ? 1 : 2;
+        int seen = 3;
+        for (const double off : {static_cast<double>(eps), 2e-3 * m.size}) {
+            const Vec3 o = (at + nn * off).f();
+            int here = 0;
+            for (int dir = 0; dir < 2; ++dir) {
+                Ray r;
+                r.origin = o;
+                r.dir = (dir == 0 ? -d : d).f();
+                float t = 1e30f;
+                // 1: part behind (a floor), 2: ahead (a ceiling); grazing a curve close by is neither.
+                if (bvh.raycast(r, t) && t > 2e-3f * static_cast<float>(m.size)) here |= dir == 0 ? 1 : 2;
+            }
+            seen &= here;
         }
         return seen;
     };
@@ -291,14 +299,20 @@ bool partition(const Part& welded, const DVec3& d, double h, bool split, Partiti
         }
         out.cavity[i] = seen == 1 || (seen == 0 && ddot(mid[i], d) > h) ? 1 : 0;
     }
-    for (int pass = 0; pass < 8; ++pass) {
+    // By the length they share: a sliver follows the faces along its long sides, not one
+    // touching its tip (and waits while those are slivers still to be settled).
+    constexpr int kPasses = 64;
+    for (int pass = 0; pass < kPasses; ++pass) {
         bool left = false;
         for (std::size_t i = 0; i < n; ++i) {
             if (sliver[i] != 1) continue;
-            int votes[2] = {0, 0};
-            for (int e = 0; e < 3; ++e)
-                if (const int j = across(i, e); j >= 0 && !sliver[static_cast<std::size_t>(j)]) ++votes[out.cavity[static_cast<std::size_t>(j)] ? 1 : 0];
-            if (votes[0] + votes[1] == 0) {
+            double votes[2] = {0, 0}, round = 0;
+            for (int e = 0; e < 3; ++e) {
+                const double len = dlength(m.p[static_cast<std::size_t>(m.t[i][static_cast<std::size_t>(e)])] - m.p[static_cast<std::size_t>(m.t[i][static_cast<std::size_t>((e + 1) % 3)])]);
+                round += len;
+                if (const int j = across(i, e); j >= 0 && !sliver[static_cast<std::size_t>(j)]) votes[out.cavity[static_cast<std::size_t>(j)] ? 1 : 0] += len;
+            }
+            if (votes[0] + votes[1] == 0 || (votes[0] + votes[1] < 0.5 * round && pass + 1 < kPasses)) {
                 left = true;
                 continue;
             }
@@ -533,9 +547,12 @@ bool triangulateRegion(const std::vector<P2>& q, std::vector<int> outer, std::ve
     std::vector<int> l = std::move(outer);
     auto inTri = [&](P2 a, P2 b, P2 c, P2 p) { return orient(a, b, p) >= -eps && orient(b, c, p) >= -eps && orient(c, a, p) >= -eps; };
     auto same = [](P2 a, P2 b) { return a.x == b.x && a.y == b.y; };
+    // Each round clips one ear: no more rounds than points (the bound from the start: the
+    // polygon shrinks as it goes).
+    const std::size_t rounds = l.size() + 16;
     std::size_t guard = 0;
     while (l.size() > 3) {
-        if (++guard > 4 * l.size() * l.size() + 1000) return false;
+        if (++guard > rounds) return false;
         const std::size_t n = l.size();
         bool clipped = false;
         for (int pass = 0; pass < 2 && !clipped; ++pass)
@@ -651,6 +668,25 @@ bool partingLine(const MeshData& world, Vec3 pull, std::optional<double> at, Par
     return true;
 }
 
+bool moldSealed(const MeshData& m) {
+    std::map<std::tuple<float, float, float>, std::uint32_t> at; // the same position, one point
+    std::vector<std::uint32_t> r(m.vertices.size());
+    for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+        const Vec3& p = m.vertices[i].position;
+        r[i] = at.try_emplace({p.x + 0.0f, p.y + 0.0f, p.z + 0.0f}, static_cast<std::uint32_t>(at.size())).first->second;
+    }
+    std::unordered_map<std::uint64_t, int> balance; // +1 for each use one way, -1 the other
+    for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3)
+        for (std::size_t e = 0; e < 3; ++e) {
+            const std::uint32_t a = r[m.indices[k + e]], b = r[m.indices[k + (e + 1) % 3]];
+            if (a == b) continue;
+            balance[a < b ? (static_cast<std::uint64_t>(a) << 32 | b) : (static_cast<std::uint64_t>(b) << 32 | a)] += a < b ? 1 : -1;
+        }
+    for (const auto& [k, n] : balance)
+        if (n != 0) return false;
+    return !m.indices.empty();
+}
+
 bool splitMold(const MeshData& worldIn, const MoldOptions& o, MoldHalves& out, std::string* why) {
     out = MoldHalves{};
     if (o.shrink < 0 || o.shrink > 20) return fail(why, "SHRINK is a percentage from 0 to 20");
@@ -683,7 +719,7 @@ bool splitMold(const MeshData& worldIn, const MoldOptions& o, MoldHalves& out, s
         std::vector<char> seen(part.t.size(), 0);
         for (std::size_t i = 0; i < part.t.size(); ++i) {
             if (seen[i] || cls[i] != DraftClass::Undercut) continue;
-            double area = 0;
+            double area = 0, rim = 0;
             std::vector<std::size_t> stack{i};
             seen[i] = 1;
             while (!stack.empty()) {
@@ -693,13 +729,18 @@ bool splitMold(const MeshData& worldIn, const MoldOptions& o, MoldHalves& out, s
                 normalOf(part, part.t[k], &a);
                 area += a;
                 for (int e = 0; e < 3; ++e) {
-                    const auto it = owner.find(edgeKey(part.t[k][static_cast<std::size_t>((e + 1) % 3)], part.t[k][static_cast<std::size_t>(e)]));
+                    const int pa = part.t[k][static_cast<std::size_t>(e)], pb = part.t[k][static_cast<std::size_t>((e + 1) % 3)];
+                    const auto it = owner.find(edgeKey(pb, pa));
+                    const bool undercutThere = it != owner.end() && cls[static_cast<std::size_t>(it->second)] == DraftClass::Undercut;
+                    if (!undercutThere) rim += dlength(part.p[static_cast<std::size_t>(pa)] - part.p[static_cast<std::size_t>(pb)]);
                     if (it == owner.end()) continue;
                     const std::size_t j = static_cast<std::size_t>(it->second);
-                    if (!seen[j] && cls[j] == DraftClass::Undercut) seen[j] = 1, stack.push_back(j);
+                    if (!seen[j] && undercutThere) seen[j] = 1, stack.push_back(j);
                 }
             }
-            if (area >= 1e-5 * part.size * part.size) out.undercut += area;
+            // A strip a hundredth wide (crumbs along a rounding's edge) isn't one either.
+            const double width = rim > 0 ? 2 * area / rim : 0;
+            if (area >= 1e-5 * part.size * part.size && width >= 2e-4 * part.size) out.undercut += area;
         }
     }
     if (out.undercut > 0) {
@@ -875,7 +916,7 @@ bool splitMold(const MeshData& worldIn, const MoldOptions& o, MoldHalves& out, s
     out.block = (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2]);
     out.part = meshVolume(world);
     const double vc = meshVolume(out.cavity), vk = meshVolume(out.core);
-    if (openEdgeCount(out.cavity) != 0 || openEdgeCount(out.core) != 0 || vc <= 0 || vk <= 0 ||
+    if (!moldSealed(out.cavity) || !moldSealed(out.core) || vc <= 0 || vk <= 0 ||
         std::fabs(vc + vk + out.part - out.block) > 1e-4 * out.block)
         return fail(whyNot, "The mould halves don't close round the part (its parting line may be too complex for one plane)");
     return true;
