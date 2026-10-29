@@ -597,19 +597,19 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         if (!armatureFromParams(ab.params, arm)) return;
         const Vec3 p = hit->point - ab.offset;
         const std::vector<Vec3> posed = posedBalls(arm);
-        std::size_t near = 0;
+        std::size_t nearest = 0;
         float best = 1e30f;
         for (std::size_t i = 0; i < posed.size(); ++i) {
             const float d = std::fabs(length(p - posed[i]) - arm.balls[i].radius);
-            if (d < best) best = d, near = i;
+            if (d < best) best = d, nearest = i;
         }
-        const Vec3 out = length(p - posed[near]) > 1e-6f ? normalize(p - posed[near]) : Vec3{0, 0, 1};
-        const Vec3 posedAt = posed[near] + out * arm.balls[near].radius;
+        const Vec3 out = length(p - posed[nearest]) > 1e-6f ? normalize(p - posed[nearest]) : Vec3{0, 0, 1};
+        const Vec3 posedAt = posed[nearest] + out * arm.balls[nearest].radius;
         const std::vector<Mat4> pose = armaturePose(arm);
-        const Vec3 restAt = inverse(pose[near]).transformPoint(posedAt);
+        const Vec3 restAt = inverse(pose[nearest]).transformPoint(posedAt);
         char line[256];
-        std::snprintf(line, sizeof line, "ARMATURE \"%s\" ADD TO %zu AT %.4g,%.4g,%.4g RADIUS %.4g", ab.name.c_str(), near + 1, static_cast<double>(restAt.x),
-                      static_cast<double>(restAt.y), static_cast<double>(restAt.z), static_cast<double>(arm.balls[near].radius * 0.8f));
+        std::snprintf(line, sizeof line, "ARMATURE \"%s\" ADD TO %zu AT %.4g,%.4g,%.4g RADIUS %.4g", ab.name.c_str(), nearest + 1, static_cast<double>(restAt.x),
+                      static_cast<double>(restAt.y), static_cast<double>(restAt.z), static_cast<double>(arm.balls[nearest].radius * 0.8f));
         std::string cmdLine = line;
         static const char* const kMirror[] = {"", " MIRROR X", " MIRROR Y", " MIRROR Z"};
         cmdLine += kMirror[std::clamp(m_uiState.armatureMirror, 0, 3)];
