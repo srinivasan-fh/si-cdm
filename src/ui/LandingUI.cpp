@@ -910,6 +910,42 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::EndMenu();
         }
         if (ImGui::MenuItem(tr("3D Path and Route..."))) st.showPath3d = true;
+        // Mould tools on the selected part: its draft, its parting line, the cavity and core.
+        if (m_menuScene && ImGui::BeginMenu(tr("Mold Tools"))) {
+            const Scene& scene = *m_menuScene;
+            static const char* const kPulls[] = {"+Z", "-Z", "+X", "-X", "+Y", "-Y"};
+            static const char* const kPullWords[] = {"Z", "-Z", "X", "-X", "Y", "-Y"};
+            m_moldPull = std::clamp(m_moldPull, 0, 5);
+            ImGui::SetNextItemWidth(90);
+            if (ImGui::BeginCombo(tr("Pull"), kPulls[m_moldPull])) {
+                for (int k = 0; k < 6; ++k)
+                    if (ImGui::Selectable(kPulls[k], k == m_moldPull)) m_moldPull = k;
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The way the cavity comes off the part (the core goes the other way)"));
+            ImGui::SetNextItemWidth(140);
+            ImGui::SliderFloat(tr("Least draft"), &m_moldMin, 0.0f, 10.0f, "%.1f deg");
+            ImGui::SetNextItemWidth(140);
+            ImGui::SliderFloat(tr("Shrinkage"), &m_moldShrink, 0.0f, 5.0f, "%.2f %%");
+            const bool part = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size()) && scene.bodies()[static_cast<std::size_t>(st.selectedBody)].field.empty();
+            const std::string name = part ? "\"" + scene.bodies()[static_cast<std::size_t>(st.selectedBody)].name + "\"" : std::string();
+            const std::string pull = std::string(" PULL ") + kPullWords[m_moldPull];
+            char opt[64];
+            ImGui::Separator();
+            if (ImGui::MenuItem(tr("Draft Analysis"), nullptr, false, part)) {
+                std::snprintf(opt, sizeof opt, " MIN %.2f", static_cast<double>(m_moldMin));
+                cmd.commands.push_back("MOLD DRAFT " + name + pull + opt);
+            }
+            if (ImGui::MenuItem(tr("Parting Line"), nullptr, false, part)) cmd.commands.push_back("MOLD PARTING " + name + pull);
+            if (ImGui::MenuItem(tr("Core and Cavity"), nullptr, false, part)) {
+                std::snprintf(opt, sizeof opt, " SHRINK %.3g", static_cast<double>(m_moldShrink));
+                cmd.commands.push_back("MOLD SPLIT " + name + pull + (m_moldShrink > 0 ? opt : ""));
+            }
+            if (!part && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("Select the part first"));
+            const bool shown = std::any_of(scene.bodies().begin(), scene.bodies().end(), [](const Body& b) { return b.field.rfind("draft", 0) == 0; });
+            if (ImGui::MenuItem(tr("Draft Analysis Off"), nullptr, false, shown)) cmd.commands.push_back("MOLD OFF");
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Feature History"))) cmd.commands.push_back("HISTORY");
         if (ImGui::MenuItem(tr("Regenerate"))) cmd.commands.push_back("REGEN");

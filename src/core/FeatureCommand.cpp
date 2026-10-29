@@ -2471,7 +2471,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                 auto& bodies = doc.scene.bodies();
                 for (std::size_t k = bodies.size(); k-- > 0;) {
                     const std::string f = bodies[k].field;
-                    if (f.rfind("zebra", 0) != 0 && f.find("curvature") == std::string::npos) continue;
+                    if (f.rfind("zebra", 0) != 0 && f.find("curvature") == std::string::npos && f.rfind("draft", 0) != 0) continue;
                     const std::string src = bodies[k].attachedTo;
                     bodies.erase(bodies.begin() + static_cast<std::ptrdiff_t>(k));
                     if (const int s = bodyNamed(doc, src); s >= 0) bodies[static_cast<std::size_t>(s)].visible = true;

@@ -2,6 +2,7 @@
 #include "app/PenInput.hpp"
 #include "core/Components.hpp"
 #include "core/DirectEdit.hpp"
+#include "core/Mold.hpp"
 #include "core/SectionView.hpp"
 #include "core/Translate.hpp"
 #include "app/OpenFiles.hpp"
@@ -2806,6 +2807,21 @@ void Application::drawFieldLegend() const {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     const ImVec2 lo = m_ui.canvasMin();
     const float x = lo.x + 16, y = m_ui.canvasMax().y - 120, w = 220, hgt = 14;
+    if (shown->field.rfind("draft", 0) == 0) { // a draft analysis: its four colours, named
+        static const DraftClass kinds[4] = {DraftClass::Positive, DraftClass::Negative, DraftClass::Shallow, DraftClass::Undercut};
+        static const char* const names[4] = {SICDM_TR_NOOP("cavity side"), SICDM_TR_NOOP("core side"), SICDM_TR_NOOP("too little draft"), SICDM_TR_NOOP("undercut")};
+        float at = x;
+        for (int k = 0; k < 4; ++k) {
+            const Vec3 c = draftColour(kinds[k]);
+            const ImU32 col = IM_COL32(static_cast<int>(c.x * 255), static_cast<int>(c.y * 255), static_cast<int>(c.z * 255), 255);
+            dl->AddRectFilled(ImVec2(at, y), ImVec2(at + hgt, y + hgt), col);
+            const char* label = tr(names[k]);
+            dl->AddText(ImVec2(at + hgt + 5, y - 1), IM_COL32(220, 225, 235, 230), label);
+            at += hgt + 14 + ImGui::CalcTextSize(label).x;
+        }
+        dl->AddText(ImVec2(x, y - 18), IM_COL32(220, 225, 235, 230), (shown->name + ": " + shown->field).c_str());
+        return;
+    }
     static const ImU32 stops[5] = {IM_COL32(26, 64, 242, 255), IM_COL32(26, 217, 242, 255), IM_COL32(51, 230, 64, 255), IM_COL32(250, 230, 38, 255),
                                    IM_COL32(242, 38, 26, 255)};
     for (int k = 0; k < 4; ++k)

@@ -177,6 +177,11 @@ void main() {
         own = vec3(float((h >> 8) & 255u), float((h >> 16) & 255u), float((h >> 24) & 255u)) / 255.0 * 0.65 + 0.3;
     }
     vec3 base = mix(own, vec3(0.30, 0.65, 1.00), uHighlight * 0.55);
+    if (uField > 2.5) { // an analysis painted per face (draft): its colours, lit, no material
+        vec3 painted = mix(vColor.rgb, vec3(0.30, 0.65, 1.00), uHighlight * 0.3);
+        fragColor = vec4(pow(painted * (ambient + diff) + vec3(spec) * 0.5, vec3(1.0 / 1.1)), 1.0);
+        return;
+    }
     if (uField > 1.5) { // zebra: stripes of the reflected view, smooth where the surface is
         vec3 R = reflect(-V, N);
         float f = fract(R.z * 5.0);
@@ -1167,7 +1172,10 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_mesh.set("uColor", bodies[i].color);
             m_mesh.set("uMetallic", bodies[i].material.metallic);
             m_mesh.set("uRoughness", bodies[i].material.roughness);
-            m_mesh.set("uField", bodies[i].field.empty() ? 0.0f : bodies[i].field.rfind("zebra", 0) == 0 ? 2.0f : 1.0f);
+            m_mesh.set("uField", bodies[i].field.empty()                   ? 0.0f
+                                 : bodies[i].field.rfind("zebra", 0) == 0 ? 2.0f
+                                 : bodies[i].field.rfind("draft", 0) == 0 ? 3.0f
+                                                                          : 1.0f);
             m_mesh.set("uModel", model(i));
             m_mesh.set("uClip", cutBody(i) ? cutClip : noClip);
             m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);

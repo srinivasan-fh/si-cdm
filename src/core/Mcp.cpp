@@ -738,6 +738,22 @@ Json McpServer::toolDefinitions() {
                             return c;
                         }(),
                         {"operation"}));
+        tools.push(tool("mold",
+                        "Mould tools for a part: its draft along the pull (faces coming away with the cavity, with the core, with too little "
+                        "draft, undercuts), its parting line (added as closed 3D paths), and the cavity and core cut from a block round it.",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "draft | parting | split | off"));
+                            c.set("body", prop("string", "the part (default: the selected body)"));
+                            c.set("pull", prop("string", "the way the cavity comes off: \"Z\" (default), \"-Z\", \"X\"..., or \"x,y,z\""));
+                            c.set("min", prop("number", "draft: the least draft in degrees (default 1)"));
+                            c.set("at", prop("number", "parting / split: the parting height along the pull (default: the part's own)"));
+                            c.set("margin", prop("number", "split: the block's wall round the part (mm; default a quarter of its size)"));
+                            c.set("shrink", prop("number", "split: the part's shrinkage in percent (it is grown by it)"));
+                            c.set("gap", prop("number", "split: the cavity shown this far open along the pull"));
+                            return c;
+                        }(),
+                        {"operation"}));
         tools.push(tool("section",
                         "Live section view of the 3D window: a plane through the model takes away the material on one side so the "
                         "inside shows, the cut faces filled and hatched (the model doesn't change); reports each body's section area "
@@ -1433,6 +1449,22 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine(line + opts);
         }
         return textResult("weldment operations: profiles, member, joint, edit, list, cutlist", true);
+    }
+    if (name == "mold") {
+        const std::string op = a["operation"].asString();
+        if (op == "off") return runLine("MOLD OFF");
+        if (op != "draft" && op != "parting" && op != "split") return textResult("mold operations: draft, parting, split, off", true);
+        std::string line = "MOLD " + toUpper(op);
+        if (a["body"].isString()) line += " " + quote(a["body"].asString());
+        if (a["pull"].isString()) line += " PULL " + a["pull"].asString();
+        if (op == "draft" && a["min"].isNumber()) line += " MIN " + num(a["min"].asNumber());
+        if (op != "draft" && a["at"].isNumber()) line += " AT " + num(a["at"].asNumber());
+        if (op == "split") {
+            if (a["margin"].isNumber()) line += " MARGIN " + num(a["margin"].asNumber());
+            if (a["shrink"].isNumber()) line += " SHRINK " + num(a["shrink"].asNumber());
+            if (a["gap"].isNumber()) line += " GAP " + num(a["gap"].asNumber());
+        }
+        return runLine(line);
     }
     if (name == "route") {
         const std::string op = a["operation"].asString();

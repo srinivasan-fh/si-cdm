@@ -73,6 +73,8 @@ add_library(sicdm_core STATIC
     src/core/Weldment.cpp
     src/core/Route.cpp
     src/core/RouteCommand.cpp
+    src/core/Mold.cpp
+    src/core/MoldCommand.cpp
     src/core/WeldmentCommand.cpp
     src/core/Bvh.cpp
     src/core/SketchEdit.cpp

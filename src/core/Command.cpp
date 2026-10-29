@@ -253,6 +253,10 @@ constexpr CommandSpec kCommands[] = {
      "Routes: pipes, tubes, bars, cables and hoses along a path (a 3D sketch, or a line, polyline, rectangle or spline), exact, bent at the "
      "corners (BEND, else the path's own radius, else 1.5 x OD for pipe, 2 x OD for tube and rod, 6 x OD for cable and hose); BENDS gives the "
      "bend table (feed, rotation, bend angle) and the length to cut; UPDATE refits routes to paths changed since"},
+    {"MOLD", "MOULD", "MOLD DRAFT [part] [PULL Z|-Z|x,y,z] [MIN deg] | PARTING [part] [PULL ...] [AT h] | SPLIT [part] [PULL ...] [AT h] [MARGIN m] [SHRINK %] [GAP g] | OFF",
+     "Mould tools: DRAFT colours the part by its draft along the pull (green: comes away with the cavity, red: with the core, yellow: too little "
+     "draft, purple: undercut); PARTING adds the parting line as closed 3D paths; SPLIT makes the cavity and the core from a block round the part, "
+     "flat at the parting height outside it with shut-off walls where the line steps (refused for undercuts)"},
     {"SECTION", "CLIP XSECTION", "SECTION [X|Y|Z|-X|-Y|-Z|PLANE nx,ny,nz] [AT d | AT x,y,z] | MOVE d | FLIP | ON | OFF | CAP ON|OFF | ONLY body... | ALL",
      "Live section view: a plane through the model takes away the material on one side in the 3D window, the cut faces filled and "
      "hatched, so the inside shows (nothing in the model changes). It reports each body's section area and centroid"},

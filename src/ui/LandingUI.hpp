@@ -314,6 +314,8 @@ private:
     int m_weldFamily = 0, m_weldSize = 6, m_weldCorner = 0; // the Weldment menu's profile (family, size) and corners
     int m_routeKind = 0, m_routeSize = 4;                    // the 3D Path window's route: kind and size
     float m_routeBend = 0.0f;                                // its bends (0: the path's own, else the size's default)
+    int m_moldPull = 0;                                      // the Mold Tools menu: the pull (+Z, -Z, +X, -X, +Y, -Y),
+    float m_moldMin = 1.0f, m_moldShrink = 0.0f;             // the least draft (degrees) and the shrinkage (%)
     int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;

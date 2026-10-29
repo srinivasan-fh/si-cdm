@@ -326,6 +326,9 @@ The *Design* menu (or the command line) adds part features to sketches and solid
 - **Weldments:** frames of tube, pipe, bar, angle, channel and beam (EN and DIN sizes, or any
   dimensions) along sketch lines, mitred, butted or cut to the side they meet, with a cut list
   of lengths, angles and masses (`WELDMENT MEMBER SHS 40x40x3 ALONG "Rectangle 1"`).
+- **Mould tools:** draft and undercut analysis along a pull, the parting line, and the core and
+  cavity cut from a block round the part, with shut-offs and shrinkage (`MOLD DRAFT`,
+  `MOLD SPLIT "Part" SHRINK 0.6 GAP 60`).
 - **3D sketches and routes:** paths through points in space, bent at a radius or smooth, and
   pipes (EN 10255, ASME B36.10M), tubes, bars, cables and hoses along them as exact solids,
   with the bend table and the length to cut (`PATH3D ... BEND 60`, `ROUTE "3D Polyline 1" PIPE DN25`).

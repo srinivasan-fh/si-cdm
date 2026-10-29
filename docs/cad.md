@@ -972,6 +972,72 @@ member left alone gets square ends. Undo takes back both.
 The members are exact solids: planes, cylinders for the rounds, and the end cuts. They are
 saved with the project.
 
+## Mould tools
+
+`MOLD` checks how a part comes out of a two-part mould along a pull direction, finds where the
+mould opens (the parting line), and makes the mould's halves: the cavity, which comes off along
+the pull, and the core, which goes the other way.
+
+```text
+RECT 0,0 80,50
+EXTRUDE "Rectangle 1" 30 DRAFT 3
+HOLE "Extrude 1" AT 40,25,30 DIR 0,0,-1 DIAMETER 16 DEPTH 20
+MOLD DRAFT "Extrude 1" MIN 1                      its faces coloured by their draft
+MOLD OFF
+MOLD PARTING "Extrude 1"                          the parting line, as closed 3D paths
+MOLD SPLIT "Extrude 1" AT 12 MARGIN 12 SHRINK 0.6 GAP 60
+```
+
+```text
+  Mould of Extrude 1 along +Z: Cavity 1 and Core 1 in Mold 1, parted at 12 mm
+    block 420.59 cm3: cavity 170.91 cm3, core 138.07 cm3, part 111.62 cm3 (grown 0.6% for shrinkage)
+```
+
+![Left, a part's draft analysis; right, its mould opened: the cavity lifted off the core](mold.png)
+
+**Draft analysis** (`MOLD DRAFT [part] [PULL Z|-Z|X|...|x,y,z] [MIN deg]`): each face's draft is
+its angle off the pull. The part is shown in four colours, with a legend, in place of the
+part. `MOLD OFF` (or `ANALYZE OFF`) puts the part back.
+
+| Colour | Faces |
+| --- | --- |
+| green | positive draft of at least `MIN` (1 degree by default): they come away with the cavity |
+| red | negative draft of at least `MIN`: they come away with the core |
+| yellow | less draft than `MIN`, upright walls among them: they need more |
+| purple | undercuts: something of the part stands in their way in both directions; they would lock the part in |
+
+The report gives each colour's share of the surface and the least draft on each side.
+
+**Parting line** (`MOLD PARTING [part] [PULL ...] [AT h]`): the line round the part where cavity
+and core meet. It runs where faces turn from facing the pull to facing away. On upright walls
+it runs at the parting height: `AT h` (along the pull), or by default the height that needs
+the least shut-off. The loops are added as closed 3D paths (`Parting Line 1`, ...) that `ROUTE`,
+`SWEEP` and `PATH3D` can use. Undo takes them back.
+
+**Core and cavity** (`MOLD SPLIT [part] [PULL ...] [AT h] [MARGIN m] [SHRINK %] [GAP g]`):
+
+- The halves are cut from a block round the part, `MARGIN` mm larger on every side (by
+  default a quarter of the part's largest size).
+- Outside the part the halves meet on a flat parting plane at the parting height. Where the
+  parting line steps off that height (a round part pulled at an angle, or a line given
+  above or below the part's own), upright shut-off walls join it to the plane.
+- Each half is the part's faces on its side, the shut-offs, the plane and the block. Both
+  halves are closed solids, and with the part they fill the block exactly; this is checked.
+- `SHRINK` grows the part first by the plastic's shrinkage (0.4 to 2% is usual).
+- `GAP` shows the cavity lifted off along the pull. The halves go in a `Mold n` group, as
+  tool steel.
+- A part with undercuts along the pull is refused, with their area. `MOLD DRAFT` shows them;
+  turn the pull or change the part (side actions are not made). A part that isn't a closed
+  solid is refused too.
+- With no `AT`, the part's own parting height is tried first. If the halves don't close there
+  (a tangent line through rounded corners, say), the middle of the part is tried.
+
+Meshes from booleans and roundings have their faces a hair off: walls under 0.6 degrees, slivers,
+points a hundred-thousandth of the size apart, specks at creases. These are taken as what they
+should be. One case still fails: where three roundings meet (`FILLET ... EDGES ALL`), the
+corner leaves steps of a few hundredths of a millimetre. Such a part parts along a pull square
+to its base, but not along one through those corners: give another pull, or round fewer edges.
+
 ## 3D sketches and routes
 
 `PATH3D` draws a path through points in space: a polyline whose corners bend at a radius, or a
@@ -1290,6 +1356,10 @@ The `cad` tool has these operations:
 
 The `weldment` tool adds members (`profile` with `curves` or `points`), changes a `joint`,
 `edit`s a member and gives the `cutlist`.
+
+The `mold` tool runs the draft analysis (`draft`, with `body`, `pull` and `min`), adds the
+parting line (`parting`, with `at`), makes the cavity and core (`split`, with `at`, `margin`,
+`shrink` and `gap`), and turns the analysis `off`.
 
 The `route` tool makes 3D paths (`path` with `points`, `spline`, `closed`, `bend`) and edits
 them (`path_point`, `path_insert`, `path_delete`, `path_bend`, `path_info`). It also lays

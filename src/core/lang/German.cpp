@@ -1019,6 +1019,20 @@ const char* const kGerman[][2] = {
     {"Smooth (spline)", "Glatt (Spline)"},
     {"Tube", "Rohr (Präzision)"},
     {"Update Routes", "Leitungen aktualisieren"},
+    {"Core and Cavity", "Kern und Formnest"},
+    {"Draft Analysis", "Formschrägenanalyse"},
+    {"Draft Analysis Off", "Formschrägenanalyse aus"},
+    {"Least draft", "Kleinste Formschräge"},
+    {"Mold Tools", "Formenbau"},
+    {"Parting Line", "Trennlinie"},
+    {"Pull", "Entformung"},
+    {"Select the part first", "Zuerst das Teil wählen"},
+    {"Shrinkage", "Schwindung"},
+    {"The way the cavity comes off the part (the core goes the other way)", "Die Richtung, in der das Formnest vom Teil abgeht (der Kern in die andere)"},
+    {"cavity side", "Formnestseite"},
+    {"core side", "Kernseite"},
+    {"too little draft", "zu wenig Formschräge"},
+    {"undercut", "Hinterschnitt"},
 };
 
 
