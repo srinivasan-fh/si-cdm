@@ -13,6 +13,7 @@
 #include "core/Pdm.hpp"
 #include "core/Assembly.hpp"
 #include "core/SectionView.hpp"
+#include "core/Stackup.hpp"
 #include "core/Drawing.hpp"
 #include "core/Render.hpp"
 #include "core/Scene.hpp"
@@ -63,6 +64,7 @@ struct ProjectState {
     RenderSettings render;    // RENDER: environment, lights, size, samples
     SectionView section;      // SECTION: the live section view of the 3D window
     ProductData product;      // properties, the revision and its state, the vault item (PROPERTY, REVISION, VAULT)
+    std::vector<ToleranceStack> stacks; // tolerance stack-ups (STACK)
     std::vector<HistoryStep> history;     // the feature history
     std::vector<HistoryStep> historyRedo; // steps an UNDO took back (not saved)
     bool historyComplete = true;          // false: the model was also changed outside commands
@@ -103,7 +105,9 @@ std::string activePlaneName(const ProjectState& st);
 //   11 adds 3D sketch curves: a polyline or spline whose points "rise" off its plane (one
 //      height per point); a file with one has reader_version 11 (an older reader would lay
 //      it flat). Bodies keep their weldment "member" and pipe "route" data
-constexpr int kProjectVersion = 11;
+//   12 adds tolerance stack-ups ("stacks") and motions that ride on a body ("contact",
+//      "spring", "preload", "mass"); a reader before 12 leaves them out
+constexpr int kProjectVersion = 12;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
 // renamed over it. A failure part way leaves any old file as it was.

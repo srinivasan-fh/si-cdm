@@ -25,6 +25,7 @@
 #include "core/WeldmentCommand.hpp"
 #include "core/RouteCommand.hpp"
 #include "core/FastenerCommand.hpp"
+#include "core/StackupCommand.hpp"
 #include "core/StudyCommand.hpp"
 #include "core/MoldCommand.hpp"
 #include "core/Components.hpp"
@@ -736,7 +737,7 @@ bool sketchCommand(const std::string& cmd) {
 // Document::JobsUndo): around them that state is compared, and kept for UNDO when changed.
 bool sideCommand(const std::string& cmd) {
     static const char* const kSide[] = {"CAM",  "LATHE",  "MATE", "ASSEMBLY", "SHEET",   "VAR", "CONFIG", "PLANE", "REFAXIS",
-                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM", "PROPERTY", "EXPLODE"};
+                                        "REFPOINT", "RIG", "ARM",  "TERRAIN",  "PHYSICS", "SIM", "REGEN",  "PARAM", "PROPERTY", "EXPLODE", "STACK"};
     for (const char* k : kSide)
         if (cmd == k) return true;
     return false;
@@ -751,6 +752,7 @@ Document::JobsUndo sideState(const Document& doc) {
     s.datums = st.datums, s.refAxes = st.refAxes, s.refPoints = st.refPoints;
     s.rigs = doc.scene.rigs(), s.physics = doc.scene.physics(), s.terrain = doc.scene.terrain();
     s.product = st.product;
+    s.stacks = st.stacks;
     return s;
 }
 
@@ -781,6 +783,7 @@ std::string sideKey(const Document& doc) {
     const ProductData& pd = st.product;
     k += "|" + pd.revision + releaseStateName(pd.state) + pd.vaultItem + "#" + std::to_string(pd.history.size());
     for (const auto& [n, v] : pd.properties) k += n + "=" + v + ";";
+    k += "|" + stacksToJson(st.stacks).dump();
     return k;
 }
 
@@ -801,6 +804,7 @@ Document::JobsUndo swapSide(Document& doc, Document::JobsUndo s, std::size_t dep
     st.datums = std::move(s.datums), st.refAxes = std::move(s.refAxes), st.refPoints = std::move(s.refPoints);
     doc.scene.rigs() = std::move(s.rigs), doc.scene.physics() = s.physics, doc.scene.terrain() = std::move(s.terrain);
     st.product = std::move(s.product);
+    st.stacks = std::move(s.stacks);
     return cur;
 }
 
@@ -2716,6 +2720,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "MOLD") return runMoldCommand(doc, a, pc.quoted);
     if (cmd == "FASTENER") return runFastenerCommand(doc, a, pc.quoted);
     if (cmd == "STUDY") return runStudyCommand(doc, a, pc.quoted);
+    if (cmd == "STACK") return runStackCommand(doc, a, pc.quoted);
     if (cmd == "FACE") return runFaceCommand(doc, a, pc.quoted);
     if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
     if (cmd == "COMPONENT") {
@@ -5007,13 +5012,13 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {
-        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION | PATH3D | STUDY: open that page or window.
+        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION | PATH3D | STUDY | STACK: open that page or window.
         const std::string page = toUpper(a[0]);
         const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5
                     : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7
                     : page == "PRODUCT" || page == "PDM" || page == "VAULT" ? 10
                     : page == "APPEARANCE" || page == "MATERIALS" ? 11 : page == "SECTION" ? 12 : page == "PATH3D" || page == "ROUTE" ? 13
-                    : page == "STUDY" || page == "PLOT" ? 14 : -1;
+                    : page == "STUDY" || page == "PLOT" ? 14 : page == "STACK" || page == "TOLERANCE" || page == "STACKUP" ? 15 : -1;
         if (p >= 0) {
             if (auto o = needView(view, "PANEL"); !o.ok) return o;
             view->setPanelPage(p);

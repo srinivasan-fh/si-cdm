@@ -3550,6 +3550,7 @@ void Application::setPanelPage(int page) {
     else if (page == 12) m_uiState.showSection = true;
     else if (page == 13) m_uiState.showPath3d = true;
     else if (page == 14) m_uiState.showStudy = true;
+    else if (page == 15) m_uiState.showStack = true;
     else if (page == 7) m_uiState.showLicence = true;
     else if (page == 6) m_uiState.showPreferences = true;
     else if (page == 5) m_uiState.showHelp = true;

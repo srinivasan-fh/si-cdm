@@ -392,6 +392,10 @@ The *Design* menu (or the command line) adds part features to sketches and solid
 - **Section view:** cut the model open in the 3D window with a plane, the cuts filled and
   hatched, and drag the plane through it (`SECTION Y AT 0`, or *View → Section View...*). It
   also gives each part's section area.
+- **Tolerance stack-up:** a chain of dimensions to a gap, from typed sizes, ISO 286 fits,
+  ISO 2768 classes, bodies' sizes or drawing dimensions. It gives worst case, RSS,
+  modified RSS and a Monte Carlo run against the spec, with each dimension's share and what
+  to tighten (`STACK`, or *Assembly → Tolerance Stack-up...*).
 - **Mass properties:** volume, mass, centre of mass and the inertia tensor.
 - **Measure:** distances between points and between bodies.
 

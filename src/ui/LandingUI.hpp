@@ -9,6 +9,7 @@
 #include "core/Pdm.hpp"
 #include "core/Scene.hpp"
 #include "core/SectionView.hpp"
+#include "core/Stackup.hpp"
 #include "core/Study.hpp"
 #include "render/Renderer.hpp"
 #include "ui/FileDialog.hpp"
@@ -75,6 +76,8 @@ struct UiState {
     std::string studyCommand;
     float studyFrom = 0.0f, studyTo = 0.0f;
     int studySamples = 600;
+    // The Tolerance Stack-up window (its stacks are the project's).
+    bool showStack = false;
     // The 3D Path window: points for a new 3D path (clicks on the model add them while
     // pathPick is on), and a route along the selected path.
     bool showPath3d = false, pathPick = false, pathSpline = false, pathClosed = false;
@@ -236,6 +239,7 @@ private:
     void drawRenderWindow(UiCommands& cmd, UiState& st);
     void drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene);
+    void drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawPath3dWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawProductWindow(UiCommands& cmd, UiState& st); // ProductWindow.cpp
     void drawAppearanceWindow(UiCommands& cmd, UiState& st); // AppearanceWindow.cpp
@@ -316,7 +320,7 @@ private:
     enum FileAction {
         FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport,
         FileLathePost, FileToolsImport, FileToolsExport, FileLicence, FileInsertComponent, FileMakeComponent, FilePackComponents,
-        FileStudyExport
+        FileStudyExport, FileStackExport
     };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
@@ -332,6 +336,11 @@ private:
     float m_fastLength = 0.0f;                               // the length (mm, 0: picked from the size)
     bool m_fastWasher = false, m_fastNut = false;            // and what goes with them into holes
     std::set<std::string> m_studyPick;                       // the Motion Study window: the motions ticked
+    std::string m_stackName;                                 // the Tolerance Stack-up window: the stack shown,
+    std::string m_stackKey;                                  // what its last analysis was of (stacksToJson),
+    StackResult m_stackResult;                               // and that analysis
+    char m_stackNew[64] = "";                                // a new stack's name as it is typed
+    int m_stackAxis = 0;                                     // the size of the selected body along X, Y or Z
     int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;

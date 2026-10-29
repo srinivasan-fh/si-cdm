@@ -1195,6 +1195,110 @@ ROUTE BENDS "Pipe 1"
 - Masses use the true section: steel for pipe, tube and rod, plastic for cable and hose
   (`MATERIAL` changes it). The parts list shows each route's size, length and bends.
 
+## Tolerance stack-up
+
+![Tolerance Stack-up window](stackup.png)
+
+```text
+STACK NEW name [NOTE text] [SPEC lo hi | MIN lo | MAX hi] [GAP from to ALONG dir] [SAMPLES n]
+STACK name ADD [label] nominal [tolerance] [options]
+STACK name ADD BODY body ALONG X|Y|Z|x,y,z [label] [tolerance] [options]
+STACK name ADD DIM n [label] [options]
+    tolerance: TOL t | TOL upper lower | LIMITS high low | FIT H7 | GENERAL f|m|c|v
+    options:   MINUS | PLUS, SENS k, NORMAL [CP c] | UNIFORM | TRIANGULAR
+STACK name EDIT n [NAME label] [NOMINAL v] [tolerance] [options]
+STACK name REMOVE n | SPEC ... | SPEC NONE | GAP ... | GAP NONE | NOTE text | UPDATE | LIST | RENAME new | DELETE
+STACK name [REPORT] [SAMPLES n] [CSV file] [SVG file]
+STACK                                       every stack, one line each
+```
+
+A stack adds up a chain of dimensions to a result, such as a gap, an overhang or end play:
+
+```text
+result = sum of  sign x sensitivity x dimension
+```
+
+**Where the dimensions come from:**
+
+- **Typed:** a size with its tolerance.
+- **An ISO 286 fit** (`FIT g6`): the deviations follow the size.
+- **An ISO 2768-1 class** (`GENERAL m`): likewise.
+- **A body's size** along a direction (`ADD BODY`): measured on the model. It gets ISO 2768-m
+  until you give it a tolerance.
+- **A drawing dimension** (`ADD DIM n`): its value and tolerance, or the title block's general
+  tolerance when it has none.
+
+`UPDATE` measures the bodies and dimensions again after the model changes.
+
+**Signs and sensitivity:** `MINUS` (or a negative size) takes a dimension away from the
+result. `SENS k` scales how much of it reaches the result, such as a lever's ratio or an
+angle's cosine.
+
+**How the parts' sizes spread** within their band:
+
+- **Normal** (the default): ±3σ, or ±3σ × Cp with `CP`.
+- **Uniform:** σ = band/√3. Use it for sizes you can't assume are centred.
+- **Triangular:** σ = band/√6.
+
+**The results:**
+
+- **Worst case:** every dimension at its limit at once.
+- **RSS:** the middle ± 3σ, with σ the root sum of each dimension's σ. With very few
+  dimensions (uniform ones above all), ±3σ can reach past the worst case, which no assembly
+  can. RSS then stops at the worst case, and the report says so.
+- **Modified RSS:** RSS × 1.5, within the worst case. This is Bender's allowance for
+  processes that drift.
+- **Monte Carlo:** 100,000 samples by default (`SAMPLES`), each dimension drawn from its own
+  spread. It is the same every run.
+
+**Against the spec** (`SPEC`, `MIN`, `MAX`), the stack reports:
+
+- whether the worst case fits, and whether RSS fits;
+- Cpk;
+- the share outside the spec, from RSS and from the Monte Carlo run.
+
+The two shares differ when uniform spreads give the result short tails, and the report says
+so.
+
+**What to change:** the report gives each dimension's share of the variance and of the worst
+case. It also gives the scale on every tolerance that would make the worst case fit, or bring
+RSS to Cpk 1, and what halving the largest contributor's tolerance would do. When the
+middle of the result itself is outside the spec, it says to change a nominal size instead.
+
+**GAP** names the same result on the model: the gap along a direction from one body to the
+next. The report checks the chain's nominal against it, which catches a missing dimension or
+a wrong sign.
+
+```text
+STACK NEW "End play" SPEC 0.35 0.65
+STACK "End play" ADD Housing 50 TOL 0.1 UNIFORM
+STACK "End play" ADD BODY "Shaft" ALONG X TOL 0.05 MINUS
+STACK "End play" ADD "Circlip" -1.2 TOL +0 -0.06
+STACK "End play" ADD Bearing 10 FIT h6 MINUS
+STACK "End play" REPORT SVG end-play.svg
+```
+
+**In the app:** *Assembly → Tolerance Stack-up...* (or `PANEL STACK`) opens the window. Edit
+each dimension's size, deviations, sign and spread in the table. *Add the Selected Body's
+Size* measures a part. The window shows the Monte Carlo histogram against the spec. Stacks
+are saved with the project, and UNDO takes changes back.
+
+**Checked against hand calculation:** on 50 ±0.1 − 20 ±0.05 − 29.5 ±0.05 with spec 0.35–0.65:
+
+- worst case 0.3–0.7;
+- RSS ±0.1225;
+- Cpk 1.22;
+- 239 ppm outside.
+
+The Monte Carlo σ is within 2% of RSS.
+
+**Limits:**
+
+- The chain is one-dimensional, adding sizes along one direction (with sensitivities for
+  levers and angles).
+- Geometric tolerances (position, flatness...) aren't turned into contributions on their own.
+  Add them as dimensions with their zone as the band.
+
 ## Mass properties
 
 ```text
@@ -1449,6 +1553,9 @@ routes along them (`route` with `curve` and `size`), and gives their `list`, `be
 
 The `section` tool sets the section view: `set` (with `axis` or `normal`, and `at` or `point`),
 `move`, `flip`, `on`, `off`, `cap`, `only`, `all` and `info`.
+
+The `tolerance_stack` tool makes and edits stacks (`new`, `add`, `edit`, `remove`, `spec`,
+`gap`, `update`, `rename`, `delete`) and gives the `report`, with `csv` and `svg` files.
 
 The `face` tool edits faces directly: `info`, `offset`, `move` and `delete`, with `at` a
 point on the face (and `body`, `distance` or `by`).

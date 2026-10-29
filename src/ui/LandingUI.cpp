@@ -379,6 +379,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showAppearance) drawAppearanceWindow(cmd, st);
     if (st.showSection && st.project && st.mode != ViewMode::Drawing2D) drawSectionWindow(cmd, st, scene);
     if (st.showStudy) drawStudyWindow(cmd, st, scene);
+    if (st.showStack && st.project) drawStackWindow(cmd, st, scene);
     if (st.showPath3d && st.mode != ViewMode::Drawing2D) drawPath3dWindow(cmd, st, scene);
     if (!st.showPath3d) st.pathPick = false;
     if (st.showLicence) drawLicenceWindow(cmd, st);
@@ -479,6 +480,215 @@ void LandingUI::drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene
         ImGui::PopID();
     }
     ImGui::TextDisabled(tr("%zu samples from %.3g to %.3g s"), r.t.size(), r.t.empty() ? 0.0 : r.t.front(), r.t.empty() ? 0.0 : r.t.back());
+    ImGui::End();
+}
+
+// Tolerance stack-up: the dimensions in a chain, each one's tolerance, sign and spread, the
+// spec, and the result by worst case, RSS and Monte Carlo with each one's share.
+void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene) {
+    ImGui::SetNextWindowSize({640, 680}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(tr("Tolerance Stack-up"), &st.showStack)) {
+        ImGui::End();
+        return;
+    }
+    const std::vector<ToleranceStack>& stacks = st.project->stacks;
+    const ToleranceStack* cur = nullptr;
+    for (const ToleranceStack& s : stacks)
+        if (s.name == m_stackName) cur = &s;
+    if (!cur && !stacks.empty()) cur = &stacks.back(), m_stackName = cur->name;
+    auto q = [](const std::string& s) { return "\"" + s + "\""; };
+    auto n = [](double v) {
+        char b[40];
+        std::snprintf(b, sizeof b, "%.6g", v);
+        return std::string(b);
+    };
+    // Which stack, and a new one.
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo("##stack", cur ? cur->name.c_str() : tr("(no stack yet)"))) {
+        for (const ToleranceStack& s : stacks)
+            if (ImGui::Selectable(s.name.c_str(), cur == &s)) m_stackName = s.name;
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(140);
+    ImGui::InputTextWithHint("##newstack", tr("new stack's name"), m_stackNew, sizeof m_stackNew);
+    ImGui::SameLine();
+    const std::string fresh = m_stackNew;
+    if (fresh.empty()) ImGui::BeginDisabled();
+    if (ImGui::Button(tr("New Stack"))) {
+        cmd.commands.push_back("STACK NEW " + q(fresh));
+        m_stackName = fresh;
+        m_stackNew[0] = 0;
+    }
+    if (fresh.empty()) ImGui::EndDisabled();
+    if (cur) {
+        ImGui::SameLine();
+        if (ImGui::Button(tr("Delete"))) cmd.commands.push_back("STACK " + q(cur->name) + " DELETE");
+    }
+    if (!cur) {
+        ImGui::TextWrapped("%s", tr("A stack adds up a chain of dimensions (part sizes, drawing dimensions) to a result, such as a gap, with "
+                                    "each one's tolerance. Name one and press New Stack."));
+        ImGui::End();
+        return;
+    }
+    const std::string name = q(cur->name);
+    // The spec: the least and greatest result allowed.
+    {
+        bool hasLo = cur->hasLow, hasHi = cur->hasHigh;
+        double lo = cur->low, hi = cur->high;
+        bool changed = false;
+        if (ImGui::Checkbox(tr("Least"), &hasLo)) changed = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        if (!hasLo) ImGui::BeginDisabled();
+        ImGui::InputDouble("##lo", &lo, 0, 0, "%.4f");
+        changed |= ImGui::IsItemDeactivatedAfterEdit();
+        if (!hasLo) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Checkbox(tr("Greatest"), &hasHi)) changed = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        if (!hasHi) ImGui::BeginDisabled();
+        ImGui::InputDouble("##hi", &hi, 0, 0, "%.4f");
+        changed |= ImGui::IsItemDeactivatedAfterEdit();
+        if (!hasHi) ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", tr("mm (the spec)"));
+        if (changed) {
+            if (hasLo && hasHi) cmd.commands.push_back("STACK " + name + " SPEC " + n(lo) + " " + n(hi));
+            else if (hasLo) cmd.commands.push_back("STACK " + name + " SPEC NONE MIN " + n(lo));
+            else if (hasHi) cmd.commands.push_back("STACK " + name + " SPEC NONE MAX " + n(hi));
+            else cmd.commands.push_back("STACK " + name + " SPEC NONE");
+        }
+    }
+    // The dimensions.
+    const StackResult& r = m_stackResult;
+    if (ImGui::BeginTable("##items", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("+/-");
+        ImGui::TableSetupColumn(tr("Dimension"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(tr("Nominal"));
+        ImGui::TableSetupColumn(tr("Upper"));
+        ImGui::TableSetupColumn(tr("Lower"));
+        ImGui::TableSetupColumn(tr("Spread"));
+        ImGui::TableSetupColumn(tr("Share"));
+        ImGui::TableSetupColumn("");
+        ImGui::TableHeadersRow();
+        static const char* const kDist[] = {"normal", "uniform", "triangular"};
+        for (std::size_t i = 0; i < cur->items.size(); ++i) {
+            const StackItem& it = cur->items[i];
+            const std::string edit = "STACK " + name + " EDIT " + std::to_string(i + 1);
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton(it.sign < 0 ? "-" : "+")) cmd.commands.push_back(edit + (it.sign < 0 ? " PLUS" : " MINUS"));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Adds to the result (+) or takes from it (-)"));
+            ImGui::TableNextColumn();
+            char label[128];
+            std::snprintf(label, sizeof label, "%s", it.name.c_str());
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##name", label, sizeof label);
+            if (ImGui::IsItemDeactivatedAfterEdit() && label[0]) cmd.commands.push_back(edit + " NAME " + q(label));
+            if (ImGui::IsItemHovered()) {
+                std::string tip = !it.body.empty() ? std::string(tr("Measured on the body")) + ": " + it.body : it.dim >= 0 ? tr("A drawing dimension") : tr("Typed");
+                if (!it.fit.empty()) tip += "; ISO 286 " + it.fit;
+                else if (it.general) tip += std::string("; ISO 2768-") + it.general;
+                ImGui::SetTooltip("%s", tip.c_str());
+            }
+            ImGui::TableNextColumn();
+            double nom = it.nominal;
+            ImGui::SetNextItemWidth(80);
+            ImGui::InputDouble("##nom", &nom, 0, 0, "%.4f");
+            if (ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back(edit + " NOMINAL " + n(nom));
+            if (ImGui::IsItemHovered() && (!it.body.empty() || it.dim >= 0)) ImGui::SetTooltip("%s", tr("Measured: typing a size here unlinks it"));
+            double up = it.upper, low = it.lower;
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputDouble("##up", &up, 0, 0, "%+.4f");
+            const bool upDone = ImGui::IsItemDeactivatedAfterEdit();
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputDouble("##low", &low, 0, 0, "%+.4f");
+            if (upDone || ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back(edit + " TOL " + (up >= 0 ? "+" : "") + n(up) + " " + (low >= 0 ? "+" : "") + n(low));
+            ImGui::TableNextColumn();
+            int d = static_cast<int>(it.dist);
+            ImGui::SetNextItemWidth(96);
+            if (ImGui::Combo("##dist", &d, kDist, 3)) cmd.commands.push_back(edit + " " + toUpper(kDist[d]));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", tr("How the parts' sizes spread in the band: normal (+-3 sigma), uniform (anywhere alike), triangular (mostly the middle)"));
+            ImGui::TableNextColumn();
+            if (i < r.variance.size()) {
+                char share[32];
+                std::snprintf(share, sizeof share, "%.0f%%", r.variance[i]);
+                ImGui::ProgressBar(static_cast<float>(r.variance[i] / 100.0), {70, 0}, share);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(tr("%.1f%% of the variance, %.1f%% of the worst case"), r.variance[i], r.wcShare[i]);
+            }
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("x")) cmd.commands.push_back("STACK " + name + " REMOVE " + std::to_string(i + 1));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Remove it"));
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    // Adding: typed, or the selected body's size.
+    if (ImGui::Button(tr("Add a Dimension"))) cmd.commands.push_back("STACK " + name + " ADD " + q("Dimension " + std::to_string(cur->items.size() + 1)) + " 10 TOL 0.1");
+    ImGui::SameLine();
+    const bool body = st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size());
+    static const char* const kAxes[] = {"X", "Y", "Z"};
+    if (!body) ImGui::BeginDisabled();
+    if (ImGui::Button(tr("Add the Selected Body's Size"))) {
+        const Body& b = scene.bodies()[static_cast<std::size_t>(st.selectedBody)];
+        cmd.commands.push_back("STACK " + name + " ADD BODY " + q(b.name) + " ALONG " + kAxes[m_stackAxis]);
+    }
+    if (!body) ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("Its size along X, Y or Z, measured, with ISO 2768-m until you give it a tolerance"));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(50);
+    ImGui::Combo("##axis", &m_stackAxis, kAxes, 3);
+    ImGui::SameLine();
+    if (ImGui::Button(tr("Measure Again"))) cmd.commands.push_back("STACK " + name + " UPDATE");
+    ImGui::SameLine();
+    if (ImGui::Button(tr("Save Report..."))) requestFile(FileStackExport, st);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(".csv: the table and the results; .svg: the chart"));
+    ImGui::Separator();
+    // The analysis, again whenever the stack changes (20000 Monte Carlo samples here; STACK
+    // REPORT runs the stack's own number).
+    const std::string key = stacksToJson({*cur}).dump();
+    if (key != m_stackKey) {
+        ToleranceStack quick = *cur;
+        quick.samples = std::min(quick.samples, 20000);
+        m_stackResult = analyzeStack(quick);
+        if (!quick.gapFrom.empty() && bodyGapAlong(scene, quick.gapFrom, quick.gapTo, quick.gapAlong, m_stackResult.modelGap, nullptr)) m_stackResult.measured = true;
+        m_stackKey = key;
+    }
+    if (cur->items.empty()) {
+        ImGui::TextDisabled("%s", tr("Add the dimensions that make up the result."));
+        ImGui::End();
+        return;
+    }
+    const bool spec = cur->hasLow || cur->hasHigh;
+    const ImVec4 good(0.3f, 0.75f, 0.35f, 1.0f), bad(0.9f, 0.35f, 0.3f, 1.0f);
+    ImGui::Text(tr("Nominal %.5g mm"), r.nominal);
+    ImGui::TextColored(spec ? (r.wcPass ? good : bad) : ImGui::GetStyle().Colors[ImGuiCol_Text], tr("Worst case: %.5g to %.5g mm"), r.wcLow, r.wcHigh);
+    ImGui::TextColored(spec ? (r.rssPass ? good : bad) : ImGui::GetStyle().Colors[ImGuiCol_Text], tr("RSS (3 sigma): %.5g to %.5g mm"), r.rssLow, r.rssHigh);
+    ImGui::Text(tr("Modified RSS (x1.5): %.5g to %.5g mm"), r.mrssLow, r.mrssHigh);
+    if (spec) ImGui::Text(tr("Cpk %.3g; %.0f ppm outside (RSS), %.0f ppm (Monte Carlo)"), r.cpk, r.ppm, r.mcPpm);
+    if (r.measured) ImGui::Text(tr("The model's gap: %.5g mm"), r.modelGap);
+    if (!r.histogram.empty()) {
+        std::vector<float> h(r.histogram.begin(), r.histogram.end());
+        ImGui::PlotHistogram("##mc", h.data(), static_cast<int>(h.size()), 0, nullptr, 0.0f, FLT_MAX, {ImGui::GetContentRegionAvail().x, 110});
+        if (spec) {
+            // The spec limits over the histogram.
+            const ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            for (const auto& [has, at] : {std::pair{cur->hasLow, cur->low}, std::pair{cur->hasHigh, cur->high}}) {
+                if (!has || at < r.histLow || at > r.histHigh) continue;
+                const float x = p0.x + static_cast<float>((at - r.histLow) / (r.histHigh - r.histLow)) * (p1.x - p0.x);
+                dl->AddLine({x, p0.y}, {x, p1.y}, IM_COL32(230, 80, 70, 255), 2.0f);
+            }
+        }
+        ImGui::TextDisabled(tr("Monte Carlo, %d samples from %.4g to %.4g mm: sigma %.4g mm (the red lines: the spec)"), r.samples, r.histLow, r.histHigh, r.mcSigma);
+    }
+    for (const std::string& note : r.notes) ImGui::TextWrapped("%s", note.c_str());
     ImGui::End();
 }
 
@@ -1211,6 +1421,9 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                 ImGui::EndMenu();
             }
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem(tr("Tolerance Stack-up..."))) st.showStack = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A chain of dimensions to a gap: worst case, RSS and Monte Carlo against the spec"));
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Put the Selected Part in a Sub-assembly"), nullptr, false, body)) {
             int n = 1;
@@ -2904,6 +3117,9 @@ void LandingUI::requestFile(int action, const UiState& st) {
     case FileStudyExport:
         m_fileDialog.open(FileDialog::Mode::Save, "Save the Motion Study (CSV table or SVG charts)", {".csv", ".svg"}, dir, projectStem(st) + "-study.csv");
         break;
+    case FileStackExport:
+        m_fileDialog.open(FileDialog::Mode::Save, "Save the Tolerance Stack (CSV table or SVG chart)", {".csv", ".svg"}, dir, projectStem(st) + "-stack.csv");
+        break;
     case FileSheetExport: m_fileDialog.open(FileDialog::Mode::Save, "Export Drawing", {".pdf", ".svg", ".dxf"}, dir, projectStem(st) + ".pdf"); break;
     case FileInsertComponent: m_fileDialog.open(FileDialog::Mode::Open, "Insert a Part or Assembly File (linked)", {".sicdm"}, dir); break;
     case FileMakeComponent: m_fileDialog.open(FileDialog::Mode::Save, "Save the Selected Body as a Part File", {".sicdm"}, dir, "part.sicdm"); break;
@@ -2942,6 +3158,12 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
             std::string ext = std::filesystem::path(*path).extension().string();
             for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             cmd.commands.push_back((st.studyCommand.empty() ? std::string("STUDY") : st.studyCommand) + (ext == ".svg" ? " SVG " : " CSV ") + quoted(*path));
+            break;
+        }
+        case FileStackExport: {
+            std::string ext = std::filesystem::path(*path).extension().string();
+            for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            cmd.commands.push_back("STACK \"" + m_stackName + "\" REPORT" + (ext == ".svg" ? " SVG " : " CSV ") + quoted(*path));
             break;
         }
         case FileLicence: cmd.commands.push_back("LICENCE INSTALL " + quoted(*path)); break;

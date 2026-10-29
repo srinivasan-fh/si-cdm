@@ -830,6 +830,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
         if (!pd.vaultItem.empty()) jp.set("vault_item", pd.vaultItem);
         doc.set("product", jp);
     }
+    if (!state.stacks.empty()) doc.set("stacks", stacksToJson(state.stacks));
     if (!scene.rigs().empty()) doc.set("robots", rigStateToJson(scene.rigs()));
     if (scene.terrain().active()) doc.set("terrain", terrainToJson(scene.terrain()));
     if (!state.drawing.empty()) doc.set("drawing", drawingToJson(state.drawing));
@@ -1297,6 +1298,7 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         r.bounces = std::clamp(rj["bounces"].asInt(r.bounces), 1, 64);
         r.denoise = rj["denoise"].asBool(r.denoise);
     }
+    if (const Json& sj = (*doc)["stacks"]; sj.isArray()) st.stacks = stacksFromJson(sj);
     if (const Json& pj = (*doc)["product"]; pj.isObject()) {
         ProductData& pd = st.product;
         pd.revision = pj["revision"].asString(pd.revision);

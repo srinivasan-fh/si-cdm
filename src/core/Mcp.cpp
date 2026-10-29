@@ -315,6 +315,40 @@ Json McpServer::toolDefinitions() {
                         "(path, speed, acceleration), and a cam follower's contact force on its spring with where it would lift off "
                         "and the spring it needs. Returns the findings; the table and charts can go to files.",
                         st, {}));
+        Json ts = Json::object();
+        ts.set("operation", enumProp({"list", "new", "add", "edit", "remove", "spec", "gap", "update", "report", "rename", "delete"},
+                                     "list the stacks; new; add or edit a dimension; remove one; set the spec or the model gap; update (measure "
+                                     "again); report (worst case, RSS, Monte Carlo); rename; delete"));
+        ts.set("stack", prop("string", "The stack's name (new: the new one's)"));
+        ts.set("name", prop("string", "add / edit: the dimension's name; rename: the stack's new name"));
+        ts.set("index", prop("number", "edit / remove: the dimension's number (1...)"));
+        ts.set("nominal", prop("number", "add / edit: the size (mm; negative takes it from the result)"));
+        ts.set("tol", prop("number", "+- tolerance (mm)"));
+        ts.set("upper", prop("number", "Upper deviation (mm, with lower instead of tol): +0.1"));
+        ts.set("lower", prop("number", "Lower deviation (mm): -0.05"));
+        ts.set("fit", prop("string", "An ISO 286 fit code for the tolerance: H7, g6..."));
+        ts.set("general", enumProp({"f", "m", "c", "v"}, "An ISO 2768-1 general tolerance class"));
+        ts.set("minus", prop("boolean", "It takes from the result (else adds)"));
+        ts.set("sens", prop("number", "Sensitivity: how much of it reaches the result (default 1)"));
+        ts.set("dist", enumProp({"normal", "uniform", "triangular"}, "How the parts' sizes spread in the band (default normal, +-3 sigma)"));
+        ts.set("cp", prop("number", "Normal: process capability (the band is +-3 sigma x cp)"));
+        ts.set("body", prop("string", "add: the body whose size this is (measured; with along)"));
+        ts.set("along", prop("string", "add / gap: X, Y, Z, -X... or x,y,z"));
+        ts.set("dim", prop("number", "add: a drawing dimension's number (its value and tolerance)"));
+        ts.set("low", prop("number", "new / spec: the least result allowed (mm)"));
+        ts.set("high", prop("number", "new / spec: the greatest result allowed (mm)"));
+        ts.set("from", prop("string", "gap: the body the gap starts at"));
+        ts.set("to", prop("string", "gap: the body it ends at"));
+        ts.set("note", prop("string", "new: what the result is"));
+        ts.set("samples", prop("number", "report: Monte Carlo samples (default 100000; 0 none)"));
+        ts.set("csv", prop("string", "report: also write the table to this .csv file"));
+        ts.set("svg", prop("string", "report: also write the chart to this .svg file"));
+        tools.push(tool("tolerance_stack",
+                        "Tolerance stack-up: a chain of dimensions (typed, a body's size along a direction, or a drawing dimension) "
+                        "adding up to a result such as a gap, each with its tolerance (+-, two-sided, ISO 286 fit or ISO 2768 class). "
+                        "Reports worst case, RSS, modified RSS and a Monte Carlo run against the spec, each dimension's share and "
+                        "what to tighten.",
+                        ts, {"operation"}));
     }
     {
         Json postures = Json::array(), gestures = Json::array();
@@ -1230,6 +1264,12 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
                     for (Mate& m : m_doc.state.assembly.mates) {
                         if (m.a.body == old) m.a.body = now;
                         if (m.b.body == old) m.b.body = now;
+                    }
+                    for (ToleranceStack& st : m_doc.state.stacks) {
+                        for (StackItem& it : st.items)
+                            if (it.body == old) it.body = now;
+                        if (st.gapFrom == old) st.gapFrom = now;
+                        if (st.gapTo == old) st.gapTo = now;
                     }
                 }
                 m_doc.dirty = m_changed = true;
@@ -2305,6 +2345,75 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return r;
     }
     if (name == "delete_motion") return runLine("MOTION DELETE " + a["name"].asString());
+    if (name == "tolerance_stack") {
+        const std::string op = a["operation"].asString();
+        const std::string st = "STACK " + quote(a["stack"].asString()) + " ";
+        auto item = [&](bool nominal) {
+            std::string l;
+            if (a["name"].isString()) l += " NAME " + quote(a["name"].asString());
+            if (nominal && a["nominal"].isNumber()) l += " NOMINAL " + num(a["nominal"].asNumber());
+            if (a["tol"].isNumber()) l += " TOL " + num(a["tol"].asNumber());
+            else if (a["upper"].isNumber() || a["lower"].isNumber()) {
+                const double up = a["upper"].asNumber(), lo = a["lower"].asNumber();
+                l += std::string(" TOL ") + (up >= 0 ? "+" : "") + num(up) + " " + (lo >= 0 ? "+" : "") + num(lo);
+            }
+            if (a["fit"].isString()) l += " FIT " + a["fit"].asString();
+            if (a["general"].isString()) l += " GENERAL " + a["general"].asString();
+            if (a["minus"].isBool()) l += a["minus"].asBool() ? " MINUS" : " PLUS";
+            if (a["sens"].isNumber()) l += " SENS " + num(a["sens"].asNumber());
+            if (a["dist"].isString()) l += " " + toUpper(a["dist"].asString());
+            if (a["cp"].isNumber()) l += " CP " + num(a["cp"].asNumber());
+            return l;
+        };
+        auto along = [&]() {
+            const Json& v = a["along"];
+            if (v.isArray() && v.size() >= 3) return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber());
+            return v.asString(std::string("X"));
+        };
+        auto spec = [&]() {
+            if (a["low"].isNumber() && a["high"].isNumber()) return " SPEC " + num(a["low"].asNumber()) + " " + num(a["high"].asNumber());
+            std::string l;
+            if (a["low"].isNumber()) l += " MIN " + num(a["low"].asNumber());
+            if (a["high"].isNumber()) l += " MAX " + num(a["high"].asNumber());
+            return l;
+        };
+        if (op == "list") return runLine("STACK");
+        if (op == "new") {
+            std::string l = "STACK NEW " + quote(a["stack"].asString()) + spec();
+            if (a["note"].isString()) l += " NOTE " + quote(a["note"].asString());
+            if (a["from"].isString() && a["to"].isString()) l += " GAP " + quote(a["from"].asString()) + " " + quote(a["to"].asString()) + " ALONG " + along();
+            return runLine(l);
+        }
+        if (op == "add") {
+            std::string l = st + "ADD";
+            if (a["body"].isString()) l += " BODY " + quote(a["body"].asString()) + " ALONG " + along();
+            else if (a["dim"].isNumber()) l += " DIM " + num(a["dim"].asNumber());
+            else if (!a["nominal"].isNumber()) return textResult("add needs nominal, body (with along) or dim", true);
+            // A measured one takes its size from the model or the drawing.
+            return runLine(l + item(!a["body"].isString() && !a["dim"].isNumber()));
+        }
+        if (op == "edit") return runLine(st + "EDIT " + num(a["index"].asNumber()) + item(true));
+        if (op == "remove") return runLine(st + "REMOVE " + num(a["index"].asNumber()));
+        if (op == "spec") {
+            const std::string l = spec();
+            return runLine(st + (l.empty() ? std::string("SPEC NONE") : "SPEC NONE" + l));
+        }
+        if (op == "gap") {
+            if (!a["from"].isString() || !a["to"].isString()) return runLine(st + "GAP NONE");
+            return runLine(st + "GAP " + quote(a["from"].asString()) + " " + quote(a["to"].asString()) + " ALONG " + along());
+        }
+        if (op == "update") return runLine(st + "UPDATE");
+        if (op == "rename") return runLine(st + "RENAME " + quote(a["name"].asString()));
+        if (op == "delete") return runLine(st + "DELETE");
+        if (op == "report") {
+            std::string l = st + "REPORT";
+            if (a["samples"].isNumber()) l += " SAMPLES " + num(a["samples"].asNumber());
+            if (a["csv"].isString()) l += " CSV " + quote(a["csv"].asString());
+            if (a["svg"].isString()) l += " SVG " + quote(a["svg"].asString());
+            return runLine(l);
+        }
+        return textResult("unknown operation", true);
+    }
     if (name == "study") {
         std::string line = "STUDY";
         for (const Json& m : a["motions"].items()) line += " " + quote(m.asString());
