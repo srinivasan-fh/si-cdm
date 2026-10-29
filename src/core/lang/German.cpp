@@ -1050,6 +1050,23 @@ const char* const kGerman[][2] = {
     {"Socket head cap screw", "Zylinderschraube mit Innensechskant"},
     {"The screw for each hole follows it: countersunk, counterbored, tapped or plain", "Die Schraube richtet sich nach der Bohrung: Senkung, Flachsenkung, Gewinde oder Durchgang"},
     {"Washers", "Scheiben"},
+    {"%zu samples from %.3g to %.3g s", "%zu Werte von %.3g bis %.3g s"},
+    {"(rides on %s)", "(läuft auf %s)"},
+    {".csv: every series by time; .svg: the charts", ".csv: jede Reihe über der Zeit; .svg: die Diagramme"},
+    {"0: the simulation's own length (the longest motion cycle)", "0: die Länge der Simulation (der längste Bewegungszyklus)"},
+    {"A cam follower: pressed against this body as it moves; + along the axis lifts (or turns) it away", "Ein Kurvenstößel: an diesen Körper gedrückt, während er sich bewegt; + entlang der Achse hebt (oder dreht) ihn ab"},
+    {"Add a motion first (the Simulation panel, or MOTION ...).", "Zuerst eine Bewegung anlegen (die Simulationsleiste oder MOTION ...)."},
+    {"For the contact force in a motion study (0: the bodies' volume as steel)", "Für die Kontaktkraft in einer Bewegungsstudie (0: das Volumen der Körper als Stahl)"},
+    {"Mass", "Masse"},
+    {"Motion study: travel, velocity and acceleration over time, a cam follower's contact force", "Bewegungsstudie: Weg, Geschwindigkeit und Beschleunigung über der Zeit, die Kontaktkraft eines Kurvenstößels"},
+    {"Nothing (own speed)", "Nichts (eigene Geschwindigkeit)"},
+    {"Plot the Motions...", "Bewegungen auftragen..."},
+    {"Rides on", "Läuft auf"},
+    {"Run Study", "Studie berechnen"},
+    {"Run a study to plot the motions.", "Eine Studie berechnen, um die Bewegungen aufzutragen."},
+    {"Save Table or Charts...", "Tabelle oder Diagramme speichern..."},
+    {"Spring", "Feder"},
+    {"To", "Bis"},
 };
 
 

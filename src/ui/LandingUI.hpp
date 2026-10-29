@@ -9,13 +9,16 @@
 #include "core/Pdm.hpp"
 #include "core/Scene.hpp"
 #include "core/SectionView.hpp"
+#include "core/Study.hpp"
 #include "render/Renderer.hpp"
 #include "ui/FileDialog.hpp"
 #include "ui/Toolbox.hpp"
 #include "ui/ViewCube.hpp"
 
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace sicdm {
@@ -65,6 +68,13 @@ struct UiState {
     bool showProduct = false; // the Product data window: properties, revision, vault
     bool showAppearance = false; // the Appearance window: the selected body's material from swatches
     bool showSection = false;    // the Section window: the live section view's plane
+    // The Motion Study window: the last study (the app points this at the document's), the
+    // line that made it, and the span asked for (to 0: the scene's own length).
+    bool showStudy = false;
+    std::shared_ptr<const StudyResult> study;
+    std::string studyCommand;
+    float studyFrom = 0.0f, studyTo = 0.0f;
+    int studySamples = 600;
     // The 3D Path window: points for a new 3D path (clicks on the model add them while
     // pathPick is on), and a route along the selected path.
     bool showPath3d = false, pathPick = false, pathSpline = false, pathClosed = false;
@@ -225,6 +235,7 @@ private:
     void drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st);
     void drawRenderWindow(UiCommands& cmd, UiState& st);
     void drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene);
+    void drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawPath3dWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawProductWindow(UiCommands& cmd, UiState& st); // ProductWindow.cpp
     void drawAppearanceWindow(UiCommands& cmd, UiState& st); // AppearanceWindow.cpp
@@ -304,7 +315,8 @@ private:
     // File menu.
     enum FileAction {
         FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport,
-        FileLathePost, FileToolsImport, FileToolsExport, FileLicence, FileInsertComponent, FileMakeComponent, FilePackComponents
+        FileLathePost, FileToolsImport, FileToolsExport, FileLicence, FileInsertComponent, FileMakeComponent, FilePackComponents,
+        FileStudyExport
     };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
@@ -319,6 +331,7 @@ private:
     int m_fastType = 1, m_fastSize = 6;                      // the Fasteners menu: the type (FastenerType) and its size,
     float m_fastLength = 0.0f;                               // the length (mm, 0: picked from the size)
     bool m_fastWasher = false, m_fastNut = false;            // and what goes with them into holes
+    std::set<std::string> m_studyPick;                       // the Motion Study window: the motions ticked
     int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;

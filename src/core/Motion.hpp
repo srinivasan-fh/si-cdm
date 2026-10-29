@@ -72,6 +72,15 @@ struct Motion {
     // Joint limits (hard stops): the value is held within [lo, hi] whatever drives it.
     bool hasLimits = false;
     float lo = 0.0f, hi = 0.0f;
+    // A contact follower: its bodies ride on the body `contact` (a cam, an eccentric, a
+    // wedge) as that moves, pressed against it as by a spring: a linear motion's travel
+    // along `axis` (+ away from it), a circular one's angle about it (+ turns away), is
+    // wherever it touches; speed, range, keys and follow are unused. With no contact it
+    // drops to its lower limit (0 without limits).
+    std::string contact;
+    float spring = 0.0f;  // N/mm (studies: the contact force)
+    float preload = 0.0f; // N at its lowest
+    float mass = 0.0f;    // kg the follower moves (0: its bodies' volume as steel)
 
     bool moves(std::string_view bodyName) const;
     // Keeps the keys in time order (call after editing them).
@@ -131,6 +140,10 @@ const char* motionKindKey(MotionKind k) noexcept;      // "circular" / "linear"
 const char* motionModeKey(MotionMode m) noexcept;      // "continuous" / "loop" / "oscillate" / "once"
 std::optional<MotionKind> motionKindFromKey(std::string_view key) noexcept; // also ROTARY, CIRCLE, ...
 std::optional<MotionMode> motionModeFromKey(std::string_view key) noexcept; // also CONT, OSC, ...
+
+// A contact follower's travel (mm) or angle (deg) at time t: where it touches its driver.
+// `touching` (optional) says whether it found the driver under it.
+float contactValue(const Scene& scene, const Motion& m, float t, bool* touching = nullptr);
 
 // One line describing a motion, e.g. "Wheel spin  circular  90 deg/s about (0,1,0) at (...)  4 bodies".
 std::string describeMotion(const Motion& m);

@@ -378,6 +378,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showProduct) drawProductWindow(cmd, st);
     if (st.showAppearance) drawAppearanceWindow(cmd, st);
     if (st.showSection && st.project && st.mode != ViewMode::Drawing2D) drawSectionWindow(cmd, st, scene);
+    if (st.showStudy) drawStudyWindow(cmd, st, scene);
     if (st.showPath3d && st.mode != ViewMode::Drawing2D) drawPath3dWindow(cmd, st, scene);
     if (!st.showPath3d) st.pathPick = false;
     if (st.showLicence) drawLicenceWindow(cmd, st);
@@ -394,6 +395,92 @@ std::string fmtNumber(float v) {
     return b;
 }
 } // namespace
+
+// The motion study: the span and the motions to sample, then each series plotted against
+// time, with what it found (peaks, lift-off) and the table or charts saved.
+void LandingUI::drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene) {
+    ImGui::SetNextWindowSize({560, 640}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(tr("Motion Study"), &st.showStudy)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::SetNextItemWidth(90);
+    ImGui::DragFloat(tr("From"), &st.studyFrom, 0.05f, 0.0f, 3600.0f, "%.2f s");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90);
+    ImGui::DragFloat(tr("To"), &st.studyTo, 0.05f, 0.0f, 3600.0f, st.studyTo <= st.studyFrom ? "auto" : "%.2f s");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("0: the simulation's own length (the longest motion cycle)"));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90);
+    ImGui::DragInt(tr("Samples"), &st.studySamples, 5.0f, 3, 20001);
+    st.studyFrom = std::max(st.studyFrom, 0.0f), st.studyTo = std::max(st.studyTo, 0.0f);
+    st.studySamples = std::clamp(st.studySamples, 3, 20001);
+    // Which motions: those ticked (all when none is).
+    const auto& motions = scene.motions();
+    if (motions.empty()) {
+        ImGui::TextDisabled("%s", tr("Add a motion first (the Simulation panel, or MOTION ...)."));
+    } else if (ImGui::BeginChild("##studymotions", {0, std::min(28.0f * static_cast<float>(motions.size()) + 8.0f, 120.0f)}, ImGuiChildFlags_Borders)) {
+        for (const Motion& m : motions) {
+            bool on = m_studyPick.count(m.name) > 0;
+            if (ImGui::Checkbox(m.name.c_str(), &on)) {
+                if (on) m_studyPick.insert(m.name);
+                else m_studyPick.erase(m.name);
+            }
+            if (!m.contact.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled(tr("(rides on %s)"), m.contact.c_str());
+            }
+        }
+    }
+    if (!motions.empty()) ImGui::EndChild();
+    if (ImGui::Button(tr("Run Study"))) {
+        std::string line = "STUDY";
+        for (const Motion& m : motions)
+            if (m_studyPick.count(m.name)) line += " \"" + m.name + "\"";
+        char span[96];
+        std::snprintf(span, sizeof span, " FROM %g", static_cast<double>(st.studyFrom));
+        line += span;
+        if (st.studyTo > st.studyFrom) std::snprintf(span, sizeof span, " TO %g", static_cast<double>(st.studyTo)), line += span;
+        line += " SAMPLES " + std::to_string(st.studySamples);
+        cmd.commands.push_back(line);
+    }
+    ImGui::SameLine();
+    if (!st.study) ImGui::BeginDisabled();
+    if (ImGui::Button(tr("Save Table or Charts..."))) requestFile(FileStudyExport, st);
+    if (!st.study) ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr(".csv: every series by time; .svg: the charts"));
+    ImGui::Separator();
+    if (!st.study) {
+        ImGui::TextDisabled("%s", tr("Run a study to plot the motions."));
+        ImGui::End();
+        return;
+    }
+    const StudyResult& r = *st.study;
+    for (const std::string& n : r.notes) ImGui::TextWrapped("%s", n.c_str());
+    ImGui::Spacing();
+    // Each series as a line over time (thinned to the window's width).
+    std::vector<float> line;
+    for (const StudySeries& q : r.series) {
+        if (q.v.empty()) continue;
+        const std::size_t step = std::max<std::size_t>(1, q.v.size() / 600);
+        line.clear();
+        double lo = q.v[0], hi = q.v[0];
+        for (std::size_t i = 0; i < q.v.size(); i += step) line.push_back(static_cast<float>(q.v[i]));
+        for (double v : q.v) lo = std::min(lo, v), hi = std::max(hi, v);
+        char label[160];
+        std::snprintf(label, sizeof label, "%s (%s): %.4g to %.4g", q.name.c_str(), q.unit.c_str(), lo, hi);
+        ImGui::TextUnformatted(label);
+        ImGui::PushID(&q);
+        const bool force = q.group == "force" && lo < 0;
+        if (force) ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.85f, 0.25f, 0.2f, 1.0f));
+        ImGui::PlotLines("##plot", line.data(), static_cast<int>(line.size()), 0, nullptr, static_cast<float>(lo), static_cast<float>(hi),
+                         {ImGui::GetContentRegionAvail().x, 64});
+        if (force) ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
+    ImGui::TextDisabled(tr("%zu samples from %.3g to %.3g s"), r.t.size(), r.t.empty() ? 0.0 : r.t.front(), r.t.empty() ? 0.0 : r.t.back());
+    ImGui::End();
+}
 
 // The live section view: which plane, where along it (dragged live), which side, the cut
 // faces filled or not, which bodies.
@@ -2814,6 +2901,9 @@ void LandingUI::requestFile(int action, const UiState& st) {
     case FileToolsExport:
         m_fileDialog.open(FileDialog::Mode::Save, "Save the Job's Tools", {".json", ".csv"}, dir, projectStem(st) + "-tools.json");
         break;
+    case FileStudyExport:
+        m_fileDialog.open(FileDialog::Mode::Save, "Save the Motion Study (CSV table or SVG charts)", {".csv", ".svg"}, dir, projectStem(st) + "-study.csv");
+        break;
     case FileSheetExport: m_fileDialog.open(FileDialog::Mode::Save, "Export Drawing", {".pdf", ".svg", ".dxf"}, dir, projectStem(st) + ".pdf"); break;
     case FileInsertComponent: m_fileDialog.open(FileDialog::Mode::Open, "Insert a Part or Assembly File (linked)", {".sicdm"}, dir); break;
     case FileMakeComponent: m_fileDialog.open(FileDialog::Mode::Save, "Save the Selected Body as a Part File", {".sicdm"}, dir, "part.sicdm"); break;
@@ -2848,6 +2938,12 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case FilePost: cmd.commands.push_back("CAM POST " + quoted(*path)); break;
         case FileToolsImport: cmd.commands.push_back("CAM LIBRARY LOAD " + quoted(*path)); break;
         case FileToolsExport: cmd.commands.push_back("CAM LIBRARY SAVE " + quoted(*path)); break;
+        case FileStudyExport: {
+            std::string ext = std::filesystem::path(*path).extension().string();
+            for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            cmd.commands.push_back((st.studyCommand.empty() ? std::string("STUDY") : st.studyCommand) + (ext == ".svg" ? " SVG " : " CSV ") + quoted(*path));
+            break;
+        }
         case FileLicence: cmd.commands.push_back("LICENCE INSTALL " + quoted(*path)); break;
         case FileInsertComponent: cmd.commands.push_back("COMPONENT INSERT " + quoted(*path)); break;
         case FileMakeComponent: {
@@ -3635,6 +3731,9 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
         ImGui::TextColored(theme::vec(theme::kTextDim), hasSel ? "Adds a motion for the selected body"
                                                               : "Adds a motion for all bodies (select one to target it)");
     }
+    if (ImGui::Button(tr("Plot the Motions..."), {-1, 0})) st.showStudy = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", tr("Motion study: travel, velocity and acceleration over time, a cam follower's contact force"));
 
     theme::caption("Display");
     ImGui::Checkbox(tr("Real-time axes"), &st.simAxes);
@@ -4133,7 +4232,38 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 ImGui::Checkbox(tr("Each body about its own centre"), &m.eachCentre);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("One motion spins every wheel about its own hub"));
             }
-            if (m.kind == MotionKind::Circular) {
+            // A cam follower: it goes wherever it touches the body it rides on.
+            ImGui::TextDisabled("%s", tr("Rides on"));
+            ImGui::SameLine(90);
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo("##contact", m.contact.empty() ? tr("Nothing (own speed)") : m.contact.c_str())) {
+                if (ImGui::Selectable(tr("Nothing (own speed)"), m.contact.empty())) m.contact.clear();
+                for (const Body& b : bodies)
+                    if (!m.moves(b.name) && ImGui::Selectable(b.name.c_str(), b.name == m.contact)) {
+                        m.contact = b.name;
+                        m.follow.clear();
+                        m.keys.clear();
+                    }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", tr("A cam follower: pressed against this body as it moves; + along the axis lifts (or turns) it away"));
+            if (!m.contact.empty()) {
+                ImGui::TextDisabled("%s", tr("Spring"));
+                ImGui::SameLine(90);
+                ImGui::SetNextItemWidth(110);
+                ImGui::DragFloat("##spring", &m.spring, 0.05f, 0.0f, 1e6f, "%.3g N/mm");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(100);
+                ImGui::DragFloat("##preload", &m.preload, 0.1f, 0.0f, 1e7f, "preload %.3g N");
+                ImGui::TextDisabled("%s", tr("Mass"));
+                ImGui::SameLine(90);
+                ImGui::SetNextItemWidth(110);
+                ImGui::DragFloat("##mass", &m.mass, 0.01f, 0.0f, 1e6f, m.mass <= 0.0f ? "from the bodies" : "%.3g kg");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("For the contact force in a motion study (0: the bodies' volume as steel)"));
+                m.spring = std::max(m.spring, 0.0f), m.preload = std::max(m.preload, 0.0f), m.mass = std::max(m.mass, 0.0f);
+            }
+            if (m.kind == MotionKind::Circular && m.contact.empty()) {
                 // Gear trains: turn with another circular motion at a ratio.
                 ImGui::TextDisabled("%s", tr("Driven by"));
                 ImGui::SameLine(90);
@@ -4161,7 +4291,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Stepper motors: moves in steps of this angle (1.8 deg = 200 steps/rev)"));
                 }
             }
-            if (m.kind == MotionKind::Linear) {
+            if (m.kind == MotionKind::Linear && m.contact.empty()) {
                 ImGui::Checkbox(tr("Travel along the chain / belt loop"), &m.alongLoop);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s", tr("Moves a chain or belt body around its own loop instead of sliding it"));
@@ -4202,34 +4332,36 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
                 }
             }
 
-            // Speed, range, mode, delay.
-            ImGui::TextDisabled("%s", tr("Speed"));
-            ImGui::SameLine(90);
-            ImGui::SetNextItemWidth(130);
-            if (m.kind == MotionKind::Circular) ImGui::DragFloat("##speed", &m.speed, 1.0f, -100000.0f, 100000.0f, "%.1f deg/s");
-            else lengthField("##speed", &m.speed, -1e6f, 1e6f, "/s");
-            if (m.kind == MotionKind::Circular) {
+            // Speed, range, mode, delay (a follower's come from its cam).
+            if (m.contact.empty()) {
+                ImGui::TextDisabled("%s", tr("Speed"));
+                ImGui::SameLine(90);
+                ImGui::SetNextItemWidth(130);
+                if (m.kind == MotionKind::Circular) ImGui::DragFloat("##speed", &m.speed, 1.0f, -100000.0f, 100000.0f, "%.1f deg/s");
+                else lengthField("##speed", &m.speed, -1e6f, 1e6f, "/s");
+                if (m.kind == MotionKind::Circular) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled(tr("%.1f rpm"), static_cast<double>(m.speed / 6.0f));
+                }
+                ImGui::TextDisabled(m.kind == MotionKind::Circular ? "Sweep" : "Stroke");
+                ImGui::SameLine(90);
+                ImGui::SetNextItemWidth(110);
+                if (m.kind == MotionKind::Circular)
+                    ImGui::DragFloat("##range", &m.range, 1.0f, 0.0f, 1e6f, m.range <= 0.0f ? "unlimited" : "%.1f deg");
+                else lengthField("##range", &m.range, 0.0f, 1e7f, "", "unlimited");
+                m.range = std::max(m.range, 0.0f);
                 ImGui::SameLine();
-                ImGui::TextDisabled(tr("%.1f rpm"), static_cast<double>(m.speed / 6.0f));
+                int mode = static_cast<int>(m.mode);
+                ImGui::SetNextItemWidth(-1);
+                if (m.range <= 0.0f) ImGui::BeginDisabled();
+                if (ImGui::Combo("##mode", &mode, "Continuous\0Loop\0Oscillate\0Once\0")) m.mode = static_cast<MotionMode>(mode);
+                if (m.range <= 0.0f) ImGui::EndDisabled();
+                ImGui::TextDisabled("%s", tr("Start"));
+                ImGui::SameLine(90);
+                ImGui::SetNextItemWidth(110);
+                ImGui::DragFloat("##start", &m.start, 0.05f, 0.0f, 3600.0f, "%.2f s");
+                m.start = std::max(m.start, 0.0f);
             }
-            ImGui::TextDisabled(m.kind == MotionKind::Circular ? "Sweep" : "Stroke");
-            ImGui::SameLine(90);
-            ImGui::SetNextItemWidth(110);
-            if (m.kind == MotionKind::Circular)
-                ImGui::DragFloat("##range", &m.range, 1.0f, 0.0f, 1e6f, m.range <= 0.0f ? "unlimited" : "%.1f deg");
-            else lengthField("##range", &m.range, 0.0f, 1e7f, "", "unlimited");
-            m.range = std::max(m.range, 0.0f);
-            ImGui::SameLine();
-            int mode = static_cast<int>(m.mode);
-            ImGui::SetNextItemWidth(-1);
-            if (m.range <= 0.0f) ImGui::BeginDisabled();
-            if (ImGui::Combo("##mode", &mode, "Continuous\0Loop\0Oscillate\0Once\0")) m.mode = static_cast<MotionMode>(mode);
-            if (m.range <= 0.0f) ImGui::EndDisabled();
-            ImGui::TextDisabled("%s", tr("Start"));
-            ImGui::SameLine(90);
-            ImGui::SetNextItemWidth(110);
-            ImGui::DragFloat("##start", &m.start, 0.05f, 0.0f, 3600.0f, "%.2f s");
-            m.start = std::max(m.start, 0.0f);
 
             // Live value.
             ImGui::TextDisabled("%s", tr("Now"));

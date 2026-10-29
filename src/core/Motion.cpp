@@ -1,11 +1,16 @@
 #include "core/Motion.hpp"
 
+#include "core/Brep.hpp"
+#include "core/Bvh.hpp"
 #include "core/Scene.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <limits>
+#include <memory>
+#include <mutex>
 #include <string_view>
 #include <unordered_map>
 
@@ -188,6 +193,7 @@ float followedValue(const Scene& scene, const Motion& m, const Motion& d, float 
 }
 
 float valueAt(const Scene& scene, const Motion& m, float t, int depth) {
+    if (!m.contact.empty()) return contactValue(scene, m, t);
     if (m.follow.empty() || !m.keys.empty()) return motionValue(m, t);
     const Motion* d = depth > 0 ? driverOf(scene, m) : nullptr;
     if (!d) return m.clampToLimits(0.0f);
@@ -195,6 +201,10 @@ float valueAt(const Scene& scene, const Motion& m, float t, int depth) {
 }
 
 float rateAt(const Scene& scene, const Motion& m, float t, int depth) {
+    if (!m.contact.empty()) { // as it moves: a central difference over a millisecond
+        constexpr float h = 1e-3f;
+        return (contactValue(scene, m, t + h) - contactValue(scene, m, std::max(t - h, 0.0f))) / (t + h - std::max(t - h, 0.0f));
+    }
     if (m.follow.empty() || !m.keys.empty()) return motionRate(m, t);
     const Motion* d = depth > 0 ? driverOf(scene, m) : nullptr;
     if (!d) return 0.0f;
@@ -220,6 +230,180 @@ Mat4 matrixFor(const Scene& scene, const Motion& m, const Body& b, float t) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Contact followers
+
+namespace {
+
+// A body's mesh for contact: its points (each place once) and a BVH to cast rays at, kept
+// while the mesh stays the same.
+struct ContactShape {
+    std::vector<Vec3> points;
+    MeshBvh bvh;
+};
+
+std::shared_ptr<const ContactShape> contactShape(const MeshData& mesh) {
+    static std::mutex lock;
+    static std::unordered_map<std::uint64_t, std::shared_ptr<const ContactShape>> cache;
+    const std::uint64_t key = meshKey(mesh) ^ (static_cast<std::uint64_t>(mesh.indices.size()) * 0x9E3779B97F4A7C15ull);
+    {
+        const std::lock_guard<std::mutex> g(lock);
+        if (const auto it = cache.find(key); it != cache.end()) return it->second;
+    }
+    auto shape = std::make_shared<ContactShape>();
+    shape->points.reserve(mesh.vertices.size());
+    for (const Vertex& v : mesh.vertices) shape->points.push_back(v.position);
+    std::sort(shape->points.begin(), shape->points.end(), [](const Vec3& a, const Vec3& b) {
+        return a.x != b.x ? a.x < b.x : a.y != b.y ? a.y < b.y : a.z < b.z;
+    });
+    shape->points.erase(std::unique(shape->points.begin(), shape->points.end(),
+                                    [](const Vec3& a, const Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }),
+                        shape->points.end());
+    shape->bvh.build(mesh);
+    const std::lock_guard<std::mutex> g(lock);
+    if (cache.size() > 64) cache.clear();
+    cache[key] = shape;
+    return shape;
+}
+
+// A body where it is at some time: its shape, its transform and the way back.
+struct Posed {
+    const Body* body = nullptr;
+    std::shared_ptr<const ContactShape> shape;
+    Mat4 tf = Mat4::identity(), inv = Mat4::identity();
+};
+
+Posed posed(const Body& b, const Mat4& tf) { return {&b, contactShape(b.mesh), tf, inverse(tf)}; }
+
+// How far each of A's points can go along `way(p)` (a unit direction, the scale that turns
+// a distance into the motion's own units, and how far back from the point a ray may start:
+// the deepest it may be in already) before meeting B, and B's points before A meets them:
+// the least of those (negative: into B by that much). False when no ray meets.
+template <class Way>
+bool leastGap(const std::vector<Posed>& A, const std::vector<Posed>& B, Way way, float& least) {
+    least = std::numeric_limits<float>::max();
+    bool hit = false;
+    auto cast = [&](const Posed& into, const Vec3& from, const Vec3& dir, float& t) {
+        const Vec3 o = into.inv.transformPoint(from) - into.body->offset;
+        const Vec3 d = into.inv.transformPoint(from + dir) - into.body->offset - o;
+        Ray r;
+        r.origin = o;
+        r.dir = normalize(d);
+        t = std::numeric_limits<float>::max();
+        return into.shape->bvh.raycast(r, t);
+    };
+    for (const Posed& a : A)
+        for (const Vec3& p : a.shape->points) {
+            const Vec3 w = a.tf.transformPoint(p + a.body->offset);
+            Vec3 dir;
+            float scale = 1.0f, back = 0.0f;
+            if (!way(w, dir, scale, back)) continue;
+            for (const Posed& b : B) {
+                float t = 0.0f;
+                if (!cast(b, w - dir * back, dir, t)) continue;
+                least = std::min(least, (t - back) * scale);
+                hit = true;
+            }
+        }
+    for (const Posed& b : B)
+        for (const Vec3& q : b.shape->points) {
+            const Vec3 w = b.tf.transformPoint(q + b.body->offset);
+            Vec3 dir;
+            float scale = 1.0f, back = 0.0f;
+            if (!way(w, dir, scale, back)) continue;
+            for (const Posed& a : A) {
+                float t = 0.0f;
+                if (!cast(a, w + dir * back, dir * -1.0f, t)) continue;
+                least = std::min(least, (t - back) * scale);
+                hit = true;
+            }
+        }
+    return hit;
+}
+
+thread_local int contactDepth = 0; // drivers riding on followers riding on drivers... stop
+
+} // namespace
+
+float contactValue(const Scene& scene, const Motion& m, float t, bool* touching) {
+    if (touching) *touching = false;
+    const float low = m.hasLimits ? m.lo : 0.0f;
+    if (m.contact.empty() || contactDepth > 8 || length(m.axis) < 1e-9f) return low;
+    struct Depth {
+        Depth() { ++contactDepth; }
+        ~Depth() { --contactDepth; }
+    } depthGuard;
+    const auto& bodies = scene.bodies();
+    const auto& motions = scene.motions();
+    std::size_t self = motions.size();
+    for (std::size_t k = 0; k < motions.size(); ++k)
+        if (&motions[k] == &m) self = k;
+    int driver = -1;
+    for (std::size_t i = 0; i < bodies.size(); ++i)
+        if (iequals(bodies[i].name, m.contact)) driver = static_cast<int>(i);
+    if (driver < 0 || m.moves(bodies[static_cast<std::size_t>(driver)].name)) return low;
+    // The followers where their outer motions put them (this one's own travel still 0), the
+    // driver where all of its put it.
+    std::vector<Posed> A, B;
+    Mat4 outer = Mat4::identity();
+    for (std::size_t i = 0; i < bodies.size(); ++i) {
+        if (static_cast<int>(i) == driver || !m.moves(bodies[i].name) || bodies[i].mesh.indices.empty()) continue;
+        outer = self < motions.size() ? bodyMotionTransform(scene, i, t, self) : Mat4::identity();
+        A.push_back(posed(bodies[i], outer));
+    }
+    if (A.empty() || bodies[static_cast<std::size_t>(driver)].mesh.indices.empty()) return low;
+    B.push_back(posed(bodies[static_cast<std::size_t>(driver)], bodyMotionTransform(scene, static_cast<std::size_t>(driver), t)));
+    float reach = 1.0f;
+    for (const Posed& p : A) reach += length(p.body->bounds().max - p.body->bounds().min);
+    reach += length(B[0].body->bounds().max - B[0].body->bounds().min);
+    // The motion's axis and origin as the outer motions carry them.
+    const Vec3 o = outer.transformPoint(m.origin);
+    const Vec3 u = normalize(outer.transformPoint(m.origin + normalize(m.axis)) - o);
+    float value = low;
+    bool hit = false;
+    if (m.kind == MotionKind::Linear) {
+        // Pressed back along -axis until it touches.
+        float gap = 0.0f;
+        hit = leastGap(A, B, [&](const Vec3&, Vec3& dir, float& scale, float& back) {
+            dir = u * -1.0f;
+            scale = 1.0f;
+            back = reach; // however deep it is modelled into the driver
+            return true;
+        }, gap);
+        if (hit) value = -gap;
+    } else {
+        // Turned back (-angle) until it touches: each point's way round the axis, the gap
+        // there in degrees at its radius. The straight tangent follows the arc only near the
+        // point, so it goes in steps of at most 5 degrees, looking again from each, until the
+        // gap closes; a pose that touches nothing on the way swung clear (no contact).
+        float angle = 0.0f;
+        bool settled = false;
+        for (int round = 0; round < 96 && !settled && std::fabs(angle) <= 180.0f; ++round) {
+            const Mat4 turn = translate(o) * rotateAxis(u, radians(angle)) * translate(o * -1.0f);
+            std::vector<Posed> At;
+            for (const Posed& p : A) At.push_back({p.body, p.shape, turn * p.tf, inverse(turn * p.tf)});
+            float gap = 0.0f;
+            const bool any = leastGap(At, B, [&](const Vec3& w, Vec3& dir, float& scale, float& back) {
+                const Vec3 r = w - o - u * dot(w - o, u);
+                const float radius = length(r);
+                if (radius < 1e-6f) return false;
+                dir = normalize(cross(u, r)) * -1.0f;
+                scale = 180.0f / (kPi * radius);
+                back = 0.25f * radius; // along its arc, not the straight line behind it
+                return true;
+            }, gap);
+            if (!any) break;
+            const float step = std::clamp(-gap, -5.0f, 5.0f);
+            angle += step;
+            settled = std::fabs(step) < 1e-4f;
+        }
+        hit = settled;
+        if (hit) value = angle;
+    }
+    if (touching) *touching = hit;
+    return m.clampToLimits(value);
+}
 
 float motionValue(const Scene& scene, const Motion& m, float t) { return valueAt(scene, m, t, kMaxFollowDepth); }
 
@@ -334,7 +518,7 @@ float loopTravel(const Scene& scene, std::size_t body, float t) {
 bool isMoving(const Scene& scene, std::size_t body) {
     if (body >= scene.bodies().size()) return false;
     for (const Motion& m : scene.motions())
-        if (m.enabled && (m.speed != 0.0f || !m.follow.empty()) && m.moves(scene.bodies()[body].name)) return true;
+        if (m.enabled && (m.speed != 0.0f || !m.follow.empty() || !m.contact.empty()) && m.moves(scene.bodies()[body].name)) return true;
     return false;
 }
 
@@ -387,7 +571,11 @@ std::optional<MotionMode> motionModeFromKey(std::string_view k) noexcept {
 std::string describeMotion(const Motion& m) {
     char buf[256];
     const Vec3 a = m.axis;
-    if (m.kind == MotionKind::Circular && !m.follow.empty())
+    if (!m.contact.empty())
+        std::snprintf(buf, sizeof(buf), "rides on %s, %s (%g, %g, %g)%s", m.contact.c_str(),
+                      m.kind == MotionKind::Linear ? "lifting along" : "turning away about", static_cast<double>(a.x),
+                      static_cast<double>(a.y), static_cast<double>(a.z), m.spring > 0.0f ? " on a spring" : "");
+    else if (m.kind == MotionKind::Circular && !m.follow.empty())
         std::snprintf(buf, sizeof(buf), "turns %g x %s about (%g, %g, %g)%s", static_cast<double>(m.ratio),
                       m.follow.c_str(), static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z),
                       m.eachCentre ? " through each body's centre" : "");
@@ -415,7 +603,13 @@ std::string describeMotion(const Motion& m) {
         std::snprintf(buf, sizeof(buf), "%g mm/s along (%g, %g, %g)", static_cast<double>(m.speed),
                       static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z));
     std::string s = m.name + "  " + motionKindKey(m.kind) + "  " + buf;
-    if (m.follow.empty() && m.range > 0.0f && m.mode != MotionMode::Continuous) {
+    if (!m.contact.empty() && (m.spring > 0.0f || m.preload > 0.0f || m.mass > 0.0f)) {
+        char r[96];
+        std::snprintf(r, sizeof(r), "  spring %g N/mm, preload %g N, mass %g kg", static_cast<double>(m.spring),
+                      static_cast<double>(m.preload), static_cast<double>(m.mass));
+        s += r;
+    }
+    if (m.follow.empty() && m.contact.empty() && m.range > 0.0f && m.mode != MotionMode::Continuous) {
         char r[64];
         std::snprintf(r, sizeof(r), "  %s %g %s", motionModeKey(m.mode), static_cast<double>(m.range), m.unit());
         s += r;

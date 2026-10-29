@@ -4,12 +4,15 @@
 #include "core/FileIO.hpp"
 #include "core/Scene.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace sicdm {
+
+struct StudyResult;
 
 // The open document: model, sketch plane, file and selection. Shared by the
 // GUI, the command line and the MCP server so they all edit the same thing.
@@ -64,6 +67,10 @@ struct Document {
     bool snapPoints = true;
 
     int primitiveSerial = 0;
+
+    // The last motion study (STUDY), for the Motion Study window; not saved.
+    std::shared_ptr<const StudyResult> study;
+    std::string studyCommand; // the line that made it
 
     void clearSelection() noexcept { selectedBody = selectedCurve = selectedImage = -1; }
     std::string title() const; // "file.sicdm" or the name, with " *" when dirty

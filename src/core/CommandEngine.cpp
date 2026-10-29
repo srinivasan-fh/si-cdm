@@ -25,6 +25,7 @@
 #include "core/WeldmentCommand.hpp"
 #include "core/RouteCommand.hpp"
 #include "core/FastenerCommand.hpp"
+#include "core/StudyCommand.hpp"
 #include "core/MoldCommand.hpp"
 #include "core/Components.hpp"
 #include "core/DrawingCommand.hpp"
@@ -1849,6 +1850,8 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         std::optional<bool> path; // PATH: a linear motion moves a chain / belt along its loop
         std::optional<std::vector<MotionKey>> keys;           // KEYS t:v,t:v,...
         std::optional<std::optional<std::pair<float, float>>> limits; // LIMITS lo hi | OFF
+        std::optional<std::string> contact;                  // CONTACT body | NONE
+        std::optional<float> spring, preload, mass;
         for (std::size_t i = 1; i < a.size(); ++i) {
             const std::string k = lower(a[i]);
             const bool hasNext = i + 1 < a.size();
@@ -1921,6 +1924,15 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 if (!lo || !hi || *lo > *hi) return out.fail("LIMITS needs lo hi (lo <= hi) or OFF");
                 limits = std::optional<std::pair<float, float>>{{*lo, *hi}};
                 i += 2;
+            } else if (k == "contact" || k == "rides" || k == "on_cam") {
+                if (!hasNext) return out.fail("CONTACT needs the body it rides on (a cam), or NONE");
+                contact = iequal(a[++i], "none") ? std::string() : a[i];
+            } else if (k == "spring") {
+                if (!num(spring) || *spring < 0.0f) return out.fail("SPRING needs a rate in N/mm (>= 0)");
+            } else if (k == "preload") {
+                if (!num(preload) || *preload < 0.0f) return out.fail("PRELOAD needs a force in N (>= 0)");
+            } else if (k == "mass") {
+                if (!num(mass) || *mass < 0.0f) return out.fail("MASS needs kg (>= 0; 0: from the bodies)");
             } else if (k == "path" || k == "alongloop" || k == "travel_loop") {
                 path = true; // chain / belt: travel along its loop
             } else if (k == "each" || k == "own") {
@@ -2004,6 +2016,20 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (radius) m.radius = *radius;
         if (ratio) m.ratio = *ratio;
         if (step) m.step = *step;
+        if (contact && !contact->empty()) {
+            const int b = findBody(doc, *contact);
+            if (b < 0) return out.fail("No body named " + *contact + " to ride on");
+            const std::string driver = doc.scene.bodies()[static_cast<std::size_t>(b)].name;
+            if (m.moves(driver)) return out.fail(driver + " can't ride on itself: CONTACT is the body it is pressed against");
+            m.contact = driver;
+            m.follow.clear();
+            m.keys.clear();
+        } else if (contact) {
+            m.contact.clear();
+        }
+        if (spring) m.spring = *spring;
+        if (preload) m.preload = *preload;
+        if (mass) m.mass = *mass;
         if (origin) {
             m.origin = *origin;
             if (!each) m.eachCentre = false;
@@ -2689,6 +2715,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "ROUTE") return runRouteCommand(doc, a, pc.quoted);
     if (cmd == "MOLD") return runMoldCommand(doc, a, pc.quoted);
     if (cmd == "FASTENER") return runFastenerCommand(doc, a, pc.quoted);
+    if (cmd == "STUDY") return runStudyCommand(doc, a, pc.quoted);
     if (cmd == "FACE") return runFaceCommand(doc, a, pc.quoted);
     if (cmd == "PROPERTY" || cmd == "REVISION" || cmd == "COMPARE" || cmd == "VAULT") return runPdmCommand(doc, cmd, a, pc.quoted, view);
     if (cmd == "COMPONENT") {
@@ -4980,12 +5007,13 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {
-        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION | PATH3D: open that page or window.
+        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION | PATH3D | STUDY: open that page or window.
         const std::string page = toUpper(a[0]);
         const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5
                     : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7
                     : page == "PRODUCT" || page == "PDM" || page == "VAULT" ? 10
-                    : page == "APPEARANCE" || page == "MATERIALS" ? 11 : page == "SECTION" ? 12 : page == "PATH3D" || page == "ROUTE" ? 13 : -1;
+                    : page == "APPEARANCE" || page == "MATERIALS" ? 11 : page == "SECTION" ? 12 : page == "PATH3D" || page == "ROUTE" ? 13
+                    : page == "STUDY" || page == "PLOT" ? 14 : -1;
         if (p >= 0) {
             if (auto o = needView(view, "PANEL"); !o.ok) return o;
             view->setPanelPage(p);

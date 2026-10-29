@@ -283,11 +283,13 @@ constexpr CommandSpec kCommands[] = {
     // Motion & simulation
     {"MOTION", "MOT MOTIONS", "MOTION CIRCLE|LINEAR [name] [AXIS X|Y|Z|x,y,z] [AT x,y,z] [SPEED v] [RANGE r] "
      "[MODE CONT|LOOP|OSC|ONCE] [START s] [EACH] [FOLLOW circular|NONE] [RATIO r] [RADIUS r] [STEP s] [PATH] "
-     "[KEYS t:v,t:v...|NONE] [LIMITS lo hi|OFF] [BODIES name... | ALL]  |  "
+     "[KEYS t:v,t:v...|NONE] [LIMITS lo hi|OFF] [CONTACT body|NONE [SPRING k] [PRELOAD f] [MASS kg]] [BODIES name... | ALL]  |  "
      "MOTION DELETE|ON|OFF name  |  MOTION",
      "Circular (deg/s about an axis; EACH: every body about its own centre) or linear (mm/s along a direction) "
      "motion of bodies; FOLLOW makes a linear motion roll with a wheel spin (travel = angle x RADIUS, "
-     "default the wheel's size); no args lists them"},
+     "default the wheel's size); CONTACT makes it ride on a body (a cam, an eccentric, a wedge) as that moves, "
+     "pressed against it: a follower's lift along AXIS or a rocker's angle about it (SPRING N/mm, PRELOAD N and "
+     "MASS kg give STUDY its contact force); no args lists them"},
     {"POSE", "POSTURE", "POSE [robot] name | joint angle... [IN s]  |  POSE [robot] JOINTS  |  POSE LIST",
      "Move a library robot (humanoid, arm, hand, leg, neck...) into a posture: a preset (STAND, SQUAT, T_POSE, "
      "HAND_FIST...) and/or joint angles in degrees (RIGHT ELBOW 90, NECK YAW -30); clamped to the joints' "
@@ -303,6 +305,11 @@ constexpr CommandSpec kCommands[] = {
      "Physical environment of the Simulation: gravity (uniform or Newton's between all masses), forces and "
      "collisions, momentum, energy and heat, charges and E / B fields, waves and Doppler, special relativity; "
      "PHYSICS AT t reports kinematics, forces, momentum, energy conservation, temperature, relativity and quantum values"},
+    {"STUDY", "MOTIONSTUDY PLOT", "STUDY [motion...] [POINT body [x,y,z]]... [FROM t0] [TO t1] [STEP dt | SAMPLES n] [SMOOTH s] [CSV file] [SVG file] [TITLE text]",
+     "Motion study: the motions (all of them, or those named) and points on bodies sampled over time: travel or angle, "
+     "velocity and acceleration, a point's path, speed and acceleration; a cam follower's contact force on its spring "
+     "(MOTION ... CONTACT cam SPRING k PRELOAD f MASS m) and where it would lift off, with the spring it needs. CSV writes "
+     "the table, SVG the charts; the Motion Study window plots them"},
     {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t] | SIM CHECK [FROM t0] [TO t1] [STEP dt] [ALL] [body...]",
      "Open the Simulation window and control playback; SIM AT t reports body poses at time t; SIM CHECK finds parts that run into each other as it plays"},
     // Library
@@ -342,7 +349,7 @@ constexpr CommandSpec kCommands[] = {
     {"DISPLAY", "SHADE", "DISPLAY SHADED|EDGES|WIRE|HIDDEN", "Display mode of the 3D window"},
     {"GRID", "", "GRID [ON|OFF]", "Show or hide the grid"},
     {"SNAP", "", "SNAP [ON|OFF]", "Grid and point snapping for sketches"},
-    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE|SECTION|PATH3D", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data, appearance, section or 3D path and route window"},
+    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE|SECTION|PATH3D|STUDY", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data, appearance, section, 3D path and route, or motion study window"},
     // Session
     {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF]",
      "Units for typing and showing lengths (the model stays exact in mm)"},

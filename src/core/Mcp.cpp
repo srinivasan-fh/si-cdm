@@ -267,6 +267,11 @@ Json McpServer::toolDefinitions() {
         p.set("follow", prop("string", "Linear: circular motion (wheel spin) that drives the travel, rolling without "
                                        "slip; speed / range / mode then come from it. \"\" unlinks"));
         p.set("radius", prop("number", "Linear with follow: wheel radius in mm (0 = from the wheel's size)"));
+        p.set("contact", prop("string", "A cam follower: the body it rides on (a cam, eccentric, wedge), pressed against it; its travel "
+                                        "(linear, + along axis lifts) or angle (circular, + turns away) is wherever it touches. \"\" unlinks"));
+        p.set("spring", prop("number", "Contact follower: spring rate N/mm (for the study's contact force)"));
+        p.set("preload", prop("number", "Contact follower: spring force at its lowest point (N)"));
+        p.set("mass", prop("number", "Contact follower: moving mass in kg (0: its bodies' volume as steel)"));
         tools.push(tool("create_motion",
                         "Add or update a circular or linear motion of bodies, played by the Simulation window.", p,
                         {"kind"}));
@@ -282,6 +287,34 @@ Json McpServer::toolDefinitions() {
                         "Run the motion simulation. 'poses' works headless too and reports every motion value and "
                         "moving body position at 'time'.",
                         s, {"action"}));
+        Json st = Json::object();
+        st.set("motions", [&] {
+            Json j = Json::object();
+            j.set("type", "array").set("items", prop("string", "Motion name")).set("description", "The motions to study (default: every enabled one)");
+            return j;
+        }());
+        st.set("points", [&] {
+            Json item = Json::object();
+            item.set("type", "object");
+            Json props = Json::object();
+            props.set("body", prop("string", "The body"));
+            props.set("at", numberArray(3, "A point on it, in the model [x,y,z] (default: its centre)"));
+            item.set("properties", props);
+            Json j = Json::object();
+            j.set("type", "array").set("items", item).set("description", "Points on bodies to trace: path, speed, acceleration");
+            return j;
+        }());
+        st.set("from", prop("number", "Start (s)"));
+        st.set("to", prop("number", "End (s; default the simulation's own length)"));
+        st.set("samples", prop("number", "Samples (default 600)"));
+        st.set("smooth", prop("number", "Fit velocity and acceleration over +- this (s); default chosen from the data"));
+        st.set("csv", prop("string", "Also write the table to this .csv file"));
+        st.set("svg", prop("string", "Also write the charts to this .svg file"));
+        tools.push(tool("study",
+                        "Motion study: the motions sampled over time (travel or angle, velocity, acceleration), points on bodies "
+                        "(path, speed, acceleration), and a cam follower's contact force on its spring with where it would lift off "
+                        "and the spring it needs. Returns the findings; the table and charts can go to files.",
+                        st, {}));
     }
     {
         Json postures = Json::array(), gestures = Json::array();
@@ -2252,6 +2285,10 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["follow"].isString())
             line += " FOLLOW " + (a["follow"].asString().empty() ? std::string("NONE") : quote(a["follow"].asString()));
         if (a["radius"].isNumber()) line += " RADIUS " + num(a["radius"].asNumber());
+        if (a["contact"].isString()) line += " CONTACT " + (a["contact"].asString().empty() ? std::string("NONE") : quote(a["contact"].asString()));
+        if (a["spring"].isNumber()) line += " SPRING " + num(a["spring"].asNumber());
+        if (a["preload"].isNumber()) line += " PRELOAD " + num(a["preload"].asNumber());
+        if (a["mass"].isNumber()) line += " MASS " + num(a["mass"].asNumber());
         if (a["bodies"].isArray() && a["bodies"].size() > 0) {
             line += " BODIES";
             for (const Json& b : a["bodies"].items()) line += " " + quote(b.asString() == "*" ? "ALL" : b.asString());
@@ -2268,6 +2305,22 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return r;
     }
     if (name == "delete_motion") return runLine("MOTION DELETE " + a["name"].asString());
+    if (name == "study") {
+        std::string line = "STUDY";
+        for (const Json& m : a["motions"].items()) line += " " + quote(m.asString());
+        for (const Json& p : a["points"].items()) {
+            line += " POINT " + quote(p["body"].asString());
+            if (p["at"].isArray() && p["at"].size() >= 3)
+                line += " " + num(p["at"][0].asNumber()) + "," + num(p["at"][1].asNumber()) + "," + num(p["at"][2].asNumber());
+        }
+        if (a["from"].isNumber()) line += " FROM " + num(a["from"].asNumber());
+        if (a["to"].isNumber()) line += " TO " + num(a["to"].asNumber());
+        if (a["samples"].isNumber()) line += " SAMPLES " + num(a["samples"].asNumber());
+        if (a["smooth"].isNumber()) line += " SMOOTH " + num(a["smooth"].asNumber());
+        if (a["csv"].isString()) line += " CSV " + quote(a["csv"].asString());
+        if (a["svg"].isString()) line += " SVG " + quote(a["svg"].asString());
+        return runLine(line);
+    }
     if (name == "simulate") {
         const std::string act = a["action"].asString();
         const std::string t = num(a["time"].asNumber());

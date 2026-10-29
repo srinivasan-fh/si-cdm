@@ -1667,6 +1667,8 @@ void Application::frame(float dt) {
     m_uiState.planeLabel = activePlaneName(m_doc.state);
     m_uiState.datums.clear();
     for (const DatumPlane& d : m_doc.state.datums) m_uiState.datums.push_back(d.name);
+    m_uiState.study = m_doc.study;
+    m_uiState.studyCommand = m_doc.studyCommand;
     const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
     pollRender();
@@ -3547,6 +3549,7 @@ void Application::setPanelPage(int page) {
     else if (page == 11) m_uiState.showAppearance = true;
     else if (page == 12) m_uiState.showSection = true;
     else if (page == 13) m_uiState.showPath3d = true;
+    else if (page == 14) m_uiState.showStudy = true;
     else if (page == 7) m_uiState.showLicence = true;
     else if (page == 6) m_uiState.showPreferences = true;
     else if (page == 5) m_uiState.showHelp = true;

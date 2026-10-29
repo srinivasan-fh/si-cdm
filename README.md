@@ -200,6 +200,59 @@ touch, until when, and where. It tests the parts' exact shapes, not their boxes.
 touching at the start (assembled parts, parts on a joint) are left out; `ALL` keeps them. Naming
 bodies (`SIM CHECK "Gripper"`) checks only those against everything else.
 
+### Contact-driven mechanisms and motion studies
+
+![Motion study of a cam follower](docs/study.png)
+
+A motion can **ride on a body** (`CONTACT`): a cam, an eccentric, a wedge. It moves with whatever
+moves that body. A linear motion is a follower: it is pressed against the body along its axis, and
+its travel is wherever it touches. A circular motion is a rocker: it turns about its axis until it
+rests on the body. Both use the parts' real shapes (their meshes), not a cam table.
+
+`STUDY` samples the motions over time. It charts the travel (or angle), velocity and acceleration,
+and paths of chosen points on bodies (`POINT body x,y,z`).
+
+For a follower with a spring, it also gives the **contact force**:
+
+```text
+contact force = mass x acceleration + PRELOAD + SPRING x lift above the lowest point
+```
+
+The mass is in kg; by default it is the moved bodies' volume as steel. Where the force drops
+below zero, the follower **lifts off**. The study says when that happens, and the spring rate and
+preload that would keep it on.
+
+```text
+CYLINDER 20 10 @5,0,0                                                  # a round 5 mm off its axis
+BOX 20 10 10 @0,35,0                                                   # a flat follower on top
+MOTION CIRCLE "Cam spin" AXIS Z AT 0,0,0 SPEED 360 BODIES "Cylinder 1"
+MOTION LINEAR Follower AXIS Y CONTACT "Cylinder 1" SPRING 0.5 PRELOAD 2 MASS 50 BODIES "Block 2"
+STUDY Follower TO 2 SAMPLES 801 CSV cam.csv SVG cam.svg TITLE "Cam follower"
+STUDY POINT "Cylinder 1" 15,0,5                                        # a point's path, speed and acceleration
+```
+
+On this eccentric cam:
+
+- The travel is within 0.02 mm of the exact 5 sin(ωt).
+- The velocity and acceleration peaks are within 3% of the exact 10π mm/s and 20π² mm/s².
+- The lift-off span, 0.10–0.40 s, matches the hand calculation.
+
+**Smoothing:** velocity and acceleration come from a local quadratic fit. The fit spans the fewest
+samples that settle it, because a meshed cam's facets would otherwise show up as spikes. The
+study says how wide the fit was, and `SMOOTH s` sets it yourself. A finer mesh needs less smoothing.
+
+**In the app:** *Plot the Motions...* in the Simulation panel (or `PANEL STUDY`) opens the Motion
+Study window, with the charts and a *Save Table or Charts...* button. The motion editor sets *Rides
+on*, *Spring*, *Preload* and *Mass*. Over MCP, use the `study` tool, plus `contact`, `spring`,
+`preload` and `mass` on `create_motion`.
+
+**Limits:**
+
+- Contact is found along the follower's axis, or about the rocker's axis. A follower that should
+  slide sideways or roll on the cam isn't modelled.
+- The contact force is the spring and inertia along that axis only. There is no friction and no
+  impact when the follower lands.
+
 ## Physics environment
 
 The Simulation can also move bodies by **forces**. Give bodies mass, velocity, charge and temperature,

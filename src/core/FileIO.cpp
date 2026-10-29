@@ -770,6 +770,7 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
             if (m.keysAdvance) jm.set("keys_advance", true);
         }
         if (m.hasLimits) jm.set("limits", Json(Json::Array{m.lo, m.hi}));
+        if (!m.contact.empty()) jm.set("contact", m.contact).set("spring", m.spring).set("preload", m.preload).set("mass", m.mass);
         motions.push(jm);
     }
     doc.set("motions", motions);
@@ -1253,6 +1254,10 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             m.lo = std::min(jm["limits"][0].asFloat(), jm["limits"][1].asFloat());
             m.hi = std::max(jm["limits"][0].asFloat(), jm["limits"][1].asFloat());
         }
+        m.contact = jm["contact"].asString();
+        m.spring = std::max(jm["spring"].asFloat(), 0.0f);
+        m.preload = std::max(jm["preload"].asFloat(), 0.0f);
+        m.mass = std::max(jm["mass"].asFloat(), 0.0f);
         loaded.motions().push_back(std::move(m));
     }
     if (const Json& ph = (*doc)["physics"]; ph.isObject()) {

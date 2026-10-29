@@ -536,9 +536,11 @@ void Scene::renameBody(std::size_t index, const std::string& name) {
     m_bodies[index].name = name;
     for (Body& b : m_bodies)
         if (b.attachedTo == old) b.attachedTo = name;
-    for (Motion& m : m_motions)
+    for (Motion& m : m_motions) {
         for (std::string& b : m.bodies)
             if (b == old) b = name;
+        if (m.contact == old) m.contact = name; // a follower rides on it still
+    }
 }
 
 std::optional<RayHit> Scene::raycast(const Ray& ray, const std::vector<Mat4>* transforms) const noexcept {

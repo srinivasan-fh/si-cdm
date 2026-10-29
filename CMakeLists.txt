@@ -76,6 +76,8 @@ add_library(sicdm_core STATIC
     src/core/Mold.cpp
     src/core/Fastener.cpp
     src/core/FastenerCommand.cpp
+    src/core/Study.cpp
+    src/core/StudyCommand.cpp
     src/core/MoldCommand.cpp
     src/core/WeldmentCommand.cpp
     src/core/Bvh.cpp
