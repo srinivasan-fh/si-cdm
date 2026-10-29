@@ -237,7 +237,9 @@ void Application::shutdown() {
     m_splash.reset();
     m_mcpHttp.stop();
     if (m_renderJob) m_renderJob->stop = true; // a picture being made: stopped, not waited for to the end
+    if (m_videoJob) m_videoJob->stop = true; // a video being made: stopped after the frame it is on
     if (m_renderDone.valid()) m_renderDone.wait();
+    if (m_videoDone.valid()) m_videoDone.wait();
     if (m_renderTexture) glDeleteTextures(1, &m_renderTexture), m_renderTexture = 0;
     m_renderer.reset();
     if (m_imguiReady) {
@@ -1804,6 +1806,7 @@ void Application::frame(float dt) {
     const UiCommands cmd = m_ui.draw(m_doc.scene, camera(), viewport(), m_uiState);
     handleCommands(cmd);
     pollRender();
+    pollVideo();
 
     // Unsaved changes: compare what would be saved with the last save.
     m_doc.dirty = contentSignature() != m_savedSignature;
@@ -3744,6 +3747,56 @@ void Application::pollRender() {
             setStatus("Picture saved to " + st.renderSavePath);
         else setStatus("Cannot save the picture: " + err);
         st.renderSavePath.clear();
+    }
+}
+
+void Application::pollVideo() {
+    UiState& st = m_uiState;
+    if (!st.videoPath.empty() && !m_videoDone.valid()) {
+        // A copy of the scene as it is; the camera from the 3D view's direction.
+        static const int kSizes[][2] = {{480, 270}, {640, 360}, {1280, 720}, {1920, 1080}};
+        VideoRequest rq;
+        rq.path = st.videoPath;
+        rq.render = m_doc.state.render;
+        const int size = std::clamp(st.videoSize, 0, 3);
+        rq.render.width = kSizes[size][0], rq.render.height = kSizes[size][1];
+        rq.render.samples = std::max(1, st.videoSamples);
+        rq.fps = std::max(1, st.videoFps);
+        rq.seconds = st.videoSeconds;
+        rq.animate = st.videoKind != 0;
+        rq.turns = st.videoKind == 1 ? 0.0f : st.videoTurns;
+        OrbitCamera cam = m_cam3D;
+        cam.setAspect(static_cast<float>(rq.render.width) / static_cast<float>(rq.render.height));
+        rq.camera = renderCamera(cam);
+        auto job = std::make_shared<VideoJob>();
+        job->path = rq.path;
+        auto scene = std::make_shared<Scene>(m_doc.scene);
+        m_videoJob = job;
+        m_videoDone = std::async(std::launch::async, [job, scene, rq] {
+            return makeVideo(*scene, rq, &job->report, &job->why, [job](int done, int total) {
+                job->progress = static_cast<float>(done) / static_cast<float>(std::max(total, 1));
+                return !job->stop.load();
+            });
+        });
+        st.videoPath.clear();
+        st.videoRunning = true;
+        st.videoProgress = 0;
+        st.videoInfo.clear();
+    }
+    if (m_videoDone.valid()) {
+        st.videoProgress = m_videoJob->progress;
+        if (st.videoCancel) m_videoJob->stop = true;
+        m_framesToRender = std::max(m_framesToRender, 2); // keep the progress moving
+        if (m_videoDone.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            const bool ok = m_videoDone.get();
+            st.videoRunning = false;
+            st.videoCancel = false;
+            st.videoInfo = ok ? videoSummary(m_videoJob->report, m_videoJob->path) : "Video not made: " + m_videoJob->why;
+            setStatus(st.videoInfo);
+            m_videoJob.reset();
+        }
+    } else {
+        st.videoCancel = false;
     }
 }
 

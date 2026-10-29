@@ -1091,6 +1091,78 @@ void LandingUI::drawRenderWindow(UiCommands& cmd, UiState& st) {
         ImGui::SameLine();
         ImGui::TextColored(theme::vec(theme::kTextDim), "%s", st.renderInfo.c_str());
     }
+    // A video: the camera going round the model, or the motions played.
+    ImGui::SeparatorText(tr("Video"));
+    {
+        static const char* const kKinds[] = {SICDM_TR_NOOP("Turntable"), SICDM_TR_NOOP("Motions"), SICDM_TR_NOOP("Motions, going round")};
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo(tr("Film"), tr(kKinds[std::clamp(st.videoKind, 0, 2)]))) {
+            for (int i = 0; i < 3; ++i)
+                if (ImGui::Selectable(tr(kKinds[i]), st.videoKind == i)) st.videoKind = i;
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tr("Turntable: the camera goes round the model. Motions: the motions, robots and physics played as the simulation shows them"));
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputFloat(tr("Seconds"), &st.videoSeconds, 1.0f, 5.0f, "%.1f");
+        st.videoSeconds = std::clamp(st.videoSeconds, 0.0f, 3600.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("How long the video is (0: the motions' own length)"));
+        if (st.videoKind != 1) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            ImGui::InputFloat(tr("Turns"), &st.videoTurns, 0.5f, 1.0f, "%.1f");
+            st.videoTurns = std::clamp(st.videoTurns, -100.0f, 100.0f);
+        }
+        static const int kFps[] = {12, 24, 30, 60};
+        static const int kVideoSizes[][2] = {{480, 270}, {640, 360}, {1280, 720}, {1920, 1080}};
+        static const int kVideoSamples[] = {4, 8, 16, 32, 64};
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::BeginCombo(tr("FPS"), std::to_string(st.videoFps).c_str())) {
+            for (int f : kFps)
+                if (ImGui::Selectable(std::to_string(f).c_str(), st.videoFps == f)) st.videoFps = f;
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        st.videoSize = std::clamp(st.videoSize, 0, 3);
+        const std::string vsize = std::to_string(kVideoSizes[st.videoSize][0]) + " x " + std::to_string(kVideoSizes[st.videoSize][1]);
+        ImGui::SetNextItemWidth(130);
+        if (ImGui::BeginCombo("##vsize", vsize.c_str())) {
+            for (int i = 0; i < 4; ++i) {
+                const std::string label = std::to_string(kVideoSizes[i][0]) + " x " + std::to_string(kVideoSizes[i][1]);
+                if (ImGui::Selectable(label.c_str(), st.videoSize == i)) st.videoSize = i;
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        if (ImGui::BeginCombo("##vsamples", std::to_string(st.videoSamples).c_str())) {
+            for (int n : kVideoSamples)
+                if (ImGui::Selectable(std::to_string(n).c_str(), st.videoSamples == n)) st.videoSamples = n;
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Samples a pixel in each frame"));
+        static const char* const kFormats[] = {SICDM_TR_NOOP("AVI (MJPEG)"), SICDM_TR_NOOP("Animated PNG"), SICDM_TR_NOOP("GIF"), SICDM_TR_NOOP("PNG frames")};
+        ImGui::SetNextItemWidth(160);
+        st.videoFormat = std::clamp(st.videoFormat, 0, 3);
+        if (ImGui::BeginCombo(tr("Format"), tr(kFormats[st.videoFormat]))) {
+            for (int i = 0; i < 4; ++i)
+                if (ImGui::Selectable(tr(kFormats[i]), st.videoFormat == i)) st.videoFormat = i;
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tr("AVI plays in VLC, Windows and video editors; animated PNG in web browsers; GIF anywhere (256 colours)"));
+        const int frames = std::max(1, static_cast<int>(std::lround(st.videoSeconds * static_cast<float>(st.videoFps))));
+        if (st.videoRunning) {
+            ImGui::ProgressBar(st.videoProgress, {300, 0});
+            ImGui::SameLine();
+            if (ImGui::Button(tr("Stop##video"))) st.videoCancel = true;
+        } else {
+            if (ImGui::Button(tr("Make Video..."))) requestFile(FileVideo, st);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(tr("%d frames, each rendered as the picture is (from the 3D view's direction)"), st.videoSeconds > 0 ? frames : 0);
+        }
+        if (!st.videoInfo.empty()) ImGui::TextColored(theme::vec(theme::kTextDim), "%s", st.videoInfo.c_str());
+    }
     if (st.renderTexture && st.renderWidth > 0) {
         const float w = std::min(640.0f, ImGui::GetMainViewport()->Size.x * 0.5f);
         ImGui::Image(static_cast<ImTextureID>(st.renderTexture), {w, w * static_cast<float>(st.renderHeight) / static_cast<float>(st.renderWidth)});
@@ -1190,7 +1262,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem(tr("Zoom to Fit"), "F")) cmd.fit = true;
         if (!is2D && ImGui::MenuItem(tr("Appearance..."))) st.showAppearance = true;
         if (!is2D && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The selected body's material: metals, colours, finishes"));
-        if (!is2D && ImGui::MenuItem(tr("Render..."))) st.showRender = true;
+        if (!is2D && ImGui::MenuItem(tr("Render / Video..."))) st.showRender = true;
         if (!is2D && ImGui::MenuItem(tr("Section View..."), nullptr, st.project && st.project->section.on)) {
             st.showSection = true;
             if (st.project && !st.project->section.on) cmd.commands.push_back("SECTION ON");
@@ -3311,6 +3383,13 @@ void LandingUI::requestFile(int action, const UiState& st) {
     case FileExportModel:
         m_fileDialog.open(FileDialog::Mode::Save, "Export glTF (.glb, .gltf) or FBX", {".glb", ".gltf", ".fbx"}, dir, projectStem(st) + ".glb");
         break;
+    case FileVideo: {
+        static const char* const kExt[] = {".avi", ".png", ".gif", ""};
+        const int f = std::clamp(st.videoFormat, 0, 3);
+        if (f == 3) m_fileDialog.open(FileDialog::Mode::Save, "Video frames: a folder to make", {}, dir, projectStem(st) + "-frames");
+        else m_fileDialog.open(FileDialog::Mode::Save, "Save Video", {kExt[f]}, dir, projectStem(st) + kExt[f]);
+        break;
+    }
     case FileSlice:
         m_fileDialog.open(FileDialog::Mode::Save, "Slice to G-code (FDM)", {".gcode"}, dir, projectStem(st) + ".gcode");
         break;
@@ -3359,6 +3438,7 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case FileImportImage:
         case FileImportStep: cmd.commands.push_back("IMPORT " + quoted(*path)); break;
         case FileSheetExport: cmd.commands.push_back("SHEET EXPORT " + quoted(*path)); break;
+        case FileVideo: st.videoPath = *path + (st.videoFormat == 3 ? "/" : ""); break;
         case FileExportStep:
         case FileExportModel:
         case FileExport:

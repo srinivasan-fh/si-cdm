@@ -5,6 +5,7 @@
 #include "core/Units.hpp"
 
 #include <algorithm>
+#include <mutex>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -658,17 +659,23 @@ std::shared_ptr<const PhysicsRun> physicsRun(const Scene& scene) {
     bool any = false;
     for (const Body& b : scene.bodies()) any = any || b.physics.enabled;
     if (!any) return nullptr;
-    // A few recent runs (several open documents), newest first.
+    // A few recent runs (several open documents), newest first. Guarded: a video is made
+    // in the background while the window plays the simulation.
+    static std::mutex lock;
     static std::vector<std::pair<std::uint64_t, std::shared_ptr<const PhysicsRun>>> cache;
     const std::uint64_t key = signature(scene);
-    for (std::size_t i = 0; i < cache.size(); ++i)
-        if (cache[i].first == key) {
-            auto hit = cache[i];
-            cache.erase(cache.begin() + static_cast<std::ptrdiff_t>(i));
-            cache.insert(cache.begin(), hit);
-            return hit.second;
-        }
+    {
+        std::lock_guard<std::mutex> g(lock);
+        for (std::size_t i = 0; i < cache.size(); ++i)
+            if (cache[i].first == key) {
+                auto hit = cache[i];
+                cache.erase(cache.begin() + static_cast<std::ptrdiff_t>(i));
+                cache.insert(cache.begin(), hit);
+                return hit.second;
+            }
+    }
     std::shared_ptr<const PhysicsRun> run = simulate(scene);
+    std::lock_guard<std::mutex> g(lock);
     cache.insert(cache.begin(), {key, run});
     if (cache.size() > 4) cache.pop_back();
     return run;

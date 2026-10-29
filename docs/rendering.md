@@ -103,7 +103,7 @@ RENDER                                      the settings now
 
 The settings are saved in the project.
 
-**In the app:** *View → Render...* opens the render window.
+**In the app:** *View → Render / Video...* opens the render window.
 
 ![The render window](render-window.png)
 
@@ -114,6 +114,69 @@ The settings are saved in the project.
 - **Save Picture:** writes the result.
 
 **MCP:** the `render` tool sets a body's material and makes the picture in one call.
+
+## Videos
+
+![Six frames of a turntable: a gold ball with cones, a tube and a row of balls, the camera going round](turntable.png)
+
+`VIDEO` renders a video frame by frame with the same path tracer, environment and materials as
+`RENDER`:
+
+- **Turntable:** the camera goes round the model, which stays still. This is the default when
+  nothing moves.
+- **Animation:** the motions, robots and physics are played as the simulation shows them, with
+  the camera still. This is the default when there are motions. `TURNS` sends the camera round
+  as well.
+
+```text
+VIDEO model.avi                                   a 6 s turntable, 640 x 360, 24 frames a second
+VIDEO model.avi TURNS 2 ELEVATION 35 SECONDS 8    twice round, looking down more steeply
+VIDEO mechanism.avi ANIMATION FROM 0 TO 4         the motions over their first 4 s
+VIDEO mechanism.png ANIMATION VIEW front          an animated PNG, filmed from the front
+VIDEO frames/ SIZE 1920 1080 SAMPLES 64           numbered PNG frames, for an editor
+```
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `TURNTABLE` / `ANIMATION` | by the scene | What is filmed |
+| `SECONDS` | 6 (an animation: its own length) | How long the video is |
+| `FROM t` / `TO t` | 0 | Which part of the motions is played (s) |
+| `FPS` | 24 | Frames a second |
+| `TURNS` | 1 (an animation: 0) | Times the camera goes round; negative goes the other way |
+| `ELEVATION` | 20 | Degrees the turntable camera looks down from |
+| `SIZE w h` | 640 360 | Pixels |
+| `SAMPLES` | 16 | Rays a pixel in each frame |
+| `QUALITY` | 90 | The AVI's JPEG quality, 1 to 100 |
+| `VIEW` | iso | The still camera of an animation; `current` is the app's 3D view |
+
+**Formats**, by the file's extension:
+
+| Path | Written as | Plays in |
+| --- | --- | --- |
+| `.avi` | Motion JPEG in an AVI | VLC, Windows, video editors (Premiere, DaVinci Resolve), ffmpeg |
+| `.png` | Animated PNG: lossless | Web browsers |
+| `.gif` | GIF: 256 colours shared by all frames, ordered dithering so it doesn't crawl | Anywhere; best kept short and small |
+| `folder/` | `frame_00001.png`, `frame_00002.png`... | Any editor that takes an image sequence |
+
+MP4 is not written. To get one, run `ffmpeg -i video.avi video.mp4`.
+
+**Steady pictures:**
+
+- The floor and the lights are fitted to the space the bodies take over the whole video, so they
+  don't jump as the bodies move.
+- The turntable camera is fitted to that space too, so the model never leaves the frame.
+- A frame comes out the same each time it is rendered, so still parts don't flicker.
+
+**Time:** each frame takes as long as a picture of its size and samples. At 640 x 360 with 16
+samples that is about 2 s on four cores, so a 6 s turntable at 24 fps takes about 5 minutes.
+Lower `SAMPLES` or `SIZE` for a quick look.
+
+**In the app:** the render window's *Video* section has the kind, length, turns, frame rate,
+size, samples and format. *Make Video...* asks where to save it, then makes it in the background
+with a progress bar and *Stop*. The camera starts from the 3D view's direction. A stopped video
+keeps the frames made so far.
+
+**MCP:** the `make_video` tool takes the same settings.
 
 ## How it works
 

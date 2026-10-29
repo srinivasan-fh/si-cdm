@@ -57,6 +57,7 @@ add_executable(sicdm_tests
     test_gizmo.cpp
     test_insert.cpp
     test_modelexport.cpp
+    test_video.cpp
 )
 target_link_libraries(sicdm_tests PRIVATE sicdm_core)
 target_include_directories(sicdm_tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/third_party/stb) # reading back written images

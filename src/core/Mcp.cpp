@@ -1023,6 +1023,21 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
+        p.set("path", prop("string", "The video: .avi (MJPEG: VLC, Windows, editors), .png (animated PNG: web browsers), .gif, or a folder (ending in /) for PNG frames"));
+        p.set("kind", enumProp({"turntable", "animation"}, "turntable: the camera goes round the model; animation: the motions, robots and physics played (default: animation when there are motions)"));
+        p.set("seconds", prop("number", "How long (default: a turntable 6 s, an animation its own length)"));
+        p.set("from", prop("number", "Animation: start at this time (s)"));
+        p.set("fps", prop("number", "Frames a second (default 24)"));
+        p.set("turns", prop("number", "Times the camera goes round (turntable default 1; an animation can turn too)"));
+        p.set("elevation", prop("number", "Degrees the turntable camera looks down from (default 20)"));
+        p.set("size", numberArray(2, "Width and height in pixels (default 640 x 360)"));
+        p.set("samples", prop("number", "Samples a pixel in each frame (default 16)"));
+        p.set("view", enumProp({"current", "iso", "front", "back", "left", "right", "top", "bottom"}, "The still camera of an animation (default iso)"));
+        tools.push(tool("make_video", "A rendered video of the model: a turntable, or its motions played. Path-traced like render, frame by frame (a few seconds a frame).",
+                        p, {"path"}));
+    }
+    {
+        Json p = Json::object();
         p.set("op", enumProp({"properties", "set_property", "delete_property", "revision", "set_state", "next_revision", "compare", "vault_list",
                               "vault_checkin", "vault_checkout", "vault_get", "vault_undo", "vault_history"},
                              "properties: list them; set_property / delete_property: 'key' ('value'); revision: the revision and its history; "
@@ -2598,6 +2613,19 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         if (a["samples"].isNumber()) line += " SAMPLES " + num(a["samples"].asNumber());
         if (a["view"].isString()) line += " VIEW " + a["view"].asString();
         if (a["floor"].isBool()) line += a["floor"].asBool() ? " FLOOR ON" : " FLOOR OFF";
+        return runLine(line);
+    }
+    if (name == "make_video") {
+        std::string line = "VIDEO " + quote(a["path"].asString());
+        if (a["kind"].isString()) line += " " + a["kind"].asString();
+        if (a["seconds"].isNumber()) line += " SECONDS " + num(a["seconds"].asNumber());
+        if (a["from"].isNumber()) line += " FROM " + num(a["from"].asNumber());
+        if (a["fps"].isNumber()) line += " FPS " + num(a["fps"].asNumber());
+        if (a["turns"].isNumber()) line += " TURNS " + num(a["turns"].asNumber());
+        if (a["elevation"].isNumber()) line += " ELEVATION " + num(a["elevation"].asNumber());
+        if (a["size"].isArray() && a["size"].size() == 2) line += " SIZE " + num(a["size"][0].asNumber()) + " " + num(a["size"][1].asNumber());
+        if (a["samples"].isNumber()) line += " SAMPLES " + num(a["samples"].asNumber());
+        if (a["view"].isString()) line += " VIEW " + a["view"].asString();
         return runLine(line);
     }
     if (name == "product_data") {

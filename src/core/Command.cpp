@@ -74,6 +74,8 @@ constexpr CommandSpec kCommands[] = {
      "What changed between two versions: bodies added, removed, reshaped or moved, parameters, properties, the history, variables"},
     {"VAULT", "PDM", "VAULT [LIST] | FOLDER path | CHECKIN [AS key] [NOTE text] | CHECKOUT key [TO file] | GET key [REV x] [TO file] | UNDO [key] | UNLOCK key FORCE | HISTORY [key]",
      "The team's vault (a shared folder): check projects in and out, so two people don't change one at the same time; every revision kept"},
+    {"VIDEO", "TURNTABLE MOVIE", "VIDEO file.avi|.png|.gif|folder/ [TURNTABLE|ANIMATION] [SECONDS s] [FROM t] [TO t] [FPS n] [TURNS k] [ELEVATION deg] [SIZE w h] [SAMPLES n] [QUALITY q] [VIEW iso|front|...|current]",
+     "A rendered video: the camera going round the model (turntable), or the motions played (animation); MJPEG AVI, animated PNG, GIF or PNG frames"},
     {"RENDER", "RAYTRACE PHOTO", "RENDER [file.png] [WINDOW|START] [SIZE w h] [SAMPLES n] [BOUNCES b] [ENV studio|sky|white|dark] [SUN az el] [LIGHT x] [EXPOSURE ev] [FLOOR ON|OFF] [DENOISE ON|OFF] [VIEW iso|front|...]",
      "A photoreal picture (path traced) of the 3D view: materials, soft shadows, reflections, glass; without a file, the settings"},
     {"UV", "UVS UNWRAP", "UV [body] UNWRAP [ANGLE deg] [MARGIN m] [NOGROUPS] | CLEAR | INFO | LAYOUT file.png [SIZE n] | SHOW CHECKER | SHOW [COLOR file] [NORMAL file] | HIDE",

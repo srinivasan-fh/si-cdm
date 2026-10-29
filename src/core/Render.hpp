@@ -50,11 +50,20 @@ struct RenderStats {
     double raysPerSecond = 0;
 };
 
+// The bodies placed for one frame of an animation: a transform per body (as
+// simulationTransforms() gives), and the space the floor and light are fitted to (the
+// whole animation's, so they stay put while the bodies move).
+struct RenderPose {
+    const std::vector<Mat4>* transforms = nullptr; // null: as modelled
+    const AABB* extent = nullptr;                  // null: what is rendered
+};
+
 // Renders into `rgb` (width x height, rows from the top, 8-bit sRGB). `progress` (0..1)
 // may return false to stop early (the image is then what was done). False (why) when
 // there is nothing visible to render.
 bool renderImage(const Scene& scene, const RenderSettings& settings, const RenderCamera& camera, std::vector<std::uint8_t>& rgb,
-                 RenderStats* stats = nullptr, std::string* why = nullptr, const std::function<bool(float)>& progress = {});
+                 RenderStats* stats = nullptr, std::string* why = nullptr, const std::function<bool(float)>& progress = {},
+                 const RenderPose& pose = {});
 
 const std::vector<std::string>& renderEnvironments();
 

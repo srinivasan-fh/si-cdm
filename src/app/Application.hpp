@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Render.hpp"
+#include "core/Video.hpp"
 #include "core/Camera.hpp"
 #include "core/Constraints.hpp"
 #include "core/Document.hpp"
@@ -338,6 +339,7 @@ private:
     std::future<UpdateResult> m_updateCheck; // the check at start (Preferences), while it runs
     // The render window's picture: made in the background from a copy of the scene.
     void pollRender();
+    void pollVideo();
     struct RenderJob {
         std::vector<std::uint8_t> pixels;
         int width = 0, height = 0, samples = 0;
@@ -347,6 +349,15 @@ private:
         std::atomic<bool> stop{false};
     };
     std::shared_ptr<RenderJob> m_renderJob;
+    // A video made in the background (the render window's Make Video).
+    struct VideoJob {
+        VideoReport report;
+        std::string why, path;
+        std::atomic<float> progress{0};
+        std::atomic<bool> stop{false};
+    };
+    std::shared_ptr<VideoJob> m_videoJob;
+    std::future<bool> m_videoDone;
     std::future<bool> m_renderDone;
     std::vector<std::uint8_t> m_renderPixels; // the last picture (to save)
     int m_renderWidth = 0, m_renderHeight = 0;

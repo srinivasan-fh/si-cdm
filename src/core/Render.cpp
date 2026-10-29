@@ -502,7 +502,7 @@ void denoise(int W, int H, std::vector<Vec3>& illum, std::vector<float>& var, co
 } // namespace
 
 bool renderImage(const Scene& scene, const RenderSettings& rs, const RenderCamera& cam, std::vector<std::uint8_t>& rgb, RenderStats* stats,
-                 std::string* why, const std::function<bool(float)>& progress) {
+                 std::string* why, const std::function<bool(float)>& progress, const RenderPose& pose) {
     const auto start = std::chrono::steady_clock::now();
     World w;
     for (std::size_t i = 0; i < scene.bodies().size(); ++i) {
@@ -510,6 +510,14 @@ bool renderImage(const Scene& scene, const RenderSettings& rs, const RenderCamer
         if (!b.visible || b.mesh.indices.empty()) continue;
         MeshData m = b.mesh;
         for (Vertex& v : m.vertices) v.position += b.offset;
+        if (pose.transforms && i < pose.transforms->size()) {
+            const Mat4& t = (*pose.transforms)[i];
+            for (Vertex& v : m.vertices) {
+                v.position = t.transformPoint(v.position);
+                const Vec3 n = t.transformDir(v.normal);
+                v.normal = length(n) > 1e-12f ? normalize(n) : v.normal;
+            }
+        }
         const auto bodyIndex = static_cast<std::uint32_t>(w.mats.size());
         Mat mat;
         mat.color = toLinear(b.color);
@@ -535,7 +543,7 @@ bool renderImage(const Scene& scene, const RenderSettings& rs, const RenderCamer
         return false;
     }
     w.bvh.build(w.mesh);
-    w.box = w.mesh.bounds();
+    w.box = pose.extent && pose.extent->valid() ? *pose.extent : w.mesh.bounds();
     w.diag = std::max(length(w.box.max - w.box.min), 1e-3f);
     w.eps = w.diag * 1e-4f;
     w.centre = (w.box.min + w.box.max) * 0.5f;

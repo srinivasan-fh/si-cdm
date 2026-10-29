@@ -152,6 +152,13 @@ right-click for more views, including Level View to reset the roll. Picking a fa
 always comes back level. In the 2D window its faces pick
 the drawing plane; edges and corners open the 3D window at that angle.
 
+**Pictures and videos:** `RENDER picture.png` makes a photoreal, path-traced picture of the model
+(metals, glass, soft shadows; *View → Render / Video...*). `VIDEO model.avi` films a turntable, or the
+motions played (`ANIMATION`), as an MJPEG AVI, an animated PNG, a GIF or numbered PNG frames.
+Details: [docs/rendering.md](docs/rendering.md).
+
+![Six frames of a turntable video](docs/turntable.png)
+
 ## Simulation window (motion control)
 
 ![Simulation window](docs/simulation.png)

@@ -29,6 +29,7 @@
 #include "core/Gizmo.hpp"
 #include "core/InsertCommand.hpp"
 #include "core/ModelExport.hpp"
+#include "core/Video.hpp"
 #include "core/StackupCommand.hpp"
 #include "core/StudyCommand.hpp"
 #include "core/MoldCommand.hpp"
@@ -3055,6 +3056,91 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (!writeFile(path, encodePngCompressed(rs.width, rs.height, 3, px), &err)) return out.fail("Cannot write the picture: " + err);
         out.say(fmt("Rendered %g x ", static_cast<double>(rs.width)) + fmt("%g", static_cast<double>(rs.height)) + fmt(", %g samples a pixel", static_cast<double>(rs.samples)) +
                 fmt(" in %.1f s -> ", stats.seconds) + path);
+        return out;
+    }
+    if (cmd == "VIDEO") {
+        // VIDEO file [TURNTABLE|ANIMATION] [SECONDS s] [FROM t] [TO t] [FPS n] [TURNS k] [ELEVATION deg]
+        //       [SIZE w h] [SAMPLES n] [QUALITY q] [VIEW ISO|FRONT|...|CURRENT]
+        VideoRequest rq;
+        rq.render = doc.state.render; // its environment, light, floor...
+        rq.render.width = 640, rq.render.height = 360, rq.render.samples = 16;
+        std::optional<bool> animate;
+        std::optional<double> to;
+        bool current = false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            const std::string w = quotedArg(i) ? std::string() : lower(a[i]);
+            const auto num = [&]() { return i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt; };
+            if (w == "turntable") {
+                animate = false;
+            } else if (w == "animation" || w == "animate") {
+                animate = true;
+            } else if (w == "seconds") {
+                const auto v = num();
+                if (!v || *v <= 0 || *v > 3600) return out.fail("SECONDS is how long the video is: above 0, up to 3600");
+                rq.seconds = *v;
+            } else if (w == "from" || w == "to") {
+                const auto v = num();
+                if (!v || *v < 0) return out.fail(toUpper(w) + " is a time in seconds, 0 or more");
+                (w == "from" ? rq.from : to.emplace()) = *v;
+                if (w == "to") animate = animate.value_or(true);
+            } else if (w == "fps") {
+                const auto v = num();
+                if (!v || *v < 1 || *v > 120) return out.fail("FPS is 1 to 120 frames a second");
+                rq.fps = static_cast<int>(std::lround(*v));
+            } else if (w == "turns") {
+                const auto v = num();
+                if (!v || std::fabs(*v) > 100) return out.fail("TURNS is how many times the camera goes round (-100 to 100; negative: the other way)");
+                rq.turns = static_cast<float>(*v);
+            } else if (w == "elevation") {
+                const auto v = num();
+                if (!v || *v < -85 || *v > 85) return out.fail("ELEVATION is -85 to 85 degrees");
+                rq.elevation = static_cast<float>(*v);
+            } else if (w == "size") {
+                const auto x = num(), y = num();
+                if (!x || !y || *x < 16 || *y < 16 || *x > 4096 || *y > 4096) return out.fail("SIZE is two numbers of pixels, 16 to 4096");
+                rq.render.width = static_cast<int>(*x), rq.render.height = static_cast<int>(*y);
+            } else if (w == "samples") {
+                const auto v = num();
+                if (!v || *v < 1 || *v > 4096) return out.fail("SAMPLES is 1 to 4096 a pixel");
+                rq.render.samples = static_cast<int>(*v);
+            } else if (w == "quality") {
+                const auto v = num();
+                if (!v || *v < 1 || *v > 100) return out.fail("QUALITY is 1 to 100 (the AVI's JPEG quality)");
+                rq.quality = static_cast<int>(*v);
+            } else if (w == "view") {
+                const std::string v = i + 1 < a.size() ? lower(a[++i]) : std::string();
+                static const std::pair<const char*, StandardView> kViews[] = {
+                    {"iso", StandardView::Isometric}, {"isometric", StandardView::Isometric}, {"front", StandardView::Front}, {"back", StandardView::Back},
+                    {"left", StandardView::Left},     {"right", StandardView::Right},         {"top", StandardView::Top},     {"bottom", StandardView::Bottom}};
+                bool known = v == "current";
+                current = known;
+                for (const auto& [name, sv] : kViews)
+                    if (v == name) rq.view = sv, known = true;
+                if (!known) return out.fail("VIEW is ISO, FRONT, BACK, LEFT, RIGHT, TOP, BOTTOM or CURRENT");
+            } else if (rq.path.empty()) {
+                rq.path = a[i];
+            } else {
+                return usage();
+            }
+        }
+        std::string format, why;
+        if (!videoFormatOf(rq.path, format, &why)) return out.fail(why);
+        rq.animate = animate.value_or(std::any_of(doc.scene.motions().begin(), doc.scene.motions().end(), [](const Motion& m) { return m.enabled; }));
+        if (to) {
+            if (*to <= rq.from) return out.fail("TO must come after FROM");
+            rq.seconds = *to - rq.from;
+        }
+        if (current) {
+            const OrbitCamera* vc = view ? view->viewCamera() : nullptr;
+            if (!vc) return out.fail("VIEW CURRENT needs the app's 3D window");
+            OrbitCamera cam = *vc;
+            cam.setAspect(static_cast<float>(rq.render.width) / static_cast<float>(rq.render.height));
+            rq.camera = renderCamera(cam);
+        }
+        if (doc.replaying) return out; // regenerating the model doesn't write files
+        VideoReport rep;
+        if (!makeVideo(doc.scene, rq, &rep, &why)) return out.fail(why);
+        out.say(videoSummary(rep, rq.path));
         return out;
     }
     if (cmd == "UV") {

@@ -1154,6 +1154,27 @@ const char* const kGerman[][2] = {
     // glTF / FBX export.
     {"Export glTF / FBX (Games, Animation)...", "glTF / FBX exportieren (Spiele, Animation)..."},
     {"Visible bodies with their materials, maps, UVs, vertex colours and (glTF) armature skins: for Blender, game engines and the web", "Sichtbare Körper mit Materialien, Texturen, UVs, Vertexfarben und (glTF) Armatur-Skins: für Blender, Spiele-Engines und das Web"},
+    // Videos.
+    {"%d frames, each rendered as the picture is (from the 3D view's direction)", "%d Bilder, jedes wie das Bild gerendert (aus der Richtung der 3D-Ansicht)"},
+    {"AVI (MJPEG)", "AVI (MJPEG)"},
+    {"AVI plays in VLC, Windows and video editors; animated PNG in web browsers; GIF anywhere (256 colours)", "AVI läuft in VLC, Windows und Videoschnittprogrammen; animiertes PNG in Webbrowsern; GIF überall (256 Farben)"},
+    {"Animated PNG", "Animiertes PNG"},
+    {"FPS", "B/s"},
+    {"Film", "Filmen"},
+    {"Format", "Format"},
+    {"GIF", "GIF"},
+    {"How long the video is (0: the motions' own length)", "Wie lang das Video ist (0: die eigene Länge der Bewegungen)"},
+    {"Make Video...", "Video erstellen..."},
+    {"Motions", "Bewegungen"},
+    {"Motions, going round", "Bewegungen, umkreisend"},
+    {"PNG frames", "PNG-Einzelbilder"},
+    {"Samples a pixel in each frame", "Samples pro Pixel in jedem Bild"},
+    {"Seconds", "Sekunden"},
+    {"Turns", "Umdrehungen"},
+    {"Turntable", "Drehteller"},
+    {"Turntable: the camera goes round the model. Motions: the motions, robots and physics played as the simulation shows them", "Drehteller: Die Kamera umkreist das Modell. Bewegungen: Bewegungen, Roboter und Physik abgespielt, wie die Simulation sie zeigt"},
+    {"Video", "Video"},
+    {"Render / Video...", "Rendern / Video..."},
 };
 
 

@@ -98,6 +98,15 @@ struct UiState {
     unsigned renderTexture = 0;
     int renderWidth = 0, renderHeight = 0;
     std::string renderInfo, renderSavePath;
+    // Videos (in the render window): what is filmed (0 turntable, 1 the motions, 2 the motions
+    // with the camera going round), its length, frame rate, turns, size and samples, and the
+    // format (0 AVI, 1 animated PNG, 2 GIF, 3 PNG frames). videoPath set: the app makes it
+    // in the background (videoCancel stops it).
+    int videoKind = 0, videoFps = 24, videoSize = 1, videoSamples = 16, videoFormat = 0;
+    float videoSeconds = 6.0f, videoTurns = 1.0f;
+    std::string videoPath, videoInfo;
+    bool videoRunning = false, videoCancel = false;
+    float videoProgress = 0;
     std::string helpPage = "getting-started.md";
     std::string mateTool;
     float mateValue = 0.0f;
@@ -339,7 +348,7 @@ private:
     enum FileAction {
         FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport,
         FileLathePost, FileToolsImport, FileToolsExport, FileLicence, FileInsertComponent, FileMakeComponent, FilePackComponents,
-        FileStudyExport, FileStackExport, FileExportModel
+        FileStudyExport, FileStackExport, FileExportModel, FileVideo
     };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;
