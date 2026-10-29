@@ -201,7 +201,13 @@ GizmoDelta gizmoDrag(GizmoMode mode, const GizmoHandle& h, const Vec3& P, const 
 }
 
 std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::string& name, const Vec3& pivot) {
-    const std::string q = "\"" + name + "\"";
+    return gizmoCommand(mode, d, std::vector<std::string>{name}, pivot);
+}
+
+std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::vector<std::string>& names, const Vec3& pivot) {
+    if (names.empty()) return {};
+    std::string q;
+    for (const std::string& n : names) q += (q.empty() ? "\"" : " \"") + n + "\"";
     if (mode == GizmoMode::Move) {
         if (length(d.move) < 1e-6f) return {};
         return "MOVE " + vec(d.move) + " " + q;

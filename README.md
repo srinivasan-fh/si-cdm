@@ -714,6 +714,12 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
     - Each drag is recorded as a command, so it is in the history and UNDO takes it back:
       `MOVE dx,dy,dz`, `ROTATE name BY a AXIS x,y,z ABOUT x,y,z`, `SCALE name k ABOUT x,y,z`.
       `GIZMO MOVE|ROTATE|SCALE` picks the mode from the command line.
+    - With several bodies selected the gizmo sits at the middle of them and moves, turns or
+      scales them together, as one piece (one command, one undo). Dragging one of the selected
+      bodies with the Move tool slides them all; a click without dragging selects just it.
+      From the command line `MOVE dx,dy,dz "A" "B"`, `ROTATE "A" "B" BY a AXIS Z` and
+      `SCALE "A" "B" k ABOUT x,y,z` do the same, and with no names they act on the selection
+      (turning and scaling about its middle).
 
     ![The gizmo's three modes on a block: move arrows and plane squares, rotation rings, scale cubes](docs/gizmo.png)
 - **2D sketch:** the drawing tools work on the active plane, in either window.
@@ -926,7 +932,8 @@ Details: [docs/plugins.md](docs/plugins.md).
 - Middle drag / Shift + left drag: pan
 - Scroll: zoom at the cursor
 - `Ctrl/⌘ + click` a body (in the 3D window or the model tree): add it to the selection, or take
-  it out. The one added last is the active body, which the gizmo and single-body commands use.
+  it out. The one added last is the active body, which single-body commands use; moving,
+  turning and scaling (the gizmo, `MOVE`, `ROTATE BY`, `SCALE`) take them all.
 - `Ctrl/⌘ + drag` on empty space: a box adding bodies to the selection. Left to right takes the
   bodies wholly inside it (solid box); right to left takes the bodies it touches (dashed box).
 - `Ctrl/⌘ A`: select every visible body; `Esc`: clear the selection

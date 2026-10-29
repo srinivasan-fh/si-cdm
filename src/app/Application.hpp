@@ -225,7 +225,8 @@ private:
     float m_pressX = 0, m_pressY = 0;
     float m_pendingScroll = 0;
     Vec3 m_movePlanePoint;
-    Vec3 m_moveStartOffset;
+    std::vector<int> m_moveBodies;    // the Move tool drags these (the selection, when the body grabbed is in it)
+    std::vector<Vec3> m_moveStarts;   // where they were
     Vec2 m_imageGrab{}, m_imageStart{};
 
     std::vector<Mat4> m_simTransforms; // per body, while the Simulation window shows motion
@@ -311,7 +312,8 @@ private:
     void drawGizmo();
     void finishGizmoDrag(bool commit); // let go: the drag becomes its command (MOVE, ROTATE, SCALE)
     GizmoHandle m_gizmoHover, m_gizmoHandle;
-    Body m_gizmoStart;      // the body as the drag began (the preview starts from it each frame)
+    std::vector<int> m_gizmoBodies;   // what it drags: every selected body, the active one first
+    std::vector<Body> m_gizmoStarts;  // them as the drag began (the preview starts from them each frame)
     int m_gizmoBody = -1;
     Vec3 m_gizmoPivot{};
     float m_gizmoSize = 0;

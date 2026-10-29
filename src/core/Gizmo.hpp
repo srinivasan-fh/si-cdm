@@ -12,6 +12,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace sicdm {
 
@@ -58,8 +59,9 @@ struct GizmoRay {
 GizmoDelta gizmoDrag(GizmoMode mode, const GizmoHandle& handle, const Vec3& pivot, const Vec3& viewDir, const GizmoProject& project,
                      const GizmoRay& start, const GizmoRay& now, float step = 0);
 
-// The command that does it to body `name` (empty: nothing to do).
+// The command that does it to body `name`, or to several bodies together (empty: nothing to do).
 std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::string& name, const Vec3& pivot);
+std::string gizmoCommand(GizmoMode mode, const GizmoDelta& d, const std::vector<std::string>& names, const Vec3& pivot);
 
 // The transforms themselves (the commands and the live preview use these).
 // Turns a body by `degrees` about `axis` through `about` (model space): its orientation and

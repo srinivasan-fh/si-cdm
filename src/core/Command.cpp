@@ -343,12 +343,12 @@ constexpr CommandSpec kCommands[] = {
     {"GIZMO", "MANIPULATOR", "GIZMO MOVE|ROTATE|SCALE|OFF",
      "The Move tool's gizmo on the selected body: arrows and squares move it, rings turn it, cubes scale it (V switches; Ctrl snaps); "
      "each drag is recorded as MOVE, ROTATE ... BY or SCALE ... ABOUT"},
-    {"ROTATE", "ROT", "ROTATE [name] rx,ry,rz | ROTATE [name] BY angle AXIS X|Y|Z|x,y,z [ABOUT x,y,z]",
+    {"ROTATE", "ROT", "ROTATE [name] rx,ry,rz | ROTATE [name...] BY angle AXIS X|Y|Z|x,y,z [ABOUT x,y,z]",
      "Orient a body: degrees about X, then Y, then Z, about its origin; or turn it on by an angle about an axis through a point "
-     "(what the gizmo's rings do)"},
-    {"SCALE", "SC RESIZE", "SCALE [name] factor | SCALE [name] TO size | SCALE [name] sx,sy,sz | SCALE [name] factor|sx,sy,sz ABOUT x,y,z",
-     "Resize a body, or a whole library component with its motions; three factors stretch a body along x, y, z; ABOUT scales one "
-     "body about a point (what the gizmo does)"},
+     "(what the gizmo's rings do); BY turns several named or selected bodies together, about their middle"},
+    {"SCALE", "SC RESIZE", "SCALE [name] factor | SCALE [name] TO size | SCALE [name] sx,sy,sz | SCALE [name...] factor|sx,sy,sz ABOUT x,y,z",
+     "Resize a body, or a whole library component with its motions; three factors stretch a body along x, y, z; ABOUT scales "
+     "bodies about a point (what the gizmo does); several selected scale together about their middle"},
     // Editing
     {"SELECT", "SEL", "SELECT [name... | ADD name... | REMOVE name... | ALL | INVERT | NONE]",
      "Select bodies by name (several: the first is the active one), add to or take from the selection, all visible bodies, the others, or none; alone: what is selected"},
@@ -362,7 +362,7 @@ constexpr CommandSpec kCommands[] = {
     {"CUT", "", "CUT [name...]", "Copy the selected bodies and take them out (PASTE puts them back in)"},
     {"PASTE", "", "PASTE [OFFSET x,y,z]", "Put in the bodies copied: in place, or beside the originals when they are there (or moved by OFFSET); they are selected"},
     {"DUPLICATE", "DUP CLONE", "DUPLICATE [name...] [OFFSET x,y,z]", "Copies of the selected bodies (or the named ones), beside them (or moved by OFFSET); the copies are selected"},
-    {"MOVE", "M", "MOVE dx,dy[,dz] [name]", "Move the selected body or image"},
+    {"MOVE", "M", "MOVE dx,dy[,dz] [name...]", "Move the selected bodies (all together) or image, or the named bodies"},
     {"IMAGE", "IMG", "IMAGE [name] WIDTH mm | OPACITY 0-1 | AT x,y", "Edit a reference image"},
     {"LIST", "LS", "LIST", "List bodies, sketch curves and images"},
     // Views & windows

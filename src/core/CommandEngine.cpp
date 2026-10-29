@@ -4622,6 +4622,47 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 (open == 0 ? ", closed" : fmt(", %g open edges", static_cast<double>(open))));
         return out;
     }
+    // Names in the arguments a[from, to): each quoted one a name, unquoted words run together into one.
+    auto namesFrom = [&](std::size_t from, std::size_t to = static_cast<std::size_t>(-1)) {
+        std::vector<std::string> names;
+        std::string run;
+        for (std::size_t i = from; i < std::min(to, a.size()); ++i) {
+            if (quotedArg(i)) {
+                if (!run.empty()) names.push_back(run), run.clear();
+                names.push_back(a[i]);
+            } else {
+                run += (run.empty() ? "" : " ") + a[i];
+            }
+        }
+        if (!run.empty()) names.push_back(run);
+        return names;
+    };
+    auto quotedList = [&](const std::vector<int>& list) {
+        std::string q;
+        for (int b : list) q += " \"" + doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\"";
+        return q;
+    };
+    // The bodies a transform acts on: the named ones, else every selected body. Empty: `why` says.
+    auto transformGroup = [&](const std::vector<std::string>& names, std::string& why) {
+        std::vector<int> list;
+        for (const std::string& n : names) {
+            const int b = findBody(doc, n);
+            if (b < 0) {
+                why = "No body named " + n;
+                return std::vector<int>{};
+            }
+            if (std::find(list.begin(), list.end(), b) == list.end()) list.push_back(b);
+        }
+        if (names.empty()) list = doc.selectedBodies();
+        if (list.empty()) why = "Select a body first, or give its name";
+        return list;
+    };
+    // The middle of their bounds: what several bodies turn and scale about.
+    auto groupCentre = [&](const std::vector<int>& list) {
+        AABB box;
+        for (int b : list) box.expand(doc.scene.bodies()[static_cast<std::size_t>(b)].bounds());
+        return box.valid() ? box.center() : Vec3{0, 0, 0};
+    };
     if (cmd == "ROTATE") {
         // ROTATE [name] BY angle AXIS x,y,z [ABOUT x,y,z]: turns it on from where it is, about an
         // axis through a point (default its origin): what the gizmo's rings do.
@@ -4629,14 +4670,14 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         for (std::size_t i = 0; i < a.size(); ++i)
             if (!quotedArg(i) && lower(a[i]) == "by") by = i;
         if (by < a.size()) {
-            const std::vector<std::string> words(a.begin(), a.begin() + static_cast<std::ptrdiff_t>(by));
-            const int bi = words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
-            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
-                return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
-            Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            // Several bodies (named, or the selection) turn together, about the middle of them.
+            std::string why;
+            const std::vector<int> group = transformGroup(namesFrom(0, by), why);
+            if (group.empty()) return out.fail(why);
+            const Body& first = doc.scene.bodies()[static_cast<std::size_t>(group[0])];
             const auto angle = by + 1 < a.size() ? parseNumber(a[by + 1]) : std::nullopt;
             if (!angle || !std::isfinite(*angle)) return out.fail("ROTATE ... BY needs degrees: ROTATE name BY 30 AXIS Z [ABOUT x,y,z]");
-            Vec3 axis{0, 0, 1}, about = b.offset;
+            Vec3 axis{0, 0, 1}, about = group.size() == 1 ? first.offset : groupCentre(group);
             for (std::size_t i = by + 2; i < a.size(); ++i) {
                 const std::string k = lower(a[i]);
                 if ((k == "axis" || k == "about") && i + 1 < a.size()) {
@@ -4648,18 +4689,26 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                     return out.fail("ROTATE ... BY doesn't take " + a[i] + " (AXIS, ABOUT)");
                 }
             }
-            std::string why;
-            if (!turnBody(b, axis, *angle, about, &why)) return out.fail(why);
+            for (int bi : group) { // all of them or none
+                Body trial = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+                if (!turnBody(trial, axis, *angle, about, &why)) return out.fail(why);
+            }
+            for (int bi : group) turnBody(doc.scene.bodies()[static_cast<std::size_t>(bi)], axis, *angle, about);
+            if (group.size() > 1)
+                doc.recordAs = "ROTATE" + quotedList(group) + " BY " + fmt("%g", *angle) + " AXIS " + fmt("%g,", axis.x) + fmt("%g,", axis.y) + fmt("%g", axis.z) +
+                               " ABOUT " + fmt("%g,", about.x) + fmt("%g,", about.y) + fmt("%g", about.z); // replayed by name
             doc.scene.touchBodies();
             markChanged(doc);
-            out.say("Turned " + b.name + fmt(" %g deg about (", *angle) + fmt("%g, ", axis.x) + fmt("%g, ", axis.y) + fmt("%g) through (", axis.z) +
-                    fmt("%g, ", about.x) + fmt("%g, ", about.y) + fmt("%g)", about.z));
+            out.say("Turned " + (group.size() == 1 ? first.name : std::to_string(group.size()) + " bodies") + fmt(" %g deg about (", *angle) + fmt("%g, ", axis.x) +
+                    fmt("%g, ", axis.y) + fmt("%g) through (", axis.z) + fmt("%g, ", about.x) + fmt("%g, ", about.y) + fmt("%g)", about.z));
             return out;
         }
         if (a.empty()) return usage();
         const auto deg = parseVec3(a.back());
         if (!deg || !std::isfinite(deg->x) || !std::isfinite(deg->y) || !std::isfinite(deg->z)) return usage();
         const std::vector<std::string> words(a.begin(), a.end() - 1);
+        if (words.empty() && doc.selectedBodies().size() > 1)
+            return out.fail("ROTATE rx,ry,rz sets one body's orientation; turn several together with ROTATE BY angle AXIS X|Y|Z");
         const int bi = words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
         if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
             return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
@@ -4685,19 +4734,35 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             if (kw.find(',') != std::string::npos) k = parseVec3(kw);
             else if (const auto f = parseNumber(kw)) k = Vec3{*f, *f, *f};
             if (!k) return out.fail("SCALE ... ABOUT needs a factor or sx,sy,sz before ABOUT");
-            const std::vector<std::string> words(a.begin(), a.begin() + static_cast<std::ptrdiff_t>(about - 1));
-            const int bi = words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
-            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
-                return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
-            Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
             std::string why;
-            if (!stretchBody(b, *k, *at, &why)) return out.fail(why);
+            const std::vector<int> group = transformGroup(namesFrom(0, about - 1), why);
+            if (group.empty()) return out.fail(why);
+            for (int bi : group) { // all of them or none
+                Body trial = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+                if (!stretchBody(trial, *k, *at, &why)) return out.fail(why);
+            }
+            AABB box;
+            for (int bi : group) {
+                Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+                stretchBody(b, *k, *at);
+                box.expand(b.bounds());
+            }
+            if (group.size() > 1) doc.recordAs = "SCALE" + quotedList(group) + " " + kw + " ABOUT " + a[about + 1]; // replayed by name
             doc.scene.touchBodies();
             markChanged(doc);
-            const AABB box = b.bounds();
-            out.say("Scaled " + b.name + " about (" + fmt("%g, ", at->x) + fmt("%g, ", at->y) + fmt("%g): ", at->z) + fmt("%g x ", box.max.x - box.min.x) +
+            const std::string what = group.size() == 1 ? doc.scene.bodies()[static_cast<std::size_t>(group[0])].name : std::to_string(group.size()) + " bodies";
+            out.say("Scaled " + what + " about (" + fmt("%g, ", at->x) + fmt("%g, ", at->y) + fmt("%g): ", at->z) + fmt("%g x ", box.max.x - box.min.x) +
                     fmt("%g x ", box.max.y - box.min.y) + fmt("%g mm", box.max.z - box.min.z));
             return out;
+        }
+        // Several selected and no name: they scale together, about the middle of them.
+        if (const std::vector<int> sel = doc.selectedBodies(); sel.size() > 1 && !a.empty() && a.size() <= 2) {
+            const bool to = a.size() == 2 && !quotedArg(0) && lower(a[0]) == "to";
+            if (to) return out.fail("SCALE TO is for one body; scale several by a factor");
+            if (a.size() == 1) {
+                const Vec3 c = groupCentre(sel);
+                return runCommand(doc, "SCALE" + quotedList(sel) + " " + a[0] + " ABOUT " + fmt("%g,", c.x) + fmt("%g,", c.y) + fmt("%g", c.z), view);
+            }
         }
     }
     if (cmd == "SCALE" && !a.empty() && a.back().find(',') != std::string::npos) {
@@ -5023,26 +5088,6 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     }
 
     // ---- Editing ----------------------------------------------------------
-    // Names in the arguments: each quoted one a name, unquoted words run together into one.
-    auto namesFrom = [&](std::size_t from) {
-        std::vector<std::string> names;
-        std::string run;
-        for (std::size_t i = from; i < a.size(); ++i) {
-            if (quotedArg(i)) {
-                if (!run.empty()) names.push_back(run), run.clear();
-                names.push_back(a[i]);
-            } else {
-                run += (run.empty() ? "" : " ") + a[i];
-            }
-        }
-        if (!run.empty()) names.push_back(run);
-        return names;
-    };
-    auto quotedList = [&](const std::vector<int>& list) {
-        std::string q;
-        for (int b : list) q += " \"" + doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\"";
-        return q;
-    };
     if (cmd == "SELECT") {
         // SELECT name... | ADD name... | REMOVE name... | ALL | INVERT | NONE | (nothing: what is selected)
         const std::string first = !a.empty() && !quotedArg(0) ? lower(a[0]) : std::string();
@@ -5338,25 +5383,41 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (a.empty()) return usage();
         const auto d = parseVec3(a[0]);
         if (!d) return usage();
+        // MOVE dx,dy,dz [name...]: the named bodies (they become the selection), an image, or
+        // every selected body, together.
         if (a.size() > 1) {
-            const std::string name = joinArgs(a, 1);
-            doc.clearSelection();
-            doc.selectedBody = findBody(doc, name);
-            if (doc.selectedBody < 0) doc.selectedImage = findImage(doc, name);
+            const std::vector<std::string> names = namesFrom(1);
+            if (names.size() == 1 && findBody(doc, names[0]) < 0) {
+                doc.clearSelection();
+                doc.selectedImage = findImage(doc, names[0]);
+            } else {
+                std::string why;
+                const std::vector<int> group = transformGroup(names, why);
+                if (group.empty()) return out.fail(why);
+                doc.clearSelection();
+                selectBodies(doc.scene, doc.selectedBody, doc.selection, group);
+            }
         }
         auto& s = doc.scene;
-        if (doc.selectedBody >= 0 && doc.selectedBody < static_cast<int>(s.bodies().size())) {
-            Body& b = s.bodies()[static_cast<std::size_t>(doc.selectedBody)];
-            if (b.linked()) { // a linked part moves as one
-                const std::string comp = b.component;
-                moveComponent(s, comp, *d);
-                markChanged(doc);
-                out.say("Moved " + comp + fmt(" by (%.1f, %.1f, %.1f)", d->x, d->y, d->z));
-                return out;
+        if (const std::vector<int> group = doc.selectedBodies(); !group.empty()) {
+            std::vector<std::string> moved; // linked parts move as one, once
+            for (int bi : group) {
+                Body& b = s.bodies()[static_cast<std::size_t>(bi)];
+                if (b.linked()) {
+                    if (std::find(moved.begin(), moved.end(), "component " + b.component) != moved.end()) continue;
+                    moved.push_back("component " + b.component);
+                    moveComponent(s, b.component, *d);
+                } else {
+                    b.offset += *d;
+                }
             }
-            b.offset += *d;
+            if (group.size() > 1) doc.recordAs = "MOVE " + fmt("%g,", d->x) + fmt("%g,", d->y) + fmt("%g", d->z) + quotedList(group); // replayed by name
+            s.touchBodies();
             markChanged(doc);
-            out.say("Moved " + b.name + fmt(" to (%.1f, %.1f, %.1f)", b.offset.x, b.offset.y, b.offset.z));
+            const Body& b = s.bodies()[static_cast<std::size_t>(group[0])];
+            if (group.size() > 1) out.say("Moved " + std::to_string(group.size()) + " bodies" + fmt(" by (%.1f, %.1f, %.1f)", d->x, d->y, d->z));
+            else if (b.linked()) out.say("Moved " + b.component + fmt(" by (%.1f, %.1f, %.1f)", d->x, d->y, d->z));
+            else out.say("Moved " + b.name + fmt(" to (%.1f, %.1f, %.1f)", b.offset.x, b.offset.y, b.offset.z));
             return out;
         }
         if (doc.selectedImage >= 0 && doc.selectedImage < static_cast<int>(s.images().size())) {

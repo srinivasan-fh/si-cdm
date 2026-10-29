@@ -997,25 +997,51 @@ void Application::abortSculpt() {
 }
 
 void Application::finishMoveDrag(bool commit) {
-    const int sel = m_uiState.selectedBody;
-    if (!commit && sel >= 0 && sel < static_cast<int>(m_doc.scene.bodies().size()))
-        m_doc.scene.bodies()[static_cast<std::size_t>(sel)].offset = m_moveStartOffset; // Esc: where it was
-    m_doc.scene.endBodyEdit();
-    m_doc.scene.sealUndo();
+    // Put them back, then (let go) move them again by MOVE: history and undo have it.
+    auto& bodies = m_doc.scene.bodies();
+    Vec3 by{0, 0, 0};
+    std::vector<std::string> names;
+    for (std::size_t k = 0; k < m_moveBodies.size(); ++k) {
+        const int b = m_moveBodies[k];
+        if (b < 0 || b >= static_cast<int>(bodies.size())) continue;
+        Body& body = bodies[static_cast<std::size_t>(b)];
+        if (names.empty()) by = body.offset - m_moveStarts[k];
+        body.offset = m_moveStarts[k];
+        names.push_back(body.name);
+    }
+    const int grabbed = m_moveBodies.empty() ? -1 : m_moveBodies.front();
+    m_moveBodies.clear();
+    m_moveStarts.clear();
+    m_doc.scene.touchBodies();
+    if (commit && names.size() > 1 && length(by) < 1e-6f && grabbed >= 0) { // a click, not a drag: just that one
+        m_uiState.selectedBody = grabbed;
+        m_uiState.bodySelection = {};
+        selectionChanged();
+        return;
+    }
+    if (!commit || names.empty() || length(by) < 1e-6f) return;
+    GizmoDelta d;
+    d.move = by;
+    runCommandLine(gizmoCommand(GizmoMode::Move, d, names, Vec3{0, 0, 0}));
 }
 
 void Application::finishGizmoDrag(bool commit) {
     if (m_gizmoBody < 0 || m_gizmoBody >= static_cast<int>(m_doc.scene.bodies().size())) return;
-    // Put it back as it was, then (let go) do it again by its command: history and undo have it.
-    m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBody)] = m_gizmoStart;
+    // Put them back as they were, then (let go) do it again by its command: history and undo have it.
+    std::vector<std::string> names;
+    for (std::size_t k = 0; k < m_gizmoBodies.size(); ++k) {
+        m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBodies[k])] = m_gizmoStarts[k];
+        names.push_back(m_gizmoStarts[k].name);
+    }
     m_doc.scene.touchBodies();
-    const std::string name = m_gizmoStart.name;
     m_gizmoBody = -1;
+    m_gizmoBodies.clear();
+    m_gizmoStarts.clear();
     if (!commit) {
         setStatus("Cancelled");
         return;
     }
-    const std::string line = gizmoCommand(static_cast<GizmoMode>(std::clamp(m_uiState.gizmoMode, 0, 2)), m_gizmoDelta, name, m_gizmoPivot);
+    const std::string line = gizmoCommand(static_cast<GizmoMode>(std::clamp(m_uiState.gizmoMode, 0, 2)), m_gizmoDelta, names, m_gizmoPivot);
     if (!line.empty()) runCommandLine(line);
 }
 
@@ -1488,7 +1514,9 @@ void Application::handleViewportInput() {
             m_leftDrag = DragMode::Gizmo;
             m_gizmoHandle = m_gizmoHover;
             m_gizmoBody = m_uiState.selectedBody;
-            m_gizmoStart = m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBody)];
+            m_gizmoBodies = selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection);
+            m_gizmoStarts.clear();
+            for (int b : m_gizmoBodies) m_gizmoStarts.push_back(m_doc.scene.bodies()[static_cast<std::size_t>(b)]);
             m_gizmoPivot = gizmoPivot;
             m_gizmoSize = gizmoSize;
             const Ray r = cam.screenRay(mx, my, io.DisplaySize.x, wh);
@@ -1497,12 +1525,20 @@ void Application::handleViewportInput() {
         } else if (tool == ToolId::Move && !commandModifierHeld()) { // (Ctrl+click: adds to the selection)
             Vec2 grab{};
             if (const auto hit = pick(mx, my)) {
+                // On a selected body: all the selected ones move with it; else it alone (selected).
                 m_leftDrag = DragMode::MoveBody;
-                m_uiState.selectedBody = hit->body;
+                m_moveBodies = selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection);
+                if (const auto it = std::find(m_moveBodies.begin(), m_moveBodies.end(), hit->body); it != m_moveBodies.end()) {
+                    std::rotate(m_moveBodies.begin(), it, it + 1); // the one grabbed first
+                } else {
+                    m_uiState.selectedBody = hit->body;
+                    m_uiState.bodySelection = {};
+                    m_moveBodies = {hit->body};
+                }
                 m_uiState.selectedCurve = m_uiState.selectedImage = -1;
                 m_movePlanePoint = hit->point;
-                m_moveStartOffset = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].offset;
-                m_doc.scene.beginBodyEdit("MOVE " + m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name); // an undo step if it moves
+                m_moveStarts.clear();
+                for (int b : m_moveBodies) m_moveStarts.push_back(m_doc.scene.bodies()[static_cast<std::size_t>(b)].offset);
             } else if (const int img = pickImage(mx, my, &grab); img >= 0) {
                 // Images slide within their own plane.
                 m_leftDrag = DragMode::MoveImage;
@@ -1536,13 +1572,13 @@ void Application::handleViewportInput() {
         case DragMode::Zoom: cam.zoomAt(-dy * 0.02f, m_pressX, m_pressY, io.DisplaySize.x, wh); break;
         case DragMode::MoveBody: {
             // Slide in the plane through the grab point, facing the camera.
-            const int sel = m_uiState.selectedBody;
-            if (sel < 0 || sel >= static_cast<int>(m_doc.scene.bodies().size())) break;
             const Ray ray = cam.screenRay(mx, my, io.DisplaySize.x, wh);
             float t = 0.0f;
-            if (intersectPlane(ray, m_movePlanePoint, cam.forward(), t))
-                m_doc.scene.bodies()[static_cast<std::size_t>(sel)].offset =
-                    m_moveStartOffset + (ray.at(t) - m_movePlanePoint);
+            if (!intersectPlane(ray, m_movePlanePoint, cam.forward(), t)) break;
+            for (std::size_t k = 0; k < m_moveBodies.size(); ++k)
+                if (m_moveBodies[k] >= 0 && m_moveBodies[k] < static_cast<int>(m_doc.scene.bodies().size()))
+                    m_doc.scene.bodies()[static_cast<std::size_t>(m_moveBodies[k])].offset = m_moveStarts[k] + (ray.at(t) - m_movePlanePoint);
+            m_doc.scene.touchBodies();
             break;
         }
         case DragMode::Gizmo: {
@@ -1552,11 +1588,13 @@ void Application::handleViewportInput() {
             const float step = !snap ? 0.0f : gizmoMode == GizmoMode::Move ? m_uiState.gizmoMoveStep : gizmoMode == GizmoMode::Rotate ? m_uiState.gizmoAngleStep : m_uiState.gizmoScaleStep;
             m_gizmoDelta = gizmoDrag(gizmoMode, m_gizmoHandle, m_gizmoPivot, cam.forward(), gizmoProjector(), m_gizmoFrom, {r.origin, r.dir, {mx, my}}, step);
             // The preview: the body as it began, done to as the drag says so far.
-            Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBody)];
-            b = m_gizmoStart;
-            if (gizmoMode == GizmoMode::Move) b.offset += m_gizmoDelta.move;
-            else if (gizmoMode == GizmoMode::Rotate) turnBody(b, m_gizmoDelta.axis, m_gizmoDelta.angle, m_gizmoPivot);
-            else stretchBody(b, m_gizmoDelta.scale, m_gizmoPivot);
+            for (std::size_t k = 0; k < m_gizmoBodies.size(); ++k) {
+                Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBodies[k])];
+                b = m_gizmoStarts[k];
+                if (gizmoMode == GizmoMode::Move) b.offset += m_gizmoDelta.move;
+                else if (gizmoMode == GizmoMode::Rotate) turnBody(b, m_gizmoDelta.axis, m_gizmoDelta.angle, m_gizmoPivot);
+                else stretchBody(b, m_gizmoDelta.scale, m_gizmoPivot);
+            }
             m_doc.scene.touchBodies();
             break;
         }
@@ -2925,7 +2963,8 @@ bool Application::gizmoShown(Vec3& pivot, float& size) const {
         pivot = m_gizmoPivot, size = m_gizmoSize;
         return true;
     }
-    const AABB box = b.bounds();
+    AABB box; // the middle of every selected body (they move together)
+    for (int i : selectedBodies(m_doc.scene, sel, m_uiState.bodySelection)) box.expand(m_doc.scene.bodies()[static_cast<std::size_t>(i)].bounds());
     if (!box.valid()) return false;
     pivot = box.center();
     // About 110 pixels long whatever the zoom.

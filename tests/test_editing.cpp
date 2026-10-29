@@ -2,6 +2,7 @@
 
 #include "core/Command.hpp"
 #include "core/Document.hpp"
+#include "core/Gizmo.hpp"
 #include "core/Json.hpp"
 #include "core/Mcp.hpp"
 #include "core/Scene.hpp"
@@ -339,4 +340,70 @@ TEST_CASE("MCP visibility: hide, isolate, show_all") {
     for (const Body& b : d.scene.bodies()) CHECK(b.visible);
     CHECK(call(R"({"action":"hide"})")["isError"].asBool());
     CHECK(call(R"({"action":"blink","names":["Block 1"]})")["isError"].asBool());
+}
+
+TEST_CASE("Group transforms: MOVE, ROTATE BY and SCALE act on every selected body together, one undo, replayed") {
+    Document d;
+    fourBlocks(d);
+    auto at = [&](const std::string& n) { return d.scene.bodies()[static_cast<std::size_t>(bodyNamed(d, n))].offset; };
+    auto near3 = [](const Vec3& p, const Vec3& q) { return length(p - q) < 1e-3f; };
+    REQUIRE(run(d, "SELECT \"Block 1\" \"Block 2\"").ok);
+    REQUIRE(run(d, "MOVE 0,0,20").ok);
+    CHECK(near3(at("Block 1"), {0, 0, 20}));
+    CHECK(near3(at("Block 2"), {30, 0, 20}));
+    CHECK(near3(at("Block 3"), {60, 0, 0}));
+    CHECK(d.state.history.back().line == "MOVE 0,0,20 \"Block 1\" \"Block 2\"");
+    CHECK(d.selectedBodies().size() == 2); // still both selected
+    REQUIRE(run(d, "UNDO").ok); // one step puts both back
+    CHECK(near3(at("Block 1"), {0, 0, 0}));
+    CHECK(near3(at("Block 2"), {30, 0, 0}));
+    // Named: they become the selection.
+    REQUIRE(run(d, "MOVE 5,0,0 \"Block 3\" \"Block 4\"").ok);
+    CHECK(near3(at("Block 3"), {65, 0, 0}));
+    CHECK(near3(at("Block 4"), {95, 0, 0}));
+    CHECK((selectedNames(d) == std::vector<std::string>{"Block 3", "Block 4"}));
+    REQUIRE(run(d, "UNDO").ok);
+    // Turned together about the middle of the pair (15, 0, 5): as one rigid piece.
+    REQUIRE(run(d, "SELECT \"Block 1\" \"Block 2\"").ok);
+    REQUIRE(run(d, "ROTATE BY 90 AXIS Z").ok);
+    CHECK(near3(at("Block 1"), {15, -15, 0}));
+    CHECK(near3(at("Block 2"), {15, 15, 0}));
+    CHECK(std::fabs(d.scene.bodies()[0].rotation.z - 90.0f) < 1e-3f);
+    CHECK(d.state.history.back().line == "ROTATE \"Block 1\" \"Block 2\" BY 90 AXIS 0,0,1 ABOUT 15,0,5");
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(near3(at("Block 2"), {30, 0, 0}));
+    CHECK(std::fabs(d.scene.bodies()[1].rotation.z) < 1e-3f);
+    // Scaled together about the middle: the gap grows with them.
+    REQUIRE(run(d, "SCALE 2").ok);
+    CHECK(near3(at("Block 1"), {-15, 0, -5}));
+    CHECK(near3(at("Block 2"), {45, 0, -5}));
+    CHECK(std::fabs(d.scene.bodies()[0].scale - 2.0f) < 1e-5f);
+    CHECK(std::fabs(d.scene.bodies()[2].scale - 1.0f) < 1e-5f);
+    // One body's absolute orientation or size doesn't mean anything for several.
+    CHECK(!run(d, "SCALE TO 20").ok);
+    CHECK(!run(d, "ROTATE 0,0,45").ok);
+    CHECK(!run(d, "MOVE 1,0,0 \"Block 1\" \"Nope\"").ok);
+    // REGEN rebuilds the same by name.
+    REQUIRE(run(d, "REGEN").ok);
+    CHECK(near3(at("Block 1"), {-15, 0, -5}));
+    CHECK(near3(at("Block 2"), {45, 0, -5}));
+    // One body, as before.
+    REQUIRE(run(d, "SELECT \"Block 4\"").ok);
+    REQUIRE(run(d, "ROTATE BY 90 AXIS Z").ok);
+    CHECK(near3(at("Block 4"), {90, 0, 0})); // about its own origin
+}
+
+TEST_CASE("Gizmo command for several bodies names them all") {
+    GizmoDelta m;
+    m.move = {1, 2, 3};
+    CHECK(gizmoCommand(GizmoMode::Move, m, std::vector<std::string>{"A", "B c"}, {0, 0, 0}) == "MOVE 1,2,3 \"A\" \"B c\"");
+    GizmoDelta t;
+    t.axis = {0, 0, 1};
+    t.angle = 45;
+    CHECK(gizmoCommand(GizmoMode::Rotate, t, std::vector<std::string>{"A", "B"}, {1, 0, 0}) == "ROTATE \"A\" \"B\" BY 45 AXIS 0,0,1 ABOUT 1,0,0");
+    CHECK(gizmoCommand(GizmoMode::Move, m, std::vector<std::string>{}, {0, 0, 0}).empty());
+    Document d;
+    fourBlocks(d);
+    REQUIRE(run(d, gizmoCommand(GizmoMode::Rotate, t, std::vector<std::string>{"Block 1", "Block 2"}, {15, 0, 5})).ok);
+    CHECK(std::fabs(d.scene.bodies()[1].rotation.z - 45.0f) < 1e-3f);
 }
