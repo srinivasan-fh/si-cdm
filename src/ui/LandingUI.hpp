@@ -8,6 +8,7 @@
 #include "core/Lathe.hpp"
 #include "core/Pdm.hpp"
 #include "core/Scene.hpp"
+#include "core/Selection.hpp"
 #include "core/SectionView.hpp"
 #include "core/Stackup.hpp"
 #include "core/Study.hpp"
@@ -115,6 +116,7 @@ struct UiState {
     bool snapGrid = true;
     bool snapPoints = true;
     int selectedBody = -1;
+    BodySelection bodySelection; // other bodies selected with selectedBody (Selection.hpp)
     int selectedCurve = -1;
     int selectedImage = -1;
 

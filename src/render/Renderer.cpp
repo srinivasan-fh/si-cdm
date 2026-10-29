@@ -869,6 +869,11 @@ void Renderer::drawGrid(const OrbitCamera& cam, const ViewportSettings& s) {
 void Renderer::render(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s,
                       int fbWidth, int fbHeight, int selectedBody, int selectedCurve, int selectedImage,
                       const std::vector<Mat4>* motion, const std::vector<const MeshData*>* overrides) {
+    // The active body and the others selected with it are drawn highlighted.
+    std::vector<char> also(scene.bodies().size(), 0);
+    for (int b : m_alsoSelected)
+        if (b >= 0 && b < static_cast<int>(also.size())) also[static_cast<std::size_t>(b)] = 1;
+    auto isSelected = [&](std::size_t i) { return static_cast<int>(i) == selectedBody || (i < also.size() && also[i]); };
     glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(s.backgroundBottom.x, s.backgroundBottom.y, s.backgroundBottom.z, 1.0f);
     glClearStencil(0);
@@ -995,7 +1000,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     // polygroups or texture maps) are drawn together: one instanced draw a shape, each copy's
     // placement and colour from a buffer. Large assemblies are mostly such copies.
     auto plain = [&](std::size_t i) {
-        if (!shown[i] || static_cast<int>(i) == selectedBody || !bodies[i].field.empty() || m_streamed[i].vao) return false;
+        if (!shown[i] || isSelected(i) || !bodies[i].field.empty() || m_streamed[i].vao) return false;
         if (s.showPolygroups && gpu(i).groupTex) return false;
         if (gpu(i).mapped)
             for (const auto& t : s.textures)
@@ -1126,7 +1131,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_capShader.set("uHiddenLine", hidden ? 1.0f : 0.0f);
             m_capShader.set("uPaper", s.backgroundBottom);
             m_capShader.set("uInk", s.edgeColor);
-            m_capShader.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
+            m_capShader.set("uHighlight", isSelected(i) ? 1.0f : 0.0f);
             glBindVertexArray(m_emptyVao);
             glDrawArrays(GL_TRIANGLES, 0, 6);
             glEnable(GL_CLIP_DISTANCE0);
@@ -1178,7 +1183,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
                                                                           : 1.0f);
             m_mesh.set("uModel", model(i));
             m_mesh.set("uClip", cutBody(i) ? cutClip : noClip);
-            m_mesh.set("uHighlight", static_cast<int>(i) == selectedBody ? 1.0f : 0.0f);
+            m_mesh.set("uHighlight", isSelected(i) ? 1.0f : 0.0f);
             const bool groups = s.showPolygroups && gpu(i).groupTex;
             m_mesh.set("uPolygroups", groups ? 1.0f : 0.0f);
             if (groups) {
@@ -1235,7 +1240,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         }
         for (std::size_t i = 0; i < count; ++i) {
             if (!shown[i] || (instanced[i] && !wire)) continue;
-            const bool sel = static_cast<int>(i) == selectedBody;
+            const bool sel = isSelected(i);
             m_lines.set("uModel", model(i));
             m_lines.set("uClip", cutBody(i) ? cutClip : noClip);
             if (wire) {

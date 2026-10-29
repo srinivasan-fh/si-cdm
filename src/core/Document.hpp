@@ -3,6 +3,7 @@
 #include "core/Camera.hpp"
 #include "core/FileIO.hpp"
 #include "core/Scene.hpp"
+#include "core/Selection.hpp"
 
 #include <memory>
 #include <optional>
@@ -26,6 +27,12 @@ struct Document {
     int selectedBody = -1;
     int selectedCurve = -1;
     int selectedImage = -1;
+    // Other bodies selected with selectedBody (Selection.hpp).
+    BodySelection selection;
+    std::vector<int> selectedBodies() const { return sicdm::selectedBodies(scene, selectedBody, selection); }
+    // A command that acted on the selection records itself in the history as this (with the
+    // bodies' names), so replaying it doesn't depend on what is selected then.
+    std::string recordAs;
 
     // Commands built by the MCP tools pass plain numbers in millimetres whatever the
     // document's display units are; set while such a tool runs.
@@ -73,7 +80,10 @@ struct Document {
     std::shared_ptr<const StudyResult> study;
     std::string studyCommand; // the line that made it
 
-    void clearSelection() noexcept { selectedBody = selectedCurve = selectedImage = -1; }
+    void clearSelection() noexcept {
+        selectedBody = selectedCurve = selectedImage = -1;
+        selection = BodySelection{};
+    }
     std::string title() const; // "file.sicdm" or the name, with " *" when dirty
     std::string displayName() const; // "file.sicdm" or the name
 };

@@ -210,7 +210,12 @@ Json McpServer::toolDefinitions() {
     {
         Json p = Json::object();
         p.set("name", prop("string", "Name of the body, curve or image to delete"));
-        tools.push(tool("delete", "Delete a body, sketch curve or image.", p, {"name"}));
+        p.set("names", [] {
+            Json j = Json::object();
+            j.set("type", "array").set("items", Json::object().set("type", "string")).set("description", "Several bodies to delete in one step (one undo)");
+            return j;
+        }());
+        tools.push(tool("delete", "Delete a body, sketch curve or image, or several bodies at once.", p, {}));
     }
     {
         Json p = Json::object();
@@ -1363,7 +1368,13 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             }
         return textResult("Nothing named '" + target + "' (see get_scene)", true);
     }
-    if (name == "delete") return runLine("ERASE " + a["name"].asString());
+    if (name == "delete") { // one name, or several in one step (one undo)
+        std::string line = "ERASE";
+        if (a["name"].isString()) line += " " + quote(a["name"].asString());
+        for (std::size_t i = 0; i < a["names"].size(); ++i) line += " " + quote(a["names"][i].asString());
+        if (line == "ERASE") return textResult("Give 'name' or 'names'", true);
+        return runLine(line);
+    }
     if (name == "extrude") {
         if (!a["profile"].isString() || !a["distance"].isNumber())
             return textResult("extrude needs 'profile' (curve name) and 'distance'", true);

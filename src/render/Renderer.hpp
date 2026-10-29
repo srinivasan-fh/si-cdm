@@ -76,12 +76,16 @@ public:
         if (scene.revision() != m_uploadedRevision) upload(scene);
     }
 
+    // Other selected bodies, highlighted with the active one (multi-select).
+    void setAlsoSelected(const std::vector<int>& bodies) { m_alsoSelected = bodies; }
+
     void render(const Scene& scene, const OrbitCamera& camera, const ViewportSettings& settings,
                 int framebufferWidth, int framebufferHeight, int selectedBody, int selectedCurve,
                 int selectedImage = -1, const std::vector<Mat4>* motion = nullptr, // motion: per-body transforms
                 const std::vector<const MeshData*>* overrides = nullptr);           // per-body shapes for this frame
 
 private:
+    std::vector<int> m_alsoSelected;
     void drawBackground(const ViewportSettings& s);
     void drawGrid(const OrbitCamera& cam, const ViewportSettings& s);
     void uploadSketch(const Sketch& sketch);

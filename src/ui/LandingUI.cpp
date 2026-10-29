@@ -2796,6 +2796,7 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             if (ImGui::TreeNode(tr("Bodies"))) {
                 auto& bodies = scene.bodies();
+                const std::vector<int> treeSelection = selectedBodies(scene, st.selectedBody, st.bodySelection);
                 // Sub-assemblies (every path and its ancestors), in the order their parts come.
                 std::vector<std::string> paths;
                 for (const Body& b : bodies)
@@ -2824,8 +2825,14 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
                         ImGui::ColorButton("##col", {b.color.x, b.color.y, b.color.z, 1.0f},
                                            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder, {10, 10});
                         ImGui::SameLine(0, 6);
-                        if (ImGui::Selectable(b.name.c_str(), st.selectedBody == i)) {
-                            st.selectedBody = st.selectedBody == i ? -1 : i;
+                        const bool picked = std::find(treeSelection.begin(), treeSelection.end(), i) != treeSelection.end();
+                        if (ImGui::Selectable(b.name.c_str(), picked)) {
+                            if (ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper) { // Ctrl / Cmd+click: into or out of the selection
+                                toggleBody(scene, st.selectedBody, st.bodySelection, i);
+                            } else {
+                                st.selectedBody = st.selectedBody == i && treeSelection.size() == 1 ? -1 : i;
+                                st.bodySelection = {};
+                            }
                             st.selectedCurve = st.selectedImage = -1;
                         }
                         if (b.linked()) { // from a part file: say which

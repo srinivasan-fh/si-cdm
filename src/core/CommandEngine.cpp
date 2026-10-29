@@ -945,7 +945,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
         st.history.push_back(std::move(plane));
     }
     HistoryStep step;
-    step.line = std::string(line);
+    step.line = doc.recordAs.empty() ? std::string(line) : doc.recordAs;
     step.undoable = pushedUndo; // only an edit with an undo snapshot is taken back by UNDO
     step.millimetres = doc.apiMillimeters;
     step.unit = st.units.unit;
@@ -974,6 +974,7 @@ CommandOutput executeCommand(Document& doc, std::string_view line, ViewHost* vie
     const std::uint64_t pushes = doc.scene.undoPushes();
     doc.pendingConstraint.clear();
     doc.historyRewritten = false;
+    doc.recordAs.clear();
     const ParsedCommand parsed = tokenizeCommand(line);
     const CommandSpec* spec = findCommand(parsed.name);
     if (spec && !doc.replaying)
@@ -4979,44 +4980,132 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     }
 
     // ---- Editing ----------------------------------------------------------
+    // Names in the arguments: each quoted one a name, unquoted words run together into one.
+    auto namesFrom = [&](std::size_t from) {
+        std::vector<std::string> names;
+        std::string run;
+        for (std::size_t i = from; i < a.size(); ++i) {
+            if (quotedArg(i)) {
+                if (!run.empty()) names.push_back(run), run.clear();
+                names.push_back(a[i]);
+            } else {
+                run += (run.empty() ? "" : " ") + a[i];
+            }
+        }
+        if (!run.empty()) names.push_back(run);
+        return names;
+    };
+    auto quotedList = [&](const std::vector<int>& list) {
+        std::string q;
+        for (int b : list) q += " \"" + doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\"";
+        return q;
+    };
     if (cmd == "SELECT") {
-        if (a.empty()) return usage();
-        const std::string name = joinArgs(a);
-        doc.clearSelection();
-        if (iequal(name, "none")) {
+        // SELECT name... | ADD name... | REMOVE name... | ALL | INVERT | NONE | (nothing: what is selected)
+        const std::string first = !a.empty() && !quotedArg(0) ? lower(a[0]) : std::string();
+        auto say = [&](const char* verb) {
+            const std::vector<int> sel = doc.selectedBodies();
+            if (sel.empty()) out.say(std::string(verb) + ": nothing selected");
+            else if (sel.size() == 1) out.say(std::string(verb) + ": " + doc.scene.bodies()[static_cast<std::size_t>(sel[0])].name);
+            else out.say(std::string(verb) + ": " + std::to_string(sel.size()) + " bodies," + quotedList(sel) + " (the first is the active one)");
+        };
+        if (a.empty()) {
+            if (doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(doc.scene.sketch().curves().size()))
+                out.say("Selected: " + doc.scene.sketch().curves()[static_cast<std::size_t>(doc.selectedCurve)].name);
+            else if (doc.selectedImage >= 0 && doc.selectedImage < static_cast<int>(doc.scene.images().size()))
+                out.say("Selected: " + doc.scene.images()[static_cast<std::size_t>(doc.selectedImage)].name);
+            else say("Selected");
+            return out;
+        }
+        if (first == "none" && a.size() == 1) {
+            doc.clearSelection();
             out.say("Selection cleared");
             return out;
         }
-        if ((doc.selectedBody = findBody(doc, name)) >= 0 || (doc.selectedCurve = findCurve(doc, name)) >= 0 ||
-            (doc.selectedImage = findImage(doc, name)) >= 0) {
-            out.say("Selected " + name);
+        if ((first == "all" || first == "invert") && a.size() == 1) {
+            const std::vector<int> now = doc.selectedBodies();
+            std::vector<int> list;
+            for (std::size_t i = 0; i < doc.scene.bodies().size(); ++i) {
+                const bool was = std::find(now.begin(), now.end(), static_cast<int>(i)) != now.end();
+                if (doc.scene.bodies()[i].visible && (first == "all" || !was)) list.push_back(static_cast<int>(i));
+            }
+            doc.clearSelection();
+            selectBodies(doc.scene, doc.selectedBody, doc.selection, list);
+            say("Selected");
             return out;
         }
-        return out.fail("Nothing named " + name);
+        const bool adding = first == "add", removing = first == "remove";
+        const std::vector<std::string> names = namesFrom(adding || removing ? 1 : 0);
+        if (names.empty()) return usage();
+        // One name that is a sketch curve or an image (not a body): select that.
+        if (!adding && !removing && names.size() == 1 && findBody(doc, names[0]) < 0) {
+            doc.clearSelection();
+            if ((doc.selectedCurve = findCurve(doc, names[0])) >= 0 || (doc.selectedImage = findImage(doc, names[0])) >= 0) {
+                out.say("Selected " + names[0]);
+                return out;
+            }
+            return out.fail("Nothing named " + names[0]);
+        }
+        std::vector<int> picked;
+        for (const std::string& n : names) {
+            const int b = findBody(doc, n);
+            if (b < 0) return out.fail("No body named " + n);
+            picked.push_back(b);
+        }
+        std::vector<int> list = adding || removing ? doc.selectedBodies() : std::vector<int>{};
+        for (int b : picked) {
+            const auto it = std::find(list.begin(), list.end(), b);
+            if (removing) {
+                if (it != list.end()) list.erase(it);
+            } else if (it == list.end()) {
+                list.insert(adding ? list.begin() : list.end(), b); // an added body becomes the active one
+            }
+        }
+        doc.selectedCurve = doc.selectedImage = -1;
+        selectBodies(doc.scene, doc.selectedBody, doc.selection, list);
+        say("Selected");
+        return out;
     }
     if (cmd == "ERASE") {
-        if (!a.empty()) {
-            const std::string name = joinArgs(a);
-            doc.clearSelection();
-            doc.selectedBody = findBody(doc, name);
-            if (doc.selectedBody < 0) doc.selectedCurve = findCurve(doc, name);
-            if (doc.selectedBody < 0 && doc.selectedCurve < 0) doc.selectedImage = findImage(doc, name);
-        }
+        // ERASE [name...]: the named bodies, curves or images, else everything selected.
         auto& s = doc.scene;
-        std::string gone;
-        if (doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(s.sketch().curves().size())) {
-            gone = s.sketch().curves()[static_cast<std::size_t>(doc.selectedCurve)].name;
-            s.sketch().remove(static_cast<std::size_t>(doc.selectedCurve));
-        } else if (doc.selectedBody >= 0 && doc.selectedBody < static_cast<int>(s.bodies().size())) {
-            gone = s.bodies()[static_cast<std::size_t>(doc.selectedBody)].name;
-            s.pushUndo("ERASE " + gone); // a deleted body can be brought back
-            s.remove(static_cast<std::size_t>(doc.selectedBody));
+        std::vector<int> bodies;
+        int curve = -1, image = -1;
+        if (!a.empty()) {
+            for (const std::string& n : namesFrom(0)) {
+                if (const int b = findBody(doc, n); b >= 0) {
+                    if (std::find(bodies.begin(), bodies.end(), b) == bodies.end()) bodies.push_back(b);
+                } else if (const int c = findCurve(doc, n); c >= 0 && curve < 0) {
+                    curve = c;
+                } else if (const int im = findImage(doc, n); im >= 0 && image < 0) {
+                    image = im;
+                } else {
+                    return out.fail("Nothing named " + n);
+                }
+            }
+            if (curve >= 0 && (!bodies.empty() || image >= 0)) return out.fail("Erase a sketch curve on its own");
+        } else if (doc.selectedCurve >= 0 && doc.selectedCurve < static_cast<int>(s.sketch().curves().size())) {
+            curve = doc.selectedCurve;
+        } else if (!(bodies = doc.selectedBodies()).empty()) {
+            if (bodies.size() > 1) doc.recordAs = "ERASE" + quotedList(bodies); // replayed by name
         } else if (doc.selectedImage >= 0 && doc.selectedImage < static_cast<int>(s.images().size())) {
-            gone = s.images()[static_cast<std::size_t>(doc.selectedImage)].name;
-            s.removeImage(static_cast<std::size_t>(doc.selectedImage));
-        } else {
-            return out.fail(a.empty() ? "Nothing selected" : "Nothing named " + joinArgs(a));
+            image = doc.selectedImage;
         }
+        std::string gone;
+        if (curve >= 0) {
+            gone = s.sketch().curves()[static_cast<std::size_t>(curve)].name;
+            s.sketch().remove(static_cast<std::size_t>(curve));
+        } else if (!bodies.empty()) {
+            gone = bodies.size() == 1 ? s.bodies()[static_cast<std::size_t>(bodies[0])].name : std::to_string(bodies.size()) + " bodies";
+            s.pushUndo("ERASE " + gone); // one step brings them all back
+            std::sort(bodies.begin(), bodies.end(), std::greater<int>());
+            for (int b : bodies) s.remove(static_cast<std::size_t>(b));
+        }
+        if (image >= 0) {
+            gone += (gone.empty() ? "" : ", ") + s.images()[static_cast<std::size_t>(image)].name;
+            s.removeImage(static_cast<std::size_t>(image));
+        }
+        if (gone.empty()) return out.fail("Nothing selected");
         doc.clearSelection();
         markChanged(doc);
         out.say("Deleted " + gone);

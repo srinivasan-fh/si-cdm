@@ -218,7 +218,7 @@ private:
     void updateSketchColors();
 
     // Input state
-    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip, PushPull, Gizmo };
+    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip, PushPull, Gizmo, BoxSelect };
     DragMode m_leftDrag = DragMode::None;
     bool m_escapedDrag = false; // Esc cancelled the drag; the button is still held
     DragMode m_otherDrag = DragMode::None; // right / middle button
@@ -294,6 +294,7 @@ private:
     ToolId m_cutTool = ToolId::CutChannel; // the tool whose path m_cutPath is (Channel or Curve Brush)
     std::vector<Vec3> m_cutPath;
     ImVec2 m_knifeStart{};
+    ImVec2 m_boxStart{};    // a Ctrl+drag box selecting bodies: where it began
     bool beginSculpt(float x, float y);
     void continueSculpt(float x, float y);
     void endSculpt();
@@ -340,6 +341,8 @@ private:
     // The render window's picture: made in the background from a copy of the scene.
     void pollRender();
     void pollVideo();
+    void finishBoxSelect(float x, float y);
+    void selectionChanged(); // says what is selected now
     struct RenderJob {
         std::vector<std::uint8_t> pixels;
         int width = 0, height = 0, samples = 0;

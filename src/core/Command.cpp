@@ -350,8 +350,9 @@ constexpr CommandSpec kCommands[] = {
      "Resize a body, or a whole library component with its motions; three factors stretch a body along x, y, z; ABOUT scales one "
      "body about a point (what the gizmo does)"},
     // Editing
-    {"SELECT", "SEL", "SELECT name | NONE", "Select a body, curve or image by name"},
-    {"ERASE", "E DEL DELETE", "ERASE [name]", "Delete the selection (or the named item)"},
+    {"SELECT", "SEL", "SELECT [name... | ADD name... | REMOVE name... | ALL | INVERT | NONE]",
+     "Select bodies by name (several: the first is the active one), add to or take from the selection, all visible bodies, the others, or none; alone: what is selected"},
+    {"ERASE", "E DEL DELETE", "ERASE [name...]", "Delete the selection (every selected body), or the named items"},
     {"MOVE", "M", "MOVE dx,dy[,dz] [name]", "Move the selected body or image"},
     {"IMAGE", "IMG", "IMAGE [name] WIDTH mm | OPACITY 0-1 | AT x,y", "Edit a reference image"},
     {"LIST", "LS", "LIST", "List bodies, sketch curves and images"},

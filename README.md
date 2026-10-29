@@ -925,6 +925,13 @@ Details: [docs/plugins.md](docs/plugins.md).
 - Right drag (or left drag on empty space): orbit in 3D, pan in 2D
 - Middle drag / Shift + left drag: pan
 - Scroll: zoom at the cursor
-- Delete: remove the selected body, sketch curve or image
+- `Ctrl/⌘ + click` a body (in the 3D window or the model tree): add it to the selection, or take
+  it out. The one added last is the active body, which the gizmo and single-body commands use.
+- `Ctrl/⌘ + drag` on empty space: a box adding bodies to the selection. Left to right takes the
+  bodies wholly inside it (solid box); right to left takes the bodies it touches (dashed box).
+- `Ctrl/⌘ A`: select every visible body; `Esc`: clear the selection
+- `SELECT "A" "B"`, `SELECT ADD "C"`, `SELECT REMOVE "A"`, `SELECT ALL`, `SELECT INVERT`,
+  `SELECT NONE`; `SELECT` alone says what is selected
+- Delete: remove the selected bodies (one undo brings them all back), sketch curve or image
 - `F`: fit to view
 - `1` / `3` / `7` / `0`: Front / Right / Top / Isometric (in 2D: pick the drawing plane)

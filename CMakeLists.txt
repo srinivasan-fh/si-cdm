@@ -87,6 +87,7 @@ add_library(sicdm_core STATIC
     src/core/InsertCommand.cpp
     src/core/ModelExport.cpp
     src/core/Video.cpp
+    src/core/Selection.cpp
     src/core/MoldCommand.cpp
     src/core/WeldmentCommand.cpp
     src/core/Bvh.cpp
