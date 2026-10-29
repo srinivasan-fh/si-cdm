@@ -80,6 +80,8 @@ add_library(sicdm_core STATIC
     src/core/StudyCommand.cpp
     src/core/Stackup.cpp
     src/core/StackupCommand.cpp
+    src/core/Armature.cpp
+    src/core/ArmatureCommand.cpp
     src/core/MoldCommand.cpp
     src/core/WeldmentCommand.cpp
     src/core/Bvh.cpp

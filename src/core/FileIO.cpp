@@ -1,6 +1,7 @@
 #include "core/FileIO.hpp"
 #include "core/MeshImport.hpp"
 #include "core/Multires.hpp"
+#include "core/Armature.hpp"
 
 #include "core/Brep.hpp"
 #include "core/Step.hpp"
@@ -543,6 +544,21 @@ bool saveProject(const Scene& scene, const ProjectState& state, const std::strin
                 levels.push(base64(pos));
             }
             jb.set("multires", Json::object().set("current", b.multires->current).set("cage_triangles_b64", base64(tri)).set("levels_b64", levels));
+        }
+        if (b.skin && !b.skin->rest.empty()) { // its rest pose and bone weights (the armature is a body of its own)
+            const SkinData& sk = *b.skin;
+            std::vector<unsigned char> rest, bone, weight;
+            for (const Vec3& q : sk.rest) putF32(rest, q.x), putF32(rest, q.y), putF32(rest, q.z);
+            for (const auto& bb : sk.bone)
+                for (const std::int32_t v : bb) putU32(bone, static_cast<std::uint32_t>(v));
+            for (const auto& w : sk.weight)
+                for (const float v : w) putF32(weight, v);
+            jb.set("skin", Json::object()
+                               .set("armature", sk.armature)
+                               .set("rest_b64", base64(rest))
+                               .set("bones_b64", base64(bone))
+                               .set("weights_b64", base64(weight))
+                               .set("pristine", sk.key == meshKey(b.mesh)));
         }
         if (!b.holes.empty()) {
             Json hs = Json::array();
@@ -1130,6 +1146,26 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
             md->current = jm["current"].asInt(0);
             if (fits && md->levels.size() >= 2 && md->current >= 0 && md->current < static_cast<int>(md->levels.size())) b.multires = std::move(md);
         }
+        bool skinPristine = false;
+        if (const Json& js = jb["skin"]; js.isObject()) { // left out when it doesn't fit the mesh
+            auto sk = std::make_shared<SkinData>();
+            sk->armature = js["armature"].asString();
+            std::vector<unsigned char> rest, bone, weight;
+            const std::size_t n = b.mesh.vertices.size();
+            if (unbase64(js["rest_b64"].asString(), rest) && unbase64(js["bones_b64"].asString(), bone) && unbase64(js["weights_b64"].asString(), weight) &&
+                rest.size() == n * 12 && bone.size() == n * 16 && weight.size() == n * 16 && !sk->armature.empty()) {
+                for (std::size_t i = 0; i < n; ++i) {
+                    sk->rest.push_back({getF32(&rest[i * 12]), getF32(&rest[i * 12 + 4]), getF32(&rest[i * 12 + 8])});
+                    std::array<std::int32_t, 4> bb{};
+                    std::array<float, 4> w{};
+                    for (std::size_t k = 0; k < 4; ++k)
+                        bb[k] = static_cast<std::int32_t>(getU32(&bone[i * 16 + k * 4])), w[k] = getF32(&weight[i * 16 + k * 4]);
+                    sk->bone.push_back(bb), sk->weight.push_back(w);
+                }
+                skinPristine = js["pristine"].asBool(true);
+                b.skin = std::move(sk);
+            }
+        }
         for (const Json& jh : jb["holes"].items()) {
             HoleNote& h = b.holes.emplace_back();
             h.at = jsonVec3(jh["at"]), h.dir = jsonVec3(jh["dir"], {0, 0, -1}), h.callout = jh["callout"].asString();
@@ -1181,6 +1217,12 @@ bool loadProject(Scene& scene, ProjectState& state, const std::string& path, std
         if (b.isRoute()) { // the same for a route
             const std::uint64_t k = meshKey(b.mesh);
             b.route.key = b.route.key == 1 ? (k ? k : 1) : (k ^ 1 ? k ^ 1 : 2);
+        }
+        if (b.skin) { // as posed last, or edited since (its rest pose is taken back from it when posed again)
+            auto sk = std::make_shared<SkinData>(*b.skin);
+            const std::uint64_t k = meshKey(b.mesh);
+            sk->key = skinPristine ? k : k ^ 1;
+            b.skin = std::move(sk);
         }
         loaded.add(std::move(b));
     }

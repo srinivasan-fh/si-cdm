@@ -1,4 +1,5 @@
 #include "core/Geometry.hpp"
+#include "core/Armature.hpp"
 #include "core/SheetMetal.hpp"
 
 #include "core/Extrude.hpp"
@@ -219,13 +220,17 @@ void MeshData::computeFeatureEdges(float angleDeg, float shortLength, float shor
 
 bool isPrimitiveKind(const std::string& k) {
     return k == "box" || k == "wedge" || k == "cylinder" || k == "tube" || k == "cone" || k == "sphere" ||
-           k == "torus" || k == "pyramid" || k == "prism" || k == "extrude" || k == "sheet" || isLibraryKind(k);
+           k == "torus" || k == "pyramid" || k == "prism" || k == "extrude" || k == "sheet" || k == "armature" || isLibraryKind(k);
 }
 
 MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
     using namespace primitives;
     if (k == "extrude") return buildExtrusion(p);
     if (k == "sheet") return buildSheetParams(p);
+    if (k == "armature") {
+        Armature a;
+        return armatureFromParams(p, a) ? armaturePreview(a) : MeshData{};
+    }
     if (isLibraryKind(k)) return buildLibraryPart(k, p);
     auto need = [&](std::size_t n) { return p.size() >= n; };
     auto positive = [&](std::size_t n) {

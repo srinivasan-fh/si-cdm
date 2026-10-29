@@ -1,4 +1,6 @@
 #include "ui/LandingUI.hpp"
+
+#include "core/Armature.hpp"
 #include "core/Weldment.hpp"
 #include "core/Fastener.hpp"
 #include "core/Route.hpp"
@@ -380,6 +382,8 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showSection && st.project && st.mode != ViewMode::Drawing2D) drawSectionWindow(cmd, st, scene);
     if (st.showStudy) drawStudyWindow(cmd, st, scene);
     if (st.showStack && st.project) drawStackWindow(cmd, st, scene);
+    if (st.showArmature && st.mode != ViewMode::Drawing2D) drawArmatureWindow(cmd, st, scene);
+    if (!st.showArmature) st.armaturePick = false;
     if (st.showPath3d && st.mode != ViewMode::Drawing2D) drawPath3dWindow(cmd, st, scene);
     if (!st.showPath3d) st.pathPick = false;
     if (st.showLicence) drawLicenceWindow(cmd, st);
@@ -480,6 +484,138 @@ void LandingUI::drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene
         ImGui::PopID();
     }
     ImGui::TextDisabled(tr("%zu samples from %.3g to %.3g s"), r.t.size(), r.t.empty() ? 0.0 : r.t.front(), r.t.empty() ? 0.0 : r.t.back());
+    ImGui::End();
+}
+
+// Armatures: balls joined by links, sketched like ZSpheres (add on a side or by clicking the
+// model), moved, sized, mirrored, posed, and skinned into one smooth mesh.
+void LandingUI::drawArmatureWindow(UiCommands& cmd, UiState& st, const Scene& scene) {
+    ImGui::SetNextWindowSize({420, 620}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(tr("Armature"), &st.showArmature)) {
+        ImGui::End();
+        return;
+    }
+    auto q = [](const std::string& s) { return "\"" + s + "\""; };
+    auto n = [](double v) {
+        char b[40];
+        std::snprintf(b, sizeof b, "%.4g", v);
+        return std::string(b);
+    };
+    auto vec = [&](const Vec3& v) { return n(v.x) + "," + n(v.y) + "," + n(v.z); };
+    // Which armature: the one named, else the selected body if it is one, else the last.
+    const Body* body = nullptr;
+    for (const Body& b : scene.bodies())
+        if (b.kind == "armature" && b.name == st.armatureName) body = &b;
+    if (!body && st.selectedBody >= 0 && st.selectedBody < static_cast<int>(scene.bodies().size()) &&
+        scene.bodies()[static_cast<std::size_t>(st.selectedBody)].kind == "armature")
+        body = &scene.bodies()[static_cast<std::size_t>(st.selectedBody)];
+    if (!body)
+        for (const Body& b : scene.bodies())
+            if (b.kind == "armature") body = &b;
+    if (body) st.armatureName = body->name;
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo("##armature", body ? body->name.c_str() : tr("(no armature yet)"))) {
+        for (const Body& b : scene.bodies())
+            if (b.kind == "armature" && ImGui::Selectable(b.name.c_str(), body == &b)) st.armatureName = b.name, st.armatureBall = 0;
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(tr("New Armature"))) {
+        cmd.commands.push_back("ARMATURE NEW RADIUS 20 AT 0,0,100");
+        st.armatureName.clear(), st.armatureBall = 0;
+    }
+    Armature arm;
+    if (!body || !armatureFromParams(body->params, arm)) {
+        ImGui::TextWrapped("%s", tr("An armature is a tree of balls joined by links: add balls on balls (or click on one), size and "
+                                    "pose them, then skin it into one smooth mesh to sculpt."));
+        ImGui::End();
+        return;
+    }
+    const std::string name = q(body->name);
+    st.armatureBall = std::clamp(st.armatureBall, 0, static_cast<int>(arm.balls.size()) - 1);
+    const int sel = st.armatureBall;
+    const ArmatureBall& ball = arm.balls[static_cast<std::size_t>(sel)];
+    static const char* const kMirror[] = {"Off", "X", "Y", "Z"};
+    ImGui::SetNextItemWidth(70);
+    int mirror = st.armatureMirror;
+    if (ImGui::Combo(tr("Mirror"), &mirror, kMirror, 4)) st.armatureMirror = mirror;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Add, move, size and turn balls on both sides of the plane through the root ball"));
+    const std::string mirrorWord = st.armatureMirror > 0 ? std::string(" MIRROR ") + kMirror[st.armatureMirror] : std::string();
+    ImGui::SameLine();
+    ImGui::Checkbox(tr("Add by clicking it"), &st.armaturePick);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A click on a ball adds a new one there, on its surface"));
+    // The balls.
+    if (ImGui::BeginChild("##balls", {0, 150}, ImGuiChildFlags_Borders)) {
+        for (std::size_t i = 0; i < arm.balls.size(); ++i) {
+            char line[160];
+            std::snprintf(line, sizeof line, "%zu  r %.3g  %s %s", i + 1, static_cast<double>(arm.balls[i].radius),
+                          arm.balls[i].parent < 0 ? tr("root") : tr("on"), arm.balls[i].parent < 0 ? "" : std::to_string(arm.balls[i].parent + 1).c_str());
+            if (ImGui::Selectable(line, static_cast<int>(i) == sel)) st.armatureBall = static_cast<int>(i);
+        }
+    }
+    ImGui::EndChild();
+    // The chosen ball: where, how big, its pose.
+    ImGui::Text(tr("Ball %d"), sel + 1);
+    Vec3 at = ball.at;
+    ImGui::SetNextItemWidth(-60);
+    ImGui::InputFloat3(tr("At"), &at.x, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back("ARMATURE " + name + " MOVE " + std::to_string(sel + 1) + " TO " + vec(at) + mirrorWord);
+    float radius = ball.radius;
+    ImGui::SetNextItemWidth(-60);
+    ImGui::DragFloat(tr("Radius"), &radius, 0.1f, 0.1f, 10000.0f, "%.2f");
+    if (ImGui::IsItemDeactivatedAfterEdit() && radius > 0)
+        cmd.commands.push_back("ARMATURE " + name + " RADIUS " + std::to_string(sel + 1) + " " + n(radius) + mirrorWord);
+    Vec3 turn = quatToEuler(ball.turn);
+    ImGui::SetNextItemWidth(-60);
+    ImGui::DragFloat3(tr("Turn"), &turn.x, 0.5f, -180.0f, 180.0f, "%.1f deg");
+    if (ImGui::IsItemDeactivatedAfterEdit()) cmd.commands.push_back("ARMATURE " + name + " POSE " + std::to_string(sel + 1) + " TURN " + vec(turn) + mirrorWord);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Turns the ball and everything on it about its centre (X, then Y, then Z), bending the skin"));
+    // Adding and taking away.
+    static const char* const kSide[] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+    static const Vec3 kDir[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    if (ImGui::Button(tr("Add a Ball On It"))) {
+        const Vec3 to = ball.at + kDir[m_armSide] * (ball.radius * 2.0f);
+        cmd.commands.push_back("ARMATURE " + name + " ADD TO " + std::to_string(sel + 1) + " AT " + vec(to) + " RADIUS " + n(ball.radius * 0.8f) + mirrorWord);
+        st.armatureBall = static_cast<int>(arm.balls.size());
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(60);
+    ImGui::Combo("##side", &m_armSide, kSide, 6);
+    ImGui::SameLine();
+    if (ball.parent < 0) ImGui::BeginDisabled();
+    if (ImGui::Button(tr("Insert"))) cmd.commands.push_back("ARMATURE " + name + " INSERT " + std::to_string(sel + 1));
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("A ball halfway along the link to this one"));
+    ImGui::SameLine();
+    if (ImGui::Button(tr("Remove"))) {
+        cmd.commands.push_back("ARMATURE " + name + " REMOVE " + std::to_string(sel + 1));
+        st.armatureBall = std::max(0, ball.parent);
+    }
+    if (ball.parent < 0) ImGui::EndDisabled();
+    if (ImGui::Button(tr("Rest Pose"))) cmd.commands.push_back("ARMATURE " + name + " POSE RESET");
+    ImGui::SameLine();
+    if (ImGui::Button(body->visible ? tr("Hide the Armature") : tr("Show the Armature"))) cmd.commands.push_back("ARMATURE " + name + (body->visible ? " HIDE" : " SHOW"));
+    ImGui::Separator();
+    // The skin.
+    ImGui::TextUnformatted(tr("Skin"));
+    ImGui::SetNextItemWidth(90);
+    ImGui::DragFloat(tr("Voxel"), &m_armVoxel, 0.05f, 0.0f, 100.0f, m_armVoxel > 0 ? "%.2f mm" : "auto");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90);
+    ImGui::DragFloat(tr("Blend"), &m_armBlend, 0.05f, -1.0f, 100.0f, m_armBlend >= 0 ? "%.2f mm" : "auto");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(60);
+    ImGui::DragInt(tr("Smooth"), &m_armSmooth, 0.2f, 0, 50);
+    if (ImGui::Button(tr("Skin It"), {-1, 0})) {
+        std::string line = "ARMATURE " + name + " SKIN SMOOTH " + std::to_string(m_armSmooth);
+        if (m_armVoxel > 0) line += " VOXEL " + n(m_armVoxel);
+        if (m_armBlend >= 0) line += " BLEND " + n(m_armBlend);
+        cmd.commands.push_back(line);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("One smooth closed mesh round the balls and links, bound to them: turning a ball bends it"));
+    std::string skins;
+    for (const Body& b : scene.bodies())
+        if (b.skin && b.skin->armature == body->name) skins += (skins.empty() ? "" : ", ") + b.name;
+    if (!skins.empty()) ImGui::TextDisabled(tr("Skins following it: %s"), skins.c_str());
     ImGui::End();
 }
 
@@ -1245,6 +1381,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::EndMenu();
         }
         // Standard fasteners: one placed on its own, or the selected part's wizard holes filled.
+        if (ImGui::MenuItem(tr("Armature (Sketch with Balls)..."))) st.showArmature = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Sketch a form as balls joined by links, pose it, and skin it into one smooth mesh"));
         if (m_menuScene && ImGui::BeginMenu(tr("Fasteners"))) {
             const Scene& scene = *m_menuScene;
             static const char* const kTypes[] = {SICDM_TR_NOOP("Hex bolt"),         SICDM_TR_NOOP("Socket head cap screw"),

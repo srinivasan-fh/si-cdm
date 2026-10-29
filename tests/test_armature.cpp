@@ -1,0 +1,260 @@
+#include "TestFramework.hpp"
+
+#include "core/Armature.hpp"
+#include "core/Command.hpp"
+#include "core/Document.hpp"
+#include "core/FileIO.hpp"
+#include "core/Json.hpp"
+#include "core/Mcp.hpp"
+#include "core/Scene.hpp"
+#include "core/Sculpt.hpp"
+
+#include <cmath>
+#include <filesystem>
+
+using namespace sicdm;
+
+#define REQUIRE(c)                  \
+    do {                            \
+        const bool required_ = (c); \
+        CHECK(required_);           \
+        if (!required_) return;     \
+    } while (0)
+
+namespace {
+
+constexpr double kPiD = 3.14159265358979323846;
+
+CommandOutput run(Document& d, const std::string& line) { return executeCommand(d, line, nullptr); }
+
+Body* named(Document& d, const std::string& n) {
+    for (Body& b : d.scene.bodies())
+        if (b.name == n) return &b;
+    return nullptr;
+}
+
+Armature armatureOf(Document& d, const std::string& n) {
+    Armature a;
+    if (Body* b = named(d, n)) armatureFromParams(b->params, a);
+    return a;
+}
+
+std::string joined(const CommandOutput& o) {
+    std::string s;
+    for (const std::string& l : o.lines) s += l + "\n";
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("armature: params, a sound tree, quaternions that agree with the Euler turns") {
+    Armature a;
+    a.balls = {{{0, 0, 0}, 10, -1, {0, 0, 0, 1}}, {{50, 0, 0}, 8, 0, {0, 0, 0, 1}}, {{100, 0, 0}, 6, 1, {0, 0, 0, 1}}};
+    Armature back;
+    REQUIRE(armatureFromParams(armatureParams(a), back));
+    CHECK(back.balls.size() == 3 && back.balls[2].parent == 1 && back.balls[1].radius == 8);
+    std::vector<float> loop = armatureParams(a);
+    loop[4] = 2; // the root on ball 3: no root left, and a loop
+    CHECK(!armatureFromParams(loop, back));
+    std::vector<float> flat = armatureParams(a);
+    flat[3 * kArmatureFloats - kArmatureFloats + 3] = 0; // a ball without size
+    CHECK(!armatureFromParams(flat, back));
+    CHECK(!armatureFromParams({1, 2, 3}, back));
+    // The quaternion of an Euler turn is that turn; and back.
+    const Vec3 e{20, -35, 70};
+    const Mat4 m = quatMatrix(quatFromEuler(e)), r = eulerRotation(e);
+    for (int c = 0; c < 3; ++c)
+        for (int k = 0; k < 3; ++k) CHECK_NEAR(m.m[c][k], r.m[c][k], 1e-5);
+    const Vec3 again = quatToEuler(quatFromEuler(e));
+    CHECK_NEAR(again.x, 20, 1e-3);
+    CHECK_NEAR(again.y, -35, 1e-3);
+    CHECK_NEAR(again.z, 70, 1e-3);
+    // Posing: ball 2 turned 90 degrees about Z swings ball 3 round it.
+    a.balls[1].turn = quatFromAxisAngle({0, 0, 1}, radians(90));
+    const std::vector<Vec3> p = posedBalls(a);
+    CHECK(length(p[1] - Vec3{50, 0, 0}) < 1e-4f);
+    CHECK(length(p[2] - Vec3{50, 50, 0}) < 1e-4f);
+}
+
+TEST_CASE("armature skin: a ball's skin is the sphere, two balls' the capsule, closed and bound") {
+    Armature one;
+    one.balls = {{{0, 0, 0}, 20, -1, {0, 0, 0, 1}}};
+    MeshData m;
+    SkinData s;
+    REQUIRE(armatureSkin(one, SkinOptions{}, m, s));
+    CHECK(openEdgeCount(m) == 0);
+    CHECK_NEAR(meshVolume(m), 4.0 / 3 * kPiD * 8000, 0.01 * 4.0 / 3 * kPiD * 8000); // on the sphere, its facets' chords short of it
+    double worst = 0;
+    for (const Vertex& v : m.vertices) worst = std::max(worst, std::fabs(static_cast<double>(length(v.position)) - 20.0));
+    CHECK(worst < 0.01); // every vertex on the sphere
+    CHECK(s.rest.size() == m.vertices.size());
+    CHECK(s.bone[0][0] == -1); // one ball: nothing to follow
+
+    Armature two;
+    two.balls = {{{0, 0, 0}, 10, -1, {0, 0, 0, 1}}, {{60, 0, 0}, 10, 0, {0, 0, 0, 1}}};
+    SkinOptions o;
+    o.blend = 0;
+    REQUIRE(armatureSkin(two, o, m, s));
+    CHECK(openEdgeCount(m) == 0);
+    const double capsule = kPiD * 100 * 60 + 4.0 / 3 * kPiD * 1000;
+    CHECK_NEAR(meshVolume(m), capsule, 0.01 * capsule);
+    for (std::size_t i = 0; i < s.bone.size(); ++i) {
+        CHECK(s.bone[i][0] == 1); // all on the one link
+        CHECK_NEAR(s.weight[i][0], 1.0, 1e-6);
+    }
+}
+
+TEST_CASE("armature skin of a figure: closed, no triangle facing in, even where the voxels fall on its balls") {
+    // Balls on round numbers put voxel samples exactly on the surface (4^2 + 1^2 + 8^2 = 9^2 at
+    // the feet): the marching once made slivers facing anywhere there.
+    Document d;
+    for (const char* c : {"ARMATURE NEW Body AT 0,0,100 RADIUS 20", "ARMATURE Body ADD AT 0,0,140 RADIUS 14", "ARMATURE Body ADD TO 1 AT 40,0,100 RADIUS 10 MIRROR X",
+                          "ARMATURE Body ADD TO 3 AT 80,0,100 RADIUS 8 MIRROR X", "ARMATURE Body ADD TO 1 AT 15,0,60 RADIUS 12 MIRROR X",
+                          "ARMATURE Body ADD TO 7 AT 15,0,10 RADIUS 9 MIRROR X", "ARMATURE Body SKIN"})
+        REQUIRE(run(d, c).ok);
+    const Body* s = named(d, "Body skin");
+    REQUIRE(s != nullptr);
+    CHECK(openEdgeCount(s->mesh) == 0);
+    int facingIn = 0;
+    const MeshData& m = s->mesh;
+    for (std::size_t k = 0; k + 2 < m.indices.size(); k += 3) {
+        const Vertex &a = m.vertices[m.indices[k]], &b = m.vertices[m.indices[k + 1]], &c = m.vertices[m.indices[k + 2]];
+        if (dot(cross(b.position - a.position, c.position - a.position), a.normal + b.normal + c.normal) <= 0) ++facingIn;
+    }
+    CHECK(facingIn == 0);
+    CHECK(meshVolume(m) > 0);
+}
+
+TEST_CASE("armature pose bends the skin: the far end turns with the ball, the near end stays, edits are kept") {
+    Document d;
+    REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 50,0,0 RADIUS 8").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 100,0,0 RADIUS 6").ok);
+    REQUIRE(run(d, "ARMATURE Arm SKIN").ok);
+    Body* skin = named(d, "Arm skin");
+    REQUIRE(skin && skin->skin);
+    CHECK(!named(d, "Arm")->visible); // the skin is what is seen
+    const SkinData restSkin = *skin->skin;
+    REQUIRE(run(d, "ARMATURE Arm POSE 2 AXIS 0,0,1 ANGLE 90").ok);
+    skin = named(d, "Arm skin");
+    const Mat4 turn = translate({50, 0, 0}) * rotateAxis({0, 0, 1}, radians(90)) * translate({-50, 0, 0});
+    double farWorst = 0, nearWorst = 0;
+    for (std::size_t i = 0; i < restSkin.rest.size(); ++i) {
+        const Vec3 r = restSkin.rest[i], now = skin->mesh.vertices[i].position;
+        if (r.x > 88) farWorst = std::max(farWorst, static_cast<double>(length(now - turn.transformPoint(r))));
+        if (r.x < 12) nearWorst = std::max(nearWorst, static_cast<double>(length(now - r)));
+    }
+    CHECK(farWorst < 0.05);
+    CHECK(nearWorst < 0.05);
+    CHECK(openEdgeCount(skin->mesh) == 0);
+    // An edit to the posed skin (a vertex pulled out) is kept through the rest pose and back.
+    std::size_t tip = 0;
+    for (std::size_t i = 0; i < restSkin.rest.size(); ++i)
+        if (restSkin.rest[i].x > restSkin.rest[tip].x) tip = i;
+    skin->mesh.vertices[tip].position += Vec3{0, 3, 0};
+    const Vec3 edited = skin->mesh.vertices[tip].position;
+    REQUIRE(run(d, "ARMATURE Arm POSE RESET").ok);
+    skin = named(d, "Arm skin");
+    CHECK(length(skin->mesh.vertices[tip].position - (restSkin.rest[tip] + Vec3{3, 0, 0})) < 1e-3f); // the edit, turned back
+    REQUIRE(run(d, "ARMATURE Arm POSE 2 AXIS 0,0,1 ANGLE 90").ok);
+    skin = named(d, "Arm skin");
+    CHECK(length(skin->mesh.vertices[tip].position - edited) < 1e-3f);
+    // UNDO takes the pose back.
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(std::fabs(armatureOf(d, "Arm").balls[1].turn[3] - 1) < 1e-6f);
+}
+
+TEST_CASE("ARMATURE: add, mirror, insert, move a chain, size, remove, refusals") {
+    Document d;
+    REQUIRE(run(d, "ARMATURE NEW Figure AT 0,0,100 RADIUS 20").ok);
+    REQUIRE(run(d, "ARMATURE Figure ADD AT 0,0,140 RADIUS 14").ok);
+    const CommandOutput o = run(d, "ARMATURE Figure ADD TO 1 AT 40,0,100 RADIUS 10 MIRROR X");
+    REQUIRE(o.ok);
+    CHECK(joined(o).find("and its mirror 4 at (-40, 0, 100)") != std::string::npos);
+    REQUIRE(run(d, "ARMATURE Figure ADD TO 3 AT 80,0,100 RADIUS 8 MIRROR X").ok);
+    Armature a = armatureOf(d, "Figure");
+    REQUIRE(a.balls.size() == 6);
+    CHECK(a.balls[4].parent == 2 && a.balls[5].parent == 3); // the mirror's on the mirror
+    // Moving a ball and what hangs from it, mirrored.
+    REQUIRE(run(d, "ARMATURE Figure MOVE 3 BY 0,0,10 CHAIN MIRROR X").ok);
+    a = armatureOf(d, "Figure");
+    CHECK(length(a.balls[4].at - Vec3{80, 0, 110}) < 1e-4f);
+    CHECK(length(a.balls[5].at - Vec3{-80, 0, 110}) < 1e-4f);
+    REQUIRE(run(d, "ARMATURE Figure RADIUS 5 6 MIRROR X").ok);
+    a = armatureOf(d, "Figure");
+    CHECK(a.balls[4].radius == 6 && a.balls[5].radius == 6);
+    REQUIRE(run(d, "ARMATURE Figure INSERT 5").ok);
+    a = armatureOf(d, "Figure");
+    REQUIRE(a.balls.size() == 7);
+    CHECK(a.balls[4].parent == 6 && a.balls[6].parent == 2);
+    CHECK(length(a.balls[6].at - Vec3{60, 0, 110}) < 1e-4f);
+    REQUIRE(run(d, "ARMATURE Figure POSE 3 TURN 0,30,0 MIRROR X").ok);
+    a = armatureOf(d, "Figure");
+    CHECK_NEAR(quatToEuler(a.balls[3].turn).y, -30, 1e-3); // the mirror turns the mirrored way
+    CHECK(joined(run(d, "ARMATURE Figure LIST")).find("turned (0, 30, 0) deg") != std::string::npos);
+    REQUIRE(run(d, "ARMATURE Figure REMOVE 3").ok); // and 5 and 7 on it
+    CHECK(armatureOf(d, "Figure").balls.size() == 4);
+    CHECK(run(d, "ARMATURE").lines.size() == 1);
+    // Refusals.
+    CHECK(!run(d, "ARMATURE Figure REMOVE 1").ok);   // the root
+    CHECK(!run(d, "ARMATURE Figure ADD TO 9 AT 1,2,3").ok);
+    CHECK(!run(d, "ARMATURE Figure ADD AT 1,2,3 MIRROR W").ok);
+    CHECK(!run(d, "ARMATURE Figure ADD").ok);
+    CHECK(!run(d, "ARMATURE Figure POSE 2").ok);
+    CHECK(!run(d, "ARMATURE Nothing LIST").ok);
+    CHECK(!run(d, "ARMATURE NEW Figure").ok);
+    CHECK(!run(d, "ARMATURE Figure FLY").ok);
+}
+
+TEST_CASE("armatures and skins are saved, follow a rename, and work over MCP") {
+    Document d;
+    REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 50,0,0 RADIUS 8").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 100,0,0 RADIUS 6").ok);
+    REQUIRE(run(d, "ARMATURE Arm SKIN NAME Limb VOXEL 2 BLEND 2 SMOOTH 4").ok);
+    REQUIRE(run(d, "ARMATURE Arm POSE 2 TURN 0,0,45").ok);
+    const std::string path = (std::filesystem::temp_directory_path() / "sicdm_armature_test.sicdm").string();
+    std::string err;
+    REQUIRE(saveProject(d.scene, d.state, path, &err));
+    Document e;
+    REQUIRE(loadProject(e.scene, e.state, path, &err, nullptr));
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    Body* limb = named(e, "Limb");
+    REQUIRE(limb && limb->skin);
+    CHECK(limb->skin->armature == "Arm");
+    CHECK(limb->skin->rest.size() == limb->mesh.vertices.size());
+    CHECK(named(e, "Arm")->kind == "armature");
+    CHECK_NEAR(quatToEuler(armatureOf(e, "Arm").balls[1].turn).z, 45, 1e-3);
+    // Posed again after loading: the same as posing it here.
+    REQUIRE(run(e, "ARMATURE Arm POSE 2 TURN 0,0,-30").ok);
+    REQUIRE(run(d, "ARMATURE Arm POSE 2 TURN 0,0,-30").ok);
+    double worst = 0;
+    const Body* a = named(d, "Limb");
+    limb = named(e, "Limb");
+    for (std::size_t i = 0; i < a->mesh.vertices.size(); ++i)
+        worst = std::max(worst, static_cast<double>(length(a->mesh.vertices[i].position - limb->mesh.vertices[i].position)));
+    CHECK(worst < 1e-3);
+    // Renamed, the skin follows it still.
+    for (std::size_t i = 0; i < e.scene.bodies().size(); ++i)
+        if (e.scene.bodies()[i].name == "Arm") e.scene.renameBody(i, "Rig");
+    CHECK(named(e, "Limb")->skin->armature == "Rig");
+    REQUIRE(run(e, "ARMATURE Rig POSE RESET").ok);
+
+    Document m;
+    McpServer server(m, nullptr);
+    const auto tool = [&](const std::string& args) {
+        const std::string msg = R"({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"armature","arguments":)" + args + "}}";
+        const auto r = Json::parse(server.handle(msg));
+        return r ? (*r)["result"] : Json();
+    };
+    CHECK(!tool(R"({"operation":"new","armature":"Tail","at":[0,0,0],"radius":12})")["isError"].asBool());
+    CHECK(!tool(R"({"operation":"add","armature":"Tail","at":[40,0,0],"radius":9})")["isError"].asBool());
+    CHECK(!tool(R"({"operation":"add","armature":"Tail","to":2,"at":[75,0,0],"radius":6})")["isError"].asBool());
+    CHECK(!tool(R"({"operation":"skin","armature":"Tail"})")["isError"].asBool());
+    CHECK(!tool(R"({"operation":"pose","armature":"Tail","ball":2,"axis":[0,1,0],"angle":30})")["isError"].asBool());
+    CHECK(tool(R"({"operation":"list","armature":"Tail"})")["content"][0]["text"].asString().find("turned (0, 30, 0) deg") != std::string::npos);
+    CHECK(named(m, "Tail skin") != nullptr);
+    CHECK(tool(R"({"operation":"pose","armature":"Tail","ball":9,"angle":30})")["isError"].asBool());
+    CHECK(tool(R"({"operation":"fly","armature":"Tail"})")["isError"].asBool());
+}

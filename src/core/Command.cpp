@@ -310,6 +310,12 @@ constexpr CommandSpec kCommands[] = {
      "velocity and acceleration, a point's path, speed and acceleration; a cam follower's contact force on its spring "
      "(MOTION ... CONTACT cam SPRING k PRELOAD f MASS m) and where it would lift off, with the spring it needs. CSV writes "
      "the table, SVG the charts; the Motion Study window plots them"},
+    {"ARMATURE", "ZSPHERE ZSPHERES", "ARMATURE | ARMATURE NEW [name] [AT x,y,z] [RADIUS r] | ARMATURE name ADD [TO n] AT x,y,z [RADIUS r] [MIRROR X|Y|Z] | "
+     "INSERT n | MOVE n TO x,y,z | BY dx,dy,dz [CHAIN] | RADIUS n r | REMOVE n | LIST | SHOW | HIDE | SKIN [NAME skin] [VOXEL v] [BLEND b] [SMOOTH k] | "
+     "POSE n TURN ax,ay,az | AXIS x,y,z ANGLE a | RESET [MIRROR X|Y|Z] | POSE RESET",
+     "Sketch a form as balls joined by tapered links (like ZSpheres): add balls on balls, mirrored across the root's plane; "
+     "SKIN fuses them into one smooth closed mesh bound to the armature, and POSE turns a ball and everything on it, bending "
+     "the skin (edits to the skin are kept)"},
     {"STACK", "STACKUP TOLSTACK", "STACK | STACK NEW name [NOTE text] [SPEC lo hi | MIN lo | MAX hi] [GAP from to ALONG dir] [SAMPLES n] | "
      "STACK name ADD [label] nominal | BODY body ALONG dir | DIM n [TOL t | TOL upper lower | LIMITS hi lo | FIT code | GENERAL f|m|c|v] "
      "[MINUS] [SENS k] [NORMAL [CP c] | UNIFORM | TRIANGULAR] | STACK name EDIT n ... | REMOVE n | SPEC ... | GAP ... | NOTE text | UPDATE | "
@@ -357,7 +363,7 @@ constexpr CommandSpec kCommands[] = {
     {"DISPLAY", "SHADE", "DISPLAY SHADED|EDGES|WIRE|HIDDEN", "Display mode of the 3D window"},
     {"GRID", "", "GRID [ON|OFF]", "Show or hide the grid"},
     {"SNAP", "", "SNAP [ON|OFF]", "Grid and point snapping for sketches"},
-    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE|SECTION|PATH3D|STUDY|STACK", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data, appearance, section, 3D path and route, motion study or tolerance stack-up window"},
+    {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE|SECTION|PATH3D|STUDY|STACK|ARMATURE", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data, appearance, section, 3D path and route, motion study, tolerance stack-up or armature window"},
     // Session
     {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF]",
      "Units for typing and showing lengths (the model stays exact in mm)"},

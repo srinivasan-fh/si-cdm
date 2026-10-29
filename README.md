@@ -335,6 +335,14 @@ sculpted this way by a 92-command script ([docs/examples/head-bust.txt](docs/exa
 
 ![A head-and-shoulders bust: blocked out from stretched balls, fused with REMESH, detailed with the brushes](docs/head-bust.png)
 
+**Armatures** (like ZSpheres) sketch a form as balls joined by tapered links: add balls on balls,
+mirrored, then `SKIN` fuses them into one smooth closed mesh. The skin stays bound to the balls, so
+`POSE` bends it and keeps whatever was sculpted on it
+(`ARMATURE Body ADD TO 1 AT 40,0,100 MIRROR X`, `ARMATURE Body SKIN`,
+`ARMATURE Body POSE 3 AXIS 0,1,0 ANGLE 40`).
+
+![An armature of balls in the Armature window, and its skin posed](docs/armature.png)
+
 Details: [docs/sculpting.md](docs/sculpting.md).
 
 ## Armour and exoskeletons

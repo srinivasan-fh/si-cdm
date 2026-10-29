@@ -78,6 +78,11 @@ struct UiState {
     int studySamples = 600;
     // The Tolerance Stack-up window (its stacks are the project's).
     bool showStack = false;
+    // The Armature window: the armature edited, its ball chosen (0...), the plane balls are
+    // mirrored across (-1 none, 0 X, 1 Y, 2 Z), and clicks on it add balls while armaturePick is on.
+    bool showArmature = false, armaturePick = false;
+    std::string armatureName;
+    int armatureBall = 0, armatureMirror = 0;
     // The 3D Path window: points for a new 3D path (clicks on the model add them while
     // pathPick is on), and a route along the selected path.
     bool showPath3d = false, pathPick = false, pathSpline = false, pathClosed = false;
@@ -240,6 +245,7 @@ private:
     void drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene);
+    void drawArmatureWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawPath3dWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawProductWindow(UiCommands& cmd, UiState& st); // ProductWindow.cpp
     void drawAppearanceWindow(UiCommands& cmd, UiState& st); // AppearanceWindow.cpp
@@ -341,6 +347,9 @@ private:
     StackResult m_stackResult;                               // and that analysis
     char m_stackNew[64] = "";                                // a new stack's name as it is typed
     int m_stackAxis = 0;                                     // the size of the selected body along X, Y or Z
+    int m_armSide = 0;                                       // the Armature window: the side a new ball goes on (+X ... -Z)
+    float m_armVoxel = 0.0f, m_armBlend = -1.0f;             // the skin's voxel and blend (0 / -1: from the balls)
+    int m_armSmooth = 6;                                     // and its smoothing passes
     int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;

@@ -1,5 +1,6 @@
 #include "app/Application.hpp"
 #include "app/PenInput.hpp"
+#include "core/Armature.hpp"
 #include "core/Components.hpp"
 #include "core/DirectEdit.hpp"
 #include "core/Mold.hpp"
@@ -579,6 +580,42 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         line += " \"" + m_uiState.mateFirst + "\" AT " + first + " \"" + b.name + "\" AT " + at;
         m_uiState.mateFirst.clear(); // ready for the next pair
         runCommandLine(line);
+        return;
+    }
+
+    // The Armature window adding balls: a click on a ball adds one on its surface there,
+    // joined to it (in its rest frame, so a posed armature takes it where it was clicked).
+    if (m_uiState.showArmature && m_uiState.armaturePick && !is2D) {
+        const auto hit = pick(x, y);
+        const auto& bodies = m_doc.scene.bodies();
+        if (!hit || hit->body < 0 || hit->body >= static_cast<int>(bodies.size()) || bodies[static_cast<std::size_t>(hit->body)].kind != "armature") {
+            setStatus("Click a ball of the armature to add one there");
+            return;
+        }
+        const Body& ab = bodies[static_cast<std::size_t>(hit->body)];
+        Armature arm;
+        if (!armatureFromParams(ab.params, arm)) return;
+        const Vec3 p = hit->point - ab.offset;
+        const std::vector<Vec3> posed = posedBalls(arm);
+        std::size_t near = 0;
+        float best = 1e30f;
+        for (std::size_t i = 0; i < posed.size(); ++i) {
+            const float d = std::fabs(length(p - posed[i]) - arm.balls[i].radius);
+            if (d < best) best = d, near = i;
+        }
+        const Vec3 out = length(p - posed[near]) > 1e-6f ? normalize(p - posed[near]) : Vec3{0, 0, 1};
+        const Vec3 posedAt = posed[near] + out * arm.balls[near].radius;
+        const std::vector<Mat4> pose = armaturePose(arm);
+        const Vec3 restAt = inverse(pose[near]).transformPoint(posedAt);
+        char line[256];
+        std::snprintf(line, sizeof line, "ARMATURE \"%s\" ADD TO %zu AT %.4g,%.4g,%.4g RADIUS %.4g", ab.name.c_str(), near + 1, static_cast<double>(restAt.x),
+                      static_cast<double>(restAt.y), static_cast<double>(restAt.z), static_cast<double>(arm.balls[near].radius * 0.8f));
+        std::string cmdLine = line;
+        static const char* const kMirror[] = {"", " MIRROR X", " MIRROR Y", " MIRROR Z"};
+        cmdLine += kMirror[std::clamp(m_uiState.armatureMirror, 0, 3)];
+        m_uiState.armatureName = ab.name;
+        m_uiState.armatureBall = static_cast<int>(arm.balls.size());
+        runCommandLine(cmdLine);
         return;
     }
 
@@ -3551,6 +3588,7 @@ void Application::setPanelPage(int page) {
     else if (page == 13) m_uiState.showPath3d = true;
     else if (page == 14) m_uiState.showStudy = true;
     else if (page == 15) m_uiState.showStack = true;
+    else if (page == 16) m_uiState.showArmature = true;
     else if (page == 7) m_uiState.showLicence = true;
     else if (page == 6) m_uiState.showPreferences = true;
     else if (page == 5) m_uiState.showHelp = true;

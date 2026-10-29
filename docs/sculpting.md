@@ -337,6 +337,91 @@ renders, OBJ files and 3D printers that print in colour.
 - A painted or grouped CAD body becomes a mesh body of the same shape. It keeps its exact
   geometry for STEP.
 
+## Armatures: sketching with balls
+
+![The Armature window over a figure of balls, and its skin posed with the arms down](armature.png)
+
+An armature is a tree of balls joined by tapered links, like ZBrush's ZSpheres. It is a quick way
+to block out a figure, a creature or a handle before sculpting.
+
+Build and size it:
+
+- Add balls on balls, mirrored across the plane through the root ball if you like.
+- Insert a ball halfway along a link.
+- Move a ball, or a ball with everything that hangs from it (`CHAIN`), and size it.
+
+Then turn it into a mesh:
+
+- `SKIN` makes one smooth, closed mesh round the balls and links, with rounded blends where they
+  meet.
+- The skin stays bound to the armature: `POSE` turns a ball and everything on it, and bends the skin
+  with it.
+- Edits made to the skin since (sculpting, smoothing) are kept: its rest shape is taken back from it
+  before each pose.
+
+```text
+ARMATURE NEW Body AT 0,0,100 RADIUS 20
+ARMATURE Body ADD AT 0,0,140 RADIUS 14                       a head on the root (on the last ball by default)
+ARMATURE Body ADD TO 1 AT 40,0,100 RADIUS 10 MIRROR X        a shoulder each side
+ARMATURE Body ADD TO 3 AT 80,0,100 RADIUS 8 MIRROR X         hands
+ARMATURE Body ADD TO 1 AT 15,0,60 RADIUS 12 MIRROR X         hips
+ARMATURE Body ADD TO 7 AT 15,0,10 RADIUS 9 MIRROR X          feet
+ARMATURE Body SKIN                                           "Body skin": the armature is hidden
+ARMATURE Body POSE 3 AXIS 0,1,0 ANGLE 40 MIRROR X            both arms down
+ARMATURE Body POSE RESET
+```
+
+The whole command:
+
+```text
+ARMATURE                                   the armatures and their skins
+ARMATURE NEW [name] [AT x,y,z] [RADIUS r]
+ARMATURE name ADD [TO n] AT x,y,z [RADIUS r] [MIRROR X|Y|Z]
+ARMATURE name INSERT n | REMOVE n | LIST | SHOW | HIDE
+ARMATURE name MOVE n TO x,y,z | BY dx,dy,dz [CHAIN] [MIRROR X|Y|Z]
+ARMATURE name RADIUS n r [MIRROR X|Y|Z]
+ARMATURE name SKIN [NAME skin] [VOXEL v] [BLEND b] [SMOOTH k]
+ARMATURE name POSE n TURN ax,ay,az | AXIS x,y,z ANGLE a | RESET [MIRROR X|Y|Z]
+ARMATURE name POSE RESET
+```
+
+**Building it:**
+
+- A new ball is joined to ball `TO`, or by default to the one added last. Its radius defaults to
+  0.8 of that ball's.
+- `MIRROR` adds, moves, sizes or turns the ball's twin across the plane through the root ball.
+- `REMOVE` takes away a ball and everything on it.
+
+**The skin:**
+
+- Each link is the solid hull of its two balls, a cone tangent to both. The links are joined with a
+  smooth minimum over `BLEND` (default a quarter of the smallest ball's radius).
+- The surface is marched on voxels (`VOXEL`, default a quarter of the smallest ball's radius) and
+  smoothed (`SMOOTH`).
+- Every vertex is then put onto the exact surface: the field is known exactly, so each vertex steps
+  along its gradient to where the field is zero. A single ball's skin is the sphere to its facets,
+  and two balls' is the capsule within 1% of its volume.
+
+**Binding and posing:**
+
+- Each skin vertex follows the links nearest its surface, up to four, weighted by inverse distance.
+  This is linear blend skinning.
+- A link moves with the ball at its near end. So turning a ball swings what hangs from it, and the
+  skin bends smoothly round the joint.
+- The armature and its skin are saved with the project. UNDO takes back a pose.
+
+**In the app:** *Design → Armature (Sketch with Balls)...* (or `PANEL ARMATURE`). The window lists
+the balls, and edits the chosen one's place, radius and turn. *Add a Ball On It* puts one on a side
+of it. With *Add by clicking it*, a click on a ball adds a new one on its surface where you
+clicked, as with ZSpheres. *Skin It* makes the skin. Over MCP, use the `armature` tool.
+
+**Limits:**
+
+- `MOVE`, `RADIUS` and `ADD` after skinning change the armature but not the skin. Skin again to fit
+  it.
+- `REMOVE` unbinds the skins, because the balls are renumbered.
+- A skin that is remeshed (or subdivided, or decimated) no longer follows the pose.
+
 ## Voxel remesh
 
 `REMESH` (like ZBrush's DynaMesh or Blender's voxel remesh) rebuilds a body as one closed solid with
@@ -502,6 +587,7 @@ BOSS    [body] [AT] x,y,z [DIR x,y,z] [CYLINDER|BOX|BALL] DIAMETER d HEIGHT h
 BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]
 UNDO
 REMESH  [body ["other"...]] [VOXEL v] [BLEND b] [SMOOTH s]   voxel remesh: fuse into one even, closed solid
+ARMATURE name ADD|INSERT|MOVE|RADIUS|REMOVE|SKIN|POSE ...      balls joined by links, skinned and posed (above)
 SCALE   body sx,sy,sz                      stretch along x, y, z (about the body's origin)
 ROTATE  body rx,ry,rz                      orient: degrees about X, then Y, then Z
 MASK    [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]   edit the mask (the MASK brush paints it)
@@ -533,3 +619,5 @@ Over MCP: the `sculpt` tool (`operation` = a brush name, `hole`, `pocket`, `chan
 `layer_strength` (`value`), `layer_on`, `layer_off`, `layer_delete`, `layer_bake`, `layer_list`, `multires_add`
 (`levels`), `multires_level` (`value`), `multires_up`, `multires_down`, `multires_apply`, `undo` or `redo`; `symmetry_axes`, `radial`,
 `falloff`, `color`, `alpha`, `alpha_angle`, `alpha_follow`, `alpha_tile` and `spacing` for the brushes).
+The `armature` tool sketches, skins and poses armatures: `new`, `add`, `insert`, `move`, `radius`,
+`remove`, `skin`, `pose`, `reset`, `show`, `hide` and `list`.

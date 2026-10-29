@@ -315,6 +315,30 @@ Json McpServer::toolDefinitions() {
                         "(path, speed, acceleration), and a cam follower's contact force on its spring with where it would lift off "
                         "and the spring it needs. Returns the findings; the table and charts can go to files.",
                         st, {}));
+        Json am = Json::object();
+        am.set("operation", enumProp({"list", "new", "add", "insert", "move", "radius", "remove", "skin", "pose", "reset", "show", "hide"},
+                                     "list the armatures (or one's balls, with armature); new; add a ball on ball `to`; insert one halfway to "
+                                     "ball `ball`; move or size a ball; remove it (and what hangs from it); skin it into a mesh; pose: turn a "
+                                     "ball; reset: the rest pose; show or hide it"));
+        am.set("armature", prop("string", "The armature (new: its name)"));
+        am.set("ball", prop("number", "The ball's number (1...)"));
+        am.set("to", prop("number", "add: the ball the new one joins (default the last added)"));
+        am.set("at", numberArray(3, "new / add / move: where, [x,y,z] mm (rest pose)"));
+        am.set("by", numberArray(3, "move: by [dx,dy,dz] instead"));
+        am.set("chain", prop("boolean", "move: what hangs from the ball moves too"));
+        am.set("radius", prop("number", "new / add / radius: the ball's radius (mm)"));
+        am.set("mirror", enumProp({"X", "Y", "Z"}, "add / move / radius / pose: on both sides of the plane through the root ball"));
+        am.set("turn", numberArray(3, "pose: the ball's turn, degrees about X, then Y, then Z"));
+        am.set("axis", numberArray(3, "pose: turn on about this axis (with angle) instead"));
+        am.set("angle", prop("number", "pose: degrees about axis"));
+        am.set("name", prop("string", "skin: the skin body's name"));
+        am.set("voxel", prop("number", "skin: voxel size, mm (default from the smallest ball)"));
+        am.set("blend", prop("number", "skin: the rounding where links meet, mm"));
+        am.set("smooth", prop("number", "skin: smoothing passes (default 6)"));
+        tools.push(tool("armature",
+                        "Armatures (like ZSpheres): sketch a form as balls joined by tapered links, mirrored if wanted; skin it into one "
+                        "smooth closed mesh bound to the balls; pose it by turning balls, which bends the skin (edits to it are kept).",
+                        am, {"operation"}));
         Json ts = Json::object();
         ts.set("operation", enumProp({"list", "new", "add", "edit", "remove", "spec", "gap", "update", "report", "rename", "delete"},
                                      "list the stacks; new; add or edit a dimension; remove one; set the spec or the model gap; update (measure "
@@ -2345,6 +2369,58 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return r;
     }
     if (name == "delete_motion") return runLine("MOTION DELETE " + a["name"].asString());
+    if (name == "armature") {
+        const std::string op = a["operation"].asString();
+        const std::string arm = "ARMATURE " + quote(a["armature"].asString()) + " ";
+        auto v3 = [&](const char* key) {
+            const Json& v = a[key];
+            return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber());
+        };
+        const std::string ball = a["ball"].isNumber() ? num(a["ball"].asNumber()) : std::string("0");
+        const std::string mirror = a["mirror"].isString() ? " MIRROR " + a["mirror"].asString() : std::string();
+        if (op == "list") return runLine(a["armature"].isString() ? arm + "LIST" : std::string("ARMATURE"));
+        if (op == "new") {
+            std::string l = "ARMATURE NEW";
+            if (a["armature"].isString()) l += " " + quote(a["armature"].asString());
+            if (a["at"].isArray()) l += " AT " + v3("at");
+            if (a["radius"].isNumber()) l += " RADIUS " + num(a["radius"].asNumber());
+            return runLine(l);
+        }
+        if (op == "add") {
+            std::string l = arm + "ADD";
+            if (a["to"].isNumber()) l += " TO " + num(a["to"].asNumber());
+            if (a["at"].isArray()) l += " AT " + v3("at");
+            if (a["radius"].isNumber()) l += " RADIUS " + num(a["radius"].asNumber());
+            return runLine(l + mirror);
+        }
+        if (op == "insert") return runLine(arm + "INSERT " + ball);
+        if (op == "move") {
+            std::string l = arm + "MOVE " + ball;
+            if (a["at"].isArray()) l += " TO " + v3("at");
+            else if (a["by"].isArray()) l += " BY " + v3("by");
+            if (a["chain"].asBool()) l += " CHAIN";
+            return runLine(l + mirror);
+        }
+        if (op == "radius") return runLine(arm + "RADIUS " + ball + " " + num(a["radius"].asNumber()) + mirror);
+        if (op == "remove") return runLine(arm + "REMOVE " + ball);
+        if (op == "skin") {
+            std::string l = arm + "SKIN";
+            if (a["name"].isString()) l += " NAME " + quote(a["name"].asString());
+            if (a["voxel"].isNumber()) l += " VOXEL " + num(a["voxel"].asNumber());
+            if (a["blend"].isNumber()) l += " BLEND " + num(a["blend"].asNumber());
+            if (a["smooth"].isNumber()) l += " SMOOTH " + num(a["smooth"].asNumber());
+            return runLine(l);
+        }
+        if (op == "pose") {
+            std::string l = arm + "POSE " + ball;
+            if (a["turn"].isArray()) l += " TURN " + v3("turn");
+            else if (a["angle"].isNumber()) l += (a["axis"].isArray() ? " AXIS " + v3("axis") : std::string()) + " ANGLE " + num(a["angle"].asNumber());
+            return runLine(l + mirror);
+        }
+        if (op == "reset") return runLine(arm + "POSE RESET");
+        if (op == "show" || op == "hide") return runLine(arm + toUpper(op));
+        return textResult("unknown operation", true);
+    }
     if (name == "tolerance_stack") {
         const std::string op = a["operation"].asString();
         const std::string st = "STACK " + quote(a["stack"].asString()) + " ";

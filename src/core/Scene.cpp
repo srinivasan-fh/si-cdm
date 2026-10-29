@@ -4,6 +4,7 @@
 
 #include <unordered_map>
 
+#include "core/Armature.hpp"
 #include "core/Brep.hpp"
 #include "core/Fastener.hpp"
 #include "core/Step.hpp"
@@ -541,6 +542,12 @@ void Scene::renameBody(std::size_t index, const std::string& name) {
             if (b == old) b = name;
         if (m.contact == old) m.contact = name; // a follower rides on it still
     }
+    for (Body& b : m_bodies) // skins follow their armature still
+        if (b.skin && b.skin->armature == old) {
+            auto s = std::make_shared<SkinData>(*b.skin);
+            s->armature = name;
+            b.skin = std::move(s);
+        }
 }
 
 std::optional<RayHit> Scene::raycast(const Ray& ray, const std::vector<Mat4>* transforms) const noexcept {

@@ -24,6 +24,7 @@ namespace sicdm {
 
 struct Brep;
 struct MultiresData;
+struct SkinData;
 
 // A hole the hole wizard made: where, which way it goes in, and its callout ("M6 tapped
 // 12 deep (drill 5 x 15)"), relative to the body's offset.
@@ -105,6 +106,9 @@ struct Body {
     // Multiresolution levels (see Multires.hpp), shared between copies and replaced whole
     // when they change (so undo snapshots keep theirs); null: none.
     std::shared_ptr<const MultiresData> multires;
+    // A skin made from an armature (Armature.hpp): its rest pose and bone weights, so posing
+    // the armature bends it; null: none. Shared and replaced whole, as multires.
+    std::shared_ptr<const SkinData> skin;
     std::uint64_t brepKey = 0; // meshKey() of that mesh
     bool exact() const;
 

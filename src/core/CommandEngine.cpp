@@ -25,6 +25,7 @@
 #include "core/WeldmentCommand.hpp"
 #include "core/RouteCommand.hpp"
 #include "core/FastenerCommand.hpp"
+#include "core/ArmatureCommand.hpp"
 #include "core/StackupCommand.hpp"
 #include "core/StudyCommand.hpp"
 #include "core/MoldCommand.hpp"
@@ -814,7 +815,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -830,7 +831,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -849,7 +850,7 @@ std::string releasedRefusal(const Document& doc, const std::string& cmd, const P
     if (!model) return {};
     // Asking: no arguments (MATERIAL, VAR, HISTORY... then show what there is), or a word that only asks.
     static const char* const kAskEmpty[] = {"MATERIAL", "VAR", "CONFIG", "MATE", "ASSEMBLY", "PHYSICS", "RIG", "TERRAIN", "SHEET", "LAYER", "POLYGROUP",
-                                            "UV", "MULTIRES", "HISTORY", "PLANE", "REFAXIS", "REFPOINT", "EXPLODE", "FASTENER"};
+                                            "UV", "MULTIRES", "HISTORY", "PLANE", "REFAXIS", "REFPOINT", "EXPLODE", "FASTENER", "ARMATURE"};
     // (Only names, like MATERIAL "Bracket", ask about those.)
     const bool onlyNames = std::all_of(pc.quoted.begin(), pc.quoted.end(), [](bool q) { return q; }) && pc.quoted.size() == pc.args.size();
     if (pc.args.empty() || onlyNames)
@@ -912,6 +913,9 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (cmd == "PATH3D" && !pc.args.empty() && iequal(pc.args[0], "info")) return;
     if (cmd == "ROUTE" && !pc.args.empty() && (iequal(pc.args[0], "list") || iequal(pc.args[0], "bends") || iequal(pc.args[0], "sizes"))) return;
     if (cmd == "FASTENER" && (pc.args.empty() || iequal(pc.args[0], "list") || iequal(pc.args[0], "sizes"))) return; // only looks
+    if (cmd == "ARMATURE" && (pc.args.empty() || iequal(pc.args[0], "list") || (pc.args.size() == 1 && !iequal(pc.args[0], "new")) ||
+                              (pc.args.size() > 1 && (iequal(pc.args[1], "list") || iequal(pc.args[1], "show") || iequal(pc.args[1], "hide")))))
+        return; // only looks (or shows and hides)
     if ((cmd == "POLYGROUP" || cmd == "LAYER" || cmd == "MULTIRES") &&
         std::any_of(pc.args.begin(), pc.args.end(), [](const std::string& w) { return iequal(w, "list") || iequal(w, "show") || iequal(w, "hide"); }))
         return;
@@ -2719,6 +2723,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "ROUTE") return runRouteCommand(doc, a, pc.quoted);
     if (cmd == "MOLD") return runMoldCommand(doc, a, pc.quoted);
     if (cmd == "FASTENER") return runFastenerCommand(doc, a, pc.quoted);
+    if (cmd == "ARMATURE") return runArmatureCommand(doc, a, pc.quoted);
     if (cmd == "STUDY") return runStudyCommand(doc, a, pc.quoted);
     if (cmd == "STACK") return runStackCommand(doc, a, pc.quoted);
     if (cmd == "FACE") return runFaceCommand(doc, a, pc.quoted);
@@ -5012,13 +5017,14 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {
-        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION | PATH3D | STUDY | STACK: open that page or window.
+        // PANEL MODEL | LIBRARY | CAM | TOOLS | MACHINE | GUIDE | PREFERENCES | LICENCE | PRODUCT | APPEARANCE | SECTION | PATH3D | STUDY | STACK | ARMATURE: open that page or window.
         const std::string page = toUpper(a[0]);
         const int p = page == "MODEL" ? 0 : page == "LIBRARY" ? 1 : page == "CAM" || page == "LATHE" ? 2 : page == "TOOLS" ? 3 : page == "MACHINE" ? 4 : page == "GUIDE" ? 5
                     : page == "PREFERENCES" || page == "PREFS" ? 6 : page == "LICENCE" || page == "LICENSE" ? 7
                     : page == "PRODUCT" || page == "PDM" || page == "VAULT" ? 10
                     : page == "APPEARANCE" || page == "MATERIALS" ? 11 : page == "SECTION" ? 12 : page == "PATH3D" || page == "ROUTE" ? 13
-                    : page == "STUDY" || page == "PLOT" ? 14 : page == "STACK" || page == "TOLERANCE" || page == "STACKUP" ? 15 : -1;
+                    : page == "STUDY" || page == "PLOT" ? 14 : page == "STACK" || page == "TOLERANCE" || page == "STACKUP" ? 15
+                    : page == "ARMATURE" || page == "ZSPHERE" ? 16 : -1;
         if (p >= 0) {
             if (auto o = needView(view, "PANEL"); !o.ok) return o;
             view->setPanelPage(p);

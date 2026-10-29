@@ -105,8 +105,9 @@ std::string activePlaneName(const ProjectState& st);
 //   11 adds 3D sketch curves: a polyline or spline whose points "rise" off its plane (one
 //      height per point); a file with one has reader_version 11 (an older reader would lay
 //      it flat). Bodies keep their weldment "member" and pipe "route" data
-//   12 adds tolerance stack-ups ("stacks") and motions that ride on a body ("contact",
-//      "spring", "preload", "mass"); a reader before 12 leaves them out
+//   12 adds tolerance stack-ups ("stacks"), motions that ride on a body ("contact",
+//      "spring", "preload", "mass"), armatures (bodies of kind "armature") and the skins made
+//      from them ("skin": rest pose and bone weights); a reader before 12 leaves them out
 constexpr int kProjectVersion = 12;
 
 // Writes a whole file safely: to a temporary file beside it, flushed to the disk, then
