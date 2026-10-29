@@ -154,8 +154,9 @@ constexpr CommandSpec kCommands[] = {
     {"IMPORT", "IMP", "IMPORT path [@x,y] [WIDTH mm] [UNIT mm|cm|m|inch|foot|micron]",
      "STEP or IGES solids and surfaces (exact; STEP assemblies placed); STL, OBJ, 3MF, AMF, PLY, OFF, glTF/GLB or VRML meshes as bodies (parts, "
      "assemblies, colours; UNIT: one file unit, for files that don't say or say wrong); DXF onto the sketch plane; PNG/JPG/... as a reference image"},
-    {"EXPORT", "EXP", "EXPORT path.step|.igs|.stl|.obj|.3mf|.dxf|.svg|.urdf|.sdf|.xml",
-     "STEP or IGES (exact B-reps)/STL/OBJ/3MF of visible bodies; DXF/SVG of the sketch plane; URDF/SDF/MJCF (.xml) of the robot"},
+    {"EXPORT", "EXP", "EXPORT path.step|.igs|.stl|.obj|.3mf|.gltf|.glb|.fbx|.dxf|.svg|.urdf|.sdf|.xml",
+     "STEP or IGES (exact B-reps)/STL/OBJ/3MF of visible bodies; glTF/GLB/FBX with materials, maps, UVs and skins; DXF/SVG of the sketch "
+     "plane; URDF/SDF/MJCF (.xml) of the robot"},
     {"RUN", "SCRIPT", "RUN path.txt", "Run the commands in a text file, one a line (# starts a comment)"},
     // 3D printing
     {"REVOLVE", "REV", "REVOLVE [curve] [ANGLE deg] [AXIS U|V|\"line\"|x,y x,y] [CUT|JOIN [body]] [KEEP]",

@@ -1151,6 +1151,9 @@ const char* const kGerman[][2] = {
     {"Cube", "Würfel"},
     {"A tube along the stroke, or a row of shapes along it", "Ein Rohr entlang des Strichs oder eine Reihe von Formen entlang dessen"},
     {"The distance between the shapes (0: their size)", "Der Abstand zwischen den Formen (0: ihre Größe)"},
+    // glTF / FBX export.
+    {"Export glTF / FBX (Games, Animation)...", "glTF / FBX exportieren (Spiele, Animation)..."},
+    {"Visible bodies with their materials, maps, UVs, vertex colours and (glTF) armature skins: for Blender, game engines and the web", "Sichtbare Körper mit Materialien, Texturen, UVs, Vertexfarben und (glTF) Armatur-Skins: für Blender, Spiele-Engines und das Web"},
 };
 
 

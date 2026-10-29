@@ -798,7 +798,7 @@ With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,d
 | --- | --- |
 | **New / Open / Save / Save As** (Ctrl/⌘ N, O, S, Shift+S) | `.sicdm` project (JSON): parametric solids, meshes, sketches, reference images |
 | **Import** (Ctrl/⌘ I) | `.step` `.stp` → exact solids (assemblies placed in their sub-assembly tree, units converted) · `.igs` `.iges` → exact solids (trimmed surfaces sewn) or surfaces · `.stl` `.obj` → body · `.3mf` `.amf` `.ply` `.off` `.gltf` `.glb` `.wrl` → bodies (parts, assembly tree, colours, units) · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
-| **Export** (Ctrl/⌘ E) | `.step` (AP214: exact B-reps, other meshes as planar faces, the sub-assembly tree) · `.igs` (IGES 5.3 trimmed surfaces) · `.stl` `.obj` `.3mf` (visible bodies) · `.dxf` `.svg` (sketch curves of the active plane) |
+| **Export** (Ctrl/⌘ E) | `.step` (AP214: exact B-reps, other meshes as planar faces, the sub-assembly tree) · `.igs` (IGES 5.3 trimmed surfaces) · `.stl` `.obj` `.3mf` (visible bodies) · `.glb` `.gltf` `.fbx` (visible bodies with materials, maps, UVs, vertex colours; glTF also armature skins) · `.dxf` `.svg` (sketch curves of the active plane) |
 | **Drawing → Export...** | `.pdf` `.svg` `.dxf` (the drawing sheet: views, sections, dimensions, title block) |
 
 **STEP and IGES:** imports keep their exact geometry (planes, cylinders, cones, spheres, tori, NURBS),
@@ -807,7 +807,9 @@ solids. Primitives, extrusions and revolves export exactly too. Details: [docs/s
 
 **Mesh formats:** 3MF, AMF, PLY, OFF, glTF / GLB and VRML 97 come in as bodies, each part with
 its name, its place in the assembly, its colour and its unit (`IMPORT scan.ply UNIT inch` for
-files that don't say). Details: [docs/mesh-formats.md](docs/mesh-formats.md).
+files that don't say). `EXPORT model.glb` (or `.gltf`, `.fbx`) writes the bodies for Blender, game
+engines and the web: PBR materials with their maps embedded, UVs, polypaint and, in glTF, armature
+skins that pose. Details: [docs/mesh-formats.md](docs/mesh-formats.md).
 
 Unsaved changes are tracked (`*` in the tab and title); closing a tab or quitting asks before discarding them.
 

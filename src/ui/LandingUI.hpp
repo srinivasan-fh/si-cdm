@@ -339,7 +339,7 @@ private:
     enum FileAction {
         FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport,
         FileLathePost, FileToolsImport, FileToolsExport, FileLicence, FileInsertComponent, FileMakeComponent, FilePackComponents,
-        FileStudyExport, FileStackExport
+        FileStudyExport, FileStackExport, FileExportModel
     };
     FileDialog m_fileDialog;
     int m_fileAction = FileNone;

@@ -1,4 +1,4 @@
-# Mesh formats: 3MF, AMF, PLY, OFF, glTF and VRML
+# Mesh formats: 3MF, AMF, PLY, OFF, glTF, VRML and FBX
 
 Besides STEP and IGES (exact solids, see [STEP and IGES](step.md)) and STL and OBJ, SI-CDM
 imports the mesh formats that printers, scanners, viewers and other CAD tools exchange. Each
@@ -59,6 +59,65 @@ A damaged file is refused with the reason: a checksum that doesn't match, a pack
 model, XML that isn't well formed, or an index outside its list.
 
 Over MCP, `import_file` takes the same files, with `unit` for the unit.
+
+## Exporting glTF, GLB and FBX
+
+```
+EXPORT robot.glb          glTF 2.0, binary: one file with everything in it
+EXPORT robot.gltf         glTF 2.0 as JSON, its data inside as base64
+EXPORT robot.fbx          FBX 7.4, binary
+```
+
+These are for Blender, game engines (Unity, Unreal, Godot), the web (three.js, Babylon.js,
+`<model-viewer>`) and animation tools. The visible bodies are written, each with its name and in
+its assembly group.
+
+**What goes into glTF:**
+
+- Positions and normals. The scene's millimetres with +Z up become metres with +Y up, as glTF
+  has it.
+- Texture coordinates from `UV UNWRAP`. Vertices are split where charts meet, and v is turned to
+  glTF's (it counts down).
+- Polypaint, as vertex colours.
+- Materials as PBR metallic-roughness: the colour, `METALLIC` and `ROUGHNESS`.
+  - Glass uses `KHR_materials_transmission` and `KHR_materials_ior`.
+  - A glow uses `emissiveFactor`, with `KHR_materials_emissive_strength` above 1.
+  - Bodies that look the same share one material.
+- The `COLORMAP` and `NORMALMAP` images, embedded. PNG and JPEG go as they are. Other image
+  formats are written as PNG.
+- Tangents for a normal-mapped body, in the frame `BAKE` bakes the map in, so it shades the same
+  in any viewer.
+- Armature skins (`ARMATURE ... SKIN`) as glTF skins, which animation tools can pose:
+  - Each ball is a joint, under its parent ball and turned as the armature is posed.
+  - Each vertex follows up to four joints.
+  - The mesh is in its rest pose, so the joints pose it back to the shape seen in the model.
+  - Edits sculpted on the skin since its last pose are kept.
+  - The armature itself is not written as a mesh.
+
+**What goes into FBX:**
+
+- The same bodies and groups, in centimetres with +Y up.
+- Normals, UVs and vertex colours, per polygon corner.
+- Materials and the maps, embedded.
+- Quad meshes from `RETOPO` stay quads.
+- A skin goes as it is posed, without its bones. Use glTF to take the skin and bones.
+
+**What isn't written:**
+
+- Hidden bodies, sketches and reference images.
+- Lines and points.
+- Animation (keyframed motions).
+- A skin that was remeshed since it was skinned. Dynamic topology counts, because it changes the
+  vertices. Such a skin goes as it is, and the export says so.
+
+**Checked:**
+
+- The Khronos glTF Validator finds no errors, warnings or hints in the files written.
+- Assimp reads both formats back with the same positions, UVs, quads, materials and embedded maps.
+- The tests read the files back and pose the skin from its joints. It matches the model's posed
+  mesh to within a thousandth of a millimetre.
+
+The FBX has not been opened in Autodesk's own software. Over MCP, `export_file` writes all three.
 
 ## Native CAD formats
 

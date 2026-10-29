@@ -1152,6 +1152,9 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Import STEP / IGES..."))) requestFile(FileImportStep, st);
         if (ImGui::MenuItem(tr("Export STEP / IGES..."))) requestFile(FileExportStep, st);
+        if (ImGui::MenuItem(tr("Export glTF / FBX (Games, Animation)..."))) requestFile(FileExportModel, st);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tr("Visible bodies with their materials, maps, UVs, vertex colours and (glTF) armature skins: for Blender, game engines and the web"));
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Product Data..."))) st.showProduct = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Part numbers and properties, the revision and its release, the team's vault"));
@@ -3302,8 +3305,11 @@ void LandingUI::requestFile(int action, const UiState& st) {
         m_fileDialog.open(FileDialog::Mode::Open, "Import Image", {std::begin(kImageExts), std::end(kImageExts)}, dir);
         break;
     case FileExport:
-        m_fileDialog.open(FileDialog::Mode::Save, "Export (STEP / IGES / STL / OBJ / 3MF model, DXF / SVG sketch plane)",
-                          {".step", ".igs", ".stl", ".obj", ".3mf", ".dxf", ".svg"}, dir, projectStem(st) + ".step");
+        m_fileDialog.open(FileDialog::Mode::Save, "Export (STEP / IGES / STL / OBJ / 3MF / glTF / FBX model, DXF / SVG sketch plane)",
+                          {".step", ".igs", ".stl", ".obj", ".3mf", ".glb", ".gltf", ".fbx", ".dxf", ".svg"}, dir, projectStem(st) + ".step");
+        break;
+    case FileExportModel:
+        m_fileDialog.open(FileDialog::Mode::Save, "Export glTF (.glb, .gltf) or FBX", {".glb", ".gltf", ".fbx"}, dir, projectStem(st) + ".glb");
         break;
     case FileSlice:
         m_fileDialog.open(FileDialog::Mode::Save, "Slice to G-code (FDM)", {".gcode"}, dir, projectStem(st) + ".gcode");
@@ -3354,6 +3360,7 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case FileImportStep: cmd.commands.push_back("IMPORT " + quoted(*path)); break;
         case FileSheetExport: cmd.commands.push_back("SHEET EXPORT " + quoted(*path)); break;
         case FileExportStep:
+        case FileExportModel:
         case FileExport:
         case File3mf: cmd.commands.push_back("EXPORT " + quoted(*path)); break;
         case FileSlice: cmd.commands.push_back("SLICE TO " + quoted(*path)); break;

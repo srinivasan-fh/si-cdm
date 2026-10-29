@@ -996,7 +996,9 @@ Json McpServer::toolDefinitions() {
         tools.push(tool("import_file", "Import STEP or IGES solids (exact B-reps) or a mesh as bodies, a DXF onto the sketch plane, or a reference image.",
                         p, {"path"}));
         Json e = Json::object();
-        e.set("path", prop("string", ".step or .igs (visible bodies: exact where they have exact geometry, else planar facets), .stl/.obj/.3mf (visible bodies) or .dxf/.svg (curves on the sketch plane)"));
+        e.set("path", prop("string", ".step or .igs (visible bodies: exact where they have exact geometry, else planar facets), .stl/.obj/.3mf (visible bodies), "
+                                      ".gltf/.glb/.fbx (visible bodies with materials, maps, UVs, vertex colours and, in glTF, armature skins) or .dxf/.svg "
+                                      "(curves on the sketch plane)"));
         tools.push(tool("export_file", "Export the model or the active sketch plane.", e, {"path"}));
     }
     {

@@ -28,6 +28,7 @@
 #include "core/ArmatureCommand.hpp"
 #include "core/Gizmo.hpp"
 #include "core/InsertCommand.hpp"
+#include "core/ModelExport.hpp"
 #include "core/StackupCommand.hpp"
 #include "core/StudyCommand.hpp"
 #include "core/MoldCommand.hpp"
@@ -4685,6 +4686,13 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         const std::string path = joinArgs(a);
         if (RobotFormat rf; robotFormatOf(path, rf)) return runRobotCommand(doc, "RIG", {"export", path}, {false, true});
         std::string err;
+        if (const std::size_t dot = path.find_last_of('.'); dot != std::string::npos && isModelExportExtension(path.substr(dot))) {
+            ModelExportReport rep;
+            if (!exportModel(doc.scene, path, &rep, &err)) return out.fail(err);
+            out.say(modelExportSummary(rep, path));
+            for (const std::string& n : rep.notes) out.say("  " + n);
+            return out;
+        }
         if (path.size() > 4 && lower(path.substr(path.size() - 4)) == ".3mf") {
             if (!export3mf(doc.scene, path, &err)) return out.fail(err);
             out.say("Exported visible bodies to " + path + " (3MF)");
@@ -4737,7 +4745,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                     std::to_string(exact) + " exact, " + std::to_string(faceted) + " as planar facets");
             return out;
         }
-        default: return out.fail("Export supports .stl .obj .3mf .step .igs .dxf .svg");
+        default: return out.fail("Export supports .stl .obj .3mf .gltf .glb .fbx .step .igs .dxf .svg");
         }
     }
     if (cmd == "IMPORT") {
