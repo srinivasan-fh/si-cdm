@@ -150,6 +150,14 @@ struct UiState {
     float channelWidth = 4.0f, channelDepth = 0.0f; // 0 = half the width (a round groove)
     int bossShape = 0; // 0 cylinder, 1 box, 2 dome
     float bossDiameter = 10.0f, bossHeight = 8.0f;
+    // Insert Mesh and Curve Brush: the shape (0 sphere, 1 cube, 2 cylinder, 3 cone, 4 torus,
+    // 5 the body insertBody), its size, how far it sinks in (0..1), how it joins (0 union, 1
+    // append as a polygroup, 2 a new body); the curve's tube or row, radius and spacing (0: the size).
+    int insertShape = 0, insertJoin = 0;
+    std::string insertBody;
+    float insertSize = 8.0f, insertSink = 0.15f;
+    bool curveTube = true;
+    float curveRadius = 1.5f, curveSpacing = 0.0f;
     int booleanOp = 1; // 0 union, 1 subtract, 2 intersect
     bool booleanKeep = false;
     std::string booleanFirst; // the body picked first

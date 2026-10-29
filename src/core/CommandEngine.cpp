@@ -27,6 +27,7 @@
 #include "core/FastenerCommand.hpp"
 #include "core/ArmatureCommand.hpp"
 #include "core/Gizmo.hpp"
+#include "core/InsertCommand.hpp"
 #include "core/StackupCommand.hpp"
 #include "core/StudyCommand.hpp"
 #include "core/MoldCommand.hpp"
@@ -816,7 +817,7 @@ bool bodyCommand(const std::string& cmd) {
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
                                         "DRAFT",   "THREAD",   "SPLIT",    "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE"};
+                                        "PARAM",   "REGEN",    "MATE",     "ASSEMBLY",   "MOTION", "POSE", "GESTURE", "PHYSICS", "VAR", "CONFIG", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE"};
     for (const char* k : kBody)
         if (cmd == k) return true;
     return false;
@@ -832,7 +833,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -2725,6 +2726,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "MOLD") return runMoldCommand(doc, a, pc.quoted);
     if (cmd == "FASTENER") return runFastenerCommand(doc, a, pc.quoted);
     if (cmd == "ARMATURE") return runArmatureCommand(doc, a, pc.quoted);
+    if (cmd == "INSERTMESH" || cmd == "CURVE") return runInsertCommand(doc, cmd, a, pc.quoted);
     if (cmd == "STUDY") return runStudyCommand(doc, a, pc.quoted);
     if (cmd == "STACK") return runStackCommand(doc, a, pc.quoted);
     if (cmd == "FACE") return runFaceCommand(doc, a, pc.quoted);

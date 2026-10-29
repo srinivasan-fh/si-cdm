@@ -2200,6 +2200,53 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             field("Height", "##bh", &st.bossHeight, 0.01f);
             ImGui::TextDisabled("%s", tr("Click a surface"));
             break;
+        case ToolId::InsertMesh:
+        case ToolId::CurveBrush: {
+            const bool curve = tool.id == ToolId::CurveBrush;
+            if (curve) {
+                int kind = st.curveTube ? 0 : 1;
+                shapeCombo("##ckind", &kind, {"Tube", "Row"});
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A tube along the stroke, or a row of shapes along it"));
+                st.curveTube = kind == 0;
+                ImGui::SameLine();
+            }
+            if (!curve || !st.curveTube) {
+                // The shape: a primitive, or a body of the scene.
+                static const char* const kShapes[] = {"Sphere", "Cube", "Cylinder", "Cone", "Torus"};
+                const std::string shown = st.insertShape < 5 ? tr(kShapes[st.insertShape]) : st.insertBody;
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::BeginCombo("##ishape", shown.c_str())) {
+                    for (int k = 0; k < 5; ++k)
+                        if (ImGui::Selectable(tr(kShapes[k]), st.insertShape == k)) st.insertShape = k;
+                    if (m_menuScene && !m_menuScene->bodies().empty()) {
+                        ImGui::Separator();
+                        for (const Body& b : m_menuScene->bodies())
+                            if (ImGui::Selectable(b.name.c_str(), st.insertShape == 5 && st.insertBody == b.name)) st.insertShape = 5, st.insertBody = b.name;
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The shape to put in: a primitive, or any body's shape"));
+                ImGui::SameLine();
+                field("Size", "##isize", &st.insertSize, 0.01f);
+            }
+            if (curve && st.curveTube) field("Radius", "##crad", &st.curveRadius, 0.01f);
+            if (curve && !st.curveTube) {
+                field("Spacing", "##cspace", &st.curveSpacing, 0.0f);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The distance between the shapes (0: their size)"));
+            }
+            ImGui::TextDisabled("%s", tr("Sink"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            ImGui::SliderFloat("##isink", &st.insertSink, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("How much of it is sunk into the surface (0: resting on it)"));
+            ImGui::SameLine();
+            shapeCombo("##ijoin", &st.insertJoin, {"Union", "Append (polygroup)", "New body"});
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", tr("Union: fused exactly. Append: added as a polygroup of its own, to fuse later with Remesh. New body: a part of its own"));
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", curve ? tr("Drag along a surface") : tr("Click a surface"));
+            break;
+        }
         default: // BooleanBodies
             shapeCombo("##bop", &st.booleanOp, {"Union", "Subtract", "Intersect"});
             ImGui::SameLine();

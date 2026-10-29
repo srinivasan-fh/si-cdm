@@ -422,6 +422,54 @@ clicked, as with ZSpheres. *Skin It* makes the skin. Over MCP, use the `armature
 - `REMOVE` unbinds the skins, because the balls are renumbered.
 - A skin that is remeshed (or subdivided, or decimated) no longer follows the pose.
 
+## Insert-mesh and curve brushes
+
+![A ball with cones, a tube and a row of balls put on it, and a torus appended as its own polygroup](insert-brushes.png)
+
+These are like ZBrush's insert-mesh (IMM) and curve brushes. They put shapes on a surface where you
+click or drag, rather than sculpting them out of it.
+
+- **Insert Mesh** (`INSERTMESH`) puts one shape where you click. It stands along the surface's
+  normal, with `SINK` of its height (0 to 1) sunk into the surface. The shape is a sphere, cube,
+  cylinder, cone or torus, or any other body's shape (`BODY "name"`), fitted to `SIZE`. `DIR` stands
+  it along another direction, and `SPIN` turns it about its axis.
+- **Curve Brush** (`CURVE`) works on a stroke over the surface. `TUBE` lays a round-ended tube of
+  `RADIUS` along it, with its centre line `SINK` of its diameter below the surface (half in by
+  default). `INSERT shape` lays a row of shapes along it, every `SPACING` mm (their size by
+  default), each facing along the stroke. The stroke is evened out and smoothed a little, as a
+  hand's stroke wobbles.
+
+What it does with the shape:
+
+- `UNION` (the default) fuses it with the body exactly, into one closed solid.
+- `APPEND` adds its triangles as they are, as a polygroup of its own. This is the sculpting
+  workflow: place several, then `REMESH` fuses them all with blended joins. The body becomes a mesh
+  body.
+- `NEW` makes it a body of its own ("Insert 1", "Tube 1").
+
+Points given away from the body are put onto its surface first. A point further away than the
+shape's size (or a twentieth of the body's, if that is larger) is refused.
+
+```
+INSERTMESH "Head" CONE AT 0,0,60 SIZE 14
+INSERTMESH "Head" BODY "Ear" AT 28,0,40 SIZE 20 SPIN 90
+CURVE "Head" TUBE PATH -25,-10,40 0,-24,50 25,-10,40 RADIUS 2.5
+CURVE "Head" INSERT SPHERE PATH -28,0,20 0,28,22 28,0,20 SIZE 5 SPACING 7
+INSERTMESH "Head" TORUS AT 0,-29,25 SIZE 12 APPEND
+```
+
+**In the app:** *Insert Mesh* and *Curve Brush* are in the toolbar's cuts group, with *Add Volume
+(Boss)* (right-click or hold it). The options bar has the shape (the primitives, then the scene's
+bodies), its size, the tube's radius or the row's spacing, *Sink*, and *Union*, *Append* or *New
+body*. Click a surface to insert; drag over one to lay a curve. Over MCP, use the `insert_mesh`
+tool.
+
+**Limits:**
+
+- The tube's cross-section is round. There is no profile or taper along it yet.
+- Appended shapes overlap the body. Until `REMESH` fuses them, the body is not one closed solid, so
+  fuse it before 3D printing or a boolean.
+
 ## Voxel remesh
 
 `REMESH` (like ZBrush's DynaMesh or Blender's voxel remesh) rebuilds a body as one closed solid with
@@ -588,6 +636,8 @@ BOOLEAN body UNION|SUBTRACT|INTERSECT other [KEEP]
 UNDO
 REMESH  [body ["other"...]] [VOXEL v] [BLEND b] [SMOOTH s]   voxel remesh: fuse into one even, closed solid
 ARMATURE name ADD|INSERT|MOVE|RADIUS|REMOVE|SKIN|POSE ...      balls joined by links, skinned and posed (above)
+INSERTMESH [body] SPHERE|CUBE|CYLINDER|CONE|TORUS|BODY "name" AT x,y,z [SIZE s] [DIR x,y,z] [SPIN deg] [SINK f] [UNION|APPEND|NEW]
+CURVE   [body] TUBE PATH x,y,z ... [RADIUS r] | INSERT shape PATH ... [SIZE s] [SPACING d]  [SINK f] [UNION|APPEND|NEW]
 SCALE   body sx,sy,sz                      stretch along x, y, z (about the body's origin)
 ROTATE  body rx,ry,rz                      orient: degrees about X, then Y, then Z
 MASK    [body] CLEAR|INVERT|SMOOTH|GROW|SHRINK|ALL [n]   edit the mask (the MASK brush paints it)

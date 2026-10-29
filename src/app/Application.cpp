@@ -692,7 +692,7 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
     }
 
     if (isCutTool(tool)) {
-        if (tool != ToolId::CutChannel && tool != ToolId::CutKnife && tool != ToolId::PushPull) applyCutTool(tool, x, y);
+        if (tool != ToolId::CutChannel && tool != ToolId::CurveBrush && tool != ToolId::CutKnife && tool != ToolId::PushPull) applyCutTool(tool, x, y);
         return;
     }
     if (isWearableTool(tool)) {
@@ -1030,6 +1030,18 @@ void Application::cancelInteraction(bool commit) {
     m_leftDrag = m_otherDrag = DragMode::None;
 }
 
+// The shape and join words of an INSERTMESH / CURVE INSERT line from the options bar.
+static std::string insertShapeWords(const UiState& u) {
+    static const char* const kShapes[] = {"SPHERE", "CUBE", "CYLINDER", "CONE", "TORUS"};
+    return u.insertShape >= 0 && u.insertShape < 5 ? std::string(kShapes[u.insertShape]) : "BODY " + quotedName(u.insertBody);
+}
+
+static std::string insertTailWords(const UiState& u) {
+    char sink[32];
+    std::snprintf(sink, sizeof(sink), " SINK %.3g", static_cast<double>(std::clamp(u.insertSink, 0.0f, 1.0f)));
+    return sink + std::string(u.insertJoin == 1 ? " APPEND" : u.insertJoin == 2 ? " NEW" : "");
+}
+
 void Application::applyCutTool(ToolId tool, float x, float y) {
     const auto hit = pick(x, y);
     const UiState& u = m_uiState;
@@ -1085,6 +1097,9 @@ void Application::applyCutTool(ToolId tool, float x, float y) {
                " HEIGHT " + mmText(u.bossHeight);
         break;
     }
+    case ToolId::InsertMesh:
+        line = "INSERTMESH " + body + " " + insertShapeWords(u) + at + " SIZE " + mmText(u.insertSize) + insertTailWords(u);
+        break;
     default: return;
     }
     runCommandLine(line);
@@ -1173,6 +1188,25 @@ void Application::finishCutDrag(ToolId tool, float x, float y) {
         if ((m_cutPath.size() - 1) % every != 0) line += " " + mmVec(m_cutPath.back());
         line += " WIDTH " + mmText(m_uiState.channelWidth);
         if (m_uiState.channelDepth > 0) line += " DEPTH " + mmText(m_uiState.channelDepth);
+        m_cutPath.clear();
+        runCommandLine(line);
+        return;
+    }
+    if (tool == ToolId::CurveBrush) {
+        if (m_cutPath.size() < 2 || m_cutBody < 0 || m_cutBody >= static_cast<int>(m_doc.scene.bodies().size())) {
+            setStatus("Drag along a surface to lay the curve");
+            m_cutPath.clear();
+            return;
+        }
+        const UiState& u = m_uiState;
+        const std::size_t every = m_cutPath.size() / 100 + 1;
+        std::string line = "CURVE " + quotedName(m_doc.scene.bodies()[static_cast<std::size_t>(m_cutBody)].name) +
+                           (u.curveTube ? std::string(" TUBE") : " INSERT " + insertShapeWords(u)) + " PATH";
+        for (std::size_t i = 0; i < m_cutPath.size(); i += every) line += " " + mmVec(m_cutPath[i]);
+        if ((m_cutPath.size() - 1) % every != 0) line += " " + mmVec(m_cutPath.back());
+        if (u.curveTube) line += " RADIUS " + mmText(u.curveRadius);
+        else line += " SIZE " + mmText(u.insertSize) + (u.curveSpacing > 0 ? " SPACING " + mmText(u.curveSpacing) : std::string());
+        line += insertTailWords(u);
         m_cutPath.clear();
         runCommandLine(line);
         return;
@@ -1307,6 +1341,8 @@ void Application::drawSculptOverlay() {
         r = tool == ToolId::CutHole     ? u.holeDiameter * 0.5f
             : tool == ToolId::CutPocket ? u.pocketWidth * 0.5f
             : tool == ToolId::AddBoss   ? u.bossDiameter * 0.5f
+            : tool == ToolId::InsertMesh ? u.insertSize * 0.5f
+            : tool == ToolId::CurveBrush ? (u.curveTube ? u.curveRadius : u.insertSize * 0.5f)
                                         : u.channelWidth * 0.5f;
     }
     // The brush footprint drawn on the surface plane, and the normal.
@@ -1396,9 +1432,10 @@ void Application::handleViewportInput() {
         if (tool == ToolId::Select && !simulating() && !io.KeyShift) m_gripCandidate = pickSketchGrip(mx, my);
         if (isSculptTool(tool) && beginSculpt(mx, my)) {
             m_leftDrag = m_sculptSettings.brush == SculptBrush::Grab ? DragMode::Grab : DragMode::Sculpt;
-        } else if (tool == ToolId::CutChannel && pick(mx, my)) {
+        } else if ((tool == ToolId::CutChannel || tool == ToolId::CurveBrush) && pick(mx, my)) {
             const auto hit = pick(mx, my);
             m_leftDrag = DragMode::CutPath;
+            m_cutTool = tool;
             m_cutBody = hit->body;
             m_cutPath = {hit->point};
         } else if (tool == ToolId::CutKnife) {
@@ -1505,7 +1542,9 @@ void Application::handleViewportInput() {
         case DragMode::PushPull: updatePushPull(mx, my); break;
         case DragMode::CutPath: {
             const auto hit = pick(mx, my);
-            const float step = std::max(m_uiState.channelWidth * 0.5f, 0.5f);
+            const float step = std::max((m_cutTool == ToolId::CurveBrush ? (m_uiState.curveTube ? m_uiState.curveRadius : m_uiState.insertSize * 0.25f)
+                                                                          : m_uiState.channelWidth * 0.5f),
+                                        0.5f);
             if (hit && hit->body == m_cutBody && length(hit->point - m_cutPath.back()) >= step) m_cutPath.push_back(hit->point);
             break;
         }
@@ -1516,7 +1555,7 @@ void Application::handleViewportInput() {
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         if (m_leftDrag == DragMode::Pending) onCanvasClick(mx, my, false);
         else if (m_leftDrag == DragMode::Sculpt || m_leftDrag == DragMode::Grab) endSculpt();
-        else if (m_leftDrag == DragMode::CutPath) finishCutDrag(ToolId::CutChannel, mx, my);
+        else if (m_leftDrag == DragMode::CutPath) finishCutDrag(m_cutTool, mx, my);
         else if (m_leftDrag == DragMode::Knife) finishCutDrag(ToolId::CutKnife, mx, my);
         else if (m_leftDrag == DragMode::PushPull) finishPushPull();
         else if (m_leftDrag == DragMode::SketchGrip) finishSketchDrag();

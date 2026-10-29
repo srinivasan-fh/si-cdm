@@ -339,6 +339,29 @@ Json McpServer::toolDefinitions() {
                         "Armatures (like ZSpheres): sketch a form as balls joined by tapered links, mirrored if wanted; skin it into one "
                         "smooth closed mesh bound to the balls; pose it by turning balls, which bends the skin (edits to it are kept).",
                         am, {"operation"}));
+        Json im = Json::object();
+        im.set("body", prop("string", "The body to put it on (default the selected one)"));
+        im.set("shape", enumProp({"sphere", "cube", "cylinder", "cone", "torus", "tube"},
+                                 "The shape; tube: a tube along the path (default sphere, or the body named in `from`)"));
+        im.set("from", prop("string", "Put in this body's shape instead of a primitive (fitted to `size`)"));
+        im.set("at", numberArray(3, "One shape: the spot on the surface [x,y,z] mm (snapped to it)"));
+        im.set("path", [] {
+            Json j = Json::object();
+            j.set("type", "array").set("items", numberArray(3, "[x,y,z] mm")).set("description", "A stroke over the surface: a tube, or a row of shapes, along it");
+            return j;
+        }());
+        im.set("size", prop("number", "The shape's size across and tall (mm)"));
+        im.set("radius", prop("number", "tube: its radius (mm)"));
+        im.set("spacing", prop("number", "row: the distance between copies (mm; default their size)"));
+        im.set("direction", numberArray(3, "Stand along this direction instead of the surface's normal"));
+        im.set("spin", prop("number", "Degrees turned about the normal"));
+        im.set("sink", prop("number", "0 (resting on the surface) to 1 (sunk in)"));
+        im.set("join", enumProp({"union", "append", "new"}, "union: fused exactly (default); append: a polygroup of its own; new: a body of its own"));
+        tools.push(tool("insert_mesh",
+                        "Insert-mesh and curve brushes: put a shape (sphere, cube, cylinder, cone, torus, or any body's) on a surface "
+                        "standing along its normal, lay a tube along a stroke over it, or a row of shapes; fused, appended as a polygroup, "
+                        "or a new body.",
+                        im, {}));
         Json ts = Json::object();
         ts.set("operation", enumProp({"list", "new", "add", "edit", "remove", "spec", "gap", "update", "report", "rename", "delete"},
                                      "list the stacks; new; add or edit a dimension; remove one; set the spec or the model gap; update (measure "
@@ -2369,6 +2392,30 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         return r;
     }
     if (name == "delete_motion") return runLine("MOTION DELETE " + a["name"].asString());
+    if (name == "insert_mesh") {
+        auto v3 = [&](const Json& v) { return num(v[0].asNumber()) + "," + num(v[1].asNumber()) + "," + num(v[2].asNumber()); };
+        const std::string shape = a["shape"].isString() ? a["shape"].asString() : std::string("sphere");
+        const std::string what = a["from"].isString() ? "BODY " + quote(a["from"].asString()) : shape;
+        const bool curve = a["path"].isArray();
+        std::string l = curve ? "CURVE" : "INSERTMESH";
+        if (a["body"].isString()) l += " " + quote(a["body"].asString());
+        if (curve) {
+            l += shape == "tube" && !a["from"].isString() ? std::string(" TUBE PATH") : " INSERT " + what + " PATH";
+            for (std::size_t i = 0; i < a["path"].size(); ++i) l += " " + v3(a["path"][i]);
+        } else {
+            if (shape == "tube") return textResult("A tube needs a path", true);
+            l += " " + what;
+            if (a["at"].isArray()) l += " AT " + v3(a["at"]);
+        }
+        if (a["size"].isNumber()) l += " SIZE " + num(a["size"].asNumber());
+        if (a["radius"].isNumber()) l += " RADIUS " + num(a["radius"].asNumber());
+        if (a["spacing"].isNumber()) l += " SPACING " + num(a["spacing"].asNumber());
+        if (a["direction"].isArray()) l += " DIR " + v3(a["direction"]);
+        if (a["spin"].isNumber()) l += " SPIN " + num(a["spin"].asNumber());
+        if (a["sink"].isNumber()) l += " SINK " + num(a["sink"].asNumber());
+        if (a["join"].isString()) l += " " + a["join"].asString();
+        return runLine(l);
+    }
     if (name == "armature") {
         const std::string op = a["operation"].asString();
         const std::string arm = "ARMATURE " + quote(a["armature"].asString()) + " ";

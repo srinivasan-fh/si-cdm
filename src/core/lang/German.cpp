@@ -1138,6 +1138,19 @@ const char* const kGerman[][2] = {
     {"Rotate", "Drehen"},
     {"Snap", "Raster"},
     {"The gizmo's handles: arrows and squares move, rings rotate, cubes scale  [V switches]", "Die Griffe des Gizmos: Pfeile und Quadrate verschieben, Ringe drehen, Würfel skalieren  [V wechselt]"},
+    // Insert-mesh and curve brushes.
+    {"Click a surface to put a shape (or another body's) there, standing along the surface.", "Auf eine Oberfläche klicken, um dort eine Form (oder die eines anderen Körpers) aufzusetzen, entlang der Oberfläche stehend."},
+    {"Curve Brush", "Kurvenpinsel"},
+    {"Drag along a surface", "Entlang einer Oberfläche ziehen"},
+    {"Drag over a surface to lay a tube, or a row of shapes, along the stroke.", "Über eine Oberfläche ziehen, um entlang des Strichs ein Rohr oder eine Reihe von Formen zu legen."},
+    {"How much of it is sunk into the surface (0: resting on it)", "Wie weit sie in die Oberfläche eingesenkt ist (0: liegt auf)"},
+    {"Insert Mesh", "Netz einfügen"},
+    {"Sink", "Einsenken"},
+    {"The shape to put in: a primitive, or any body's shape", "Die einzufügende Form: ein Grundkörper oder die Form eines beliebigen Körpers"},
+    {"Union: fused exactly. Append: added as a polygroup of its own, to fuse later with Remesh. New body: a part of its own", "Vereinigen: exakt verschmolzen. Anhängen: als eigene Polygruppe hinzugefügt, später mit Remesh zu verschmelzen. Neuer Körper: ein eigenes Teil"},
+    {"Cube", "Würfel"},
+    {"A tube along the stroke, or a row of shapes along it", "Ein Rohr entlang des Strichs oder eine Reihe von Formen entlang dessen"},
+    {"The distance between the shapes (0: their size)", "Der Abstand zwischen den Formen (0: ihre Größe)"},
 };
 
 

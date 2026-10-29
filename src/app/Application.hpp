@@ -290,6 +290,7 @@ private:
     bool m_brushNormalValid = false;
     // Channel stroke and knife line.
     int m_cutBody = -1;
+    ToolId m_cutTool = ToolId::CutChannel; // the tool whose path m_cutPath is (Channel or Curve Brush)
     std::vector<Vec3> m_cutPath;
     ImVec2 m_knifeStart{};
     bool beginSculpt(float x, float y);

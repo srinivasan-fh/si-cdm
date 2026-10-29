@@ -604,6 +604,22 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
         g.line(0, 0.9f, -0.22f, 0.65f);
         g.line(0, 0.9f, 0.22f, 0.65f);
         break;
+    case ToolId::InsertMesh: // a ball set on a surface, an arrow down onto it
+        g.line(-0.95f, -0.6f, 0.95f, -0.6f);
+        g.circle(0, -0.15f, 0.42f, true);
+        g.line(0, 0.95f, 0, 0.42f);
+        g.line(-0.18f, 0.6f, 0, 0.42f);
+        g.line(0.18f, 0.6f, 0, 0.42f);
+        break;
+    case ToolId::CurveBrush: // a tube laid along a wavy stroke
+        g.line(-0.95f, -0.75f, 0.95f, -0.75f);
+        g.line(-0.85f, -0.1f, -0.4f, 0.35f);
+        g.line(-0.4f, 0.35f, 0.1f, -0.2f);
+        g.line(0.1f, -0.2f, 0.55f, 0.25f);
+        g.line(0.55f, 0.25f, 0.85f, 0.0f);
+        g.circle(-0.85f, -0.1f, 0.12f, true);
+        g.circle(0.85f, 0.0f, 0.12f, true);
+        break;
     case ToolId::DeleteFace: // a block with a hole, crossed out
         g.poly({{-0.85f, -0.75f}, {0.85f, -0.75f}, {0.85f, 0.45f}, {-0.85f, 0.45f}}, true, true);
         g.ellipse(-0.1f, -0.15f, 0.3f, 0.12f, true);

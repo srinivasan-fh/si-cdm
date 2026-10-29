@@ -343,6 +343,14 @@ mirrored, then `SKIN` fuses them into one smooth closed mesh. The skin stays bou
 
 ![An armature of balls in the Armature window, and its skin posed](docs/armature.png)
 
+**Insert-mesh and curve brushes** (like ZBrush's IMM and curve brushes) put shapes on a surface: a
+click stands a sphere, cube, cylinder, cone, torus or any body's shape on it along the normal; a
+drag lays a tube, or a row of shapes, along the stroke. Each is fused exactly, appended as a
+polygroup of its own for `REMESH`, or made a body of its own
+(`INSERTMESH Head CONE AT 0,0,60 SIZE 14`, `CURVE Head TUBE PATH ... RADIUS 2.5`).
+
+![A ball with cones, a tube and a row of balls put on it](docs/insert-brushes.png)
+
 Details: [docs/sculpting.md](docs/sculpting.md).
 
 ## Armour and exoskeletons

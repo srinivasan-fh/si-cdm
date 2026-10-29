@@ -97,6 +97,8 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::CutChannel, C::Cut, SICDM_TR_NOOP("Channel"), "", SICDM_TR_NOOP("Drag over a surface to carve a round-bottomed channel along the stroke."), true},
     {T::CutKnife, C::Cut, SICDM_TR_NOOP("Knife / Trim"), "", SICDM_TR_NOOP("Drag a line across a body: the plane through it slices the body and the smaller side is removed. The cut is capped."), true},
     {T::AddBoss, C::Cut, SICDM_TR_NOOP("Add Volume (Boss)"), "", SICDM_TR_NOOP("Click a surface to fuse on a boss, pad or dome."), true},
+    {T::InsertMesh, C::Cut, SICDM_TR_NOOP("Insert Mesh"), "", SICDM_TR_NOOP("Click a surface to put a shape (or another body's) there, standing along the surface."), true},
+    {T::CurveBrush, C::Cut, SICDM_TR_NOOP("Curve Brush"), "", SICDM_TR_NOOP("Drag over a surface to lay a tube, or a row of shapes, along the stroke."), true},
     {T::BooleanBodies, C::Cut, SICDM_TR_NOOP("Boolean Bodies"), "", SICDM_TR_NOOP("Click a body, then a second one: union, subtract or intersect them exactly."), true},
     {T::PushPull, C::Cut, SICDM_TR_NOOP("Push / Pull Face"), "", SICDM_TR_NOOP("Drag a face of any solid along its normal: a flat face moves and its neighbours follow; a hole or boss gets larger or smaller. Shift: whole millimetres."), true},
     {T::DeleteFace, C::Cut, SICDM_TR_NOOP("Delete Face"), "", SICDM_TR_NOOP("Click a hole, boss, fillet or chamfer to take it away: the faces round it close up."), true},
@@ -140,7 +142,7 @@ constexpr ToolId gSculptSmooth[] = {T::SculptSmooth, T::SculptFlatten, T::Sculpt
 constexpr ToolId gSculptMask[] = {T::SculptMask, T::SculptPaint};
 constexpr ToolId gCutHole[] = {T::CutHole, T::CutPocket, T::CutChannel};
 constexpr ToolId gCutKnife[] = {T::CutKnife};
-constexpr ToolId gBoss[] = {T::AddBoss};
+constexpr ToolId gBoss[] = {T::AddBoss, T::InsertMesh, T::CurveBrush};
 constexpr ToolId gBoolean[] = {T::BooleanBodies};
 constexpr ToolId gDirect[] = {T::PushPull, T::DeleteFace};
 constexpr ToolId gShell[] = {T::ShellBody, T::LightenBody};

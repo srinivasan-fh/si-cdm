@@ -83,6 +83,8 @@ add_library(sicdm_core STATIC
     src/core/Armature.cpp
     src/core/ArmatureCommand.cpp
     src/core/Gizmo.cpp
+    src/core/InsertBrush.cpp
+    src/core/InsertCommand.cpp
     src/core/MoldCommand.cpp
     src/core/WeldmentCommand.cpp
     src/core/Bvh.cpp
