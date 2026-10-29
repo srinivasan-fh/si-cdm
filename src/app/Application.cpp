@@ -993,7 +993,23 @@ void Application::finishMoveDrag(bool commit) {
     m_doc.scene.sealUndo();
 }
 
+void Application::finishGizmoDrag(bool commit) {
+    if (m_gizmoBody < 0 || m_gizmoBody >= static_cast<int>(m_doc.scene.bodies().size())) return;
+    // Put it back as it was, then (let go) do it again by its command: history and undo have it.
+    m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBody)] = m_gizmoStart;
+    m_doc.scene.touchBodies();
+    const std::string name = m_gizmoStart.name;
+    m_gizmoBody = -1;
+    if (!commit) {
+        setStatus("Cancelled");
+        return;
+    }
+    const std::string line = gizmoCommand(static_cast<GizmoMode>(std::clamp(m_uiState.gizmoMode, 0, 2)), m_gizmoDelta, name, m_gizmoPivot);
+    if (!line.empty()) runCommandLine(line);
+}
+
 void Application::cancelInteraction(bool commit) {
+    if (m_leftDrag == DragMode::Gizmo) finishGizmoDrag(commit);
     if (m_leftDrag == DragMode::MoveBody) finishMoveDrag(commit);
     if (m_leftDrag == DragMode::SketchGrip) { // Esc: the sketch as it was
         if (commit) finishSketchDrag();
@@ -1361,6 +1377,16 @@ void Application::handleViewportInput() {
     if (m_otherDrag == DragMode::Orbit) cam.orbit(dx, dy);
     if (m_otherDrag == DragMode::Pan) cam.pan(dx, dy, wh);
 
+    // The gizmo on the selected body (Move tool): the handle under the mouse.
+    Vec3 gizmoPivot{};
+    float gizmoSize = 0;
+    const bool gizmo = tool == ToolId::Move && !is2D && !simulating() && gizmoShown(gizmoPivot, gizmoSize);
+    const GizmoMode gizmoMode = static_cast<GizmoMode>(std::clamp(m_uiState.gizmoMode, 0, 2));
+    if (m_leftDrag != DragMode::Gizmo)
+        m_gizmoHover = gizmo && onCanvas && m_leftDrag == DragMode::None
+                           ? gizmoPick(gizmoMode, gizmoPivot, gizmoSize, cam.forward(), gizmoProjector(), {mx, my})
+                           : GizmoHandle{};
+
     // Left button behaviour depends on the active tool.
     if (onCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         m_pressX = mx;
@@ -1388,6 +1414,17 @@ void Application::handleViewportInput() {
             m_leftDrag = DragMode::Pan;
         } else if (tool == ToolId::Zoom) {
             m_leftDrag = DragMode::Zoom;
+        } else if (tool == ToolId::Move && gizmo && m_gizmoHover.kind != GizmoHandle::None) {
+            // On a gizmo handle: it drags the selected body that way.
+            m_leftDrag = DragMode::Gizmo;
+            m_gizmoHandle = m_gizmoHover;
+            m_gizmoBody = m_uiState.selectedBody;
+            m_gizmoStart = m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBody)];
+            m_gizmoPivot = gizmoPivot;
+            m_gizmoSize = gizmoSize;
+            const Ray r = cam.screenRay(mx, my, io.DisplaySize.x, wh);
+            m_gizmoFrom = {r.origin, r.dir, {mx, my}};
+            m_gizmoDelta = {};
         } else if (tool == ToolId::Move) {
             Vec2 grab{};
             if (const auto hit = pick(mx, my)) {
@@ -1435,6 +1472,21 @@ void Application::handleViewportInput() {
                     m_moveStartOffset + (ray.at(t) - m_movePlanePoint);
             break;
         }
+        case DragMode::Gizmo: {
+            if (m_gizmoBody < 0 || m_gizmoBody >= static_cast<int>(m_doc.scene.bodies().size())) break;
+            const Ray r = cam.screenRay(mx, my, io.DisplaySize.x, wh);
+            const bool snap = m_uiState.gizmoSnap || commandModifierHeld();
+            const float step = !snap ? 0.0f : gizmoMode == GizmoMode::Move ? m_uiState.gizmoMoveStep : gizmoMode == GizmoMode::Rotate ? m_uiState.gizmoAngleStep : m_uiState.gizmoScaleStep;
+            m_gizmoDelta = gizmoDrag(gizmoMode, m_gizmoHandle, m_gizmoPivot, cam.forward(), gizmoProjector(), m_gizmoFrom, {r.origin, r.dir, {mx, my}}, step);
+            // The preview: the body as it began, done to as the drag says so far.
+            Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(m_gizmoBody)];
+            b = m_gizmoStart;
+            if (gizmoMode == GizmoMode::Move) b.offset += m_gizmoDelta.move;
+            else if (gizmoMode == GizmoMode::Rotate) turnBody(b, m_gizmoDelta.axis, m_gizmoDelta.angle, m_gizmoPivot);
+            else stretchBody(b, m_gizmoDelta.scale, m_gizmoPivot);
+            m_doc.scene.touchBodies();
+            break;
+        }
         case DragMode::MoveImage: {
             const int sel = m_uiState.selectedImage;
             if (sel < 0 || sel >= static_cast<int>(m_doc.scene.images().size())) break;
@@ -1469,6 +1521,7 @@ void Application::handleViewportInput() {
         else if (m_leftDrag == DragMode::PushPull) finishPushPull();
         else if (m_leftDrag == DragMode::SketchGrip) finishSketchDrag();
         else if (m_leftDrag == DragMode::MoveBody) finishMoveDrag(true);
+        else if (m_leftDrag == DragMode::Gizmo) finishGizmoDrag(true);
         m_leftDrag = DragMode::None;
         m_gripCandidate.reset();
         m_escapedDrag = false;
@@ -1516,6 +1569,9 @@ void Application::handleViewportInput() {
     if (io.WantCaptureKeyboard) return;
     if (!isSketchTool(m_ui.toolbox().active())) m_sketcher.cancel();
     const ToolId before = m_ui.toolbox().active();
+    // V again with the Move tool on: the gizmo moves, then rotates, then scales.
+    if (m_leftDrag == DragMode::None && before == ToolId::Move && ImGui::IsKeyPressed(ImGuiKey_V, false) && !commandModifierHeld())
+        m_uiState.gizmoMode = (m_uiState.gizmoMode + 1) % 3;
     if (m_leftDrag == DragMode::None) m_ui.toolbox().handleShortcuts(); // not mid-stroke
     if (m_ui.toolbox().active() != before) m_sketcher.cancel();
 
@@ -1897,6 +1953,7 @@ void Application::frame(float dt) {
     if (m_uiState.mode == ViewMode::Model3D) drawFieldLegend();
     if (m_explodeT > 0 && m_doc.state.assembly.explode.trails) drawExplodeOverlay();
     if (m_leftDrag == DragMode::PushPull) drawPushPullOverlay();
+    drawGizmo();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
                           isWearableTool(m_ui.toolbox().active())))
         drawSculptOverlay();
@@ -2753,6 +2810,79 @@ void Application::finishPushPull() {
 }
 
 // The arrow from where the face was pressed to where it goes, and the distance.
+bool Application::gizmoShown(Vec3& pivot, float& size) const {
+    const int sel = m_leftDrag == DragMode::Gizmo ? m_gizmoBody : m_uiState.selectedBody;
+    if (sel < 0 || sel >= static_cast<int>(m_doc.scene.bodies().size())) return false;
+    const Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(sel)];
+    if (!b.visible) return false;
+    if (m_leftDrag == DragMode::Gizmo) { // it stays where the drag began
+        pivot = m_gizmoPivot, size = m_gizmoSize;
+        return true;
+    }
+    const AABB box = b.bounds();
+    if (!box.valid()) return false;
+    pivot = box.center();
+    // About 110 pixels long whatever the zoom.
+    const ImGuiIO& io = ImGui::GetIO();
+    const auto p = projectToScreen(camera(), pivot, io.DisplaySize), q = projectToScreen(camera(), pivot + camera().right(), io.DisplaySize);
+    if (!p || !q) return false;
+    const float perMm = std::hypot(q->x - p->x, q->y - p->y);
+    if (!(perMm > 1e-6f)) return false;
+    size = 110.0f / perMm;
+    return true;
+}
+
+GizmoProject Application::gizmoProjector() const {
+    const ImVec2 view = ImGui::GetIO().DisplaySize;
+    const OrbitCamera* cam = &camera();
+    return [cam, view](const Vec3& p) -> std::optional<Vec2> {
+        const auto s = projectToScreen(*cam, p, view);
+        if (!s) return std::nullopt;
+        return Vec2{s->x, s->y};
+    };
+}
+
+void Application::drawGizmo() {
+    if (m_ui.toolbox().active() != ToolId::Move || m_uiState.mode == ViewMode::Drawing2D || simulating()) return;
+    Vec3 pivot{};
+    float size = 0;
+    if (!gizmoShown(pivot, size)) return;
+    const GizmoMode mode = static_cast<GizmoMode>(std::clamp(m_uiState.gizmoMode, 0, 2));
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    static const ImU32 kAxisColour[3] = {IM_COL32(230, 80, 80, 255), IM_COL32(110, 200, 90, 255), IM_COL32(80, 140, 240, 255)};
+    const GizmoHandle hot = m_leftDrag == DragMode::Gizmo ? m_gizmoHandle : m_gizmoHover;
+    for (const GizmoStroke& s : gizmoStrokes(mode, pivot, size, camera().forward(), gizmoProjector())) {
+        if (s.points.size() < 2) continue;
+        ImU32 col = s.handle.kind == GizmoHandle::Center ? IM_COL32(235, 235, 235, 230)
+                    : s.handle.kind == GizmoHandle::ViewRing ? IM_COL32(200, 200, 200, 200)
+                                                              : kAxisColour[std::clamp(s.handle.axis, 0, 2)];
+        if (hot.kind != GizmoHandle::None && s.handle == hot) col = IM_COL32(255, 214, 60, 255);
+        std::vector<ImVec2> pts;
+        for (const Vec2& p : s.points) pts.push_back({p.x, p.y});
+        if (s.fill) {
+            const ImU32 fill = s.handle.kind == GizmoHandle::Plane ? (col & 0x00FFFFFF) | 0x80000000 : col;
+            fg->AddConvexPolyFilled(pts.data(), static_cast<int>(pts.size()), fill);
+        } else {
+            fg->AddPolyline(pts.data(), static_cast<int>(pts.size()), col, s.closed ? ImDrawFlags_Closed : ImDrawFlags_None, s.handle == hot ? 3.5f : 2.2f);
+        }
+    }
+    if (m_leftDrag != DragMode::Gizmo) return;
+    // What the drag does so far, by the mouse.
+    char label[96];
+    if (mode == GizmoMode::Move)
+        std::snprintf(label, sizeof label, "%+.2f, %+.2f, %+.2f mm", static_cast<double>(m_gizmoDelta.move.x), static_cast<double>(m_gizmoDelta.move.y),
+                      static_cast<double>(m_gizmoDelta.move.z));
+    else if (mode == GizmoMode::Rotate)
+        std::snprintf(label, sizeof label, "%+.1f deg", static_cast<double>(m_gizmoDelta.angle));
+    else if (m_gizmoDelta.uniform)
+        std::snprintf(label, sizeof label, "x%.3f", static_cast<double>(m_gizmoDelta.scale.x));
+    else
+        std::snprintf(label, sizeof label, "x%.3f, %.3f, %.3f", static_cast<double>(m_gizmoDelta.scale.x), static_cast<double>(m_gizmoDelta.scale.y),
+                      static_cast<double>(m_gizmoDelta.scale.z));
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    fg->AddText(ImVec2(m.x + 16, m.y + 12), IM_COL32(255, 214, 60, 255), label);
+}
+
 void Application::drawPushPullOverlay() const {
     const ImGuiIO& io = ImGui::GetIO();
     if (m_push.body < 0) return;
@@ -3579,6 +3709,17 @@ void Application::pollRender() {
 }
 
 void Application::setPanel(std::optional<bool> on) { m_uiState.showModelTree = on.value_or(!m_uiState.showModelTree); }
+
+bool Application::setGizmo(int mode) {
+    if (mode < 0) {
+        m_ui.toolbox().setActive(ToolId::Select);
+        return true;
+    }
+    m_ui.toolbox().setActive(ToolId::Move);
+    m_uiState.gizmoMode = std::clamp(mode, 0, 2);
+    if (m_uiState.mode == ViewMode::Drawing2D) m_uiState.mode = ViewMode::Model3D;
+    return true;
+}
 
 void Application::setPanelPage(int page) {
     if (page == 8 || page == 9) m_uiState.showRender = true, m_uiState.renderStart = m_uiState.renderStart || page == 9;

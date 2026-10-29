@@ -26,6 +26,7 @@
 #include "core/RouteCommand.hpp"
 #include "core/FastenerCommand.hpp"
 #include "core/ArmatureCommand.hpp"
+#include "core/Gizmo.hpp"
 #include "core/StackupCommand.hpp"
 #include "core/StudyCommand.hpp"
 #include "core/MoldCommand.hpp"
@@ -4489,7 +4490,39 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "ROTATE") {
-        // ROTATE [name] rx,ry,rz: the orientation, degrees about X, then Y, then Z, about the body's origin.
+        // ROTATE [name] BY angle AXIS x,y,z [ABOUT x,y,z]: turns it on from where it is, about an
+        // axis through a point (default its origin): what the gizmo's rings do.
+        std::size_t by = a.size();
+        for (std::size_t i = 0; i < a.size(); ++i)
+            if (!quotedArg(i) && lower(a[i]) == "by") by = i;
+        if (by < a.size()) {
+            const std::vector<std::string> words(a.begin(), a.begin() + static_cast<std::ptrdiff_t>(by));
+            const int bi = words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
+            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+                return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
+            Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            const auto angle = by + 1 < a.size() ? parseNumber(a[by + 1]) : std::nullopt;
+            if (!angle || !std::isfinite(*angle)) return out.fail("ROTATE ... BY needs degrees: ROTATE name BY 30 AXIS Z [ABOUT x,y,z]");
+            Vec3 axis{0, 0, 1}, about = b.offset;
+            for (std::size_t i = by + 2; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if ((k == "axis" || k == "about") && i + 1 < a.size()) {
+                    const std::string w = k == "axis" ? toUpper(a[i + 1]) : std::string();
+                    const std::optional<Vec3> v = w == "X" ? Vec3{1, 0, 0} : w == "Y" ? Vec3{0, 1, 0} : w == "Z" ? Vec3{0, 0, 1} : parseVec3(a[i + 1]);
+                    if (!v) return out.fail(toUpper(k) + (k == "axis" ? " needs X, Y, Z or x,y,z" : " needs x,y,z"));
+                    (k == "axis" ? axis : about) = *v, ++i;
+                } else {
+                    return out.fail("ROTATE ... BY doesn't take " + a[i] + " (AXIS, ABOUT)");
+                }
+            }
+            std::string why;
+            if (!turnBody(b, axis, *angle, about, &why)) return out.fail(why);
+            doc.scene.touchBodies();
+            markChanged(doc);
+            out.say("Turned " + b.name + fmt(" %g deg about (", *angle) + fmt("%g, ", axis.x) + fmt("%g, ", axis.y) + fmt("%g) through (", axis.z) +
+                    fmt("%g, ", about.x) + fmt("%g, ", about.y) + fmt("%g)", about.z));
+            return out;
+        }
         if (a.empty()) return usage();
         const auto deg = parseVec3(a.back());
         if (!deg || !std::isfinite(deg->x) || !std::isfinite(deg->y) || !std::isfinite(deg->z)) return usage();
@@ -4505,6 +4538,34 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         markChanged(doc);
         out.say("Rotated " + b.name + " to " + fmt("(%g, ", deg->x) + fmt("%g, ", deg->y) + fmt("%g) deg", deg->z));
         return out;
+    }
+    if (cmd == "SCALE") {
+        // SCALE [name] factor | sx,sy,sz ABOUT x,y,z: about a point (the gizmo's pivot); one body.
+        std::size_t about = a.size();
+        for (std::size_t i = 0; i < a.size(); ++i)
+            if (!quotedArg(i) && lower(a[i]) == "about") about = i;
+        if (about < a.size()) {
+            const auto at = about + 1 < a.size() ? parseVec3(a[about + 1]) : std::nullopt;
+            if (!at || about + 2 != a.size() || about == 0) return out.fail("SCALE [name] factor | sx,sy,sz ABOUT x,y,z");
+            const std::string& kw = a[about - 1];
+            std::optional<Vec3> k;
+            if (kw.find(',') != std::string::npos) k = parseVec3(kw);
+            else if (const auto f = parseNumber(kw)) k = Vec3{*f, *f, *f};
+            if (!k) return out.fail("SCALE ... ABOUT needs a factor or sx,sy,sz before ABOUT");
+            const std::vector<std::string> words(a.begin(), a.begin() + static_cast<std::ptrdiff_t>(about - 1));
+            const int bi = words.empty() ? doc.selectedBody : findBody(doc, joinArgs(words));
+            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size()))
+                return out.fail(words.empty() ? "Select a body first, or give its name" : "No body named " + joinArgs(words));
+            Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            std::string why;
+            if (!stretchBody(b, *k, *at, &why)) return out.fail(why);
+            doc.scene.touchBodies();
+            markChanged(doc);
+            const AABB box = b.bounds();
+            out.say("Scaled " + b.name + " about (" + fmt("%g, ", at->x) + fmt("%g, ", at->y) + fmt("%g): ", at->z) + fmt("%g x ", box.max.x - box.min.x) +
+                    fmt("%g x ", box.max.y - box.min.y) + fmt("%g mm", box.max.z - box.min.z));
+            return out;
+        }
     }
     if (cmd == "SCALE" && !a.empty() && a.back().find(',') != std::string::npos) {
         // SCALE [name] sx,sy,sz: stretches the body along its own axes, about its origin.
@@ -5014,6 +5075,16 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (auto o = needView(view, "DISPLAY"); !o.ok) return o;
         view->setDisplay(mode);
         out.say("Display " + m);
+        return out;
+    }
+    if (cmd == "GIZMO") {
+        // GIZMO MOVE | ROTATE | SCALE | OFF: the Move tool with its gizmo on the selected body.
+        const std::string m = a.empty() ? std::string("MOVE") : toUpper(a[0]);
+        const int mode = m == "MOVE" || m == "TRANSLATE" ? 0 : m == "ROTATE" || m == "TURN" ? 1 : m == "SCALE" ? 2 : m == "OFF" ? -1 : -2;
+        if (mode == -2) return usage();
+        if (auto o = needView(view, "GIZMO"); !o.ok) return o;
+        view->setGizmo(mode);
+        out.say(mode < 0 ? "Gizmo off (the Select tool)" : "Gizmo: " + lower(m) + " the selected body by its handles");
         return out;
     }
     if (cmd == "PANEL" && !a.empty()) {

@@ -1132,6 +1132,12 @@ const char* const kGerman[][2] = {
     {"Voxel", "Voxel"},
     {"on", "an"},
     {"root", "Wurzel"},
+    {"Click a body to move it, or select one for the gizmo", "Einen Körper anklicken, um ihn zu verschieben, oder einen für das Gizmo auswählen"},
+    {"Drag a handle, or the body to slide it in the view", "Einen Griff ziehen, oder den Körper, um ihn in der Ansicht zu verschieben"},
+    {"Move, turn and scale in steps (also while Ctrl is held)", "In Schritten verschieben, drehen und skalieren (auch bei gedrückter Strg-Taste)"},
+    {"Rotate", "Drehen"},
+    {"Snap", "Raster"},
+    {"The gizmo's handles: arrows and squares move, rings rotate, cubes scale  [V switches]", "Die Griffe des Gizmos: Pfeile und Quadrate verschieben, Ringe drehen, Würfel skalieren  [V wechselt]"},
 };
 
 

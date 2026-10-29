@@ -331,9 +331,15 @@ constexpr CommandSpec kCommands[] = {
      "Insert a library component: motors, gears, racks, gear trains (PART alone lists them)"},
     {"PARAM", "PARAMS PARAMETERS", "PARAM [name] [key value]...",
      "Edit a placed library part: motor shafts (SHAFTS NONE|SINGLE|DUAL, SHAFT_LENGTH...), gear teeth...; no values lists them"},
-    {"ROTATE", "ROT", "ROTATE [name] rx,ry,rz", "Orient a body: degrees about X, then Y, then Z, about its origin"},
-    {"SCALE", "SC RESIZE", "SCALE [name] factor | SCALE [name] TO size | SCALE [name] sx,sy,sz",
-     "Resize a body, or a whole library component with its motions; three factors stretch a body along x, y, z"},
+    {"GIZMO", "MANIPULATOR", "GIZMO MOVE|ROTATE|SCALE|OFF",
+     "The Move tool's gizmo on the selected body: arrows and squares move it, rings turn it, cubes scale it (V switches; Ctrl snaps); "
+     "each drag is recorded as MOVE, ROTATE ... BY or SCALE ... ABOUT"},
+    {"ROTATE", "ROT", "ROTATE [name] rx,ry,rz | ROTATE [name] BY angle AXIS X|Y|Z|x,y,z [ABOUT x,y,z]",
+     "Orient a body: degrees about X, then Y, then Z, about its origin; or turn it on by an angle about an axis through a point "
+     "(what the gizmo's rings do)"},
+    {"SCALE", "SC RESIZE", "SCALE [name] factor | SCALE [name] TO size | SCALE [name] sx,sy,sz | SCALE [name] factor|sx,sy,sz ABOUT x,y,z",
+     "Resize a body, or a whole library component with its motions; three factors stretch a body along x, y, z; ABOUT scales one "
+     "body about a point (what the gizmo does)"},
     // Editing
     {"SELECT", "SEL", "SELECT name | NONE", "Select a body, curve or image by name"},
     {"ERASE", "E DEL DELETE", "ERASE [name]", "Delete the selection (or the named item)"},

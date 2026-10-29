@@ -4,6 +4,7 @@
 #include "core/Camera.hpp"
 #include "core/Constraints.hpp"
 #include "core/Document.hpp"
+#include "core/Gizmo.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Mcp.hpp"
 #include "core/Recovery.hpp"
@@ -68,6 +69,7 @@ public:
     bool setBodyTexture(const std::string& body, bool checker, const std::string& colorPath, const std::string& normalPath, std::string* error) override;
     void setPanel(std::optional<bool> on) override;
     void setPanelPage(int page) override;
+    bool setGizmo(int mode) override;
     std::string describe() const override;
     bool simulation(const std::string& action, float value, std::string* reply) override;
     bool showSheet(bool on) override;
@@ -215,7 +217,7 @@ private:
     void updateSketchColors();
 
     // Input state
-    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip, PushPull };
+    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip, PushPull, Gizmo };
     DragMode m_leftDrag = DragMode::None;
     bool m_escapedDrag = false; // Esc cancelled the drag; the button is still held
     DragMode m_otherDrag = DragMode::None; // right / middle button
@@ -299,6 +301,19 @@ private:
     // dropped; channel paths, knife lines and a half-picked boolean are forgotten.
     void finishMoveDrag(bool commit); // the move tool let go (commit) or cancelled
     void cancelInteraction(bool commit);
+    // The move / rotate / scale gizmo on the selected body while the Move tool is on: where it
+    // is and how long (mm, a fixed size on screen); false when none shows.
+    bool gizmoShown(Vec3& pivot, float& size) const;
+    GizmoProject gizmoProjector() const;
+    void drawGizmo();
+    void finishGizmoDrag(bool commit); // let go: the drag becomes its command (MOVE, ROTATE, SCALE)
+    GizmoHandle m_gizmoHover, m_gizmoHandle;
+    Body m_gizmoStart;      // the body as the drag began (the preview starts from it each frame)
+    int m_gizmoBody = -1;
+    Vec3 m_gizmoPivot{};
+    float m_gizmoSize = 0;
+    GizmoRay m_gizmoFrom{};
+    GizmoDelta m_gizmoDelta{};
     void applyCutTool(ToolId tool, float x, float y);
     void applyWearableTool(ToolId tool, float x, float y);
     void finishCutDrag(ToolId tool, float x, float y);

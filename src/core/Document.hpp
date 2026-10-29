@@ -106,6 +106,8 @@ public:
     // Open the panel on a page (0 Model, 1 Library, 2 CAM), or a window (3 CAM tools, 4 machine,
     // 5 user guide, 6 preferences, 7 licence, 8 render, 9 render and start making the picture).
     virtual void setPanelPage(int page) { (void)page; }
+    // The Move tool with its gizmo in a mode (0 move, 1 rotate, 2 scale); -1: the Select tool.
+    virtual bool setGizmo(int mode) { (void)mode; return false; }
     virtual std::string describe() const = 0;          // window, plane, camera summary
 
     // Multi-document hosts keep each project in its own file tab. NEW / OPEN call

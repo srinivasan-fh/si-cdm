@@ -686,6 +686,21 @@ bodies, sketches and properties of the selection. It is hidden by default; drag 
 Slots with a small corner triangle hold several tools: right-click or hold to open the flyout.
 
 - **Navigate & select:** Move (V), Select (S), Orbit (O), Pan (H), Zoom (Z)
+  - **Move, rotate and scale gizmo:** with the Move tool on, the selected body shows a gizmo at
+    its centre.
+    - In *Move* mode, an arrow slides the body along X, Y or Z; a square slides it in that plane;
+      the dot slides it in the view.
+    - In *Rotate* mode, a ring turns it about X, Y or Z through its centre, and the outer ring
+      turns it about the line of sight.
+    - In *Scale* mode, a cube stretches it along one axis, and the centre scales it evenly (it
+      stays the primitive it was).
+    - `V` again switches mode. *Snap* (or holding Ctrl) moves in steps (1 mm, 15°, ×0.1 by
+      default). Esc cancels a drag.
+    - Each drag is recorded as a command, so it is in the history and UNDO takes it back:
+      `MOVE dx,dy,dz`, `ROTATE name BY a AXIS x,y,z ABOUT x,y,z`, `SCALE name k ABOUT x,y,z`.
+      `GIZMO MOVE|ROTATE|SCALE` picks the mode from the command line.
+
+    ![The gizmo's three modes on a block: move arrows and plane squares, rotation rings, scale cubes](docs/gizmo.png)
 - **2D sketch:** the drawing tools work on the active plane, in either window.
   - **Curves:** Point, Line (L), Polyline, Arc (A, three points), Circle (C), Ellipse, Rectangle
     (R), Slot, Polygon and Spline (a smooth curve through the points you click).

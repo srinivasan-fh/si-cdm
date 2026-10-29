@@ -81,6 +81,11 @@ struct UiState {
     // The Armature window: the armature edited, its ball chosen (0...), the plane balls are
     // mirrored across (-1 none, 0 X, 1 Y, 2 Z), and clicks on it add balls while armaturePick is on.
     bool showArmature = false, armaturePick = false;
+    // The Move tool's gizmo: 0 move, 1 rotate, 2 scale; snapping (also while Ctrl is held) to
+    // these steps (mm, degrees, a factor).
+    int gizmoMode = 0;
+    bool gizmoSnap = false;
+    float gizmoMoveStep = 1.0f, gizmoAngleStep = 15.0f, gizmoScaleStep = 0.1f;
     std::string armatureName;
     int armatureBall = 0, armatureMirror = 0;
     // The 3D Path window: points for a new 3D path (clicks on the model add them while

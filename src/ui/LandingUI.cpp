@@ -2280,6 +2280,27 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         const std::string snap = lengthText(5.0);
         if (is2D) ImGui::TextDisabled(tr("Click to place on the %s plane (%s snap)"), (st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : shortPlaneName(st.plane)), snap.c_str());
         else ImGui::TextDisabled(tr("Click the grid or a face to place (%s snap)"), snap.c_str());
+    } else if (tool.id == ToolId::Move && !is2D) {
+        // The gizmo on the selected body: move, rotate or scale it by its handles.
+        static const char* const kModes[] = {SICDM_TR_NOOP("Move"), SICDM_TR_NOOP("Rotate"), SICDM_TR_NOOP("Scale")};
+        for (int m = 0; m < 3; ++m) {
+            if (m > 0) ImGui::SameLine(0, 2);
+            const bool on = st.gizmoMode == m;
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ButtonActive]);
+            if (ImGui::Button(tr(kModes[m]))) st.gizmoMode = m;
+            if (on) ImGui::PopStyleColor();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The gizmo's handles: arrows and squares move, rings rotate, cubes scale  [V switches]"));
+        ImGui::SameLine();
+        ImGui::Checkbox(tr("Snap"), &st.gizmoSnap);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Move, turn and scale in steps (also while Ctrl is held)"));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        if (st.gizmoMode == 0) ImGui::DragFloat("##mstep", &st.gizmoMoveStep, 0.1f, 0.01f, 1000.0f, "%.2f mm");
+        else if (st.gizmoMode == 1) ImGui::DragFloat("##astep", &st.gizmoAngleStep, 0.5f, 0.1f, 180.0f, "%.1f deg");
+        else ImGui::DragFloat("##sstep", &st.gizmoScaleStep, 0.01f, 0.001f, 10.0f, "x%.3f");
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", st.selectedBody >= 0 ? tr("Drag a handle, or the body to slide it in the view") : tr("Click a body to move it, or select one for the gizmo"));
     } else if (tool.id == ToolId::Move || tool.id == ToolId::Select) {
         ImGui::TextDisabled("%s", tr("Auto-select:"));
         ImGui::SameLine();
