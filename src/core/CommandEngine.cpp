@@ -20,6 +20,7 @@
 #include "core/Collide.hpp"
 #include "core/ComponentCommand.hpp"
 #include "core/FaceCommand.hpp"
+#include "core/MeshImport.hpp"
 #include "core/SectionView.hpp"
 #include "core/Components.hpp"
 #include "core/DrawingCommand.hpp"
@@ -4619,8 +4620,12 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         std::vector<std::string> rest = a;
         std::optional<Vec2> at;
         std::optional<float> width;
+        std::optional<double> fileUnit; // mesh models: one file unit in mm (UNIT inch...)
         for (std::size_t i = 0; i < rest.size();) {
-            if (iequal(rest[i], "width") && i + 1 < rest.size() && parseLength(rest[i + 1])) {
+            if (iequal(rest[i], "unit") && i + 1 < rest.size() && (parseUnitName(rest[i + 1]) || iequal(rest[i + 1], "micron"))) {
+                fileUnit = iequal(rest[i + 1], "micron") ? 0.001 : toMillimeters(1.0, *parseUnitName(rest[i + 1]));
+                rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i), rest.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+            } else if (iequal(rest[i], "width") && i + 1 < rest.size() && parseLength(rest[i + 1])) {
                 width = static_cast<float>(*parseLength(rest[i + 1]));
                 rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i), rest.begin() + static_cast<std::ptrdiff_t>(i) + 2);
             } else if (rest[i].size() > 1 && rest[i][0] == '@' && parsePointInput(rest[i])) {
@@ -4720,8 +4725,37 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             for (std::size_t k = 0; k < rep.warnings.size() && k < 5; ++k) out.say("  warning: " + rep.warnings[k]);
             return out;
         }
+        case FileKind::MeshModel: {
+            MeshImportReport rep;
+            std::vector<ImportedPart> parts = importMeshModel(path, &rep, &err, fileUnit);
+            if (parts.empty()) return out.fail(err.empty() ? "Nothing imported" : err);
+            std::size_t tris = 0;
+            std::string names;
+            for (const ImportedPart& p : parts) {
+                Body b = bodyFromPart(p);
+                if (!p.color) b.color = kPalette[static_cast<std::size_t>(++doc.primitiveSerial) % std::size(kPalette)];
+                const std::string base = b.name.empty() ? fs::path(path).stem().string() : b.name;
+                std::string name = base;
+                for (int k = 2; findBody(doc, name) >= 0; ++k) name = base + " " + std::to_string(k);
+                b.name = name;
+                tris += b.mesh.indices.size() / 3;
+                if (names.size() < 120) names += (names.empty() ? "" : ", ") + name;
+                doc.scene.add(std::move(b));
+            }
+            doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+            doc.selectedCurve = doc.selectedImage = -1;
+            markChanged(doc);
+            char u[64];
+            std::snprintf(u, sizeof(u), "%g mm", rep.unitToMm);
+            out.say("Imported " + std::to_string(parts.size()) + (parts.size() == 1 ? " part" : " parts") + " from " + path + " (" + rep.format + ", 1 file unit = " + u +
+                    (rep.unitAssumed ? ", taken: the file doesn't say; IMPORT ... UNIT inch changes it" : "") + "): " + names);
+            out.say("  " + std::to_string(tris) + " triangles");
+            for (std::size_t k = 0; k < rep.warnings.size() && k < 5; ++k) out.say("  warning: " + rep.warnings[k]);
+            return out;
+        }
         case FileKind::Project: return out.fail("Use OPEN for project files");
-        default: return out.fail("Import supports .stl .obj .step .stp .igs .iges .dxf and images (.png .jpg .bmp .tga .gif ...)");
+        default:
+            return out.fail("Import supports .step .stp .igs .iges, .stl .obj .3mf .amf .ply .off .gltf .glb .wrl, .dxf and images (.png .jpg .bmp .tga .gif ...)");
         }
     }
 

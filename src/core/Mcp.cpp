@@ -790,7 +790,9 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
-        p.set("path", prop("string", ".step/.stp exact solids (assemblies placed, units converted), .stl/.obj mesh, .dxf drawing, or image (.png .jpg .bmp .tga .gif ...)"));
+        p.set("path", prop("string", ".step/.stp/.igs exact solids (assemblies placed, units converted), .stl/.obj/.3mf/.amf/.ply/.off/.gltf/.glb/.wrl meshes "
+                                     "(parts, assemblies and colours), .dxf drawing, or image (.png .jpg .bmp .tga .gif ...)"));
+        p.set("unit", prop("string", "meshes: one file unit (mm, cm, m, inch, foot, micron) when the file doesn't say or says wrong"));
         p.set("position", numberArray(2, "Image centre [u,v] on the sketch plane (mm)"));
         p.set("width", prop("number", "Image width (mm)"));
         tools.push(tool("import_file", "Import STEP or IGES solids (exact B-reps) or a mesh as bodies, a DXF onto the sketch plane, or a reference image.",
@@ -2040,6 +2042,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         std::string line = "IMPORT " + quote(a["path"].asString());
         if (a["position"].isArray()) line += " @" + pointArg(a["position"]);
         if (a["width"].isNumber()) line += " WIDTH " + num(a["width"].asNumber());
+        if (a["unit"].isString()) line += " UNIT " + a["unit"].asString();
         return runLine(line);
     }
     if (name == "export_file") return runLine("EXPORT " + quote(a["path"].asString()));

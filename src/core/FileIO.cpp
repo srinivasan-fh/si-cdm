@@ -1,4 +1,5 @@
 #include "core/FileIO.hpp"
+#include "core/MeshImport.hpp"
 #include "core/Multires.hpp"
 
 #include "core/Brep.hpp"
@@ -300,6 +301,7 @@ FileKind fileKindOf(const std::string& path) {
     if (e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".bmp" || e == ".tga" || e == ".gif" || e == ".psd" ||
         e == ".hdr" || e == ".pnm" || e == ".ppm" || e == ".pgm")
         return FileKind::Image;
+    if (isMeshModelExtension(e)) return FileKind::MeshModel;
     return FileKind::Unknown;
 }
 
@@ -313,6 +315,7 @@ const char* fileKindName(FileKind k) {
     case FileKind::Step: return "STEP model";
     case FileKind::Iges: return "IGES model";
     case FileKind::Image: return "image";
+    case FileKind::MeshModel: return "mesh model";
     case FileKind::Unknown: return "unknown";
     }
     return "unknown";

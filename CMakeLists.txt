@@ -67,6 +67,9 @@ add_library(sicdm_core STATIC
     src/core/DirectEdit.cpp
     src/core/FaceCommand.cpp
     src/core/SectionView.cpp
+    src/core/Zip.cpp
+    src/core/Xml.cpp
+    src/core/MeshImport.cpp
     src/core/Bvh.cpp
     src/core/SketchEdit.cpp
     src/core/AssemblyCommand.cpp

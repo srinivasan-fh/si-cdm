@@ -2533,9 +2533,9 @@ void LandingUI::requestFile(int action, const UiState& st) {
         m_fileDialog.open(FileDialog::Mode::Save, "Save Project As", {".sicdm"}, dir, projectStem(st) + ".sicdm");
         break;
     case FileImport: {
-        std::vector<std::string> ext = {".step", ".stp", ".igs", ".iges", ".stl", ".obj", ".dxf"};
+        std::vector<std::string> ext = {".step", ".stp", ".igs", ".iges", ".stl", ".obj", ".3mf", ".amf", ".ply", ".off", ".gltf", ".glb", ".wrl", ".dxf"};
         ext.insert(ext.end(), std::begin(kImageExts), std::end(kImageExts));
-        m_fileDialog.open(FileDialog::Mode::Open, "Import (STEP, IGES, STL, OBJ, DXF, images)", ext, dir);
+        m_fileDialog.open(FileDialog::Mode::Open, "Import (STEP, IGES, STL, OBJ, 3MF, AMF, PLY, OFF, glTF, VRML, DXF, images)", ext, dir);
         break;
     }
     case FileImportStep: m_fileDialog.open(FileDialog::Mode::Open, "Import STEP / IGES (exact solids)", {".step", ".stp", ".igs", ".iges"}, dir); break;

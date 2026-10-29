@@ -57,7 +57,9 @@ Every file opens in its own tab above the canvas. *File → Undo* (`Ctrl+Z`) and
    every minute in the background, and after a crash SI CDM offers it back.
 
 The [CAD guide](cad.md) covers sketches, constraints, features, patterns and the feature
-history; [STEP and IGES](step.md) covers exchanging models with other CAD systems.
+history; [STEP and IGES](step.md) covers exchanging models with other CAD systems, and
+[mesh formats](mesh-formats.md) the 3MF, AMF, PLY, OFF, glTF and VRML files that printers,
+scanners and viewers use.
 
 ## A drawing
 
