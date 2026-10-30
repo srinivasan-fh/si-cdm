@@ -14,6 +14,7 @@
 #include <map>
 #include <tuple>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <unordered_map>
 
@@ -1215,6 +1216,405 @@ void negate(DistanceGrid& g) {
     for (float& v : g.d) v = -v;
 }
 
+// Parts thinner than the ball (a fin, a thin wall, the whole of a thin plate), which an opening
+// by r erases, put back rounded as far as they allow: the union of their own largest inscribed
+// balls (radius under r, centred on the middle of the part, so a plate of thickness t comes back
+// with its edges rounded at t / 2). Medial points of a thick part's convex edge (whose depth
+// rises steadily towards the inside) are left out, so those edges stay rounded at r.
+// `orig`: the part's field before the opening (negative inside).
+void restoreThin(DistanceGrid& g, const DistanceGrid& orig, float r) {
+    const float h = g.h;
+    auto depth = [&](int x, int y, int z) {
+        if (x < 0 || y < 0 || z < 0 || x >= g.nx || y >= g.ny || z >= g.nz) return -1e30f;
+        return -orig.d[orig.idx(x, y, z)];
+    };
+    // Medial voxels: not inside a neighbour's ball (their depth doesn't rise as fast as the
+    // step towards any neighbour), deep enough to hold a ball, shallower than r.
+    std::vector<std::array<int, 3>> medial;
+    std::vector<char> isMedial(g.d.size(), 0);
+    for (int x = 0; x < g.nx; ++x)
+        for (int y = 0; y < g.ny; ++y)
+            for (int z = 0; z < g.nz; ++z) {
+                const float D = depth(x, y, z);
+                if (!(D > 0.2f * h) || D >= r) continue;
+                bool covered = false;
+                for (int dx = -1; dx <= 1 && !covered; ++dx)
+                    for (int dy = -1; dy <= 1 && !covered; ++dy)
+                        for (int dz = -1; dz <= 1 && !covered; ++dz) {
+                            if (!dx && !dy && !dz) continue;
+                            const float step = h * std::sqrt(static_cast<float>(dx * dx + dy * dy + dz * dz));
+                            covered = depth(x + dx, y + dy, z + dz) - D >= 0.6f * step;
+                        }
+                if (covered) continue;
+                isMedial[g.idx(x, y, z)] = 1;
+                medial.push_back({x, y, z});
+            }
+    // Thin parts' middles are level (the depth hardly changes along them); a convex edge's
+    // bisector climbs (by sin of half its angle per step). Only level ones are put back.
+    for (const auto& c : medial) {
+        const float D = depth(c[0], c[1], c[2]);
+        float slope = 0;
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dz = -1; dz <= 1; ++dz) {
+                    const int x = c[0] + dx, y = c[1] + dy, z = c[2] + dz;
+                    if ((!dx && !dy && !dz) || x < 0 || y < 0 || z < 0 || x >= g.nx || y >= g.ny || z >= g.nz || !isMedial[g.idx(x, y, z)]) continue;
+                    const float step = h * std::sqrt(static_cast<float>(dx * dx + dy * dy + dz * dz));
+                    slope = std::max(slope, std::fabs(depth(x, y, z) - D) / step);
+                }
+        if (slope > 0.35f) continue;
+        const Vec3 at = g.at(c[0], c[1], c[2]);
+        if (g.d[g.idx(c[0], c[1], c[2])] <= -D) continue; // already well inside what is kept
+        const int reach = static_cast<int>(std::ceil(D / h)) + 1;
+        for (int x = std::max(0, c[0] - reach); x <= std::min(g.nx - 1, c[0] + reach); ++x)
+            for (int y = std::max(0, c[1] - reach); y <= std::min(g.ny - 1, c[1] + reach); ++y)
+                for (int z = std::max(0, c[2] - reach); z <= std::min(g.nz - 1, c[2] + reach); ++z) {
+                    const std::size_t i = g.idx(x, y, z);
+                    const float v = length(g.at(x, y, z) - at) - D;
+                    if (v < g.d[i]) g.d[i] = v;
+                }
+    }
+}
+
+} // namespace
+
+namespace {
+
+// Where the rounding left the part's surface as it was, the marched mesh is put back on it
+// exactly: vertices on one of its faces onto that face, vertices at one of its sharp edges that
+// wasn't rounded onto the edge (a corner onto the corner), and triangles still cutting across
+// such an edge turned so the edge runs along their sides. The roundings themselves are far
+// from the part's edges (0.41 r for a right angle), so they are left alone, and so are vertices
+// more than a voxel's fraction off the part's faces.
+// A field's value at p (between its voxels' centres).
+float sampleField(const DistanceGrid& g, const Vec3& p) {
+    const float fx = (p.x - g.origin.x) / g.h - 0.5f, fy = (p.y - g.origin.y) / g.h - 0.5f, fz = (p.z - g.origin.z) / g.h - 0.5f;
+    const int x0 = std::clamp(static_cast<int>(std::floor(fx)), 0, g.nx - 2), y0 = std::clamp(static_cast<int>(std::floor(fy)), 0, g.ny - 2),
+              z0 = std::clamp(static_cast<int>(std::floor(fz)), 0, g.nz - 2);
+    const float tx = std::clamp(fx - static_cast<float>(x0), 0.0f, 1.0f), ty = std::clamp(fy - static_cast<float>(y0), 0.0f, 1.0f),
+                tz = std::clamp(fz - static_cast<float>(z0), 0.0f, 1.0f);
+    float v = 0;
+    for (int c = 0; c < 8; ++c) {
+        const int dx = c & 1, dy = (c >> 1) & 1, dz = (c >> 2) & 1;
+        const float w = (dx ? tx : 1 - tx) * (dy ? ty : 1 - ty) * (dz ? tz : 1 - tz);
+        v += w * g.d[g.idx(x0 + dx, y0 + dy, z0 + dz)];
+    }
+    return v;
+}
+
+void exactBesideRounds(MeshData& out, const MeshData& part, float h, const DistanceGrid& before, const DistanceGrid& after) {
+    if (part.indices.empty() || out.indices.empty()) return;
+    const MeshData kept = out; // put back if the result isn't a sound closed mesh
+    {
+        // One vertex per place (the marched mesh can have two at a seam), so a snap moves both.
+        std::map<std::array<float, 3>, std::uint32_t> at;
+        MeshData w;
+        std::vector<std::uint32_t> id(out.vertices.size());
+        for (std::size_t i = 0; i < out.vertices.size(); ++i) {
+            const Vec3& p = out.vertices[i].position;
+            const auto [it, fresh] = at.try_emplace({p.x, p.y, p.z}, static_cast<std::uint32_t>(w.vertices.size()));
+            if (fresh) w.vertices.push_back(out.vertices[i]);
+            id[i] = it->second;
+        }
+        for (const std::uint32_t k : out.indices) w.indices.push_back(id[k]);
+        out = std::move(w);
+    }
+    const MeshData start = out; // welded, as it was
+    // The part's faces as planes (triangles in one plane share an id).
+    const AABB box = part.bounds();
+    const float size = std::max(length(box.max - box.min), 1e-3f);
+    const std::size_t pt = part.indices.size() / 3;
+    std::vector<int> planeOf(pt, -1);
+    std::vector<std::pair<Vec3, float>> planes;
+    for (std::size_t t = 0; t < pt; ++t) {
+        const Vec3 a = part.vertices[part.indices[3 * t]].position, b = part.vertices[part.indices[3 * t + 1]].position,
+                   c = part.vertices[part.indices[3 * t + 2]].position;
+        const Vec3 f = cross(b - a, c - a);
+        if (!(length(f) > 1e-12f)) continue;
+        const Vec3 nn = normalize(f);
+        const float off = dot(nn, a);
+        for (std::size_t k = 0; k < planes.size() && planeOf[t] < 0; ++k)
+            if (dot(planes[k].first, nn) > 0.99995f && std::fabs(planes[k].second - off) < 1e-5f * size) planeOf[t] = static_cast<int>(k);
+        if (planeOf[t] < 0) planeOf[t] = static_cast<int>(planes.size()), planes.push_back({nn, off});
+    }
+    // Bins of the part's triangles, a voxel across.
+    const float cell = h;
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> bins;
+    auto keyOf = [&](int i, int j, int k) {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(i + 1000000)) << 42) ^ (static_cast<std::uint64_t>(static_cast<std::uint32_t>(j + 1000000)) << 21) ^
+               static_cast<std::uint64_t>(static_cast<std::uint32_t>(k + 1000000));
+    };
+    auto cellOf = [&](const Vec3& p) {
+        return std::array<int, 3>{static_cast<int>(std::floor((p.x - box.min.x) / cell)), static_cast<int>(std::floor((p.y - box.min.y) / cell)),
+                                  static_cast<int>(std::floor((p.z - box.min.z) / cell))};
+    };
+    for (std::uint32_t t = 0; t < pt; ++t) {
+        AABB b;
+        for (int c = 0; c < 3; ++c) b.expand(part.vertices[part.indices[3 * t + static_cast<std::uint32_t>(c)]].position);
+        const auto lo = cellOf(b.min), hi = cellOf(b.max);
+        for (int i = lo[0]; i <= hi[0]; ++i)
+            for (int j = lo[1]; j <= hi[1]; ++j)
+                for (int k = lo[2]; k <= hi[2]; ++k) bins[keyOf(i, j, k)].push_back(t);
+    }
+    auto nearTris = [&](const Vec3& p, float reach, std::vector<std::uint32_t>& tris) {
+        tris.clear();
+        const auto lo = cellOf(p - Vec3{reach, reach, reach}), hi = cellOf(p + Vec3{reach, reach, reach});
+        for (int i = lo[0]; i <= hi[0]; ++i)
+            for (int j = lo[1]; j <= hi[1]; ++j)
+                for (int k = lo[2]; k <= hi[2]; ++k)
+                    if (const auto it = bins.find(keyOf(i, j, k)); it != bins.end()) tris.insert(tris.end(), it->second.begin(), it->second.end());
+        std::sort(tris.begin(), tris.end());
+        tris.erase(std::unique(tris.begin(), tris.end()), tris.end());
+    };
+    // Each vertex: on a face (label: that plane), on an edge (two planes), at a corner (three or
+    // more), or left (-1).
+    std::vector<std::array<int, 2>> label(out.vertices.size(), {-1, -1});
+    std::vector<std::uint32_t> tris;
+    // Each vertex's triangles: a vertex goes onto an edge only if none of them would then have
+    // all three corners on it (no area left), and a corner takes one vertex.
+    std::vector<std::vector<std::uint32_t>> around(out.vertices.size());
+    for (std::uint32_t t = 0; t + 2 < out.indices.size(); t += 3)
+        for (int e = 0; e < 3; ++e) around[out.indices[t + static_cast<std::uint32_t>(e)]].push_back(t);
+    auto wouldFlatten = [&](std::size_t vi, int a, int b) {
+        for (const std::uint32_t t : around[vi]) {
+            int onIt = 0;
+            for (int e = 0; e < 3; ++e) {
+                const std::uint32_t o = out.indices[t + static_cast<std::uint32_t>(e)];
+                if (o == vi) continue;
+                const auto& l = label[o];
+                onIt += (l[0] == -2) || (l[1] >= 0 && ((l[0] == std::min(a, b) && l[1] == std::max(a, b)))) ? 1 : 0;
+            }
+            if (onIt == 2) return true;
+        }
+        return false;
+    };
+    std::vector<Vec3> cornersUsed;
+    const float onFace = 0.1f * h, nearEdge = 0.75f * h, offEdge = 0.35f * h;
+    for (std::size_t vi = 0; vi < out.vertices.size(); ++vi) {
+        Vec3& v = out.vertices[vi].position;
+        // Only where the rounding left the part as it was: the field the same round about it.
+        bool same = true;
+        for (int c = 0; c < 7 && same; ++c) {
+            const Vec3 off = c == 0 ? Vec3{0, 0, 0} : Vec3{c == 1 ? h : c == 2 ? -h : 0.0f, c == 3 ? h : c == 4 ? -h : 0.0f, c == 5 ? h : c == 6 ? -h : 0.0f};
+            same = std::fabs(sampleField(after, v + off) - sampleField(before, v + off)) < 0.05f * h;
+        }
+        if (!same) continue;
+        nearTris(v, nearEdge, tris);
+        float best = 1e30f;
+        Vec3 q = v;
+        std::vector<int> near; // the planes within reach of the vertex
+        for (const std::uint32_t t : tris) {
+            if (planeOf[t] < 0) continue;
+            const Vec3 c = closestPointOnTriangle(v, part.vertices[part.indices[3 * t]].position, part.vertices[part.indices[3 * t + 1]].position,
+                                                  part.vertices[part.indices[3 * t + 2]].position);
+            const float d = length(c - v);
+            if (d < best) best = d, q = c;
+            if (d < nearEdge && std::find(near.begin(), near.end(), planeOf[t]) == near.end()) near.push_back(planeOf[t]);
+        }
+        if (best > offEdge) continue; // off the part's surface: a rounding
+        // The planes that meet near it at a sharp angle (not two faces of one smooth surface).
+        std::vector<int> sharp;
+        for (const int pl : near) {
+            bool apart = true;
+            for (const int other : sharp) apart = apart && dot(planes[static_cast<std::size_t>(pl)].first, planes[static_cast<std::size_t>(other)].first) < 0.94f;
+            if (apart) sharp.push_back(pl);
+        }
+        if (sharp.size() >= 3) { // a corner: where the three planes meet
+            const Vec3 n0 = planes[static_cast<std::size_t>(sharp[0])].first, n1 = planes[static_cast<std::size_t>(sharp[1])].first,
+                       n2 = planes[static_cast<std::size_t>(sharp[2])].first;
+            const float det = dot(n0, cross(n1, n2));
+            if (std::fabs(det) > 1e-3f) {
+                const Vec3 c = (cross(n1, n2) * planes[static_cast<std::size_t>(sharp[0])].second + cross(n2, n0) * planes[static_cast<std::size_t>(sharp[1])].second +
+                                cross(n0, n1) * planes[static_cast<std::size_t>(sharp[2])].second) *
+                               (1.0f / det);
+                bool taken = false;
+                for (const Vec3& u : cornersUsed) taken = taken || length(u - c) < 1e-6f * size;
+                bool nextTo = false; // a neighbour on an edge or corner already
+                for (const std::uint32_t t : around[vi])
+                    for (int e = 0; e < 3; ++e)
+                        if (const std::uint32_t o = out.indices[t + static_cast<std::uint32_t>(e)]; o != vi && label[o][0] == -2) nextTo = true;
+                if (length(c - v) < nearEdge && !taken && !nextTo) {
+                    v = c;
+                    label[vi] = {-2, -2};
+                    cornersUsed.push_back(c);
+                    continue;
+                }
+            }
+        }
+        if (sharp.size() >= 2) { // an edge: the nearest point of the two planes' line
+            const auto& a = planes[static_cast<std::size_t>(sharp[0])];
+            const auto& b = planes[static_cast<std::size_t>(sharp[1])];
+            const Vec3 dir = cross(a.first, b.first);
+            const float dd = dot(dir, dir);
+            if (dd > 1e-6f) {
+                const Vec3 p0 = (cross(b.first, dir) * a.second + cross(dir, a.first) * b.second) * (1.0f / dd); // a point on both planes
+                const Vec3 u = dir * (1.0f / std::sqrt(dd));
+                const Vec3 on = p0 + u * dot(v - p0, u);
+                if (length(on - v) < nearEdge && !wouldFlatten(vi, sharp[0], sharp[1])) {
+                    v = on;
+                    label[vi] = {std::min(sharp[0], sharp[1]), std::max(sharp[0], sharp[1])};
+                    continue;
+                }
+            }
+        }
+        if (best < onFace) { // on a face: onto its plane (not onto the nearest point, which near a
+                             // corner is that one point for many)
+            int pl = -1;
+            float bd = 1e30f;
+            for (const int k : near) {
+                const float d = std::fabs(dot(planes[static_cast<std::size_t>(k)].first, q) - planes[static_cast<std::size_t>(k)].second);
+                if (d < bd) bd = d, pl = k;
+            }
+            if (pl < 0) continue;
+            const auto& plane = planes[static_cast<std::size_t>(pl)];
+            v = v - plane.first * (dot(plane.first, v) - plane.second);
+            label[vi] = {pl, -1};
+        }
+    }
+    // Triangles still across a sharp edge: a side from one face's vertex to the other face's,
+    // with the edge's vertices opposite on both triangles, is turned to run along the edge.
+    // On both planes (by where it is: one face may have come out as two near-equal planes).
+    const float eps = 1e-4f * size;
+    auto onPlane = [&](std::uint32_t v, int k) {
+        const auto& pl = planes[static_cast<std::size_t>(k)];
+        return std::fabs(dot(pl.first, out.vertices[v].position) - pl.second) < eps;
+    };
+    auto samePlane = [&](int i, int j) {
+        return i == j || (dot(planes[static_cast<std::size_t>(i)].first, planes[static_cast<std::size_t>(j)].first) > 0.9999f &&
+                          std::fabs(planes[static_cast<std::size_t>(i)].second - planes[static_cast<std::size_t>(j)].second) < eps);
+    };
+    auto onLine = [&](std::uint32_t v, int a, int b) { return label[v][1] >= 0 || label[v][0] == -2 ? onPlane(v, a) && onPlane(v, b) : false; };
+    for (int pass = 0; pass < 3; ++pass) {
+        std::unordered_map<std::uint64_t, std::array<std::int64_t, 2>> sides; // side -> its two triangles
+        const std::size_t nt = out.indices.size() / 3;
+        for (std::size_t t = 0; t < nt; ++t)
+            for (int e = 0; e < 3; ++e) {
+                const std::uint32_t a = out.indices[3 * t + static_cast<std::size_t>(e)], b = out.indices[3 * t + static_cast<std::size_t>((e + 1) % 3)];
+                const std::uint64_t k = (static_cast<std::uint64_t>(std::min(a, b)) << 32) | std::max(a, b);
+                auto [it, fresh] = sides.try_emplace(k, std::array<std::int64_t, 2>{static_cast<std::int64_t>(t), -1});
+                if (!fresh) it->second[1] = static_cast<std::int64_t>(t);
+            }
+        int flipped = 0;
+        std::vector<char> touched(nt, 0);
+        for (const auto& [k, tt] : sides) {
+            if (tt[1] < 0) continue;
+            const std::uint32_t a = static_cast<std::uint32_t>(k >> 32), b = static_cast<std::uint32_t>(k & 0xffffffffu);
+            const auto& la = label[a];
+            const auto& lb = label[b];
+            if (la[0] < 0 || lb[0] < 0 || la[1] >= 0 || lb[1] >= 0 || samePlane(la[0], lb[0])) continue; // a and b each on one face, different faces
+            const std::size_t t0 = static_cast<std::size_t>(tt[0]), t1 = static_cast<std::size_t>(tt[1]);
+            if (touched[t0] || touched[t1]) continue;
+            auto third = [&](std::size_t t) {
+                for (int e = 0; e < 3; ++e)
+                    if (const std::uint32_t v = out.indices[3 * t + static_cast<std::size_t>(e)]; v != a && v != b) return v;
+                return a;
+            };
+            const std::uint32_t c = third(t0), d = third(t1);
+            if (c == d || !onLine(c, la[0], lb[0]) || !onLine(d, la[0], lb[0])) continue;
+            if (sides.count((static_cast<std::uint64_t>(std::min(c, d)) << 32) | std::max(c, d))) continue; // c-d is a side already
+            // t0 runs a -> b -> c (in its own order): the new pair keeps that turn.
+            std::uint32_t first = a, second = b;
+            for (int e = 0; e < 3; ++e)
+                if (out.indices[3 * t0 + static_cast<std::size_t>(e)] == a && out.indices[3 * t0 + static_cast<std::size_t>((e + 1) % 3)] != b) first = b, second = a;
+            // t0 = (first, second, c); t1 = (second, first, d): new (first, d, c) and (second, c, d).
+            const std::uint32_t n0[3] = {first, d, c}, n1[3] = {second, c, d};
+            for (int e = 0; e < 3; ++e) out.indices[3 * t0 + static_cast<std::size_t>(e)] = n0[e], out.indices[3 * t1 + static_cast<std::size_t>(e)] = n1[e];
+            touched[t0] = touched[t1] = 1;
+            ++flipped;
+        }
+        if (!flipped) break;
+    }
+    // A triangle whose corners all went onto one edge has no area left (and would be dropped,
+    // opening the mesh). Its middle corner lies on its long side: the triangle across that
+    // side is split there instead, and the flat one goes (two triangles become two).
+    auto flat = [&](std::size_t t) {
+        const Vec3 f = cross(out.vertices[out.indices[t + 1]].position - out.vertices[out.indices[t]].position,
+                             out.vertices[out.indices[t + 2]].position - out.vertices[out.indices[t]].position);
+        return length(f) <= size * size * 1e-9f;
+    };
+    for (int pass = 0; pass < 8; ++pass) {
+        std::unordered_map<std::uint64_t, std::size_t> directed; // a -> b: the triangle (first index) with that side
+        for (std::size_t t = 0; t + 2 < out.indices.size(); t += 3)
+            for (int e = 0; e < 3; ++e)
+                directed[(static_cast<std::uint64_t>(out.indices[t + static_cast<std::size_t>(e)]) << 32) | out.indices[t + static_cast<std::size_t>((e + 1) % 3)]] = t;
+        std::vector<char> busy(out.indices.size() / 3, 0);
+        int fixed = 0;
+        for (std::size_t t = 0; t + 2 < out.indices.size(); t += 3) {
+            if (busy[t / 3] || !flat(t)) continue;
+            // The long side (u -> v) and the corner w between.
+            int longest = 0;
+            float len = -1;
+            for (int e = 0; e < 3; ++e) {
+                const float l = length(out.vertices[out.indices[t + static_cast<std::size_t>((e + 1) % 3)]].position - out.vertices[out.indices[t + static_cast<std::size_t>(e)]].position);
+                if (l > len) len = l, longest = e;
+            }
+            const std::uint32_t u = out.indices[t + static_cast<std::size_t>(longest)], v = out.indices[t + static_cast<std::size_t>((longest + 1) % 3)],
+                                w = out.indices[t + static_cast<std::size_t>((longest + 2) % 3)];
+            const auto it = directed.find((static_cast<std::uint64_t>(v) << 32) | u);
+            if (it == directed.end() || busy[it->second / 3]) continue;
+            const std::size_t n = it->second;
+            std::uint32_t dd = u;
+            for (int e = 0; e < 3; ++e)
+                if (const std::uint32_t x = out.indices[n + static_cast<std::size_t>(e)]; x != u && x != v) dd = x;
+            // t = (u, v, w), n = (v, u, d)  ->  (v, w, d) and (w, u, d).
+            const std::uint32_t a0[3] = {v, w, dd}, a1[3] = {w, u, dd};
+            for (int e = 0; e < 3; ++e) out.indices[t + static_cast<std::size_t>(e)] = a0[e], out.indices[n + static_cast<std::size_t>(e)] = a1[e];
+            busy[t / 3] = busy[n / 3] = 1;
+            ++fixed;
+        }
+        if (!fixed) break;
+    }
+    // Any still flat: one of its snapped corners goes back to where it was.
+    for (int pass = 0; pass < 6; ++pass) {
+        int reverted = 0;
+        for (std::size_t t = 0; t + 2 < out.indices.size(); t += 3) {
+            const std::uint32_t a = out.indices[t], b = out.indices[t + 1], c = out.indices[t + 2];
+            const Vec3 f = cross(out.vertices[b].position - out.vertices[a].position, out.vertices[c].position - out.vertices[a].position);
+            if (length(f) > size * size * 1e-9f) continue;
+            std::uint32_t worst = a;
+            float moved = -1;
+            for (const std::uint32_t v : {a, b, c})
+                if (label[v][0] != -1)
+                    if (const float m = length(out.vertices[v].position - start.vertices[v].position); m > moved) moved = m, worst = v;
+            if (moved < 0) continue;
+            out.vertices[worst].position = start.vertices[worst].position;
+            label[worst] = {-1, -1};
+            ++reverted;
+        }
+        if (!reverted) break;
+    }
+    // Vertices snapped onto one point are one; triangles left with no area go.
+    std::map<std::array<float, 3>, std::uint32_t> at;
+    std::vector<std::uint32_t> remap(out.vertices.size());
+    MeshData welded;
+    for (std::size_t i = 0; i < out.vertices.size(); ++i) {
+        const Vec3& p = out.vertices[i].position;
+        const auto [it, fresh] = at.try_emplace({p.x, p.y, p.z}, static_cast<std::uint32_t>(welded.vertices.size()));
+        if (fresh) welded.vertices.push_back(out.vertices[i]);
+        remap[i] = it->second;
+    }
+    for (std::size_t t = 0; t + 2 < out.indices.size(); t += 3) {
+        const std::uint32_t a = remap[out.indices[t]], b = remap[out.indices[t + 1]], c = remap[out.indices[t + 2]];
+        if (a == b || b == c || a == c) continue;
+        welded.indices.insert(welded.indices.end(), {a, b, c});
+    }
+    // Sound: closed, every side shared by exactly two triangles, about the same volume.
+    std::unordered_map<std::uint64_t, int> uses;
+    for (std::size_t t = 0; t + 2 < welded.indices.size(); t += 3)
+        for (int e = 0; e < 3; ++e) {
+            const std::uint32_t a = welded.indices[t + static_cast<std::size_t>(e)], b = welded.indices[t + static_cast<std::size_t>((e + 1) % 3)];
+            ++uses[(static_cast<std::uint64_t>(std::min(a, b)) << 32) | std::max(a, b)];
+        }
+    bool sound = !welded.indices.empty();
+    for (const auto& [k, n] : uses) sound = sound && n == 2;
+    const double v0 = meshVolume(kept), v1 = sound ? meshVolume(welded) : 0.0;
+    if (!sound || !(std::fabs(v1 - v0) <= 0.01 * std::fabs(v0))) {
+        out = kept;
+        return;
+    }
+    out = std::move(welded);
+}
+
 } // namespace
 
 bool roundBody(Body& body, const RoundOptions& o, std::string* error) {
@@ -1241,26 +1641,37 @@ bool roundBody(Body& body, const RoundOptions& o, std::string* error) {
     DistanceGrid g;
     if (!solidDistance(world, box, h, g)) return fail("The part is too big to round at this radius");
     const double before = meshVolume(world);
+    const DistanceGrid original = g; // the part's own field, to tell where the rounding changed it
     const TriBins bins(world, o.radius + h); // a query reaches r + h: 27 bins at most
-    if (o.convex) openBy(g, o.radius, bins);
+    if (o.convex) {
+        const DistanceGrid part = g;
+        openBy(g, o.radius, bins);
+        restoreThin(g, part, o.radius); // fins and walls thinner than the ball rounded, not erased
+    }
     if (o.concave) {
         // After a convex round the surface is the rounded one: its closest points are no
         // longer on the mesh, so the concave pass works from a mesh of that surface.
         negate(g);
+        const DistanceGrid space = g; // the outside: slots narrower than the ball stay open
         if (o.convex) {
             MeshData mid = marchTets(g.d, g.nx, g.ny, g.nz, g.origin, h, false);
             const TriBins midBins(mid, o.radius + h);
             openBy(g, o.radius, midBins);
         } else
             openBy(g, o.radius, bins);
+        restoreThin(g, space, o.radius);
         negate(g);
     }
     MeshData out = marchTets(g.d, g.nx, g.ny, g.nz, g.origin, h, true);
-    if (out.indices.empty()) return fail("Nothing is left: every part of " + body.name + " is thinner than the ball");
+    if (out.indices.empty()) return fail("Nothing is left of " + body.name + " to round");
     finishMarched(out, 1);
     simplifyMesh(out, h * 0.8f);
+    // One kind of edge rounded: the other kind (and every face) exactly as the part had them.
+    const MeshData plain = out;
+    if (o.convex != o.concave && o.exactRest) exactBesideRounds(out, world, h, original, g);
     const Vec3 color = body.color;
     Body b = featureBody(body.name, std::move(out), color);
+    if (openEdgeCount(b.mesh) > 0) b = featureBody(body.name, plain, color); // the exact pass didn't hold in the body's frame: the voxels' mesh
     if (openEdgeCount(b.mesh) > 0) return fail("Rounding left holes in " + body.name);
     const double after = meshVolume(b.mesh);
     if (after < before * 0.2) return fail("Rounding would remove most of " + body.name + ": the ball is too big for it");

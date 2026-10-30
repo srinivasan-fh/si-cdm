@@ -758,17 +758,25 @@ FILLET rounds a closed solid's edges with a rolling ball of radius `r`:
 2. The set of ball centres (the solid shrunk by `r`) gets its own distance field.
 3. Near the surface, each closest point is made exact by projected steps that keep it `r`
    from every face, so it settles on the shrunk solid's edges and corners.
-4. The surface is remeshed from the field.
+4. A part thinner than the ball (a fin, a thin wall, a whole thin plate), which the ball can't
+   roll in, is put back rounded as far as it allows: the union of its own largest inscribed
+   balls, so a plate of thickness t gets its edges rounded at t/2 rather than being erased.
+5. The surface is remeshed from the field.
+6. Rounding one kind (CONVEX or CONCAVE), the rest of the part is taken back exactly: where the
+   field is unchanged, vertices go onto the part's own faces, and onto its sharp edges and
+   corners, and triangles still across such an edge are turned to run along it.
 
 **Accuracy:** on a 40 × 30 × 20 box with R3, the surface is within 0.006 mm of the exact
 rounded box on average and 0.06 mm at worst. The volume is within 0.3% of the Steiner formula.
+Edges not rounded are kept: an L's inside edge, rounding its outside ones with R3, is within
+0.001 mm of where it was (it was a voxel's bevel, 0.22 mm, before), and its faces within
+0.001 mm; filling the inside corner instead, the outside edges stay within 0.01 mm.
 
 **Limits:**
 
-- Edges that aren't rounded stay sharp to within a voxel.
-- A part thinner than the ball can't hold it, so FILLET refuses rather than erase it.
 - It rounds all the edges of the kind chosen. To round only some, use `FILLET ... EDGES`
   (above).
+- With BOTH, every edge is rounded, so nothing is taken back from the part.
 
 ## Shell, dome, rib and lettering
 

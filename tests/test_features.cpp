@@ -233,9 +233,10 @@ TEST_CASE("FILLET rounds edges with a rolling ball: a box comes out as the exact
     CHECK(inCorner > 20);
     CHECK(off < 0.08);
     CHECK_NEAR(volumeOf(l), v0, 80.0);
-    // A plate thinner than the ball has nothing a ball can roll in.
+    // A plate thinner than the ball: rounded as far as it allows (its edges at half its
+    // thickness), not refused.
     REQUIRE(run(d, "BOX 40 40 2 @100,0,0").ok);
-    CHECK(!run(d, "FILLET \"Block 3\" RADIUS 3").ok);
+    CHECK(run(d, "FILLET \"Block 3\" RADIUS 3").ok);
     CHECK(!run(d, "FILLET \"Block 3\"").ok); // no radius
 }
 
@@ -454,4 +455,88 @@ TEST_CASE("ERASE of a body can be undone and redone") {
     REQUIRE(run(d, "REDO").ok);
     CHECK(d.scene.bodies().size() == 1);
     CHECK(named(d, "Sphere 2") == nullptr);
+}
+TEST_CASE("FILLET: edges not rounded stay exact; parts thinner than the ball are rounded as far as they allow") {
+    // An L: a block with a tower on it. Rounding the convex edges leaves the concave edge where
+    // the tower meets the block, and the faces, exactly as they were.
+    {
+        Document d;
+        REQUIRE(run(d, "BOX 40 30 10").ok);
+        REQUIRE(run(d, "BOX 10 30 20 @15,0,10").ok);
+        REQUIRE(run(d, "BOOLEAN \"Block 1\" UNION \"Block 2\"").ok);
+        const std::string nm = d.scene.bodies().back().name;
+        REQUIRE(run(d, "FILLET \"" + nm + "\" RADIUS 3").ok);
+        const MeshData m = worldMesh(d.scene.bodies().back());
+        CHECK(openEdgeCount(m) == 0);
+        double edge = 0; // the concave edge x = 10, z = 10, away from its ends' roundings
+        for (float y = -9; y <= 9; y += 1.5f) {
+            const Vec3 p{10, y, 10};
+            double best = 1e9;
+            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3)
+                best = std::min(best, static_cast<double>(length(
+                                          closestPointOnTriangle(p, m.vertices[m.indices[t]].position, m.vertices[m.indices[t + 1]].position, m.vertices[m.indices[t + 2]].position) - p)));
+            edge = std::max(edge, best);
+        }
+        CHECK(edge < 1e-3); // was a voxel's bevel (0.22 mm here)
+        double flat = 0;    // the block's top, between the roundings
+        for (const Vertex& v : m.vertices)
+            if (std::fabs(v.position.z - 10) < 0.5 && v.position.x > -12 && v.position.x < 4 && std::fabs(v.position.y) < 9)
+                flat = std::max(flat, static_cast<double>(std::fabs(v.position.z - 10)));
+        CHECK(flat < 1e-3);
+        // The convex edges are rounded: the block's outer top edge (x -20, z 10) R3.
+        double corner = 1e9;
+        for (const Vertex& v : m.vertices)
+            if (std::fabs(v.position.y) < 9) corner = std::min(corner, static_cast<double>(std::hypot(v.position.x + 20, v.position.z - 10)));
+        CHECK(std::fabs(corner - 3 * (std::sqrt(2.0) - 1)) < 0.08);
+    }
+    // Filling the inside corner of an L instead: its convex edges stay (here the block's
+    // outer top edge, x -20, z 10).
+    {
+        Document d;
+        REQUIRE(run(d, "BOX 40 20 10 @0,0,0").ok);
+        REQUIRE(run(d, "BOX 20 20 30 @10,0,0").ok);
+        REQUIRE(run(d, "BOOLEAN \"Block 1\" UNION \"Block 2\"").ok);
+        REQUIRE(run(d, "FILLET \"Block 1\" RADIUS 3 CONCAVE").ok);
+        const MeshData m = worldMesh(d.scene.bodies()[0]);
+        CHECK(openEdgeCount(m) == 0);
+        double edge = 0;
+        for (float y = -6; y <= 6; y += 1.5f) {
+            const Vec3 p{-20, y, 10};
+            double best = 1e9;
+            for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3)
+                best = std::min(best, static_cast<double>(length(
+                                          closestPointOnTriangle(p, m.vertices[m.indices[t]].position, m.vertices[m.indices[t + 1]].position, m.vertices[m.indices[t + 2]].position) - p)));
+            edge = std::max(edge, best);
+        }
+        CHECK(edge < 0.01); // was 0.39 mm
+    }
+    // A plate thinner than the ball: its edges rounded at half its thickness, not refused.
+    {
+        Document d;
+        REQUIRE(run(d, "BOX 30 30 1").ok);
+        REQUIRE(run(d, "FILLET \"" + d.scene.bodies().back().name + "\" RADIUS 2").ok);
+        const Body& b = d.scene.bodies().back();
+        const AABB bx = b.mesh.bounds();
+        CHECK(openEdgeCount(b.mesh) == 0);
+        CHECK(std::fabs(bx.max.z - bx.min.z - 1) < 0.02);   // as thick as it was
+        // A full round of R0.5 on its 120 mm of edge takes 0.107 mm2 a mm: 887 of 900 mm3.
+        CHECK(std::fabs(meshVolume(b.mesh) - 887.1) < 6);
+    }
+    // A fin thinner than the ball on a block: kept (its top rounded), the block's edges at R2.
+    {
+        Document d;
+        REQUIRE(run(d, "BOX 40 30 10").ok);
+        REQUIRE(run(d, "BOX 1 30 10 @0,0,10").ok);
+        REQUIRE(run(d, "BOOLEAN \"Block 1\" UNION \"Block 2\"").ok);
+        REQUIRE(run(d, "FILLET \"" + d.scene.bodies().back().name + "\" RADIUS 2").ok);
+        const Body& b = d.scene.bodies().back();
+        CHECK(openEdgeCount(b.mesh) == 0);
+        double finTop = 0;
+        for (const Vertex& v : b.mesh.vertices)
+            if (std::fabs(v.position.x) < 1) finTop = std::max(finTop, static_cast<double>(v.position.z));
+        CHECK(finTop > 19.9); // the fin is all there
+        double corner = 1e9;
+        for (const Vertex& v : b.mesh.vertices) corner = std::min(corner, static_cast<double>(std::hypot(v.position.x - 20, v.position.z - 10)));
+        CHECK(std::fabs(corner - 2 * (std::sqrt(2.0) - 1)) < 0.06);
+    }
 }

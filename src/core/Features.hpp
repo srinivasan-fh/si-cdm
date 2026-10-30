@@ -95,8 +95,10 @@ struct RoundOptions {
     bool convex = true;   // round the outside edges (a ball rolled inside)
     bool concave = false; // fill the inside corners (a ball rolled outside)
     float voxel = 0.0f;   // 0: from the radius and the size
+    bool exactRest = true; // one kind rounded: the faces and the other edges taken exactly from the part
 };
-// Rounds the body's edges with a rolling ball of the radius. The body becomes a mesh.
+// Rounds the body's edges with a rolling ball of the radius (parts thinner than the ball rounded
+// as far as they allow, not erased). The body becomes a mesh.
 bool roundBody(Body& body, const RoundOptions& options, std::string* error = nullptr);
 
 // The sharp edges of a solid (faces meeting at more than `angleDeg`), joined into
