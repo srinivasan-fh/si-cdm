@@ -25,6 +25,7 @@
 #include "core/Physics.hpp"
 #include "core/Preferences.hpp"
 #include "core/Units.hpp"
+#include "ui/KeyInput.hpp"
 #include "ui/Theme.hpp"
 #include "core/Extrude.hpp"
 #include "core/Json.hpp"
@@ -1727,17 +1728,16 @@ void Application::handleViewportInput() {
     if (!isSketchTool(m_ui.toolbox().active())) m_sketcher.cancel();
     const ToolId before = m_ui.toolbox().active();
     // V again with the Move tool on: the gizmo moves, then rotates, then scales.
-    if (m_leftDrag == DragMode::None && before == ToolId::Move && ImGui::IsKeyPressed(ImGuiKey_V, false) && !commandModifierHeld())
+    if (m_leftDrag == DragMode::None && before == ToolId::Move && keyActionPressed(toolKeyId(toolInfo(ToolId::Move).name)))
         m_uiState.gizmoMode = (m_uiState.gizmoMode + 1) % 3;
     if (m_leftDrag == DragMode::None) m_ui.toolbox().handleShortcuts(); // not mid-stroke
     if (m_ui.toolbox().active() != before) m_sketcher.cancel();
 
     const bool ctrl = commandModifierHeld();
     UiCommands cmd;
-    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !ctrl) {
-        if (io.KeyShift) cmd.mode = simulating() ? ViewMode::Model3D : ViewMode::Simulation;
-        else cmd.mode = is2D ? ViewMode::Model3D : simulating() ? ViewMode::Model3D : ViewMode::Drawing2D;
-    }
+    // The keys come from the keymap (Keymap.hpp): the user's, else the defaults.
+    if (keyActionPressed("view.simulation")) cmd.mode = simulating() ? ViewMode::Model3D : ViewMode::Simulation;
+    else if (keyActionPressed("view.windows")) cmd.mode = is2D ? ViewMode::Model3D : simulating() ? ViewMode::Model3D : ViewMode::Drawing2D;
     if (simulating() && !ctrl) { // playback keys
         if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
             if (!m_uiState.simPlaying && m_uiState.simTime >= m_uiState.simDuration - 1e-4f) m_uiState.simTime = 0.0f;
@@ -1747,32 +1747,32 @@ void Application::handleViewportInput() {
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) m_uiState.simTime = std::max(m_uiState.simTime - 1.0f / 30.0f, 0.0f);
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) m_uiState.simTime += 1.0f / 30.0f;
     }
-    auto viewKey = [&](ImGuiKey a, ImGuiKey b) { return ImGui::IsKeyPressed(a) || ImGui::IsKeyPressed(b); };
-    if (viewKey(ImGuiKey_1, ImGuiKey_Keypad1)) cmd.view = ctrl ? StandardView::Back : StandardView::Front;
-    if (viewKey(ImGuiKey_3, ImGuiKey_Keypad3)) cmd.view = ctrl ? StandardView::Left : StandardView::Right;
-    if (viewKey(ImGuiKey_7, ImGuiKey_Keypad7)) cmd.view = ctrl ? StandardView::Bottom : StandardView::Top;
-    if (viewKey(ImGuiKey_0, ImGuiKey_Keypad0)) cmd.view = StandardView::Isometric;
-    // F fits the view; with a sculpt brush it sizes the brush (Shift+F: its strength), as in Blender.
-    if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-        if (isSculptTool(m_ui.toolbox().active()) && !is2D && m_leftDrag == DragMode::None && !ctrl)
-            startRadial(ImGui::GetIO().KeyShift ? Radial::Strength : Radial::Size);
-        else
+    static const std::pair<const char*, StandardView> kViews[] = {{"view.front", StandardView::Front}, {"view.right", StandardView::Right},
+                                                                   {"view.top", StandardView::Top},     {"view.back", StandardView::Back},
+                                                                   {"view.left", StandardView::Left},   {"view.bottom", StandardView::Bottom},
+                                                                   {"view.iso", StandardView::Isometric}};
+    for (const auto& [id, v] : kViews)
+        if (keyActionPressed(id)) cmd.view = v;
+    // Fit fits the view; with a sculpt brush it sizes the brush (with Shift: its strength), as in Blender.
+    bool fitShift = false;
+    for (KeyChord c : boundChords(preferences(), "view.fit"))
+        if (!c.shift && (c.shift = true, chordPressed(c))) fitShift = true;
+    if (const bool fit = keyActionPressed("view.fit"); fit || fitShift) {
+        if (isSculptTool(m_ui.toolbox().active()) && !is2D && m_leftDrag == DragMode::None)
+            startRadial(fitShift ? Radial::Strength : Radial::Size);
+        else if (fit)
             cmd.fit = true;
     }
     auto togglePage = [&](int page) { // M: Model page, K: Library page, J: CAM page of the docked panel
         m_uiState.showModelTree = !(m_uiState.showModelTree && m_uiState.dockTab == page);
         m_uiState.dockTab = page;
     };
-    if (ImGui::IsKeyPressed(ImGuiKey_M, false) && !ctrl) togglePage(0);
-    if (ImGui::IsKeyPressed(ImGuiKey_K, false) && !ctrl) togglePage(1);
-    if (ImGui::IsKeyPressed(ImGuiKey_J, false) && !ctrl) togglePage(2);
-    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) m_uiState.showHelp = !m_uiState.showHelp;
-    if (ctrl) { // Ctrl/Cmd + key belongs to the menus, not to single-key shortcuts
-        if (ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
-        handleCommands(cmd);
-        return;
-    }
-    if (isSculptTool(m_ui.toolbox().active())) { // brush size, like Photoshop and ZBrush; Shift: its strength
+    if (keyActionPressed("panel.model")) togglePage(0);
+    if (keyActionPressed("panel.library")) togglePage(1);
+    if (keyActionPressed("panel.cam")) togglePage(2);
+    if (keyActionPressed("help.help")) m_uiState.showHelp = !m_uiState.showHelp;
+    if (keyActionPressed("file.quit")) cmd.quit = true;
+    if (isSculptTool(m_ui.toolbox().active()) && !ctrl) { // brush size, like Photoshop and ZBrush; Shift: its strength
         const bool shift = ImGui::GetIO().KeyShift;
         char said[64] = "";
         if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) {
@@ -1792,9 +1792,9 @@ void Application::handleViewportInput() {
             setStatus(status);
         }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_P) && !is2D) cmd.toggleProjection = true;
-    if (ImGui::IsKeyPressed(ImGuiKey_G)) viewport().showGrid = !viewport().showGrid;
-    if (ImGui::IsKeyPressed(ImGuiKey_W) && !is2D)
+    if (keyActionPressed("view.projection") && !is2D) cmd.toggleProjection = true;
+    if (keyActionPressed("view.grid")) viewport().showGrid = !viewport().showGrid;
+    if (keyActionPressed("view.display") && !is2D)
         m_vp3D.displayMode = static_cast<DisplayMode>((static_cast<int>(m_vp3D.displayMode) + 1) % 4);
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
         if (m_extrudeCurve >= 0) applyExtrude();
@@ -1819,21 +1819,21 @@ void Application::handleViewportInput() {
             m_uiState.curveSelection = {};
         }
     }
-    if (ImGui::GetIO().KeyAlt && m_leftDrag == DragMode::None) { // Alt+H hide, Alt+Shift+H show all, Alt+I isolate
+    if (m_leftDrag == DragMode::None) { // hide, isolate (Alt+H, Alt+I), show all (Alt+Shift+H)
         std::string bodies; // the selected bodies, by name (as Delete)
         for (int b : selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection))
             bodies += " \"" + m_doc.scene.bodies()[static_cast<std::size_t>(b)].name + "\"";
-        if (ImGui::IsKeyPressed(ImGuiKey_H, false)) {
-            if (ImGui::GetIO().KeyShift) runCommandLine("SHOW ALL");
-            else if (!bodies.empty()) runCommandLine("HIDE" + bodies);
+        if (keyActionPressed("edit.show-all")) runCommandLine("SHOW ALL");
+        if (keyActionPressed("edit.hide")) {
+            if (!bodies.empty()) runCommandLine("HIDE" + bodies);
             else setStatus(tr("Select the bodies to hide first"));
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_I, false)) {
+        if (keyActionPressed("edit.isolate")) {
             if (!bodies.empty()) runCommandLine("ISOLATE" + bodies);
             else setStatus(tr("Select the bodies to isolate first"));
         }
     }
-    if ((ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) && m_leftDrag == DragMode::None) {
+    if (keyActionPressed("edit.delete") && m_leftDrag == DragMode::None) {
         // By the ERASE command, so it is in the history and undoes.
         const auto& curves = m_doc.scene.sketch().curves();
         std::string name;
@@ -1848,7 +1848,8 @@ void Application::handleViewportInput() {
         if (m_uiState.selectedCurve < 0 && !bodies.empty()) runCommandLine("ERASE" + bodies);
         else if (!name.empty()) runCommandLine("ERASE \"" + name + "\"");
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && is2D && m_leftDrag == DragMode::None) { // 2D: every visible sketch curve
+    const bool selectAll = keyActionPressed("edit.select-all");
+    if (selectAll && is2D && m_leftDrag == DragMode::None) { // 2D: every visible sketch curve
         std::vector<int> all;
         for (std::size_t i = 0; i < m_doc.scene.sketch().curves().size(); ++i)
             if (m_doc.scene.sketch().curves()[i].visible) all.push_back(static_cast<int>(i));
@@ -1857,7 +1858,7 @@ void Application::handleViewportInput() {
         selectCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection, all);
         selectionChanged();
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false) && !is2D && m_leftDrag == DragMode::None) { // every visible body
+    if (selectAll && !is2D && m_leftDrag == DragMode::None) { // every visible body
         std::vector<int> all;
         for (std::size_t i = 0; i < m_doc.scene.bodies().size(); ++i)
             if (m_doc.scene.bodies()[i].visible) all.push_back(static_cast<int>(i));
@@ -1865,7 +1866,6 @@ void Application::handleViewportInput() {
         selectBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection, all);
         selectionChanged();
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Q)) cmd.quit = true;
     handleCommands(cmd);
 }
 

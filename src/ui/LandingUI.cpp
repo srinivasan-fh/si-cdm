@@ -1,5 +1,7 @@
 #include "ui/LandingUI.hpp"
 
+#include "ui/KeyInput.hpp"
+
 #include "core/Armature.hpp"
 #include "core/Weldment.hpp"
 #include "core/Fastener.hpp"
@@ -51,6 +53,12 @@
 namespace sicdm {
 
 namespace {
+
+// An action's first key as bound now, for a menu ("" for none).
+std::string keysLabel(const char* id) {
+    const std::vector<KeyChord> c = boundChords(preferences(), id);
+    return c.empty() ? std::string() : chordText(c.front());
+}
 
 constexpr float kRulerSize = 20.0f;
 constexpr ImU32 kAccent = theme::kAccent;
@@ -375,9 +383,15 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     if (st.showAbout) drawAboutWindow(st);
     if (st.showCamTools && st.cam) drawCamToolsWindow(cmd, st);
     if (st.showHelp) drawHelpWindow(cmd, st);
-    if (st.showPreferences) drawPreferencesWindow(cmd, st);
+    if (st.showPreferences) {
+        drawPreferencesWindow(cmd, st);
+    } else if (!m_keyCapture.empty()) { // closed while setting a shortcut: nothing set
+        m_keyCapture.clear();
+        m_keyShared.reset();
+    }
+    if (!st.showPreferences) setKeyCapture(false);
     if (st.showRender) drawRenderWindow(cmd, st);
-    if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F2, false) && st.selectedBody >= 0) st.renameBody = st.selectedBody;
+    if (!ImGui::GetIO().WantTextInput && keyActionPressed("edit.rename") && st.selectedBody >= 0) st.renameBody = st.selectedBody;
     if (st.renameBody >= 0) drawRenamePopup(cmd, st, scene);
     if (st.openBodyMenu) { // a right click on a body in the 3D view
         ImGui::OpenPopup("###bodymenu");
@@ -886,15 +900,15 @@ void LandingUI::drawBodyMenuItems(UiCommands& cmd, UiState& st, const Scene& sce
     if (sel.size() == 1) ImGui::TextDisabled("%s", active.name.c_str());
     else ImGui::TextDisabled(tr("%d bodies"), static_cast<int>(sel.size()));
     ImGui::Separator();
-    if (ImGui::MenuItem(tr("Rename..."), "F2", false, sel.size() == 1)) st.renameBody = sel[0];
-    if (ImGui::MenuItem(tr("Duplicate"), "Ctrl+D")) cmd.commands.push_back("DUPLICATE");
-    if (ImGui::MenuItem(tr("Copy"), "Ctrl+C")) cmd.commands.push_back("COPY");
-    if (ImGui::MenuItem(tr("Cut"), "Ctrl+X")) cmd.commands.push_back("CUT");
-    if (ImGui::MenuItem(tr("Delete"), "Del")) cmd.commands.push_back("ERASE");
+    if (ImGui::MenuItem(tr("Rename..."), keysLabel("edit.rename").c_str(), false, sel.size() == 1)) st.renameBody = sel[0];
+    if (ImGui::MenuItem(tr("Duplicate"), keysLabel("edit.duplicate").c_str())) cmd.commands.push_back("DUPLICATE");
+    if (ImGui::MenuItem(tr("Copy"), keysLabel("edit.copy").c_str())) cmd.commands.push_back("COPY");
+    if (ImGui::MenuItem(tr("Cut"), keysLabel("edit.cut").c_str())) cmd.commands.push_back("CUT");
+    if (ImGui::MenuItem(tr("Delete"), keysLabel("edit.delete").c_str())) cmd.commands.push_back("ERASE");
     ImGui::Separator();
-    if (ImGui::MenuItem(tr("Hide"), "Alt+H")) cmd.commands.push_back("HIDE");
-    if (ImGui::MenuItem(tr("Isolate"), "Alt+I")) cmd.commands.push_back("ISOLATE");
-    if (ImGui::MenuItem(tr("Show All"), "Alt+Shift+H")) cmd.commands.push_back("SHOW ALL");
+    if (ImGui::MenuItem(tr("Hide"), keysLabel("edit.hide").c_str())) cmd.commands.push_back("HIDE");
+    if (ImGui::MenuItem(tr("Isolate"), keysLabel("edit.isolate").c_str())) cmd.commands.push_back("ISOLATE");
+    if (ImGui::MenuItem(tr("Show All"), keysLabel("edit.show-all").c_str())) cmd.commands.push_back("SHOW ALL");
     ImGui::Separator();
     if (ImGui::BeginMenu(tr("Material"))) {
         for (const char* family : materialFamilies()) {
@@ -1317,8 +1331,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
     const bool is2D = st.mode == ViewMode::Drawing2D;
 
     if (ImGui::BeginMenu(tr("File"))) {
-        if (ImGui::MenuItem(tr("New Project"), "Ctrl+N")) requestFile(-1, st);
-        if (ImGui::MenuItem(tr("Open Project..."), "Ctrl+O")) requestFile(FileOpen, st);
+        if (ImGui::MenuItem(tr("New Project"), keysLabel("file.new").c_str())) requestFile(-1, st);
+        if (ImGui::MenuItem(tr("Open Project..."), keysLabel("file.open").c_str())) requestFile(FileOpen, st);
         const std::vector<std::string>& recent = preferences().recent;
         if (ImGui::BeginMenu(tr("Open Recent"), !recent.empty())) {
             for (std::size_t i = 0; i < recent.size(); ++i) {
@@ -1334,20 +1348,20 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             if (ImGui::MenuItem(tr("Clear the List"))) cmd.commands.push_back("RECENT CLEAR");
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem(tr("Close"), "Ctrl+W")) requestClose(cmd, st, st.activeFile);
+        if (ImGui::MenuItem(tr("Close"), keysLabel("file.close").c_str())) requestClose(cmd, st, st.activeFile);
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Undo"), "Ctrl+Z")) cmd.commands.push_back("UNDO");
-        if (ImGui::MenuItem(tr("Redo"), "Ctrl+Shift+Z")) cmd.commands.push_back("REDO");
+        if (ImGui::MenuItem(tr("Undo"), keysLabel("edit.undo").c_str())) cmd.commands.push_back("UNDO");
+        if (ImGui::MenuItem(tr("Redo"), keysLabel("edit.redo").c_str())) cmd.commands.push_back("REDO");
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Save"), "Ctrl+S")) {
+        if (ImGui::MenuItem(tr("Save"), keysLabel("file.save").c_str())) {
             if (st.projectPath.empty()) requestFile(FileSaveAs, st);
             else cmd.commands.push_back("SAVE");
         }
-        if (ImGui::MenuItem(tr("Save As..."), "Ctrl+Shift+S")) requestFile(FileSaveAs, st);
+        if (ImGui::MenuItem(tr("Save As..."), keysLabel("file.save-as").c_str())) requestFile(FileSaveAs, st);
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Import..."), "Ctrl+I")) requestFile(FileImport, st);
+        if (ImGui::MenuItem(tr("Import..."), keysLabel("file.import").c_str())) requestFile(FileImport, st);
         if (ImGui::MenuItem(tr("Import Image..."))) requestFile(FileImportImage, st);
-        if (ImGui::MenuItem(tr("Export..."), "Ctrl+E")) requestFile(FileExport, st);
+        if (ImGui::MenuItem(tr("Export..."), keysLabel("file.export").c_str())) requestFile(FileExport, st);
         ImGui::Separator();
         if (ImGui::MenuItem(tr("Import STEP / IGES..."))) requestFile(FileImportStep, st);
         if (ImGui::MenuItem(tr("Export STEP / IGES..."))) requestFile(FileExportStep, st);
@@ -1358,36 +1372,36 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         if (ImGui::MenuItem(tr("Product Data..."))) st.showProduct = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Part numbers and properties, the revision and its release, the team's vault"));
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Preferences..."), "Ctrl+,")) st.showPreferences = true;
+        if (ImGui::MenuItem(tr("Preferences..."), keysLabel("file.preferences").c_str())) st.showPreferences = true;
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Quit"), "Ctrl+Q")) cmd.quit = true;
+        if (ImGui::MenuItem(tr("Quit"), keysLabel("file.quit").c_str())) cmd.quit = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("Edit"))) {
         const bool bodies = m_menuScene && !selectedBodies(*m_menuScene, st.selectedBody, st.bodySelection).empty();
         const bool any = bodies || (m_menuScene && !selectedCurves(m_menuScene->sketch(), st.selectedCurve, st.curveSelection).empty());
-        if (ImGui::MenuItem(tr("Undo"), "Ctrl+Z")) cmd.commands.push_back("UNDO");
-        if (ImGui::MenuItem(tr("Redo"), "Ctrl+Shift+Z")) cmd.commands.push_back("REDO");
+        if (ImGui::MenuItem(tr("Undo"), keysLabel("edit.undo").c_str())) cmd.commands.push_back("UNDO");
+        if (ImGui::MenuItem(tr("Redo"), keysLabel("edit.redo").c_str())) cmd.commands.push_back("REDO");
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Cut"), "Ctrl+X", false, any)) cmd.commands.push_back("CUT");
-        if (ImGui::MenuItem(tr("Copy"), "Ctrl+C", false, any)) cmd.commands.push_back("COPY");
-        if (ImGui::MenuItem(tr("Paste"), "Ctrl+V", false, !bodyClipboard().empty() || !curveClipboard().empty())) cmd.commands.push_back("PASTE");
-        if (ImGui::MenuItem(tr("Duplicate"), "Ctrl+D", false, any)) cmd.commands.push_back("DUPLICATE");
-        if (ImGui::MenuItem(tr("Delete"), "Del", false, any)) cmd.commands.push_back("ERASE");
-        if (ImGui::MenuItem(tr("Rename..."), "F2", false, st.selectedBody >= 0)) st.renameBody = st.selectedBody;
+        if (ImGui::MenuItem(tr("Cut"), keysLabel("edit.cut").c_str(), false, any)) cmd.commands.push_back("CUT");
+        if (ImGui::MenuItem(tr("Copy"), keysLabel("edit.copy").c_str(), false, any)) cmd.commands.push_back("COPY");
+        if (ImGui::MenuItem(tr("Paste"), keysLabel("edit.paste").c_str(), false, !bodyClipboard().empty() || !curveClipboard().empty())) cmd.commands.push_back("PASTE");
+        if (ImGui::MenuItem(tr("Duplicate"), keysLabel("edit.duplicate").c_str(), false, any)) cmd.commands.push_back("DUPLICATE");
+        if (ImGui::MenuItem(tr("Delete"), keysLabel("edit.delete").c_str(), false, any)) cmd.commands.push_back("ERASE");
+        if (ImGui::MenuItem(tr("Rename..."), keysLabel("edit.rename").c_str(), false, st.selectedBody >= 0)) st.renameBody = st.selectedBody;
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Hide"), "Alt+H", false, bodies)) cmd.commands.push_back("HIDE");
-        if (ImGui::MenuItem(tr("Isolate"), "Alt+I", false, bodies)) cmd.commands.push_back("ISOLATE");
-        if (ImGui::MenuItem(tr("Show All"), "Alt+Shift+H")) cmd.commands.push_back("SHOW ALL");
+        if (ImGui::MenuItem(tr("Hide"), keysLabel("edit.hide").c_str(), false, bodies)) cmd.commands.push_back("HIDE");
+        if (ImGui::MenuItem(tr("Isolate"), keysLabel("edit.isolate").c_str(), false, bodies)) cmd.commands.push_back("ISOLATE");
+        if (ImGui::MenuItem(tr("Show All"), keysLabel("edit.show-all").c_str())) cmd.commands.push_back("SHOW ALL");
         ImGui::Separator();
-        if (ImGui::MenuItem(tr("Select All"), "Ctrl+A")) cmd.commands.push_back("SELECT ALL");
+        if (ImGui::MenuItem(tr("Select All"), keysLabel("edit.select-all").c_str())) cmd.commands.push_back("SELECT ALL");
         if (ImGui::MenuItem(tr("Invert Selection"))) cmd.commands.push_back("SELECT INVERT");
         if (ImGui::MenuItem(tr("Select None"), "Esc", false, any)) cmd.commands.push_back("SELECT NONE");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("View"))) {
-        if (ImGui::MenuItem(tr("3D Model Window"), "Tab", st.mode == ViewMode::Model3D)) cmd.mode = ViewMode::Model3D;
-        if (ImGui::MenuItem(tr("Simulation Window"), "Shift+Tab", st.mode == ViewMode::Simulation)) cmd.mode = ViewMode::Simulation;
+        if (ImGui::MenuItem(tr("3D Model Window"), keysLabel("view.windows").c_str(), st.mode == ViewMode::Model3D)) cmd.mode = ViewMode::Model3D;
+        if (ImGui::MenuItem(tr("Simulation Window"), keysLabel("view.simulation").c_str(), st.mode == ViewMode::Simulation)) cmd.mode = ViewMode::Simulation;
         if (ImGui::BeginMenu(tr("2D Drawing Window"))) {
             for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right})
                 if (ImGui::MenuItem(planeName(p), nullptr, is2D && st.plane == p)) {
@@ -1408,7 +1422,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                 if (ImGui::MenuItem(v.label, v.shortcut)) cmd.view = v.view;
             ImGui::Separator();
         }
-        if (ImGui::MenuItem(tr("Zoom to Fit"), "F")) cmd.fit = true;
+        if (ImGui::MenuItem(tr("Zoom to Fit"), keysLabel("view.fit").c_str())) cmd.fit = true;
         if (!is2D && ImGui::MenuItem(tr("Appearance..."))) st.showAppearance = true;
         if (!is2D && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The selected body's material: metals, colours, finishes"));
         if (!is2D && ImGui::MenuItem(tr("Render / Video..."))) st.showRender = true;
@@ -1418,7 +1432,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         }
         if (!is2D && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Cut the model open with a plane to see inside (the model doesn't change)"));
         if (!is2D) {
-            if (ImGui::MenuItem(tr("Orthographic"), "P", cam.projection() == Projection::Orthographic))
+            if (ImGui::MenuItem(tr("Orthographic"), keysLabel("view.projection").c_str(), cam.projection() == Projection::Orthographic))
                 cmd.toggleProjection = true;
             ImGui::Separator();
             for (DisplayMode m : kDisplayModes)
@@ -1431,16 +1445,16 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        ImGui::MenuItem(tr("Grid"), "G", &vp.showGrid);
-        if (ImGui::MenuItem(tr("Model Panel"), "M", st.showModelTree && st.dockTab == 0)) {
+        ImGui::MenuItem(tr("Grid"), keysLabel("view.grid").c_str(), &vp.showGrid);
+        if (ImGui::MenuItem(tr("Model Panel"), keysLabel("panel.model").c_str(), st.showModelTree && st.dockTab == 0)) {
             st.showModelTree = !(st.showModelTree && st.dockTab == 0);
             st.dockTab = 0;
         }
-        if (ImGui::MenuItem(tr("Library"), "K", st.showModelTree && st.dockTab == 1)) {
+        if (ImGui::MenuItem(tr("Library"), keysLabel("panel.library").c_str(), st.showModelTree && st.dockTab == 1)) {
             st.showModelTree = !(st.showModelTree && st.dockTab == 1);
             st.dockTab = 1;
         }
-        if (ImGui::MenuItem(tr("CAM Panel"), "J", st.showModelTree && st.dockTab == 2)) {
+        if (ImGui::MenuItem(tr("CAM Panel"), keysLabel("panel.cam").c_str(), st.showModelTree && st.dockTab == 2)) {
             st.showModelTree = !(st.showModelTree && st.dockTab == 2);
             st.dockTab = 2;
         }
@@ -1804,7 +1818,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("Manufacture"))) {
-        if (ImGui::MenuItem(tr("CAM Panel (operations, tools, post)"), "J")) {
+        if (ImGui::MenuItem(tr("CAM Panel (operations, tools, post)"), keysLabel("panel.cam").c_str())) {
             st.showModelTree = true;
             st.dockTab = 2;
         }
@@ -1957,7 +1971,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("Help"))) {
-        if (ImGui::MenuItem(tr("User Guide"), "F1")) st.showHelp = true;
+        if (ImGui::MenuItem(tr("User Guide"), keysLabel("help.help").c_str())) st.showHelp = true;
         if (ImGui::MenuItem(tr("Getting Started"))) st.showHelp = true, st.helpPage = "getting-started.md";
         if (ImGui::BeginMenu(tr("Sample Projects"))) {
             for (const HelpExample& e : helpExamples())
@@ -2759,14 +2773,14 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Files"));
         }
         if (ImGui::BeginPopup("##filesMenu")) {
-            if (ImGui::MenuItem(tr("New"), "Ctrl+N")) cmd.commands.push_back("NEW");
-            if (ImGui::MenuItem(tr("Open..."), "Ctrl+O")) requestFile(FileOpen, st);
-            if (ImGui::MenuItem(tr("Save"), "Ctrl+S")) {
+            if (ImGui::MenuItem(tr("New"), keysLabel("file.new").c_str())) cmd.commands.push_back("NEW");
+            if (ImGui::MenuItem(tr("Open..."), keysLabel("file.open").c_str())) requestFile(FileOpen, st);
+            if (ImGui::MenuItem(tr("Save"), keysLabel("file.save").c_str())) {
                 if (st.projectPath.empty()) requestFile(FileSaveAs, st);
                 else cmd.commands.push_back("SAVE");
             }
-            if (ImGui::MenuItem(tr("Save As..."), "Ctrl+Shift+S")) requestFile(FileSaveAs, st);
-            if (ImGui::MenuItem(tr("Close"), "Ctrl+W")) requestClose(cmd, st, st.activeFile);
+            if (ImGui::MenuItem(tr("Save As..."), keysLabel("file.save-as").c_str())) requestFile(FileSaveAs, st);
+            if (ImGui::MenuItem(tr("Close"), keysLabel("file.close").c_str())) requestClose(cmd, st, st.activeFile);
             ImGui::Separator();
             for (const auto& f : st.files) {
                 const std::string label = f.name + (f.dirty ? "*" : "") + "###menufile" + std::to_string(f.id);
@@ -3442,36 +3456,39 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
     const float y = mv->WorkPos.y + mv->WorkSize.y - m_statusHeight - h;
     m_commandHeight = h;
 
-    // Shortcuts: Space jumps to the command line; Ctrl/Cmd + N O S I E for files
-    // (these also work while typing in the command line, but not in dialogs).
+    // Shortcuts: Space jumps to the command line; the file keys also work while typing in the
+    // command line (those with Ctrl or Alt), but not in dialogs.
     const bool mod = commandModifierHeld();
     if (!io.WantCaptureKeyboard && !mod && ImGui::IsKeyPressed(ImGuiKey_Space, false) && st.mode != ViewMode::Simulation)
         m_focusCommand = true; // (Space plays / pauses in the Simulation window)
-    if (mod && !m_fileDialog.isOpen() && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
-        if (ImGui::IsKeyPressed(ImGuiKey_N, false)) requestFile(-1, st);
-        if (mod && ImGui::IsKeyPressed(ImGuiKey_O, false)) requestFile(FileOpen, st);
-        if (mod && ImGui::IsKeyPressed(ImGuiKey_I, false)) requestFile(FileImport, st);
-        if (mod && ImGui::IsKeyPressed(ImGuiKey_E, false)) requestFile(FileExport, st);
-        if (mod && ImGui::IsKeyPressed(ImGuiKey_W, false)) requestClose(cmd, st, st.activeFile);
-        if (ImGui::IsKeyPressed(ImGuiKey_Comma, false)) st.showPreferences = true;
-        if (mod && ImGui::IsKeyPressed(ImGuiKey_Tab, false) && st.files.size() > 1) { // next / previous file
+    // The file and edit keys (the user's, else the defaults: Keymap.hpp).
+    if (!m_fileDialog.isOpen() && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
+        if (keyActionPressed("file.new")) requestFile(-1, st);
+        if (keyActionPressed("file.open")) requestFile(FileOpen, st);
+        if (keyActionPressed("file.import")) requestFile(FileImport, st);
+        if (keyActionPressed("file.export")) requestFile(FileExport, st);
+        if (keyActionPressed("file.close")) requestClose(cmd, st, st.activeFile);
+        if (keyActionPressed("file.preferences")) st.showPreferences = true;
+        if (st.files.size() > 1) { // next / previous file
             const int n = static_cast<int>(st.files.size());
-            cmd.switchFile = st.files[static_cast<std::size_t>((st.activeFile + (io.KeyShift ? n - 1 : 1)) % n)].id;
+            if (keyActionPressed("file.next")) cmd.switchFile = st.files[static_cast<std::size_t>((st.activeFile + 1) % n)].id;
+            if (keyActionPressed("file.previous")) cmd.switchFile = st.files[static_cast<std::size_t>((st.activeFile + n - 1) % n)].id;
         }
-        if (mod && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-            if (io.KeyShift || st.projectPath.empty()) requestFile(FileSaveAs, st);
+        if (keyActionPressed("file.save-as")) requestFile(FileSaveAs, st);
+        else if (keyActionPressed("file.save")) {
+            if (st.projectPath.empty()) requestFile(FileSaveAs, st);
             else cmd.commands.push_back("SAVE");
         }
         // Undo / redo, unless a text field has the keys (it undoes its own typing).
         if (!io.WantTextInput) {
-            if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) cmd.commands.push_back(io.KeyShift ? "REDO" : "UNDO");
-            if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) cmd.commands.push_back("REDO");
+            if (keyActionPressed("edit.undo")) cmd.commands.push_back("UNDO");
+            if (keyActionPressed("edit.redo")) cmd.commands.push_back("REDO");
             // Copy, cut, paste and duplicate the selected bodies.
             const bool some = st.selectedBody >= 0 || st.selectedCurve >= 0; // bodies or sketch curves
-            if (ImGui::IsKeyPressed(ImGuiKey_C, false) && some) cmd.commands.push_back("COPY");
-            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && some) cmd.commands.push_back("CUT");
-            if (ImGui::IsKeyPressed(ImGuiKey_V, false)) cmd.commands.push_back("PASTE");
-            if (ImGui::IsKeyPressed(ImGuiKey_D, false) && some) cmd.commands.push_back("DUPLICATE");
+            if (keyActionPressed("edit.copy") && some) cmd.commands.push_back("COPY");
+            if (keyActionPressed("edit.cut") && some) cmd.commands.push_back("CUT");
+            if (keyActionPressed("edit.paste")) cmd.commands.push_back("PASTE");
+            if (keyActionPressed("edit.duplicate") && some) cmd.commands.push_back("DUPLICATE");
         }
     }
 
@@ -3810,51 +3827,36 @@ void LandingUI::drawControlsWindow(UiState& st) {
     ImGui::SetNextWindowSize({380, 0}, ImGuiCond_FirstUseEver);
     if (ImGui::Begin(tr("Viewport Controls"), &st.showControls, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
-            const char* rows[][2] = {
-                {"Tab", "Switch 2D Drawing / 3D Model window"},
-                {"Shift + Tab", "Simulation window"},
-                {"Space (Simulation)", "Play / pause"},
-                {"Home / Left / Right (Simulation)", "Rewind / step back / step forward"},
-                {"Ctrl + Tab / Shift", "Next / previous file tab"},
-                {"Ctrl + W", "Close the file tab"},
+            // The mouse and the fixed keys, then every shortcut as bound now (Preferences >
+            // Keyboard Shortcuts changes them).
+            std::vector<std::pair<std::string, std::string>> rows = {
                 {"ViewCube click", "Face / edge / corner view (26 views)"},
                 {"ViewCube drag", "Orbit (3D)"},
                 {"ViewCube right-click", "More views & windows"},
                 {"Left drag (empty space)", "Orbit in 3D, pan in 2D"},
                 {"Right drag", "Orbit in 3D, pan in 2D"},
+                {"Right-click a body", "Its menu (or the selection's): rename, copy, hide, material..."},
                 {"Middle drag / Shift + left drag", "Pan"},
                 {"Scroll", "Zoom at cursor"},
-                {"F", "Zoom to fit"},
-                {"1 / 3 / 7 / 0", "3D: Front / Right / Top / Iso"},
-                {"1 / 3 / 7 (2D)", "Front / Right / Top drawing plane"},
-                {"Ctrl + 1 / 3 / 7", "Back / Left / Bottom"},
-                {"P", "Toggle perspective / orthographic"},
-                {"W", "Cycle display mode"},
-                {"G", "Toggle grid"},
-                {"Enter", "Finish polyline"},
-                {"Esc", "Cancel drawing / clear selection"},
-                {"Delete / Backspace", "Delete the selected bodies or curve"},
                 {"Ctrl + click", "Add a body or sketch curve to / take it from the selection"},
                 {"Ctrl + drag (empty space)", "Box select (2D: curves): left to right inside, right to left touching"},
-                {"Ctrl + A", "Select every visible body (2D: every sketch curve)"},
-                {"Ctrl + C / X / V", "Copy / cut / paste bodies"},
-                {"Ctrl + D", "Duplicate the selected bodies"},
-                {"F2 / double-click in tree", "Rename the selected body"},
-                {"Alt + H / Alt + I", "Hide / isolate the selected bodies"},
-                {"Alt + Shift + H", "Show every body"},
-                {"Right-click a body", "Its menu (or the selection's): rename, copy, hide, material..."},
-                {"M  K  J", "Show / hide the Model, Library and CAM panels"},
-                {"V  S  O  H  Z", "Move / Select / Orbit / Pan / Zoom tools"},
-                {"L  C  R", "Line / Circle / Rectangle sketch tools"},
-                {"B  Y", "Block / Cylinder tools (Shift cycles the slot)"},
-                {"E", "Extrude: click a closed profile, drag or type the depth"},
+                {"Double-click in the tree", "Rename"},
+                {"Space (Simulation)", "Play / pause"},
+                {"Home / Left / Right (Simulation)", "Rewind / step back / step forward"},
+                {"Enter", "Finish polyline"},
+                {"Esc", "Cancel drawing / clear selection"},
             };
+            for (const KeyAction& a : keyActions())
+                if (const std::vector<KeyChord> c = boundChords(preferences(), a.id); !c.empty()) rows.push_back({chordsText(c), a.label});
+            for (int t = 0; t < static_cast<int>(ToolId::Count); ++t)
+                if (const std::string k = toolKeysText(static_cast<ToolId>(t)); !k.empty())
+                    rows.push_back({k + " (Shift: the next in its slot)", std::string(toolInfo(static_cast<ToolId>(t)).name) + " tool"});
             for (const auto& r : rows) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(r[0]);
+                ImGui::TextUnformatted(r.first.c_str());
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextDisabled("%s", r[1]);
+                ImGui::TextDisabled("%s", r.second.c_str());
             }
             ImGui::EndTable();
         }

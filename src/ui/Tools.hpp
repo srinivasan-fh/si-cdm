@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <span>
+#include <string>
 
 namespace sicdm {
 
@@ -64,6 +65,8 @@ bool isPrimitiveTool(ToolId id);
 // Ctrl / Cmd held: ImGui's modifier flag or the physical keys (the flag can lag
 // a key pressed in the same event batch).
 bool commandModifierHeld();
+// A tool's key as bound now (the user's, else its own), "" for none.
+std::string toolKeysText(ToolId id);
 
 // True for the 2D sketch tools that are implemented (draw on the active sketch plane).
 bool isSketchTool(ToolId id);

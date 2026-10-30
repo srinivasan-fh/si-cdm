@@ -3,6 +3,7 @@
 // Preferences: what a user sets once for every project, kept in preferences.json in the
 // per-user configuration folder. The recent files list lives here too.
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@ struct Preferences {
     std::string updateUrl;           // where the latest release is described (see UpdateCheck.hpp)
     std::string language = "en";     // the interface's language (see Translate.hpp)
     std::string vault;               // the team's vault folder (VAULT; Pdm.hpp); empty: $SICDM_VAULT, else none
+    std::map<std::string, std::string> keys; // keyboard shortcuts changed from their defaults: action -> keys (Keymap.hpp)
 
     static constexpr std::size_t kMaxRecent = 10;
 };

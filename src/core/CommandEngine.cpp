@@ -1,4 +1,5 @@
 #include "core/Command.hpp"
+#include "core/Keymap.hpp"
 #include "core/Document.hpp"
 #include "core/Extrude.hpp"
 #include "core/Library.hpp"
@@ -1714,6 +1715,35 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         out.say(r.describe(SICDM_VERSION));
         if (r.newer && !r.latest.notes.empty()) out.say("  " + r.latest.notes);
         return out;
+    }
+    if (cmd == "KEYS") {
+        // KEYS [LIST] | SET action keys [FORCE] | RESET [action | ALL]
+        const std::string sub = a.empty() ? "list" : lower(a[0]);
+        std::string err;
+        if (sub == "list") {
+            for (const std::string& l : describeKeyBindings(preferences())) out.say(l);
+            return out;
+        }
+        if (sub == "set") {
+            if (a.size() < 3) return usage();
+            bool force = false;
+            std::vector<std::string> words(a.begin() + 2, a.end());
+            if (!words.empty() && !quotedArg(a.size() - 1) && lower(words.back()) == "force") force = true, words.pop_back();
+            const std::string id = lower(a[1]);
+            if (!setKeyBinding(preferences(), id, joinArgs(words), force, &err)) return out.fail(err);
+            if (!savePreferences(&err)) return out.fail(err);
+            out.say(id + ": " + chordsText(boundChords(preferences(), id)));
+            return out;
+        }
+        if (sub == "reset") {
+            const std::string id = a.size() > 1 && lower(a[1]) != "all" ? lower(a[1]) : std::string();
+            if (!id.empty() && !findKeyAction(id) && !isToolKeyId(id)) return out.fail("No action " + id + " (KEYS lists them)");
+            resetKeyBinding(preferences(), id);
+            if (!savePreferences(&err)) return out.fail(err);
+            out.say(id.empty() ? std::string("Every shortcut is back to its default") : id + ": " + chordsText(boundChords(preferences(), id)) + " (its default)");
+            return out;
+        }
+        return usage();
     }
     if (cmd == "PREFERENCES") {
         // PREFERENCES [SHOW] | SET name value | RESET

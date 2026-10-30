@@ -971,5 +971,7 @@ Details: [docs/plugins.md](docs/plugins.md).
 - `Alt H`: hide the selected bodies; `Alt I`: isolate them (hide every other body);
   `Alt Shift H`: show every body (`HIDE`, `ISOLATE`, `SHOW [name...|ALL]`). These are steps in the
   history, so they undo, and features and exports, which use the visible bodies, replay the same.
+- Every shortcut can be changed: *Preferences → Keyboard Shortcuts*, or `KEYS SET edit.hide
+  Ctrl+H` ([docs/preferences.md](docs/preferences.md)). The keys below are the defaults.
 - `F`: fit to view
 - `1` / `3` / `7` / `0`: Front / Right / Top / Isometric (in 2D: pick the drawing plane)

@@ -5,13 +5,17 @@
 #include "core/Translate.hpp"
 #include "core/Lathe.hpp"
 #include "core/Licence.hpp"
+#include "core/Keymap.hpp"
 #include "core/Preferences.hpp"
 #include "core/Units.hpp"
 #include "ui/LandingUI.hpp"
+#include "ui/KeyInput.hpp"
 #include "ui/Theme.hpp"
+#include "ui/Tools.hpp"
 
 #include <imgui.h>
 
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -23,6 +27,103 @@ namespace {
 std::string quotedArg(const std::string& s) { return "\"" + s + "\""; }
 
 } // namespace
+
+// Every action and tool with its keys: click the keys and press new ones (KEYS SET).
+void LandingUI::drawKeyboardShortcuts(UiCommands& cmd) {
+    const Preferences& p = preferences();
+    struct Row {
+        std::string id, label, group;
+    };
+    std::vector<Row> rows;
+    for (const KeyAction& a : keyActions()) rows.push_back({a.id, tr(a.label), a.group});
+    for (int t = 0; t < static_cast<int>(ToolId::Count); ++t) {
+        const ToolInfo& info = toolInfo(static_cast<ToolId>(t));
+        if (info.available) rows.push_back({toolKeyId(info.name), std::string(tr(info.name)) + " " + tr("tool"), "Tools"});
+    }
+    ImGui::SetNextItemWidth(220);
+    ImGui::InputTextWithHint("##keyfilter", tr("Find an action or a key"), m_keyFilter, sizeof m_keyFilter);
+    ImGui::SameLine();
+    if (ImGui::Button(tr("Reset All Shortcuts"))) cmd.commands.push_back("KEYS RESET ALL");
+    const std::string filter = [&] {
+        std::string f = m_keyFilter;
+        for (char& c : f) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return f;
+    }();
+    // Setting one: the next keys pressed (Esc: leave it as it was).
+    if (!m_keyCapture.empty() && !m_keyShared) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            m_keyCapture.clear();
+        } else if (const auto c = pressedChord()) {
+            if (actionsOnChord(p, *c, m_keyCapture).empty()) {
+                cmd.commands.push_back("KEYS SET " + m_keyCapture + " " + quotedArg(chordText(*c)));
+                m_keyCapture.clear();
+            } else {
+                m_keyShared = *c; // another action has it: ask first
+            }
+        }
+    }
+    setKeyCapture(!m_keyCapture.empty());
+    if (ImGui::BeginChild("##keys", {560, 260}, ImGuiChildFlags_Borders)) {
+        if (ImGui::BeginTable("##keytable", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableSetupColumn(tr("Action"), ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn(tr("Keys"));
+            ImGui::TableSetupColumn("");
+            std::string group;
+            for (const Row& r : rows) {
+                const std::vector<KeyChord> bound = boundChords(p, r.id);
+                const std::string keys = bound.empty() ? std::string() : chordsText(bound);
+                if (!filter.empty()) {
+                    std::string hay = r.label + " " + r.id + " " + keys;
+                    for (char& c : hay) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (hay.find(filter) == std::string::npos) continue;
+                }
+                if (r.group != group) {
+                    group = r.group;
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr(group.c_str()));
+                }
+                ImGui::PushID(r.id.c_str());
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(r.label.c_str());
+                // Another action on the same keys: said here.
+                std::string shared;
+                for (const KeyChord& c : bound)
+                    for (const std::string& o : actionsOnChord(p, c, r.id)) shared += (shared.empty() ? "" : ", ") + o;
+                if (!shared.empty()) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(theme::vec(theme::kError), "(%s %s)", tr("also"), shared.c_str());
+                }
+                ImGui::TableSetColumnIndex(1);
+                const bool setting = m_keyCapture == r.id;
+                const std::string label = setting ? std::string(tr("Press the keys... (Esc)")) : keys.empty() ? std::string("-") : keys;
+                if (ImGui::Button((label + "##set").c_str(), {170, 0})) m_keyCapture = setting ? std::string() : r.id, m_keyShared.reset();
+                if (ImGui::IsItemHovered() && !setting) ImGui::SetTooltip("%s", tr("Click, then press the new keys (with Ctrl, Shift, Alt as you like)"));
+                ImGui::TableSetColumnIndex(2);
+                if (p.keys.count(r.id)) {
+                    if (ImGui::SmallButton(tr("Default"))) cmd.commands.push_back("KEYS RESET " + r.id);
+                } else if (!keys.empty()) {
+                    if (ImGui::SmallButton(tr("Clear"))) cmd.commands.push_back("KEYS SET " + r.id + " none");
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::EndChild();
+    if (m_keyShared) {
+        const std::vector<std::string> others = actionsOnChord(p, *m_keyShared, m_keyCapture);
+        ImGui::TextColored(theme::vec(theme::kError), tr("%s is %s's already."), chordText(*m_keyShared).c_str(), others.empty() ? "?" : others[0].c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton(tr("Use for Both"))) {
+            cmd.commands.push_back("KEYS SET " + m_keyCapture + " " + quotedArg(chordText(*m_keyShared)) + " FORCE");
+            m_keyCapture.clear(), m_keyShared.reset();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton(tr("Cancel"))) m_keyCapture.clear(), m_keyShared.reset();
+    }
+}
 
 void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
     ImGui::SetNextWindowSize({520, 0}, ImGuiCond_Appearing);
@@ -118,6 +219,9 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
             ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("Set the release feed your administrator gave you."));
         }
     }
+
+    ImGui::SeparatorText(tr("Keyboard Shortcuts"));
+    drawKeyboardShortcuts(cmd);
 
     ImGui::Separator();
     ImGui::TextColored(theme::vec(theme::kTextDim), tr("Saved in %s"), preferencesPath().c_str());

@@ -1,4 +1,6 @@
 #include "core/Preferences.hpp"
+
+#include "core/Keymap.hpp"
 #include "core/Translate.hpp"
 
 #include "core/Cam.hpp"
@@ -64,6 +66,11 @@ Json preferencesToJson(const Preferences& p) {
     j.set("update_url", p.updateUrl);
     j.set("language", p.language);
     j.set("vault", p.vault);
+    if (!p.keys.empty()) {
+        Json keys = Json::object();
+        for (const auto& [id, chords] : p.keys) keys.set(id, chords);
+        j.set("keys", keys);
+    }
     return j;
 }
 
@@ -88,6 +95,10 @@ Preferences preferencesFromJson(const Json& j) {
     take("vault", "vault");
     if (j["autosave_seconds"].isNumber()) p.autosaveSeconds = std::clamp(j["autosave_seconds"].asInt(), 0, 3600);
     p.checkUpdates = j["check_updates"].asBool(false);
+    // Changed shortcuts: only keys this version can read (a hand-edited file can't break them).
+    if (j["keys"].isObject())
+        for (const auto& [id, v] : j["keys"].members())
+            if (v.isString() && (findKeyAction(id) || isToolKeyId(id)) && parseChords(v.asString())) p.keys[id] = v.asString();
     return p;
 }
 

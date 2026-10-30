@@ -1,4 +1,7 @@
 #include "ui/Toolbox.hpp"
+
+#include "core/Preferences.hpp"
+#include "ui/KeyInput.hpp"
 #include "core/Translate.hpp"
 
 #include "ui/Theme.hpp"
@@ -31,7 +34,10 @@ bool commandModifierHeld() {
            ImGui::IsKeyDown(ImGuiKey_LeftSuper) || ImGui::IsKeyDown(ImGuiKey_RightSuper);
 }
 
-Toolbox::Toolbox() : m_current(toolGroups().size(), 0) { setActive(ToolId::Select); }
+Toolbox::Toolbox() : m_current(toolGroups().size(), 0) {
+    registerToolKeys(); // the tools' own keys, the keymap's defaults for them
+    setActive(ToolId::Select);
+}
 
 int Toolbox::groupOf(ToolId id) const {
     const auto groups = toolGroups();
@@ -52,20 +58,28 @@ void Toolbox::setActive(ToolId id) {
 
 void Toolbox::handleShortcuts() {
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard || commandModifierHeld() || io.KeyAlt) return;
+    if (io.WantCaptureKeyboard) return;
     for (int i = 0; i < static_cast<int>(ToolId::Count); ++i) {
         const ToolInfo& info = toolInfo(static_cast<ToolId>(i));
-        const char k = info.shortcut[0];
-        if (k < 'A' || k > 'Z') continue;
-        if (!ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_A + (k - 'A')), false)) continue;
-
+        // The tool's keys (the user's, else its own); with Shift too, they step through its slot.
+        bool hit = false, cycle = false;
+        for (KeyChord c : boundChords(preferences(), toolKeyId(info.name))) {
+            hit = hit || chordPressed(c);
+            if (!c.shift && (c.shift = true, chordPressed(c))) cycle = true;
+        }
+        if (!hit && !cycle) continue;
         const int g = groupOf(info.id);
         const auto tools = toolGroups()[static_cast<std::size_t>(g)].tools;
         int& cur = m_current[static_cast<std::size_t>(g)];
-        if (io.KeyShift && groupOf(m_active) == g) cur = (cur + 1) % static_cast<int>(tools.size());
+        if (cycle && groupOf(m_active) == g) cur = (cur + 1) % static_cast<int>(tools.size());
         setActive(tools[static_cast<std::size_t>(cur)]);
         return;
     }
+}
+
+std::string toolKeysText(ToolId id) {
+    const std::vector<KeyChord> c = boundChords(preferences(), toolKeyId(toolInfo(id).name));
+    return c.empty() ? std::string() : chordText(c.front());
 }
 
 float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen, int& panelTab) {
@@ -224,7 +238,7 @@ void Toolbox::drawSlot(int gi, float size) {
     if (hovered && !ImGui::IsPopupOpen("flyout")) {
         const ToolInfo& info = toolInfo(shown);
         ImGui::BeginTooltip();
-        if (info.shortcut[0]) ImGui::Text("%s  (%s)", tr(info.name), info.shortcut);
+        if (const std::string keys = toolKeysText(shown); !keys.empty()) ImGui::Text("%s  (%s)", tr(info.name), keys.c_str());
         else ImGui::TextUnformatted(tr(info.name));
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
         ImGui::TextDisabled("%s", tr(info.description));
@@ -263,7 +277,8 @@ void Toolbox::drawFlyout(int gi) {
         const float ty = lo.y + (rowH - ImGui::GetFontSize()) * 0.5f;
         dl->AddText({lo.x + 32, ty}, info.available ? theme::kText : theme::kTextFaint,
                     tr(info.name));
-        if (info.shortcut[0]) dl->AddText({lo.x + rowW - 16, ty}, theme::kTextDim, info.shortcut);
+        if (const std::string keys = toolKeysText(id); !keys.empty())
+            dl->AddText({lo.x + rowW - 8 - ImGui::CalcTextSize(keys.c_str()).x, ty}, theme::kTextDim, keys.c_str());
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);

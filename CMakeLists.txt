@@ -88,6 +88,7 @@ add_library(sicdm_core STATIC
     src/core/ModelExport.cpp
     src/core/Video.cpp
     src/core/Selection.cpp
+    src/core/Keymap.cpp
     src/core/MoldCommand.cpp
     src/core/WeldmentCommand.cpp
     src/core/Bvh.cpp
@@ -222,6 +223,7 @@ if(SICDM_BUILD_APP)
         src/ui/AppearanceWindow.cpp
         src/ui/LandingUI.cpp
         src/ui/Toolbox.cpp
+        src/ui/KeyInput.cpp
         src/ui/ToolIcons.cpp
         src/ui/Theme.cpp
         src/ui/ViewCube.cpp

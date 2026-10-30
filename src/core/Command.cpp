@@ -141,6 +141,9 @@ constexpr CommandSpec kCommands[] = {
      "[AMPLITUDE mm] [WAVELENGTH mm] [HEIGHT mm] [BLOCK mm] [CELL mm] [SIZE x [y]] [AT x,y] [SEED n] [FRICTION mu]",
      "Ground for robots to walk and drive on: a slope, stairs, rough ground, blocks or a digital elevation model (the body \"Terrain\")"},
     {"RECENT", "", "RECENT [n | CLEAR]", "The projects opened or saved lately; RECENT n opens one"},
+    {"KEYS", "SHORTCUTS KEYMAP", "KEYS [LIST] | SET action keys [FORCE] | RESET [action | ALL]",
+     "Keyboard shortcuts: what each action is on, and changing them (KEYS SET edit.hide Ctrl+H; KEYS SET edit.redo \"Ctrl+Shift+Z, Ctrl+Y\"); "
+     "a key another action has is refused unless FORCE. Kept with the preferences"},
     {"PREFERENCES", "PREFS SETTINGS LANGUAGE", "PREFERENCES [SHOW] | SET units|autosave|material|post|machine|updates|update-url|language value | LANGUAGES | UNTRANSLATED [file.json] | RESET",
      "Settings for every project: units for new projects, autosave interval, CAM set-up defaults, update check, the interface's language"},
     {"UPDATES", "UPDATE", "UPDATES [CHECK] [url]", "Is there a newer release? Reads the release feed (the update-url preference, or the address given)"},

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/Keymap.hpp"
+
 #include "core/Assembly.hpp"
 #include "core/Cam.hpp"
 #include "core/Camera.hpp"
@@ -277,6 +279,7 @@ private:
     void drawRenderWindow(UiCommands& cmd, UiState& st);
     void drawSectionWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawRenamePopup(UiCommands& cmd, UiState& st, const Scene& scene);
+    void drawKeyboardShortcuts(UiCommands& cmd);
     void drawBodyMenuItems(UiCommands& cmd, UiState& st, const Scene& scene); // the right-click menu of the selected bodies
     void drawStudyWindow(UiCommands& cmd, UiState& st, const Scene& scene);
     void drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene);
@@ -355,6 +358,11 @@ private:
     double m_showRecentUntil = 0.0;
     std::size_t m_seenLog = 0;
     char m_renameText[128] = {};
+    // Preferences > Keyboard Shortcuts: the action whose keys are being set, a key it would
+    // share with another (asked first), and the list's filter.
+    std::string m_keyCapture;
+    std::optional<KeyChord> m_keyShared;
+    char m_keyFilter[64] = {};
     int m_renameShown = -1; // the body the rename box was filled for
     std::vector<std::string> m_recall; // previous inputs for Up / Down
     int m_recallPos = -1;
