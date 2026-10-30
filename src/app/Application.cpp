@@ -1316,8 +1316,8 @@ bool Application::updateRadial() {
     const float d = std::hypot(io.MousePos.x - m_radialCentre.x, io.MousePos.y - m_radialCentre.y);
     if (m_radial == Radial::Size) m_uiState.sculptRadius = std::clamp(d * m_radialPerPixel, 0.1f, 1e5f);
     else m_uiState.sculptStrength = std::clamp(d / kRadialStrengthSpan, 0.0f, 1.0f);
-    const bool cancel = ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-    const bool keep = ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+    const bool cancel = keyActionPressed("edit.cancel") || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    const bool keep = ImGui::IsMouseClicked(ImGuiMouseButton_Left) || keyActionPressed("edit.finish");
     if (cancel) (m_radial == Radial::Size ? m_uiState.sculptRadius : m_uiState.sculptStrength) = m_radialWas;
     if (cancel || keep) {
         char status[96];
@@ -1733,19 +1733,18 @@ void Application::handleViewportInput() {
     if (m_leftDrag == DragMode::None) m_ui.toolbox().handleShortcuts(); // not mid-stroke
     if (m_ui.toolbox().active() != before) m_sketcher.cancel();
 
-    const bool ctrl = commandModifierHeld();
     UiCommands cmd;
     // The keys come from the keymap (Keymap.hpp): the user's, else the defaults.
     if (keyActionPressed("view.simulation")) cmd.mode = simulating() ? ViewMode::Model3D : ViewMode::Simulation;
     else if (keyActionPressed("view.windows")) cmd.mode = is2D ? ViewMode::Model3D : simulating() ? ViewMode::Model3D : ViewMode::Drawing2D;
-    if (simulating() && !ctrl) { // playback keys
-        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+    if (simulating()) { // playback keys
+        if (keyActionPressed("sim.play")) {
             if (!m_uiState.simPlaying && m_uiState.simTime >= m_uiState.simDuration - 1e-4f) m_uiState.simTime = 0.0f;
             m_uiState.simPlaying = !m_uiState.simPlaying;
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) m_uiState.simTime = 0.0f;
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) m_uiState.simTime = std::max(m_uiState.simTime - 1.0f / 30.0f, 0.0f);
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) m_uiState.simTime += 1.0f / 30.0f;
+        if (keyActionPressed("sim.rewind")) m_uiState.simTime = 0.0f;
+        if (keyActionPressed("sim.back", true)) m_uiState.simTime = std::max(m_uiState.simTime - 1.0f / 30.0f, 0.0f);
+        if (keyActionPressed("sim.forward", true)) m_uiState.simTime += 1.0f / 30.0f;
     }
     static const std::pair<const char*, StandardView> kViews[] = {{"view.front", StandardView::Front}, {"view.right", StandardView::Right},
                                                                    {"view.top", StandardView::Top},     {"view.back", StandardView::Back},
@@ -1772,19 +1771,15 @@ void Application::handleViewportInput() {
     if (keyActionPressed("panel.cam")) togglePage(2);
     if (keyActionPressed("help.help")) m_uiState.showHelp = !m_uiState.showHelp;
     if (keyActionPressed("file.quit")) cmd.quit = true;
-    if (isSculptTool(m_ui.toolbox().active()) && !ctrl) { // brush size, like Photoshop and ZBrush; Shift: its strength
-        const bool shift = ImGui::GetIO().KeyShift;
+    if (isSculptTool(m_ui.toolbox().active())) { // brush size, like Photoshop and ZBrush; with Shift: its strength
         char said[64] = "";
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) {
-            if (shift) m_uiState.sculptStrength = std::max(m_uiState.sculptStrength - 0.05f, 0.0f);
-            else m_uiState.sculptRadius = std::max(m_uiState.sculptRadius / 1.2f, 0.1f);
-            std::snprintf(said, sizeof said, "-");
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) {
-            if (shift) m_uiState.sculptStrength = std::min(m_uiState.sculptStrength + 0.05f, 1.0f);
-            else m_uiState.sculptRadius = std::min(m_uiState.sculptRadius * 1.2f, 1e5f);
-            std::snprintf(said, sizeof said, "+");
-        }
+        bool shift = false;
+        if (keyActionPressed("brush.smaller", true)) m_uiState.sculptRadius = std::max(m_uiState.sculptRadius / 1.2f, 0.1f), std::snprintf(said, sizeof said, "-");
+        if (keyActionPressed("brush.larger", true)) m_uiState.sculptRadius = std::min(m_uiState.sculptRadius * 1.2f, 1e5f), std::snprintf(said, sizeof said, "+");
+        if (keyActionPressed("brush.weaker", true))
+            m_uiState.sculptStrength = std::max(m_uiState.sculptStrength - 0.05f, 0.0f), shift = true, std::snprintf(said, sizeof said, "-");
+        if (keyActionPressed("brush.stronger", true))
+            m_uiState.sculptStrength = std::min(m_uiState.sculptStrength + 0.05f, 1.0f), shift = true, std::snprintf(said, sizeof said, "+");
         if (said[0]) {
             char status[96];
             if (shift) std::snprintf(status, sizeof status, "%s %.2f", tr("Brush strength"), static_cast<double>(m_uiState.sculptStrength));
@@ -1796,11 +1791,11 @@ void Application::handleViewportInput() {
     if (keyActionPressed("view.grid")) viewport().showGrid = !viewport().showGrid;
     if (keyActionPressed("view.display") && !is2D)
         m_vp3D.displayMode = static_cast<DisplayMode>((static_cast<int>(m_vp3D.displayMode) + 1) % 4);
-    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+    if (keyActionPressed("edit.finish")) {
         if (m_extrudeCurve >= 0) applyExtrude();
         else if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    if (keyActionPressed("edit.cancel")) {
         if (m_leftDrag != DragMode::None && m_leftDrag != DragMode::Pending) {
             cancelInteraction(false);
             m_escapedDrag = true; // the button is still down: ignore it until released

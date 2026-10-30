@@ -41,6 +41,7 @@ ImGuiKey imguiKey(const std::string& name) {
     }
     if (name.size() == 4 && name.rfind("Num", 0) == 0 && name[3] >= '0' && name[3] <= '9') return static_cast<ImGuiKey>(ImGuiKey_Keypad0 + (name[3] - '0'));
     static const std::pair<const char*, ImGuiKey> kNamed[] = {
+        {"Escape", ImGuiKey_Escape}, {"Enter", ImGuiKey_Enter}, {"NumEnter", ImGuiKey_KeypadEnter},
         {"Delete", ImGuiKey_Delete}, {"Backspace", ImGuiKey_Backspace}, {"Insert", ImGuiKey_Insert}, {"Home", ImGuiKey_Home},
         {"End", ImGuiKey_End},       {"PageUp", ImGuiKey_PageUp},       {"PageDown", ImGuiKey_PageDown}, {"Left", ImGuiKey_LeftArrow},
         {"Right", ImGuiKey_RightArrow}, {"Up", ImGuiKey_UpArrow},       {"Down", ImGuiKey_DownArrow},    {"Tab", ImGuiKey_Tab},

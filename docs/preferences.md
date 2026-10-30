@@ -44,7 +44,7 @@ from `PREFERENCES SET` is ignored, and the default is used.
 
 Every menu key, view key, panel key and tool key can be changed. In the app, *Preferences →
 Keyboard Shortcuts* lists them: click an action's keys, then press the new ones (with Ctrl,
-Shift or Alt as you like; Esc leaves them as they were). The list says when two actions share
+Shift or Alt as you like; a click on its button again leaves them as they were). The list says when two actions share
 a key, and asks before giving one a key another action has. *Default* puts one back, *Clear*
 takes its keys away, *Reset All Shortcuts* puts them all back. Menus, tool tips and *Help →
 Viewport Controls* show the keys as they are now.
@@ -58,14 +58,22 @@ KEYS SET view.grid none                    no keys
 KEYS RESET edit.hide | KEYS RESET ALL
 ```
 
-- **Actions:** `file.*`, `edit.*`, `view.*`, `panel.*`, `help.help`, and `tool.<name>` for
+- **Actions:** `file.*`, `edit.*` (with `edit.cancel`, Esc, and `edit.finish`, Enter),
+  `view.*`, `panel.*`, `help.help`, `commandline.focus` (Space), the simulation player's
+  `sim.play`, `sim.rewind`, `sim.back`, `sim.forward`, the brush's `brush.smaller`,
+  `brush.larger`, `brush.weaker`, `brush.stronger` (`[` `]`, with Shift), and `tool.<name>` for
   every tool (`tool.move`, `tool.block-cuboid` ...). With Shift added, a tool's key still steps
   through the tools in its slot.
-- **Keys:** a letter, digit, `F1`–`F12`, `Num0`–`Num9`, `Delete`, `Backspace`, `Insert`, `Home`,
-  `End`, `PageUp`, `PageDown`, the arrows, `Tab`, `Space` and punctuation, with `Ctrl` (`Cmd` on a
-  Mac), `Shift` and `Alt`. The modifiers must be held exactly as named.
-- **Fixed:** Esc (cancel, clear the selection) and Enter (finish) stay as they are, as do the
-  mouse, the simulation player's keys and the brush-size keys `[` `]`.
+- **Places:** the player's keys act only in the Simulation window, the brush keys only with a
+  sculpt brush, `commandline.focus` everywhere else; actions whose places never meet may share a
+  key (Space plays in the Simulation window and opens the command line elsewhere). Anything else
+  sharing a key is a clash, and is refused unless you `FORCE` it.
+- **Keys:** a letter, digit, `F1`–`F12`, `Num0`–`Num9`, `Escape`, `Enter`, `NumEnter`, `Delete`,
+  `Backspace`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, the arrows, `Tab`, `Space` and
+  punctuation, with `Ctrl` (`Cmd` on a Mac), `Shift` and `Alt`. The modifiers must be held exactly
+  as named. In the window, a click on the action's button again stops listening (so Esc can be
+  set as a key too).
+- **Not keys:** the mouse; and a dialog's own Esc (closing it) stays as it is.
 - **Typing:** while you type in a field, only keys with Ctrl or Alt act, so a single-letter
   shortcut never takes a typed letter.
 - **Where they are kept:** with the preferences (above), so they apply to every project.

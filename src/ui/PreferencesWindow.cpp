@@ -49,11 +49,10 @@ void LandingUI::drawKeyboardShortcuts(UiCommands& cmd) {
         for (char& c : f) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         return f;
     }();
-    // Setting one: the next keys pressed (Esc: leave it as it was).
+    // Setting one: the next keys pressed, Esc and Enter too (a click on its button again: leave
+    // it as it was).
     if (!m_keyCapture.empty() && !m_keyShared) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            m_keyCapture.clear();
-        } else if (const auto c = pressedChord()) {
+        if (const auto c = pressedChord()) {
             if (actionsOnChord(p, *c, m_keyCapture).empty()) {
                 cmd.commands.push_back("KEYS SET " + m_keyCapture + " " + quotedArg(chordText(*c)));
                 m_keyCapture.clear();
@@ -97,7 +96,7 @@ void LandingUI::drawKeyboardShortcuts(UiCommands& cmd) {
                 }
                 ImGui::TableSetColumnIndex(1);
                 const bool setting = m_keyCapture == r.id;
-                const std::string label = setting ? std::string(tr("Press the keys... (Esc)")) : keys.empty() ? std::string("-") : keys;
+                const std::string label = setting ? std::string(tr("Press the keys... (click: stop)")) : keys.empty() ? std::string("-") : keys;
                 if (ImGui::Button((label + "##set").c_str(), {170, 0})) m_keyCapture = setting ? std::string() : r.id, m_keyShared.reset();
                 if (ImGui::IsItemHovered() && !setting) ImGui::SetTooltip("%s", tr("Click, then press the new keys (with Ctrl, Shift, Alt as you like)"));
                 ImGui::TableSetColumnIndex(2);

@@ -34,6 +34,9 @@ struct KeyAction {
     const char* chords;   // its default keys
     const char* label;    // what it does
     const char* group;    // File, Edit, View, Panels ...
+    // Where it acts: "" everywhere; "sim" only in the Simulation window, "model" only outside
+    // it, "sculpt" only with a sculpt brush. Actions in two different such places may share keys.
+    const char* context = "";
 };
 // The actions other than the tools (whose ids are "tool." and the tool's name, lower case,
 // words joined by '-', with the tool's own key as the default).
@@ -48,7 +51,9 @@ const std::vector<std::pair<std::string, std::string>>& toolKeyDefaults();
 
 // What an action is bound to: the user's keys, else its default (`fallback` for a tool).
 std::vector<KeyChord> boundChords(const Preferences& p, const std::string& id);
-// The other actions bound to a chord (`except`: not this one).
+// Whether two actions can be on the same keys without both acting (their places never overlap).
+bool keyContextsApart(const std::string& a, const std::string& b);
+// The other actions bound to a chord that would act with it (`except`: not this one).
 std::vector<std::string> actionsOnChord(const Preferences& p, const KeyChord& chord, const std::string& except = {});
 
 // KEYS: list, set, reset (and saves the preferences). Lines for the output; false and why.

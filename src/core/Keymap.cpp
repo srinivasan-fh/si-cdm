@@ -44,7 +44,7 @@ const std::vector<std::string>& keyNames() {
         for (char c = '0'; c <= '9'; ++c) n.push_back(std::string(1, c));
         for (int k = 1; k <= 12; ++k) n.push_back("F" + std::to_string(k));
         for (char c = '0'; c <= '9'; ++c) n.push_back(std::string("Num") + c);
-        for (const char* s : {"Delete", "Backspace", "Insert", "Home", "End", "PageUp", "PageDown", "Left", "Right", "Up", "Down", "Tab", "Space",
+        for (const char* s : {"Escape", "Enter", "NumEnter", "Delete", "Backspace", "Insert", "Home", "End", "PageUp", "PageDown", "Left", "Right", "Up", "Down", "Tab", "Space",
                               ",", ".", "/", ";", "'", "-", "=", "[", "]", "\\", "`"})
             n.push_back(s);
         return n;
@@ -91,7 +91,8 @@ std::optional<std::vector<KeyChord>> parseChords(const std::string& text) {
         const auto it = std::find_if(names.begin(), names.end(), [&](const std::string& n) { return upper(n) == want; });
         if (it == names.end()) {
             if (want == "DEL") key = "Delete";
-            else if (want == "ESC" || want == "ESCAPE" || want == "ENTER" || want == "RETURN") return std::nullopt; // kept for cancelling and finishing
+            else if (want == "ESC") key = "Escape";
+            else if (want == "RETURN") key = "Enter";
             else if (want == "COMMA") key = ",";
             else if (want == "PERIOD") key = ".";
             else return std::nullopt;
@@ -143,6 +144,9 @@ const std::vector<KeyAction>& keyActions() {
         {"edit.hide", "Alt+H", SICDM_TR_NOOP("Hide the selection"), SICDM_TR_NOOP("Edit")},
         {"edit.isolate", "Alt+I", SICDM_TR_NOOP("Isolate the selection"), SICDM_TR_NOOP("Edit")},
         {"edit.show-all", "Alt+Shift+H", SICDM_TR_NOOP("Show every body"), SICDM_TR_NOOP("Edit")},
+        {"edit.cancel", "Escape", SICDM_TR_NOOP("Cancel, or clear the selection"), SICDM_TR_NOOP("Edit")},
+        {"edit.finish", "Enter, NumEnter", SICDM_TR_NOOP("Finish (a polyline, an extrusion's depth, a brush size)"), SICDM_TR_NOOP("Edit")},
+        {"commandline.focus", "Space", SICDM_TR_NOOP("Type a command"), SICDM_TR_NOOP("Edit"), "model"},
         {"view.fit", "F", SICDM_TR_NOOP("Zoom to fit"), SICDM_TR_NOOP("View")},
         {"view.front", "1, Num1", SICDM_TR_NOOP("Front view"), SICDM_TR_NOOP("View")},
         {"view.right", "3, Num3", SICDM_TR_NOOP("Right view"), SICDM_TR_NOOP("View")},
@@ -160,6 +164,14 @@ const std::vector<KeyAction>& keyActions() {
         {"panel.library", "K", SICDM_TR_NOOP("Library panel"), SICDM_TR_NOOP("Panels")},
         {"panel.cam", "J", SICDM_TR_NOOP("CAM panel"), SICDM_TR_NOOP("Panels")},
         {"help.help", "F1", SICDM_TR_NOOP("Help"), SICDM_TR_NOOP("Help")},
+        {"sim.play", "Space", SICDM_TR_NOOP("Play / pause"), SICDM_TR_NOOP("Simulation"), "sim"},
+        {"sim.rewind", "Home", SICDM_TR_NOOP("Back to the start"), SICDM_TR_NOOP("Simulation"), "sim"},
+        {"sim.back", "Left", SICDM_TR_NOOP("A frame back"), SICDM_TR_NOOP("Simulation"), "sim"},
+        {"sim.forward", "Right", SICDM_TR_NOOP("A frame on"), SICDM_TR_NOOP("Simulation"), "sim"},
+        {"brush.smaller", "[", SICDM_TR_NOOP("Smaller brush"), SICDM_TR_NOOP("Sculpting"), "sculpt"},
+        {"brush.larger", "]", SICDM_TR_NOOP("Larger brush"), SICDM_TR_NOOP("Sculpting"), "sculpt"},
+        {"brush.weaker", "Shift+[", SICDM_TR_NOOP("Weaker brush"), SICDM_TR_NOOP("Sculpting"), "sculpt"},
+        {"brush.stronger", "Shift+]", SICDM_TR_NOOP("Stronger brush"), SICDM_TR_NOOP("Sculpting"), "sculpt"},
     };
     return actions;
 }
@@ -196,6 +208,18 @@ std::vector<KeyChord> boundChords(const Preferences& p, const std::string& id) {
     return chords.value_or(std::vector<KeyChord>{});
 }
 
+bool keyContextsApart(const std::string& a, const std::string& b) {
+    auto ctx = [](const std::string& id) {
+        const KeyAction* k = findKeyAction(id);
+        return std::string(k ? k->context : "");
+    };
+    const std::string x = ctx(a), y = ctx(b);
+    // "model" and "sim" never overlap; "sculpt" is outside the Simulation window, so it
+    // overlaps "model" but not "sim".
+    auto apart = [](const std::string& p, const std::string& q) { return (p == "sim" && (q == "model" || q == "sculpt")); };
+    return !x.empty() && !y.empty() && x != y && (apart(x, y) || apart(y, x));
+}
+
 std::vector<std::string> actionsOnChord(const Preferences& p, const KeyChord& chord, const std::string& except) {
     std::vector<std::string> ids;
     for (const KeyAction& a : keyActions()) ids.push_back(a.id);
@@ -204,7 +228,7 @@ std::vector<std::string> actionsOnChord(const Preferences& p, const KeyChord& ch
         if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
     std::vector<std::string> out;
     for (const std::string& id : ids) {
-        if (id == except) continue;
+        if (id == except || (!except.empty() && keyContextsApart(id, except))) continue;
         for (const KeyChord& c : boundChords(p, id))
             if (c == chord) {
                 out.push_back(id);

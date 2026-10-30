@@ -15,7 +15,7 @@ bool keyActionPressed(const std::string& id, bool repeat = false);
 bool chordPressed(const KeyChord& chord, bool repeat = false);
 // The tools' own keys, for the keymap's defaults (once, at start).
 void registerToolKeys();
-// A chord pressed this frame (not a modifier, Esc or Enter alone): for setting a shortcut.
+// A chord pressed this frame (not a modifier alone): for setting a shortcut.
 std::optional<KeyChord> pressedChord();
 // While a shortcut is being set, no shortcut acts (the keys pressed are the new one).
 void setKeyCapture(bool on);

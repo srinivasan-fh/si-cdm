@@ -3458,8 +3458,7 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
 
     // Shortcuts: Space jumps to the command line; the file keys also work while typing in the
     // command line (those with Ctrl or Alt), but not in dialogs.
-    const bool mod = commandModifierHeld();
-    if (!io.WantCaptureKeyboard && !mod && ImGui::IsKeyPressed(ImGuiKey_Space, false) && st.mode != ViewMode::Simulation)
+    if (!io.WantCaptureKeyboard && keyActionPressed("commandline.focus") && st.mode != ViewMode::Simulation)
         m_focusCommand = true; // (Space plays / pauses in the Simulation window)
     // The file and edit keys (the user's, else the defaults: Keymap.hpp).
     if (!m_fileDialog.isOpen() && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
@@ -3841,10 +3840,6 @@ void LandingUI::drawControlsWindow(UiState& st) {
                 {"Ctrl + click", "Add a body or sketch curve to / take it from the selection"},
                 {"Ctrl + drag (empty space)", "Box select (2D: curves): left to right inside, right to left touching"},
                 {"Double-click in the tree", "Rename"},
-                {"Space (Simulation)", "Play / pause"},
-                {"Home / Left / Right (Simulation)", "Rewind / step back / step forward"},
-                {"Enter", "Finish polyline"},
-                {"Esc", "Cancel drawing / clear selection"},
             };
             for (const KeyAction& a : keyActions())
                 if (const std::vector<KeyChord> c = boundChords(preferences(), a.id); !c.empty()) rows.push_back({chordsText(c), a.label});

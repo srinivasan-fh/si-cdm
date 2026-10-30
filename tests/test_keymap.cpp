@@ -37,7 +37,8 @@ TEST_CASE("Keymap: chords read and written back, the defaults, refusals") {
     CHECK(parseChords("")->empty());
     CHECK(!parseChords("Ctrl+Nope"));
     CHECK(!parseChords("Hyper+A"));
-    CHECK(!parseChords("Escape")); // kept for cancelling
+    CHECK(chordText(parseChords("esc")->front()) == "Escape"); // Esc and Enter can be moved too
+    CHECK(chordsText(*parseChords("Return, NumEnter")) == "Enter, NumEnter");
     // Every default parses, and no two actions share one.
     Preferences p;
     for (const KeyAction& a : keyActions()) {
@@ -102,4 +103,31 @@ TEST_CASE("KEYS: list, set, reset") {
     CHECK(!run(d, "KEYS RESET no.such").ok);
     REQUIRE(run(d, "KEYS RESET ALL").ok);
     CHECK(preferences().keys.empty());
+}
+
+TEST_CASE("Keymap: Esc, Enter, the player's and the brush keys; places that never overlap share keys") {
+    Preferences p;
+    std::string why;
+    // Defaults: Space plays in the Simulation window and opens the command line elsewhere.
+    CHECK(chordsText(boundChords(p, "sim.play")) == "Space");
+    CHECK(chordsText(boundChords(p, "commandline.focus")) == "Space");
+    CHECK(keyContextsApart("sim.play", "commandline.focus"));
+    CHECK(actionsOnChord(p, parseChords("Space")->front(), "sim.play").empty());
+    // ... but a key everywhere (a tool, a view key) clashes with both.
+    CHECK(!keyContextsApart("sim.play", "view.fit"));
+    CHECK(!keyContextsApart("brush.larger", "commandline.focus")); // sculpting is outside the Simulation window too
+    CHECK(keyContextsApart("brush.larger", "sim.forward"));
+    // Moved: cancel to Q, finish to F5; the brush keys to Shift+Alt+arrows.
+    REQUIRE(setKeyBinding(p, "edit.cancel", "Ctrl+Q", true, &why)); // Quit has it: shared on purpose
+    REQUIRE(setKeyBinding(p, "edit.finish", "F5", false, &why));
+    REQUIRE(setKeyBinding(p, "brush.larger", "Alt+Up", false, &why));
+    CHECK(chordsText(boundChords(p, "brush.larger")) == "Alt+Up");
+    // A brush key on a key a Simulation action has: they never act together.
+    REQUIRE(setKeyBinding(p, "brush.smaller", "Left", false, &why));
+    // Esc is free once cancelling is moved off it; back on it, giving Esc to a global action clashes.
+    CHECK(setKeyBinding(p, "view.grid", "Escape", false, &why));
+    resetKeyBinding(p, "view.grid");
+    resetKeyBinding(p, "edit.cancel");
+    CHECK(!setKeyBinding(p, "view.grid", "Escape", false, &why));
+    CHECK(why.find("edit.cancel") != std::string::npos);
 }

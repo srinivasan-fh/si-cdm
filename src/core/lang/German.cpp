@@ -1233,7 +1233,6 @@ const char* const kGerman[][2] = {
     {"Next file tab", "Nächster Dateireiter"},
     {"Panels", "Bereiche"},
     {"Perspective / orthographic", "Perspektivisch / orthografisch"},
-    {"Press the keys... (Esc)", "Tasten drücken... (Esc)"},
     {"Previous file tab", "Vorheriger Dateireiter"},
     {"Reset All Shortcuts", "Alle Tastenkürzel zurücksetzen"},
     {"Right view", "Ansicht rechts"},
@@ -1245,6 +1244,19 @@ const char* const kGerman[][2] = {
     {"Zoom to fit", "Einpassen"},
     {"also", "auch"},
     {"tool", "Werkzeug"},
+    {"A frame back", "Ein Bild zurück"},
+    {"A frame on", "Ein Bild weiter"},
+    {"Back to the start", "Zurück zum Anfang"},
+    {"Cancel, or clear the selection", "Abbrechen oder Auswahl aufheben"},
+    {"Finish (a polyline, an extrusion's depth, a brush size)", "Abschließen (Polylinie, Extrusionstiefe, Pinselgröße)"},
+    {"Larger brush", "Größerer Pinsel"},
+    {"Play / pause", "Abspielen / Pause"},
+    {"Press the keys... (click: stop)", "Tasten drücken... (Klick: Ende)"},
+    {"Sculpting", "Modellieren"},
+    {"Smaller brush", "Kleinerer Pinsel"},
+    {"Stronger brush", "Stärkerer Pinsel"},
+    {"Type a command", "Befehl eingeben"},
+    {"Weaker brush", "Schwächerer Pinsel"},
 };
 
 
