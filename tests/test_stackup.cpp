@@ -315,7 +315,9 @@ TEST_CASE("Vector stacks: a 2D loop with an angle, by its sensitivities and the 
     r = analyzeStack(st);
     CHECK(std::fabs(r.nominal - 100) < 1e-6);
     CHECK(std::fabs(stackSensitivities(st)[2]) < 1e-6);
-    CHECK(std::fabs(r.wcHigh - (100 + 0.1 + 0.5 * 50 * 3.14159265358979 / 180)) < 1e-4);
+    // The loop's own extreme: the arm longest and turned least (the linear figure, 100.5363,
+    // misses that the two tolerances work together).
+    CHECK(std::fabs(r.wcHigh - (100.1 + 50.1 * std::cos(89.5 * 3.14159265358979 / 180))) < 1e-6);
     // Folded back on itself (out and back, 180 deg): the straight-line view says it closes to
     // nothing and doesn't move; the loop itself never goes below zero and opens up.
     ToleranceStack fold = st;
@@ -326,9 +328,35 @@ TEST_CASE("Vector stacks: a 2D loop with an angle, by its sensitivities and the 
     CHECK(std::fabs(r.nominal) < 1e-6);
     CHECK(r.mcLow >= 0);
     CHECK(r.mcMean > 0.5);
+    // Worst case: the loop can close exactly (least 0), and opens most with the angle at its
+    // limit and the lengths apart: the greatest of the box's corners.
+    CHECK(std::fabs(r.wcLow) < 1e-6);
+    double most = 0;
+    for (double a : {99.9, 100.1})
+        for (double b : {99.9, 100.1})
+            for (double t : {178.0, 182.0}) {
+                const double q = t * 3.14159265358979 / 180;
+                most = std::max(most, std::hypot(a + b * std::cos(q), b * std::sin(q)));
+            }
+    CHECK(std::fabs(r.wcHigh - most) < 1e-6);
+    // The second-order middle is nearer what the loop really gives than the straight-line
+    // view (which says 0).
+    CHECK(std::fabs(r.mean - r.mcMean) < r.mcMean);
+    CHECK(r.sigma > 0.3);
     bool noted = false;
     for (const std::string& n : r.notes) noted = noted || n.find("vector stack") != std::string::npos;
     CHECK(noted);
+    // Where the bend moves the mean: along Y the arm's end is 50 sin(turn), on average
+    // 50 exp(-s^2 / 2) with the turn's sigma s: second order finds it, as the loop does.
+    ToleranceStack wide = st;
+    wide.measure = {0, 1, 0};
+    wide.items[1].upper = 10, wide.items[1].lower = -10; // +-10 deg: sigma 3.33 deg
+    r = analyzeStack(wide);
+    const double sTurn = 10.0 / 3 * 3.14159265358979 / 180;
+    CHECK(std::fabs(r.mean - 50 * std::exp(-sTurn * sTurn / 2)) < 2e-3);
+    CHECK(std::fabs(r.mcMean - r.mean) < 0.01);
+    CHECK(std::fabs(r.mean - 50) > 0.08); // the straight-line view's 50 is off by more than that
+    CHECK(std::fabs(r.wcHigh - 50.1) < 1e-6); // the arm at its longest, square to X
     // A straight stack is as it was: the value is the signed sum.
     ToleranceStack lin;
     lin.items = {base, arm};

@@ -1308,19 +1308,25 @@ STACK Pin ADD Arm 50 TOL 0.1 DIR X             so this goes along Y
 STACK Pin REPORT
 ```
 
-- The result isn't a plain sum, so worst case and RSS use each dimension's sensitivity at the
-  nominal sizes, worked out numerically. An angle's is in mm per degree. The report lists
-  them.
-- The Monte Carlo run evaluates the loop itself, so it shows what the straight-line view
-  misses. For example, a loop that folds back on itself never closes to less than nothing.
+- The result isn't a plain sum, so each figure comes from the loop itself:
+  - **Worst case:** the loop's least and greatest result over the tolerance box. Every corner is
+    tried (up to 14 dimensions; beyond, the corners the sensitivities point to), then a search
+    along each dimension finds an extreme inside a band, such as a loop folding back to close.
+  - **RSS:** to second order: the loop's bend moves the mean and adds spread, worked out from its
+    first and second derivatives over each dimension's own sigma.
+  - **Monte Carlo:** the loop evaluated for every sample.
+  - **Sensitivities:** each dimension's effect at the nominal sizes, worked out numerically, are
+    listed (an angle's in mm per degree), with each one's share of the variance.
 - Checked by hand on the example above: nominal √(100² + 50²) = 111.803 mm; sensitivities
-  0.894, 0.447 and −0.781 mm/deg; worst case ±0.524 mm.
+  0.894, 0.447 and −0.781 mm/deg; worst case ±0.524 mm. Measured along Y with the turn
+  ±10°, the mean is 50·e^(−σ²/2) = 49.915 mm, not the straight-line 50 (second order and Monte
+  Carlo agree); a loop folding back on itself has a least result of exactly 0.
 - An angle's size and tolerance are always degrees, whatever the units.
 
 **Limits:**
 
-- A vector stack's worst case and RSS are linearised at the nominal sizes. Where the loop bends
-  a lot within the tolerances, the Monte Carlo figures are the ones to trust.
+- A vector stack's RSS is second order: right for loops that bend smoothly, approximate at a
+  kink (a loop that can close to exactly nothing); there the Monte Carlo figures are the closest.
 - Geometric tolerances (position, flatness...) aren't turned into contributions on their own.
   Add them as dimensions with their zone as the band.
 

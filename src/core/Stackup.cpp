@@ -221,6 +221,126 @@ std::vector<double> stackSensitivities(const ToleranceStack& st) {
     return c;
 }
 
+namespace {
+
+// Each item's band: least and greatest value.
+void bandOf(const StackItem& it, double& lo, double& hi) {
+    lo = it.nominal + std::min(it.upper, it.lower), hi = it.nominal + std::max(it.upper, it.lower);
+}
+
+struct VectorExtremes {
+    double low = 0, high = 0;
+};
+
+// The least and greatest result over the tolerance box: every corner (up to 14 dimensions;
+// beyond, the corners the sensitivities point to), then from the best corner a search along
+// each dimension in turn (golden section, so an extreme inside a band is found too), until
+// nothing improves.
+VectorExtremes vectorExtremes(const ToleranceStack& st) {
+    const std::size_t n = st.items.size();
+    std::vector<double> lo(n), hi(n);
+    for (std::size_t i = 0; i < n; ++i) bandOf(st.items[i], lo[i], hi[i]);
+    auto extreme = [&](double sign) {
+        std::vector<double> best(n), x(n);
+        double bestV = -1e300;
+        auto consider = [&](const std::vector<double>& c) {
+            const double v = sign * stackValue(st, c);
+            if (v > bestV) bestV = v, best = c;
+        };
+        if (n <= 14) {
+            for (std::uint32_t m = 0; m < (1u << n); ++m) {
+                for (std::size_t i = 0; i < n; ++i) x[i] = (m >> i) & 1u ? hi[i] : lo[i];
+                consider(x);
+            }
+        } else {
+            const std::vector<double> g = stackSensitivities(st);
+            for (std::size_t i = 0; i < n; ++i) x[i] = sign * g[i] >= 0 ? hi[i] : lo[i];
+            consider(x);
+        }
+        for (std::size_t i = 0; i < n; ++i) x[i] = 0.5 * (lo[i] + hi[i]);
+        consider(x);
+        x = best;
+        for (int pass = 0; pass < 30; ++pass) {
+            const double before = bestV;
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!(hi[i] > lo[i])) continue;
+                auto at = [&](double t) {
+                    std::vector<double> y = x;
+                    y[i] = t;
+                    return sign * stackValue(st, y);
+                };
+                // Golden section on [lo, hi], and the ends themselves.
+                const double k = 0.6180339887498949;
+                double a = lo[i], b = hi[i], c = b - k * (b - a), d = a + k * (b - a), fc = at(c), fd = at(d);
+                for (int it = 0; it < 60 && b - a > 1e-12 * (1 + std::fabs(a) + std::fabs(b)); ++it) {
+                    if (fc > fd) b = d, d = c, fd = fc, c = b - k * (b - a), fc = at(c);
+                    else a = c, c = d, fc = fd, d = a + k * (b - a), fd = at(d);
+                }
+                for (const double t : {lo[i], hi[i], 0.5 * (a + b), x[i]}) {
+                    const double v = at(t);
+                    if (v > bestV) bestV = v, x[i] = t;
+                }
+            }
+            if (bestV - before <= 1e-13 * (1 + std::fabs(bestV))) break;
+        }
+        return sign * bestV;
+    };
+    return {extreme(-1), extreme(1)};
+}
+
+struct SecondOrder {
+    double mean = 0, variance = 0;
+    std::vector<double> share; // each item's part of the variance
+};
+
+// Mean and variance to second order about the bands' middles: f + (1/2) sum f_ii s_i^2, and
+// sum f_i^2 s_i^2 + (1/2) sum_ij f_ij^2 s_i^2 s_j^2 (independent, symmetric spreads), the
+// derivatives taken over each item's own sigma.
+SecondOrder secondOrder(const ToleranceStack& st) {
+    const std::size_t n = st.items.size();
+    std::vector<double> m(n), sd(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        double lo, hi;
+        bandOf(st.items[i], lo, hi);
+        m[i] = 0.5 * (lo + hi), sd[i] = stackItemSigma(st.items[i]);
+    }
+    auto f = [&](const std::vector<double>& x) { return stackValue(st, x); };
+    const double f0 = f(m);
+    std::vector<double> g(n, 0.0);
+    std::vector<std::vector<double>> h(n, std::vector<double>(n, 0.0));
+    auto step = [&](std::size_t i) { return sd[i] > 0 ? sd[i] : 1e-6 * (1 + std::fabs(m[i])); };
+    for (std::size_t i = 0; i < n; ++i) {
+        const double hi_ = step(i);
+        std::vector<double> p = m, q = m;
+        p[i] += hi_, q[i] -= hi_;
+        const double fp = f(p), fq = f(q);
+        g[i] = (fp - fq) / (2 * hi_);
+        h[i][i] = (fp - 2 * f0 + fq) / (hi_ * hi_);
+        for (std::size_t j = 0; j < i; ++j) {
+            const double hj = step(j);
+            std::vector<double> a = m, b = m, c = m, d = m;
+            a[i] += hi_, a[j] += hj;
+            b[i] += hi_, b[j] -= hj;
+            c[i] -= hi_, c[j] += hj;
+            d[i] -= hi_, d[j] -= hj;
+            h[i][j] = h[j][i] = (f(a) - f(b) - f(c) + f(d)) / (4 * hi_ * hj);
+        }
+    }
+    SecondOrder so;
+    so.mean = f0;
+    so.share.assign(n, 0.0);
+    for (std::size_t i = 0; i < n; ++i) {
+        so.mean += 0.5 * h[i][i] * sd[i] * sd[i];
+        double part = g[i] * g[i] * sd[i] * sd[i];
+        for (std::size_t j = 0; j < n; ++j) part += 0.5 * h[i][j] * h[i][j] * sd[i] * sd[i] * sd[j] * sd[j];
+        so.share[i] = part;
+        so.variance += part;
+    }
+    return so;
+}
+
+} // namespace
+
 StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
     StackResult r;
     const std::size_t n = st.items.size();
@@ -245,6 +365,17 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
         var += s * s;
         r.wcShare[i] = std::fabs(c) * 0.5 * (hi - lo);
         band += r.wcShare[i];
+    }
+    // A vector loop isn't a straight sum: its worst case is searched for over the tolerance box
+    // (the linear one can be short or long where the loop bends a lot), and its spread taken to
+    // second order (the bend moves the mean and adds to the variance).
+    if (st.vector && n > 0) {
+        const VectorExtremes ex = vectorExtremes(st);
+        r.wcLow = ex.low, r.wcHigh = ex.high;
+        const SecondOrder so = secondOrder(st);
+        r.mean = so.mean;
+        var = so.variance;
+        for (std::size_t i = 0; i < n; ++i) r.variance[i] = so.share[i];
     }
     for (std::size_t i = 0; i < n; ++i) {
         r.variance[i] = var > 0 ? 100.0 * r.variance[i] / var : 0.0;
@@ -356,7 +487,8 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
         }
     }
     if (st.vector)
-        r.notes.push_back("A vector stack: worst case and RSS use each dimension's effect at the nominal sizes (its sensitivity), the Monte Carlo run the loop itself");
+        r.notes.push_back("A vector stack: the worst case is the loop's own extremes over the tolerance box, RSS is taken to second order (the loop's bend "
+                          "moves the mean and adds spread), and the Monte Carlo run uses the loop itself");
     if (rssCapped)
         r.notes.push_back("With so few dimensions, 3 sigma reaches past the worst case: RSS is taken as the worst case there (the Monte Carlo run shows the real spread)");
     // The RSS figure takes the result as normal; the Monte Carlo run draws each dimension
