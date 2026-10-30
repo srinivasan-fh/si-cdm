@@ -288,57 +288,6 @@ VectorExtremes vectorExtremes(const ToleranceStack& st) {
     return {extreme(-1), extreme(1)};
 }
 
-struct SecondOrder {
-    double mean = 0, variance = 0;
-    std::vector<double> share; // each item's part of the variance
-};
-
-// Mean and variance to second order about the bands' middles: f + (1/2) sum f_ii s_i^2, and
-// sum f_i^2 s_i^2 + (1/2) sum_ij f_ij^2 s_i^2 s_j^2 (independent, symmetric spreads), the
-// derivatives taken over each item's own sigma.
-SecondOrder secondOrder(const ToleranceStack& st) {
-    const std::size_t n = st.items.size();
-    std::vector<double> m(n), sd(n);
-    for (std::size_t i = 0; i < n; ++i) {
-        double lo, hi;
-        bandOf(st.items[i], lo, hi);
-        m[i] = 0.5 * (lo + hi), sd[i] = stackItemSigma(st.items[i]);
-    }
-    auto f = [&](const std::vector<double>& x) { return stackValue(st, x); };
-    const double f0 = f(m);
-    std::vector<double> g(n, 0.0);
-    std::vector<std::vector<double>> h(n, std::vector<double>(n, 0.0));
-    auto step = [&](std::size_t i) { return sd[i] > 0 ? sd[i] : 1e-6 * (1 + std::fabs(m[i])); };
-    for (std::size_t i = 0; i < n; ++i) {
-        const double hi_ = step(i);
-        std::vector<double> p = m, q = m;
-        p[i] += hi_, q[i] -= hi_;
-        const double fp = f(p), fq = f(q);
-        g[i] = (fp - fq) / (2 * hi_);
-        h[i][i] = (fp - 2 * f0 + fq) / (hi_ * hi_);
-        for (std::size_t j = 0; j < i; ++j) {
-            const double hj = step(j);
-            std::vector<double> a = m, b = m, c = m, d = m;
-            a[i] += hi_, a[j] += hj;
-            b[i] += hi_, b[j] -= hj;
-            c[i] -= hi_, c[j] += hj;
-            d[i] -= hi_, d[j] -= hj;
-            h[i][j] = h[j][i] = (f(a) - f(b) - f(c) + f(d)) / (4 * hi_ * hj);
-        }
-    }
-    SecondOrder so;
-    so.mean = f0;
-    so.share.assign(n, 0.0);
-    for (std::size_t i = 0; i < n; ++i) {
-        so.mean += 0.5 * h[i][i] * sd[i] * sd[i];
-        double part = g[i] * g[i] * sd[i] * sd[i];
-        for (std::size_t j = 0; j < n; ++j) part += 0.5 * h[i][j] * h[i][j] * sd[i] * sd[i] * sd[j] * sd[j];
-        so.share[i] = part;
-        so.variance += part;
-    }
-    return so;
-}
-
 // The inverse of the standard normal distribution (Acklam's, about 1e-9 relative).
 double normalQuantile(double p) {
     static const double a[] = {-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00};
@@ -358,41 +307,193 @@ double normalQuantile(double p) {
     return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
 }
 
-// The loop's own mean and variance, integrated over every item's distribution with a fixed
-// quasi-random point set (Halton, shifted once by a fixed amount): the same every time, close
-// to exact with smooth loops and at kinks alike (no derivatives taken).
-std::pair<double, double> vectorMoments(const ToleranceStack& st, int points = 32768) {
+// The loop's own spread, integrated over every item's distribution with fixed quasi-random
+// point sets (Halton, shifted once by a fixed amount): the same every time, close to exact with
+// smooth loops and at kinks alike (no derivatives taken).
+// An item's size at the share u (0...1) of its distribution.
+double itemAt(const StackItem& it, double u) {
+    double lo, hi;
+    bandOf(it, lo, hi);
+    const double w = hi - lo;
+    switch (it.dist) {
+    case StackDist::Uniform: return lo + w * u;
+    case StackDist::Triangular: return u < 0.5 ? lo + w * std::sqrt(u / 2) : hi - w * std::sqrt((1 - u) / 2);
+    default: return 0.5 * (lo + hi) + stackItemSigma(it) * normalQuantile(u);
+    }
+}
+
+struct VectorSpread {
+    double mean = 0, variance = 0, skew = 0, kurtosis = 0; // kurtosis: excess (0 for a normal)
+    std::vector<double> values;                            // the loop at every point, sorted
+    std::vector<double> share;                             // each item's part of the variance (total effect)
+};
+
+VectorSpread vectorSpread(const ToleranceStack& st, int points = 65536, int sharePoints = 8192) {
     const std::size_t n = st.items.size();
+    std::vector<int> primes; // a base per dimension: n for one point set (A), n more for another (B)
+    for (int k = 2; primes.size() < 2 * n; ++k) {
+        bool prime = true;
+        for (const int q : primes) prime = prime && k % q != 0;
+        if (prime) primes.push_back(k);
+    }
+    std::vector<double> lo(n), hi(n), sd(n);
+    for (std::size_t i = 0; i < n; ++i) bandOf(st.items[i], lo[i], hi[i]), sd[i] = stackItemSigma(st.items[i]);
+    // Point k's coordinate d (0 ... 2n-1), as item i's size (i = d mod n).
+    auto size = [&](int k, std::size_t d) {
+        const int b = primes[d];
+        double u = 0, f = 1.0 / b;
+        for (int m = k; m > 0; m /= b, f /= b) u += f * (m % b);
+        u = std::fmod(u + std::fmod(0.5 + 0.6180339887498949 * static_cast<double>(d + 1), 1.0), 1.0);
+        return itemAt(st.items[d % n], u);
+    };
+    VectorSpread vs;
+    vs.values.resize(static_cast<std::size_t>(points));
+    std::vector<double> x(n);
+    double sum = 0;
+    for (int k = 1; k <= points; ++k) {
+        for (std::size_t i = 0; i < n; ++i) x[i] = size(k, i);
+        const double v = stackValue(st, x);
+        vs.values[static_cast<std::size_t>(k - 1)] = v;
+        sum += v;
+    }
+    vs.mean = sum / points;
+    double m2 = 0, m3 = 0, m4 = 0;
+    for (const double v : vs.values) {
+        const double d = v - vs.mean, d2 = d * d;
+        m2 += d2, m3 += d2 * d, m4 += d2 * d2;
+    }
+    m2 /= points, m3 /= points, m4 /= points;
+    vs.variance = m2;
+    if (m2 > 0) vs.skew = m3 / std::pow(m2, 1.5), vs.kurtosis = m4 / (m2 * m2) - 3;
+    // Each item's total effect (Jansen): half the mean square change when it alone is drawn
+    // again (point set B for it, A for the rest). For a straight stack that is c_i^2 s_i^2;
+    // for a loop it counts what the item does with the others too, at a kink as well.
+    vs.share.assign(n, 0.0);
+    const int ns = std::min(sharePoints, points);
+    std::vector<double> xb(n);
+    for (int k = 1; k <= ns; ++k) {
+        const double fa = vs.values[static_cast<std::size_t>(k - 1)];
+        for (std::size_t i = 0; i < n; ++i) x[i] = size(k, i);
+        for (std::size_t i = 0; i < n; ++i) {
+            const double keep = x[i];
+            x[i] = size(k, n + i);
+            const double d = fa - stackValue(st, x);
+            vs.share[i] += 0.5 * d * d;
+            x[i] = keep;
+        }
+    }
+    for (double& v : vs.share) v /= ns;
+    std::sort(vs.values.begin(), vs.values.end());
+    return vs;
+}
+
+// The p point of sorted values (between neighbours).
+double sortedQuantile(const std::vector<double>& v, double p) {
+    if (v.empty()) return 0;
+    const double at = std::clamp(p, 0.0, 1.0) * static_cast<double>(v.size() - 1);
+    const std::size_t k = static_cast<std::size_t>(at);
+    if (k + 1 >= v.size()) return v.back();
+    return v[k] + (v[k + 1] - v[k]) * (at - static_cast<double>(k));
+}
+
+// The share of a vector loop's results past `limit` (above it when `above`) far out in a tail,
+// where too few of the evenly spread points land to count. Every item is taken as a standard
+// normal z (its size at the share Phi(z)); the most likely points past the limit (design points,
+// nearest the origin) are found from several starts (a bend can make two, one each way), and the
+// share integrated with points spread about each of them, every point weighted by how much
+// likelier it is at the origin than in that spread (importance sampling).
+double tailBeyond(const ToleranceStack& st, double limit, bool above, int points = 16384) {
+    const std::size_t n = st.items.size();
+    std::vector<double> x(n);
+    auto g = [&](const std::vector<double>& z) { // > 0: past the limit
+        for (std::size_t i = 0; i < n; ++i) x[i] = itemAt(st.items[i], normalCdf(z[i]));
+        const double v = stackValue(st, x);
+        return above ? v - limit : limit - v;
+    };
+    auto norm2 = [](const std::vector<double>& v) {
+        double q = 0;
+        for (const double e : v) q += e * e;
+        return q;
+    };
+    const double scale = std::fabs(limit) + 1e-9;
+    // Rackwitz-Fiessler steps from a start, shortened when a full one makes things worse.
+    auto designPoint = [&](std::vector<double> z, std::vector<double>& out) {
+        std::vector<double> grad(n), next(n);
+        double gz = g(z);
+        for (int step = 0; step < 60; ++step) {
+            double gn = 0, gdz = 0;
+            for (std::size_t i = 0; i < n; ++i) {
+                std::vector<double> a = z, b = z;
+                a[i] += 1e-3, b[i] -= 1e-3;
+                grad[i] = (g(a) - g(b)) / 2e-3;
+                gn += grad[i] * grad[i], gdz += grad[i] * z[i];
+            }
+            if (!(gn > 1e-300)) return false;
+            double lambda = 1, gNext = 0;
+            for (int cut = 0; cut < 8; ++cut, lambda *= 0.5) {
+                for (std::size_t i = 0; i < n; ++i) next[i] = std::clamp(z[i] + lambda * ((gdz - gz) / gn * grad[i] - z[i]), -8.0, 8.0);
+                gNext = g(next);
+                if (std::fabs(gNext) <= std::fabs(gz) || norm2(next) <= norm2(z)) break;
+            }
+            double moved = 0;
+            for (std::size_t i = 0; i < n; ++i) moved = std::max(moved, std::fabs(next[i] - z[i]));
+            z = next, gz = gNext;
+            if (moved < 1e-7) break;
+        }
+        out = z;
+        return std::fabs(gz) < 1e-6 * scale + 1e-9;
+    };
+    std::vector<std::vector<double>> found;
+    std::vector<double> beta2;
+    for (std::size_t s = 0; s <= 2 * n; ++s) {
+        std::vector<double> start(n, 0.0), z;
+        if (s > 0) start[(s - 1) / 2] = (s % 2) ? 1.5 : -1.5;
+        if (!designPoint(start, z)) continue;
+        bool known = false;
+        for (const auto& f : found) {
+            double d = 0;
+            for (std::size_t i = 0; i < n; ++i) d += (f[i] - z[i]) * (f[i] - z[i]);
+            known = known || d < 0.01;
+        }
+        if (!known) found.push_back(z), beta2.push_back(norm2(z));
+    }
+    if (found.empty()) return 0.0;
+    // Those that matter: within a little of the nearest (others weigh exp(-beta^2 / 2) less).
+    const double best = *std::min_element(beta2.begin(), beta2.end());
+    std::vector<std::vector<double>> use;
+    std::vector<double> useB2;
+    for (std::size_t k = 0; k < found.size(); ++k)
+        if (beta2[k] <= best + 9) use.push_back(found[k]), useB2.push_back(beta2[k]);
     std::vector<int> primes;
     for (int k = 2; primes.size() < n; ++k) {
         bool prime = true;
         for (const int q : primes) prime = prime && k % q != 0;
         if (prime) primes.push_back(k);
     }
-    std::vector<double> lo(n), hi(n), sd(n), shift(n), x(n);
-    for (std::size_t i = 0; i < n; ++i) {
-        bandOf(st.items[i], lo[i], hi[i]);
-        sd[i] = stackItemSigma(st.items[i]);
-        shift[i] = std::fmod(0.5 + 0.6180339887498949 * static_cast<double>(i + 1), 1.0);
-    }
-    double sum = 0, sum2 = 0;
+    const std::size_t m = use.size();
+    std::vector<double> zz(n);
+    double sum = 0;
     for (int k = 1; k <= points; ++k) {
+        const std::vector<double>& c = use[static_cast<std::size_t>(k) % m];
         for (std::size_t i = 0; i < n; ++i) {
-            double u = 0, f = 1.0 / primes[i];
-            for (int m = k; m > 0; m /= primes[i], f /= primes[i]) u += f * (m % primes[i]);
-            u = std::fmod(u + shift[i], 1.0);
-            const double mid = 0.5 * (lo[i] + hi[i]), w = hi[i] - lo[i];
-            switch (st.items[i].dist) {
-            case StackDist::Uniform: x[i] = lo[i] + w * u; break;
-            case StackDist::Triangular: x[i] = u < 0.5 ? lo[i] + w * std::sqrt(u / 2) : hi[i] - w * std::sqrt((1 - u) / 2); break;
-            default: x[i] = mid + sd[i] * normalQuantile(u); break;
-            }
+            const int b = primes[i];
+            double u = 0, f = 1.0 / b;
+            const int idx = (k - 1) / static_cast<int>(m) + 1; // each centre gets the low-discrepancy points in turn
+            for (int q = idx; q > 0; q /= b, f /= b) u += f * (q % b);
+            u = std::fmod(u + std::fmod(0.5 + 0.6180339887498949 * static_cast<double>(i + 1), 1.0), 1.0);
+            zz[i] = c[i] + normalQuantile(u);
         }
-        const double v = stackValue(st, x);
-        sum += v, sum2 += v * v;
+        if (g(zz) <= 0) continue;
+        // phi(z) over the spread's density, the mean of phi(z - c_j): 1 / mean exp(z.c_j - |c_j|^2 / 2).
+        double mix = 0;
+        for (std::size_t j = 0; j < m; ++j) {
+            double zc = 0;
+            for (std::size_t i = 0; i < n; ++i) zc += zz[i] * use[j][i];
+            mix += std::exp(zc - 0.5 * useB2[j]);
+        }
+        sum += static_cast<double>(m) / mix;
     }
-    const double mean = sum / points;
-    return {mean, std::max(0.0, sum2 / points - mean * mean)};
+    return std::clamp(sum / points, 0.0, 1.0);
 }
 
 } // namespace
@@ -403,6 +504,7 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
     r.variance.assign(n, 0.0);
     r.wcShare.assign(n, 0.0);
     double var = 0, band = 0;
+    VectorSpread spread; // a vector stack's spread, integrated
     // About the nominal: the result there, and how each dimension moves it.
     std::vector<double> nominals(n);
     for (std::size_t i = 0; i < n; ++i) nominals[i] = st.items[i].nominal;
@@ -430,22 +532,32 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
         r.wcLow = ex.low, r.wcHigh = ex.high;
         // The spread: the loop's own mean and variance (integrated, not a Taylor estimate, so
         // right at a kink too); each item's share of it from the second-order breakdown.
-        const SecondOrder so = secondOrder(st);
-        const auto [mean, variance] = vectorMoments(st);
-        r.mean = mean;
-        var = variance;
-        for (std::size_t i = 0; i < n; ++i) r.variance[i] = so.variance > 0 ? so.share[i] / so.variance * variance : 0.0;
+        spread = vectorSpread(st);
+        r.mean = spread.mean;
+        var = spread.variance;
+        double total = 0;
+        for (const double v : spread.share) total += v;
+        for (std::size_t i = 0; i < n; ++i) r.variance[i] = total > 0 ? spread.share[i] / total * var : 0.0;
     }
     for (std::size_t i = 0; i < n; ++i) {
         r.variance[i] = var > 0 ? 100.0 * r.variance[i] / var : 0.0;
         r.wcShare[i] = band > 0 ? 100.0 * r.wcShare[i] / band : 0.0;
     }
     r.sigma = std::sqrt(var);
+    // The 0.135% and 99.865% points: mean -+ 3 sigma for a straight stack (a normal result).
+    // A vector loop's result can be lopsided (one folding back on itself can't go below 0):
+    // its points are those of its own integrated values.
+    double p0 = r.mean - 3 * r.sigma, p1 = r.mean + 3 * r.sigma, middle = r.mean;
+    const bool shaped = st.vector && n > 0 && r.sigma > 0;
+    if (shaped) {
+        r.skew = spread.skew, r.kurtosis = spread.kurtosis;
+        p0 = sortedQuantile(spread.values, 0.00135), p1 = sortedQuantile(spread.values, 0.99865), middle = sortedQuantile(spread.values, 0.5);
+    }
     // (Few dimensions, uniform ones above all, can put mean -+ 3 sigma past the worst case,
     // which no assembly can reach: RSS stops there.)
-    r.rssLow = std::max(r.mean - 3 * r.sigma, r.wcLow), r.rssHigh = std::min(r.mean + 3 * r.sigma, r.wcHigh);
-    const bool rssCapped = r.mean - 3 * r.sigma < r.wcLow - 1e-12 || r.mean + 3 * r.sigma > r.wcHigh + 1e-12;
-    r.mrssLow = std::max(r.mean - 4.5 * r.sigma, r.wcLow), r.mrssHigh = std::min(r.mean + 4.5 * r.sigma, r.wcHigh);
+    r.rssLow = std::max(p0, r.wcLow), r.rssHigh = std::min(p1, r.wcHigh);
+    const bool rssCapped = p0 < r.wcLow - 1e-12 || p1 > r.wcHigh + 1e-12;
+    r.mrssLow = std::max(middle - 1.5 * (middle - p0), r.wcLow), r.mrssHigh = std::min(middle + 1.5 * (p1 - middle), r.wcHigh);
 
     // Against the spec.
     const bool spec = st.hasLow || st.hasHigh;
@@ -453,7 +565,27 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
         r.wcPass = (!st.hasLow || r.wcLow >= st.low - 1e-12) && (!st.hasHigh || r.wcHigh <= st.high + 1e-12);
         r.rssPass = (!st.hasLow || r.rssLow >= st.low - 1e-12) && (!st.hasHigh || r.rssHigh <= st.high + 1e-12);
         double out = 0, near = 1e300;
-        if (r.sigma > 0) {
+        if (shaped) {
+            // Past a limit: the share of the integrated values there while there are enough of
+            // them to count (50), else (a far tail) by importance sampling about the design point.
+            // Cpk by percentiles (ISO 22514-2): the nearer limit's distance from the median over
+            // that side's reach to its 0.135% or 99.865% point.
+            auto share = [&](double t, bool below) {
+                const auto it = std::lower_bound(spread.values.begin(), spread.values.end(), t);
+                const double k = static_cast<double>(it - spread.values.begin()), past = below ? k : static_cast<double>(spread.values.size()) - k;
+                if (past < 0.05 * static_cast<double>(spread.values.size())) return tailBeyond(st, t, !below);
+                return past / static_cast<double>(spread.values.size());
+            };
+            if (st.hasLow) {
+                out += share(st.low, true);
+                if (middle > p0) near = std::min(near, (middle - st.low) / (middle - p0));
+            }
+            if (st.hasHigh) {
+                out += share(st.high, false);
+                if (p1 > middle) near = std::min(near, (st.high - middle) / (p1 - middle));
+            }
+            r.cpk = near < 1e299 ? near : 0.0;
+        } else if (r.sigma > 0) {
             if (st.hasLow) out += normalCdf((st.low - r.mean) / r.sigma), near = std::min(near, r.mean - st.low);
             if (st.hasHigh) out += 1.0 - normalCdf((st.high - r.mean) / r.sigma), near = std::min(near, st.high - r.mean);
             r.cpk = near / (3 * r.sigma);
@@ -533,7 +665,7 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
                 if (st.hasHigh && halfHigh > 0) f = std::min(f, (st.high - r.mean) / halfHigh);
                 return f;
             };
-            const double fw = scale(r.mean - r.wcLow, r.wcHigh - r.mean), fr = scale(3 * r.sigma, 3 * r.sigma);
+            const double fw = scale(r.mean - r.wcLow, r.wcHigh - r.mean), fr = scale(r.mean - p0, p1 - r.mean);
             if (r.wcPass)
                 r.notes.push_back("Worst case fits the spec: every part in tolerance gives a good result");
             else
@@ -546,8 +678,12 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
         }
     }
     if (st.vector)
-        r.notes.push_back("A vector stack: the worst case is the loop's own extremes over the tolerance box, RSS the loop's own mean and spread "
-                          "(integrated over every dimension's distribution), and the Monte Carlo run uses the loop itself");
+        r.notes.push_back("A vector stack: the worst case is the loop's own extremes over the tolerance box, RSS the loop's own distribution "
+                          "(integrated over every dimension's: its mean, spread and lean), each share its total effect on the variance, and "
+                          "the Monte Carlo run uses the loop itself");
+    if (st.vector && r.sigma > 0 && std::fabs(r.skew) > 0.2)
+        r.notes.push_back("The result leans to one side (skew " + num(r.skew, 3) + "): RSS's limits and the share outside the spec follow its "
+                          "own shape, not a normal's");
     if (rssCapped)
         r.notes.push_back("With so few dimensions, 3 sigma reaches past the worst case: RSS is taken as the worst case there (the Monte Carlo run shows the real spread)");
     // The RSS figure takes the result as normal; the Monte Carlo run draws each dimension
@@ -557,7 +693,7 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
         const double a = std::max(r.ppm, floor), b = std::max(r.mcPpm, floor);
         if ((r.ppm >= floor || r.mcPpm > 0) && (a > 2 * b || b > 2 * a))
             r.notes.push_back("The Monte Carlo run, with each dimension's own distribution, puts " + ppmText(r.mcPpm) + " in a million outside the spec, against " +
-                              ppmText(r.ppm) + " from RSS (which takes the result as normal)");
+                              ppmText(r.ppm) + (st.vector ? " from RSS" : " from RSS (which takes the result as normal)"));
     }
     std::size_t top = 0;
     for (std::size_t i = 1; i < n; ++i)

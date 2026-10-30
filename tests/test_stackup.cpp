@@ -310,6 +310,14 @@ TEST_CASE("Vector stacks: a 2D loop with an angle, by its sensitivities and the 
     CHECK(std::fabs(r.mcMean - R) < 0.01); // nearly straight here: the loop agrees
     CHECK(r.mcP0 > r.wcLow); // the 99.73% points inside the worst case (normal tails reach past it)
     CHECK(r.mcP1 < r.wcHigh);
+    // Nearly straight here: each one's share (its total effect on the variance) is the linear
+    // one, (sensitivity x sigma)^2 of the sum.
+    {
+        double sum = 0;
+        std::vector<double> lin(3);
+        for (std::size_t i = 0; i < 3; ++i) lin[i] = std::pow(s[i] * stackItemSigma(st.items[i]), 2), sum += lin[i];
+        for (std::size_t i = 0; i < 3; ++i) CHECK(std::fabs(r.variance[i] - 100 * lin[i] / sum) < 0.5);
+    }
     // Along X only: the arm, square to X, doesn't count; the angle swings its end.
     st.measure = {1, 0, 0};
     r = analyzeStack(st);
@@ -343,6 +351,28 @@ TEST_CASE("Vector stacks: a 2D loop with an angle, by its sensitivities and the 
     // with the sampled loop (the straight-line view says 0 and 0).
     CHECK(std::fabs(r.mean - r.mcMean) < 0.02 * r.mcMean);
     CHECK(std::fabs(r.sigma - r.mcSigma) < 0.03 * r.mcSigma);
+    // Its own shape: it leans high (it can't go below 0) and RSS's limits are its own 0.135%
+    // and 99.865% points (the high one capped by the worst case: the angle's normal tails reach
+    // past its +-2 deg box).
+    CHECK(r.skew > 0.8);
+    CHECK(std::fabs(r.rssLow - r.mcP0) < 0.005);
+    CHECK(std::fabs(r.rssHigh - r.wcHigh) < 1e-9);
+    CHECK(r.variance[1] > 99.9); // the turn makes all of it
+    // The share outside a spec: from the loop's own distribution, near or far in its tail
+    // (references: 20 million samples of the same loop; a normal fit would say 12500 ppm for
+    // the first).
+    {
+        ToleranceStack sp = fold;
+        sp.hasHigh = true, sp.high = 2.5;
+        const StackResult q = analyzeStack(sp);
+        CHECK(std::fabs(q.ppm - 31681) < 0.02 * 31681);
+        sp.items[2].nominal = 70.1, sp.high = 30.15; // out and most of the way back
+        const StackResult far = analyzeStack(sp);
+        CHECK(std::fabs(far.ppm - 250.6) < 0.05 * 250.6);
+        CHECK(far.skew > 0.15);
+        sp.items[2].nominal = 50, sp.high = 50.12;
+        CHECK(std::fabs(analyzeStack(sp).ppm - 9809) < 0.02 * 9809);
+    }
     bool noted = false;
     for (const std::string& n : r.notes) noted = noted || n.find("vector stack") != std::string::npos;
     CHECK(noted);
@@ -355,6 +385,16 @@ TEST_CASE("Vector stacks: a 2D loop with an angle, by its sensitivities and the 
     const double sTurn = 10.0 / 3 * 3.14159265358979 / 180;
     CHECK(std::fabs(r.mean - 50 * std::exp(-sTurn * sTurn / 2)) < 2e-3);
     CHECK(std::fabs(r.mcMean - r.mean) < 0.01);
+    {
+        // Leaning low (a turn either way shortens it): 49.6 is 2.8 sigma below the mean, yet
+        // about 3% are below it (20 million samples: 30413 ppm).
+        ToleranceStack sp = wide;
+        sp.hasLow = true, sp.low = 49.6;
+        const StackResult q = analyzeStack(sp);
+        CHECK(q.skew < -2);
+        CHECK(std::fabs(q.ppm - q.mcPpm) < 0.05 * q.mcPpm);
+        CHECK(std::fabs(q.rssLow - q.mcP0) < 0.05);
+    }
     CHECK(std::fabs(r.mean - 50) > 0.08); // the straight-line view's 50 is off by more than that
     CHECK(std::fabs(r.wcHigh - 50.1) < 1e-6); // the arm at its longest, square to X
     // A straight stack is as it was: the value is the signed sum.

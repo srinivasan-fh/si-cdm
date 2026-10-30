@@ -721,6 +721,40 @@ bool ownUvIsland(MeshData& out, const std::vector<Vec3>& fresh, const std::vecto
 
 } // namespace
 
+bool weightsAbout(const NearestPoints& near, const std::vector<Vec3>& pts, const std::vector<std::array<std::int32_t, 4>>& bone,
+                  const std::vector<std::array<float, 4>>& weight, const Vec3& p, const std::vector<int>& map, std::array<std::int32_t, 4>& outBone,
+                  std::array<float, 4>& outWeight) {
+    float d = 0;
+    const std::int64_t j = near.find(p, 1e30f, &d);
+    if (j < 0) return false;
+    // Within twice the nearest: on an old vertex, that one; between two, both alike.
+    const float reach = 2 * d + 1e-5f;
+    std::vector<std::uint32_t> about;
+    if (reach < 4 * near.cell()) near.around(p, reach, about);
+    else about.assign(1, static_cast<std::uint32_t>(j));
+    std::map<int, float> sum;
+    for (const std::uint32_t k : about) {
+        if (k >= bone.size() || k >= weight.size()) continue;
+        const float f = 1 - length(pts[k] - p) / reach;
+        for (std::size_t q = 0; q < 4; ++q) {
+            int b = bone[k][q];
+            if (b < 0 || !(weight[k][q] > 0)) continue;
+            if (!map.empty()) b = b < static_cast<int>(map.size()) ? map[static_cast<std::size_t>(b)] : -1;
+            if (b >= 0) sum[b] += f * f * weight[k][q];
+        }
+    }
+    std::vector<std::pair<float, int>> by;
+    for (const auto& [b, w] : sum) by.push_back({w, b});
+    std::stable_sort(by.begin(), by.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+    if (by.size() > 4) by.resize(4);
+    float total = 0;
+    for (const auto& e : by) total += e.first;
+    if (!(total > 0)) return false;
+    outBone = {-1, -1, -1, -1}, outWeight = {0, 0, 0, 0};
+    for (std::size_t q = 0; q < by.size(); ++q) outBone[q] = by[q].second, outWeight[q] = by[q].first / total;
+    return true;
+}
+
 bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& c, MeshData& out, SkinData& skin, std::string* why) {
     if (!armatureSkin(n, o, out, skin, why)) return false;
     skin.options = o;
@@ -732,6 +766,7 @@ bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& 
     // its paint.
     const std::vector<Vec3> fresh = skin.rest;
     std::vector<char> painted(out.vertices.size(), 0), apart(out.vertices.size(), 0); // apart: nothing old within a cell
+    std::vector<float> fade(out.vertices.size(), 0.0f); // how much of the old skin is about it: 1 within a cell, none by three
     for (std::size_t v = 0; v < out.vertices.size(); ++v) {
         float d = 0;
         const std::int64_t j = near.find(fresh[v], 3.0f * cell, &d);
@@ -739,9 +774,43 @@ bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& 
         if (j < 0) continue;
         const float t = std::clamp((3.0f * cell - d) / (2.0f * cell), 0.0f, 1.0f);
         const float w = t * t * (3 - 2 * t);
+        fade[v] = w;
         out.vertices[v].position += c.detail[static_cast<std::size_t>(j)] * w;
         skin.rest[v] = out.vertices[v].position;
         if (static_cast<std::size_t>(j) < c.colors.size()) out.vertices[v].color = c.colors[static_cast<std::size_t>(j)], painted[v] = 1;
+    }
+    // The weights it had (set by hand, perhaps), where the old skin was: a new ball's link
+    // takes what the new skin's own weights give it, the rest shared as the old skin's were;
+    // fading to the new skin's own where nothing of the old is near.
+    if (c.bone.size() == c.bare.size() && c.weight.size() == c.bare.size()) {
+        std::vector<char> added(n.balls.size(), 1);
+        for (const int b : c.ballMap)
+            if (b >= 0 && b < static_cast<int>(added.size())) added[static_cast<std::size_t>(b)] = 0;
+        for (std::size_t v = 0; v < out.vertices.size() && v < skin.bone.size(); ++v) {
+            if (!(fade[v] > 0)) continue;
+            std::array<std::int32_t, 4> ob;
+            std::array<float, 4> ow;
+            if (!weightsAbout(near, c.bare, c.bone, c.weight, fresh[v], c.ballMap, ob, ow)) continue;
+            float toNew = 0;
+            for (std::size_t q = 0; q < 4; ++q)
+                if (skin.bone[v][q] >= 0 && added[static_cast<std::size_t>(skin.bone[v][q])]) toNew += skin.weight[v][q];
+            std::map<int, float> sum;
+            for (std::size_t q = 0; q < 4; ++q) {
+                if (ob[q] >= 0) sum[ob[q]] += fade[v] * (1 - toNew) * ow[q];
+                const int b = skin.bone[v][q];
+                if (b < 0) continue;
+                sum[b] += (added[static_cast<std::size_t>(b)] ? 1.0f : 1 - fade[v]) * skin.weight[v][q];
+            }
+            std::vector<std::pair<float, int>> by;
+            for (const auto& [b, w] : sum) by.push_back({w, b});
+            std::stable_sort(by.begin(), by.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+            if (by.size() > 4) by.resize(4);
+            float total = 0;
+            for (const auto& e : by) total += e.first;
+            if (!(total > 0)) continue;
+            skin.bone[v] = {-1, -1, -1, -1}, skin.weight[v] = {0, 0, 0, 0};
+            for (std::size_t q = 0; q < by.size(); ++q) skin.bone[v][q] = by[q].second, skin.weight[v][q] = by[q].first / total;
+        }
     }
     // Where nothing of the old skin is near (a new ball), the paint flows on from the painted
     // vertices next to it, along the skin: a new ball takes the colour of where it joins.

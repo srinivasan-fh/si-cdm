@@ -107,35 +107,13 @@ void carryWeights(const SkinData& old, const Armature& arm, const std::vector<Ve
     if (old.bone.size() != old.rest.size() || old.weight.size() != old.rest.size() || old.rest.empty()) return;
     const std::vector<Vec3> was = poseSkin(old, arm);
     const NearestPoints near(was);
-    auto usable = [&](int bone) {
-        return bone >= 0 && bone < static_cast<int>(arm.balls.size()) && arm.balls[static_cast<std::size_t>(bone)].parent >= 0;
-    };
-    std::vector<std::uint32_t> about;
+    std::vector<int> usable(arm.balls.size(), -1); // links the armature has
+    for (std::size_t b = 0; b < arm.balls.size(); ++b)
+        if (arm.balls[b].parent >= 0) usable[b] = static_cast<int>(b);
     for (std::size_t i = 0; i < now.size() && i < s.bone.size(); ++i) {
-        float d = 0;
-        const std::int64_t j = near.find(now[i], 1e30f, &d);
-        if (j < 0) continue;
-        // Within twice the nearest: on an old vertex, that one; between two, both alike.
-        const float reach = 2 * d + 1e-5f;
-        if (reach < 4 * near.cell()) near.around(now[i], reach, about);
-        else about.assign(1, static_cast<std::uint32_t>(j));
-        std::map<int, float> sum;
-        for (const std::uint32_t k : about) {
-            const float f = 1 - length(was[k] - now[i]) / reach;
-            for (std::size_t q = 0; q < 4; ++q)
-                if (usable(old.bone[k][q]) && old.weight[k][q] > 0) sum[old.bone[k][q]] += f * f * old.weight[k][q];
-        }
-        std::vector<std::pair<float, int>> by;
-        for (const auto& [bone, w] : sum) by.push_back({w, bone});
-        std::stable_sort(by.begin(), by.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
-        if (by.size() > 4) by.resize(4);
-        float total = 0;
-        for (const auto& e : by) total += e.first;
-        if (!(total > 0)) continue;
-        std::array<std::int32_t, 4> bone{-1, -1, -1, -1};
-        std::array<float, 4> weight{0, 0, 0, 0};
-        for (std::size_t q = 0; q < by.size(); ++q) bone[q] = by[q].second, weight[q] = by[q].first / total;
-        s.bone[i] = bone, s.weight[i] = weight;
+        std::array<std::int32_t, 4> bone;
+        std::array<float, 4> weight;
+        if (weightsAbout(near, was, old.bone, old.weight, now[i], usable, bone, weight)) s.bone[i] = bone, s.weight[i] = weight;
     }
 }
 
@@ -236,8 +214,9 @@ std::shared_ptr<SkinData> currentSkin(const Body& b, const Armature& before, con
 }
 
 // Fits the skins bound to the armature to it after an edit, keeping what was sculpted on them.
+// `ballMap`: each old ball's number now (-1: taken away), when they were renumbered.
 void refitSkins(Document& doc, const std::string& armature, const Armature& before, const Armature& arm, CommandOutput& out, Refit how, int mid = -1,
-                int child = -1) {
+                int child = -1, const std::vector<int>& ballMap = {}) {
     const Armature oldRest = atRest(before), newRest = atRest(arm);
     for (Body& b : doc.scene.bodies()) {
         if (!b.skin || b.skin->armature != armature) continue;
@@ -274,6 +253,10 @@ void refitSkins(Document& doc, const std::string& armature, const Armature& befo
                 carry.indices = b.mesh.indices;
                 if (b.mesh.hasGroups()) carry.groups = b.mesh.groups;
                 if (b.mesh.hasUvs()) carry.uvs = b.mesh.uvs;
+                carry.bone = s->bone, carry.weight = s->weight;
+                carry.ballMap = ballMap;
+                if (carry.ballMap.empty())
+                    for (std::size_t k = 0; k < before.balls.size(); ++k) carry.ballMap.push_back(static_cast<int>(k));
             }
             const bool detail = !carry.detail.empty();
             MeshData mesh;
@@ -529,7 +512,7 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
         const std::size_t removed = arm.balls.size() - kept.balls.size();
         store(doc, index, before, kept, out, false);
         out.say("Removed " + std::to_string(removed) + (removed == 1 ? " ball" : " balls") + " from " + name);
-        refitSkins(doc, name, before, kept, out, Refit::Rebuilt);
+        refitSkins(doc, name, before, kept, out, Refit::Rebuilt, -1, -1, renumber);
         return out;
     }
     if (sub == "pose") {

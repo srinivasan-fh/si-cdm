@@ -75,7 +75,8 @@ struct StackResult {
     double mean = 0;               // ... at every band's middle
     double wcLow = 0, wcHigh = 0;  // worst case
     double sigma = 0;              // statistical: sqrt(sum (sign sens sigma_i)^2)
-    double rssLow = 0, rssHigh = 0;   // mean -+ 3 sigma
+    double skew = 0, kurtosis = 0; // a vector stack's result: its lean and (excess) tail weight (0 for a straight one)
+    double rssLow = 0, rssHigh = 0;   // the 0.135% and 99.865% points: mean -+ 3 sigma (a vector stack: its own)
     double mrssLow = 0, mrssHigh = 0; // mean -+ 1.5 x 3 sigma, within the worst case
     std::vector<double> variance;  // each item's share of sigma^2 (%)
     std::vector<double> wcShare;   // ... of the worst-case band (%)

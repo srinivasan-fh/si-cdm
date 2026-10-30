@@ -1312,10 +1312,17 @@ STACK Pin REPORT
   - **Worst case:** the loop's least and greatest result over the tolerance box. Every corner is
     tried (up to 14 dimensions; beyond, the corners the sensitivities point to), then a search
     along each dimension finds an extreme inside a band, such as a loop folding back to close.
-  - **RSS:** the loop's own mean and spread, integrated over every dimension's distribution
-    (normal, uniform or triangular) with a quasi-random set of 32768 points, so the bend's shift
-    of the mean and a kink (a loop that can close to exactly nothing) are both counted. Each
-    dimension's share comes from the second-order sensitivities.
+  - **RSS:** the loop's own distribution, integrated over every dimension's (normal, uniform
+    or triangular) with an even, quasi-random set of 65,536 points: its mean, sigma, skew and
+    kurtosis, so a bend's shift of the mean and a kink (a loop that can close to exactly nothing)
+    are counted. The RSS limits are its own 0.135% and 99.865% points (mean ± 3σ for a normal
+    result, further out on the side it leans to). The share outside a spec is counted from the
+    same points; in a far tail (under 5%), the most likely ways past the limit are found (the
+    design points, every one of them, as a bend can make two) and the tail is integrated about
+    them by importance sampling. Cpk is by percentiles (ISO 22514-2).
+  - **Shares:** each dimension's total effect on the variance (how much the result varies when
+    it alone is drawn again, interactions included), scaled to add to 100%. For a straight
+    stack that is (sensitivity × σ)².
   - **Monte Carlo:** the loop evaluated for every sample.
   - **Sensitivities:** each dimension's effect at the nominal sizes, worked out numerically, are
     listed (an angle's in mm per degree), with each one's share of the variance.
@@ -1328,9 +1335,9 @@ STACK Pin REPORT
 
 **Limits:**
 
-- A vector stack's RSS is the integrated mean ± k·sigma: it doesn't model a skewed result's
-  tails (a folding loop is skewed); for its yield, use the Monte Carlo figures. The shares of
-  the variance are from the second-order view, so they are approximate at a kink.
+- A vector stack's share outside a spec is an integral: checked against 20 million samples of
+  the same loops it is within about 2%, from 3% down to 0.005% outside. Beyond 5σ it isn't
+  checked.
 - Geometric tolerances (position, flatness...) aren't turned into contributions on their own.
   Add them as dimensions with their zone as the band.
 

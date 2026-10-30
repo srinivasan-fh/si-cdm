@@ -95,6 +95,12 @@ struct SkinCarry {
     std::vector<std::uint32_t> indices; // the old triangles
     std::vector<std::uint32_t> groups; // per old triangle (may be empty)
     std::vector<Vec2> uvs;             // per old triangle corner (may be empty)
+    // The old weights (per old vertex; may be empty) and each old ball's number in the new
+    // armature (-1: taken away). Where the old skin was, each new vertex keeps the weights it
+    // had there, sharing with any new ball's link what the new skin's own weights give it.
+    std::vector<std::array<std::int32_t, 4>> bone;
+    std::vector<std::array<float, 4>> weight;
+    std::vector<int> ballMap;
 };
 bool reskinWithDetail(const Armature& newRest, const SkinOptions& o, const SkinCarry& carry, MeshData& out, SkinData& skin, std::string* why = nullptr);
 
@@ -107,6 +113,15 @@ bool reskinWithDetail(const Armature& newRest, const SkinOptions& o, const SkinC
 // Both balls must have a link (not the root); the skin must keep its unsculpted shape (`base`).
 // `rest`: the armature at rest. False, with why, when it can't.
 bool copySkinDetail(const SkinData& skin, const Armature& rest, int from, int to, int mirrorAxis, std::vector<Vec3>& out, std::string* why = nullptr);
+
+class NearestPoints;
+// The weights about `p` from points `pts` (with their bones and weights): those of the points
+// within twice the nearest's distance, blended by nearness (the nearest's alone where p sits
+// on one), each bone b taken as `map[b]` (-1: dropped; an empty map: as it is), the four
+// largest kept and summing to 1. False when none is left.
+bool weightsAbout(const NearestPoints& near, const std::vector<Vec3>& pts, const std::vector<std::array<std::int32_t, 4>>& bone,
+                  const std::vector<std::array<float, 4>>& weight, const Vec3& p, const std::vector<int>& map, std::array<std::int32_t, 4>& outBone,
+                  std::array<float, 4>& outWeight);
 
 // The nearest of a set of points to a place, by cells (a cube a 64th of their extent unless
 // given): its index, or -1 when none is within `within`.

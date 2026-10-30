@@ -368,6 +368,10 @@ Then turn it into a mesh:
     - what was sculpted, fading out smoothly over a few voxels where nothing of the old skin is
       near (a new ball's own skin starts unsculpted, with no step where the old detail ends;
       `DETAIL` below gives it some);
+    - the bone weights, weights set by hand included: where the old skin was, each vertex keeps
+      the weights it had (blended from the old vertices about it, under the balls' new numbers
+      after a `REMOVE`), sharing with a new ball's link only what that link's own weights give
+      it; a new ball's own skin follows its link;
     - the paint, which also flows on over a new ball's skin from where it joins;
     - the polygroups and UVs, each new triangle from the old triangle nearest it (its UVs by
       where its corners fall on that one triangle, so no triangle straddles a seam);
@@ -448,8 +452,8 @@ clicked, as with ZSpheres. *Skin It* makes the skin. Over MCP, use the `armature
 
 **Limits:**
 
-- Adding or removing a ball skins it again, so its weights are by distance again: weights set by
-  hand aren't kept through that (what was sculpted and painted, the polygroups and UVs are).
+- Posing is linear blend skinning: a joint twisted far about its own link (past about 90°) thins
+  where the weights blend, as in other tools that skin this way.
 
 ## Insert-mesh and curve brushes
 

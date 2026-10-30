@@ -362,6 +362,71 @@ TEST_CASE("armature edits after skinning: the skin follows, what was sculpted on
     CHECK(named(plain, "Arm skin")->mesh.vertices.size() != afterRemove);
 }
 
+TEST_CASE("armature: weights set by hand stay through adding and removing balls") {
+    Document d;
+    REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 50,0,0 RADIUS 8").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 100,0,0 RADIUS 6").ok);
+    REQUIRE(run(d, "ARMATURE Arm SKIN").ok);
+    Body* skin = named(d, "Arm skin");
+    REQUIRE(skin && skin->skin);
+    // All of it on the first link (0 to 1), as distance never would.
+    auto w = std::make_shared<SkinData>(*skin->skin);
+    for (std::size_t i = 0; i < w->rest.size(); ++i) w->bone[i] = {1, -1, -1, -1}, w->weight[i] = {1, 0, 0, 0};
+    skin->skin = w;
+    // The share of a vertex on ball b's link.
+    auto on = [](const SkinData& sd, std::size_t i, int b) {
+        float x = 0;
+        for (std::size_t q = 0; q < 4; ++q)
+            if (sd.bone[i][q] == b) x += sd.weight[i][q];
+        return x;
+    };
+    // A ball added on the root, up Z: skinned again.
+    REQUIRE(run(d, "ARMATURE Arm ADD TO 1 AT 0,0,40 RADIUS 6").ok);
+    skin = named(d, "Arm skin");
+    REQUIRE(skin->skin->rest.size() == skin->mesh.vertices.size());
+    std::size_t kept = 0, lost = 0, newBall = 0, onNew = 0;
+    for (std::size_t i = 0; i < skin->skin->rest.size(); ++i) {
+        const Vec3 p = skin->skin->rest[i];
+        if (p.z < 8 && p.x > 15) (on(*skin->skin, i, 1) > 0.999f ? kept : lost) += 1;
+        if (p.z > 30) ++newBall, onNew += on(*skin->skin, i, 3) > 0.9f ? 1 : 0;
+    }
+    CHECK(kept > 100);
+    CHECK(lost == 0); // by distance the far half would be on the second link
+    CHECK(newBall > 10);
+    CHECK(onNew == newBall); // the new ball's skin follows its own link
+    // Posed at ball 2: what was all on the first link doesn't move.
+    const std::vector<Vertex> at = skin->mesh.vertices;
+    REQUIRE(run(d, "ARMATURE Arm POSE 2 AXIS 0,0,1 ANGLE 60").ok);
+    skin = named(d, "Arm skin");
+    double moved = 0;
+    for (std::size_t i = 0; i < at.size(); ++i)
+        if (at[i].position.z < 8 && at[i].position.x > 15) moved = std::max(moved, static_cast<double>(length(skin->mesh.vertices[i].position - at[i].position)));
+    CHECK(moved < 1e-3);
+    REQUIRE(run(d, "ARMATURE Arm POSE RESET").ok);
+    // Part of the first link's middle given to the new ball's link (index 3) by hand too.
+    skin = named(d, "Arm skin");
+    w = std::make_shared<SkinData>(*skin->skin);
+    for (std::size_t i = 0; i < w->rest.size(); ++i)
+        if (w->rest[i].z < 8 && w->rest[i].x > 15 && w->rest[i].x < 45) w->bone[i] = {1, 3, -1, -1}, w->weight[i] = {0.7f, 0.3f, 0, 0};
+    skin->skin = w;
+    // Ball 3 taken away: the balls renumbered (the new one, index 3, is index 2 now), the
+    // weights still kept, under the new numbers.
+    REQUIRE(run(d, "ARMATURE Arm REMOVE 3").ok);
+    skin = named(d, "Arm skin");
+    kept = lost = newBall = onNew = 0;
+    for (std::size_t i = 0; i < skin->skin->rest.size(); ++i) {
+        const Vec3 p = skin->skin->rest[i];
+        if (p.z < 8 && p.x > 18 && p.x < 42)
+            (std::fabs(on(*skin->skin, i, 1) - 0.7f) < 0.01f && std::fabs(on(*skin->skin, i, 2) - 0.3f) < 0.01f ? kept : lost) += 1;
+        if (p.z > 30) ++newBall, onNew += on(*skin->skin, i, 2) > 0.9f ? 1 : 0;
+    }
+    CHECK(kept > 50);
+    CHECK(lost == 0);
+    CHECK(newBall > 10);
+    CHECK(onNew == newBall);
+}
+
 TEST_CASE("armature: DETAIL copies what was sculpted round one ball onto another's skin") {
     // A bar with a ball each side; the right end sculpted 2 mm proud.
     auto build = [](Document& d) {
