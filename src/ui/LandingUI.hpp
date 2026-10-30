@@ -396,6 +396,7 @@ private:
     float m_armVoxel = 0.0f, m_armBlend = -1.0f;             // the skin's voxel and blend (0 / -1: from the balls)
     int m_armSmooth = 6;                                     // and its smoothing passes
     int m_armDetailFrom = 2;                                 // the ball whose sculpted detail Copy Detail takes
+    bool m_armLinear = false;                                // new skins posed linearly (as glTF viewers) rather than with dual quaternions
     int m_patternCount = 3, m_patternAxis = 0;
     int m_closeAsk = -1;          // file tab id waiting for "save changes?"
     bool m_closeAskOpen = false;

@@ -1262,6 +1262,12 @@ const char* const kGerman[][2] = {
     {"Copy Detail Onto It", "Details darauf kopieren"},
     {"From ball", "Von Kugel"},
     {"What was sculpted round the other ball (or, with Mirror on, round this one's mirror twin) copied onto this ball's skin", "Was um die andere Kugel (oder, mit Spiegeln, um das Spiegelbild dieser Kugel) modelliert wurde, auf die Haut dieser Kugel kopiert"},
+    {"Its skins are posed linearly (as glTF viewers do): pose them with dual quaternions, so twisted joints keep their volume", "Seine Häute werden linear gestellt (wie in glTF-Betrachtern): mit dualen Quaternionen stellen, damit verdrehte Gelenke ihr Volumen behalten"},
+    {"Its skins are posed with dual quaternions: pose them linearly instead, as glTF viewers do", "Seine Häute werden mit dualen Quaternionen gestellt: stattdessen linear stellen, wie glTF-Betrachter"},
+    {"Linear blending", "Lineare Mischung"},
+    {"Pose the skin as glTF viewers do (a joint twisted far thins); off: dual quaternions, joints keep their volume", "Die Haut wie glTF-Betrachter stellen (ein stark verdrehtes Gelenk wird dünner); aus: duale Quaternionen, Gelenke behalten ihr Volumen"},
+    {"Use Dual Quaternions", "Duale Quaternionen verwenden"},
+    {"Use Linear Blending", "Lineare Mischung verwenden"},
 };
 
 

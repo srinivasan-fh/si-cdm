@@ -443,6 +443,12 @@ ARMATURE name POSE RESET
   This is linear blend skinning.
 - A link moves with the ball at its near end. So turning a ball swings what hangs from it, and the
   skin bends smoothly round the joint.
+- Where a vertex follows two links, their turns are blended as dual quaternions, so a joint
+  twisted far about its link keeps its volume rather than pinching (as linear blending does).
+  `SKIN ... LINEAR` makes a skin that blends linearly instead, as glTF viewers pose skins, and
+  `ARMATURE name SKINNING DUAL|LINEAR` switches the skins bound to it, keeping their pose and
+  edits. Skins saved before dual quaternions came in stay linear. In the Armature window:
+  *Linear blending* (for a new skin) and *Use Dual Quaternions* / *Use Linear Blending*.
 - The armature and its skin are saved with the project. UNDO takes back a pose.
 
 **In the app:** *Design → Armature (Sketch with Balls)...* (or `PANEL ARMATURE`). The window lists
@@ -452,8 +458,9 @@ clicked, as with ZSpheres. *Skin It* makes the skin. Over MCP, use the `armature
 
 **Limits:**
 
-- Posing is linear blend skinning: a joint twisted far about its own link (past about 90°) thins
-  where the weights blend, as in other tools that skin this way.
+- glTF has only linear blending: a skin exported from here is posed linearly in other viewers, so
+  a joint twisted far may thin there though not here (the export says so). `SKINNING LINEAR`
+  poses it the same way here.
 
 ## Insert-mesh and curve brushes
 

@@ -257,6 +257,9 @@ Prepared prepare(const Scene& scene, bool skins) {
         } else if (b.skin) {
             std::vector<Vec3> rest;
             std::string note;
+            if (b.skin && !b.skin->options.linear)
+                out.notes.push_back(b.name + " is posed with dual quaternions here; glTF viewers blend linearly, so a joint twisted far may thin "
+                                             "there (ARMATURE name SKINNING LINEAR poses it the same way here)");
             if (skinOf(scene, b, m, rest, note)) {
                 at = rest;
                 MeshData r = mesh; // the rest pose's own normals

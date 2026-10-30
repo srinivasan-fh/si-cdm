@@ -430,22 +430,91 @@ void smoothVertexNormals(MeshData& m) {
 
 namespace {
 
-// The blended transform of one vertex: the weighted sum of its links' transforms (each link
-// moves with the ball at its near end).
-Mat4 blended(const SkinData& s, std::size_t i, const std::vector<Mat4>& pose, const Armature& a) {
-    Mat4 sum{};
+// A rigid transform as a dual quaternion: its turn `r` and, in `d`, half its shift times r.
+struct DualQuat {
+    Quat r{0, 0, 0, 1}, d{0, 0, 0, 0};
+};
+
+DualQuat dualOf(const Mat4& M) {
+    // The turn from the rotation part (Shepperd: from the largest of w, x, y, z).
+    const float r00 = M.m[0][0], r11 = M.m[1][1], r22 = M.m[2][2];
+    const float r10 = M.m[0][1], r01 = M.m[1][0], r20 = M.m[0][2], r02 = M.m[2][0], r21 = M.m[1][2], r12 = M.m[2][1];
+    Quat q;
+    const float tr = r00 + r11 + r22;
+    if (tr > 0) {
+        const float k = 2 * std::sqrt(1 + tr);
+        q = {(r21 - r12) / k, (r02 - r20) / k, (r10 - r01) / k, 0.25f * k};
+    } else if (r00 > r11 && r00 > r22) {
+        const float k = 2 * std::sqrt(1 + r00 - r11 - r22);
+        q = {0.25f * k, (r01 + r10) / k, (r02 + r20) / k, (r21 - r12) / k};
+    } else if (r11 > r22) {
+        const float k = 2 * std::sqrt(1 + r11 - r00 - r22);
+        q = {(r01 + r10) / k, 0.25f * k, (r12 + r21) / k, (r02 - r20) / k};
+    } else {
+        const float k = 2 * std::sqrt(1 + r22 - r00 - r11);
+        q = {(r02 + r20) / k, (r12 + r21) / k, 0.25f * k, (r10 - r01) / k};
+    }
+    DualQuat dq;
+    dq.r = q;
+    const Quat t{M.m[3][0], M.m[3][1], M.m[3][2], 0};
+    const Quat tq = quatMultiply(t, q);
+    dq.d = {0.5f * tq[0], 0.5f * tq[1], 0.5f * tq[2], 0.5f * tq[3]};
+    return dq;
+}
+
+// The blended transform of one vertex: its links' transforms blended as dual quaternions (each
+// link moves with the ball at its near end), so it stays a turn and a shift, without the
+// thinning a plain weighted sum of matrices gives at a twisted joint.
+// (Linear: the weighted sum of the matrices.)
+Mat4 blended(const SkinData& s, std::size_t i, const std::vector<DualQuat>& pose, const std::vector<Mat4>& mats, const Armature& a) {
+    if (s.options.linear) {
+        Mat4 sum{};
+        float total = 0;
+        for (int k = 0; k < 4; ++k) {
+            const int b = s.bone[i][static_cast<std::size_t>(k)];
+            const float w = s.weight[i][static_cast<std::size_t>(k)];
+            if (b < 0 || !(w > 0) || b >= static_cast<int>(a.balls.size())) continue;
+            const int p = a.balls[static_cast<std::size_t>(b)].parent;
+            const Mat4& M = mats[static_cast<std::size_t>(p >= 0 ? p : b)];
+            for (int c = 0; c < 4; ++c)
+                for (int r = 0; r < 4; ++r) sum.m[c][r] += w * M.m[c][r];
+            total += w;
+        }
+        return total > 0 ? sum : Mat4::identity();
+    }
+    DualQuat sum;
+    sum.r = {0, 0, 0, 0};
     float total = 0;
+    const Quat* first = nullptr;
     for (int k = 0; k < 4; ++k) {
         const int b = s.bone[i][static_cast<std::size_t>(k)];
-        const float w = s.weight[i][static_cast<std::size_t>(k)];
-        if (b < 0 || !(w > 0) || b >= static_cast<int>(a.balls.size())) continue;
+        const float w0 = s.weight[i][static_cast<std::size_t>(k)];
+        if (b < 0 || !(w0 > 0) || b >= static_cast<int>(a.balls.size())) continue;
         const int p = a.balls[static_cast<std::size_t>(b)].parent;
-        const Mat4& M = pose[static_cast<std::size_t>(p >= 0 ? p : b)];
-        for (int c = 0; c < 4; ++c)
-            for (int r = 0; r < 4; ++r) sum.m[c][r] += w * M.m[c][r];
-        total += w;
+        const DualQuat& q = pose[static_cast<std::size_t>(p >= 0 ? p : b)];
+        if (!first) first = &q.r;
+        // The short way round: a turn and its negative are the same turn.
+        const float dot = q.r[0] * (*first)[0] + q.r[1] * (*first)[1] + q.r[2] * (*first)[2] + q.r[3] * (*first)[3];
+        const float w = dot < 0 ? -w0 : w0;
+        for (std::size_t c = 0; c < 4; ++c) sum.r[c] += w * q.r[c], sum.d[c] += w * q.d[c];
+        total += w0;
     }
-    return total > 0 ? sum : Mat4::identity();
+    const float n = std::sqrt(sum.r[0] * sum.r[0] + sum.r[1] * sum.r[1] + sum.r[2] * sum.r[2] + sum.r[3] * sum.r[3]);
+    if (!(total > 0) || !(n > 1e-12f)) return Mat4::identity();
+    for (std::size_t c = 0; c < 4; ++c) sum.r[c] /= n, sum.d[c] /= n;
+    Mat4 m = quatMatrix(sum.r);
+    // The shift: 2 d r*.
+    const Quat conj{-sum.r[0], -sum.r[1], -sum.r[2], sum.r[3]};
+    const Quat t = quatMultiply(sum.d, conj);
+    m.m[3][0] = 2 * t[0], m.m[3][1] = 2 * t[1], m.m[3][2] = 2 * t[2];
+    return m;
+}
+
+std::vector<DualQuat> dualPose(const std::vector<Mat4>& pose) {
+    std::vector<DualQuat> out;
+    out.reserve(pose.size());
+    for (const Mat4& M : pose) out.push_back(dualOf(M));
+    return out;
 }
 
 } // namespace
@@ -883,18 +952,20 @@ bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& 
 }
 
 std::vector<Vec3> poseSkin(const SkinData& s, const Armature& a) {
-    const std::vector<Mat4> pose = armaturePose(a);
+    const std::vector<Mat4> mats = armaturePose(a);
+    const std::vector<DualQuat> pose = dualPose(mats);
     std::vector<Vec3> out(s.rest.size());
     for (std::size_t i = 0; i < s.rest.size(); ++i)
-        out[i] = i < s.bone.size() ? blended(s, i, pose, a).transformPoint(s.rest[i]) : s.rest[i];
+        out[i] = i < s.bone.size() ? blended(s, i, pose, mats, a).transformPoint(s.rest[i]) : s.rest[i];
     return out;
 }
 
 std::vector<Vec3> unposeSkin(const SkinData& s, const Armature& a, const std::vector<Vec3>& posed) {
-    const std::vector<Mat4> pose = armaturePose(a);
+    const std::vector<Mat4> mats = armaturePose(a);
+    const std::vector<DualQuat> pose = dualPose(mats);
     std::vector<Vec3> out(posed.size());
     for (std::size_t i = 0; i < posed.size(); ++i)
-        out[i] = i < s.bone.size() ? inverse(blended(s, i, pose, a)).transformPoint(posed[i]) : posed[i];
+        out[i] = i < s.bone.size() ? inverse(blended(s, i, pose, mats, a)).transformPoint(posed[i]) : posed[i];
     return out;
 }
 

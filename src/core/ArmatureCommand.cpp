@@ -564,6 +564,31 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
                 vecText(quatToEuler(arm.balls[static_cast<std::size_t>(*n)].turn)) + " deg");
         return out;
     }
+    if (sub == "skinning") {
+        // SKINNING DUAL|LINEAR: how the skins bound to it follow their links (the pose kept,
+        // edits made to them kept).
+        const std::string how = a.size() > 2 && unq(2) ? lowerOf(a[2]) : std::string();
+        if (how != "dual" && how != "linear") return out.fail("ARMATURE SKINNING needs DUAL (turns blended, joints keep their volume) or LINEAR (as glTF viewers pose)");
+        bool any = false;
+        for (Body& b : bodies) {
+            if (!b.skin || b.skin->armature != name) continue;
+            std::shared_ptr<SkinData> sk = currentSkin(b, arm, name, out);
+            sk->options.linear = how == "linear";
+            const std::vector<Vec3> posed = poseSkin(*sk, arm);
+            for (std::size_t i = 0; i < posed.size(); ++i) b.mesh.vertices[i].position = posed[i];
+            smoothVertexNormals(b.mesh);
+            b.mesh.computeFeatureEdges(60.0f);
+            b.brep.reset();
+            sk->key = meshKey(b.mesh);
+            b.skin = std::move(sk);
+            out.say(b.name + (how == "dual" ? ": skinned with dual quaternions" : ": skinned linearly"));
+            any = true;
+        }
+        if (!any) return out.fail(name + " has no skins (ARMATURE \"" + name + "\" SKIN makes one)");
+        doc.scene.touchBodies();
+        doc.dirty = true;
+        return out;
+    }
     if (sub == "detail") {
         // DETAIL [FROM n] TO m [MIRROR X|Y|Z]: what was sculpted round n copied onto m's skin.
         std::optional<int> from, to;
@@ -625,8 +650,10 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
                 const auto v = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
                 if (!v || *v < 0 || *v > 100) return out.fail("SMOOTH needs passes, 0 to 100");
                 o.smooth = static_cast<int>(std::lround(*v)), ++i;
+            } else if (k == "linear" || k == "dual") {
+                o.linear = k == "linear";
             } else {
-                return out.fail("ARMATURE SKIN doesn't take " + a[i] + " (NAME, VOXEL, BLEND, SMOOTH)");
+                return out.fail("ARMATURE SKIN doesn't take " + a[i] + " (NAME, VOXEL, BLEND, SMOOTH, LINEAR, DUAL)");
             }
         }
         if (skinName.empty()) skinName = bodyIndex(doc, name + " skin") < 0 ? name + " skin" : freeName(doc, name + " skin");
@@ -658,7 +685,7 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
                 (arm.balls.size() == 2 ? " link" : " links") + " (POSE bends it; the armature is hidden: ARMATURE \"" + name + "\" SHOW to edit it)");
         return out;
     }
-    return out.fail("ARMATURE " + name + " doesn't know " + a[1] + " (ADD, INSERT, MOVE, RADIUS, REMOVE, LIST, SKIN, DETAIL, POSE, SHOW, HIDE)");
+    return out.fail("ARMATURE " + name + " doesn't know " + a[1] + " (ADD, INSERT, MOVE, RADIUS, REMOVE, LIST, SKIN, SKINNING, DETAIL, POSE, SHOW, HIDE)");
 }
 
 } // namespace sicdm

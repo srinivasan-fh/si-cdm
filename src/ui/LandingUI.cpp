@@ -629,8 +629,11 @@ void LandingUI::drawArmatureWindow(UiCommands& cmd, UiState& st, const Scene& sc
     ImGui::SameLine();
     ImGui::SetNextItemWidth(60);
     ImGui::DragInt(tr("Smooth"), &m_armSmooth, 0.2f, 0, 50);
+    ImGui::Checkbox(tr("Linear blending"), &m_armLinear);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", tr("Pose the skin as glTF viewers do (a joint twisted far thins); off: dual quaternions, joints keep their volume"));
     if (ImGui::Button(tr("Skin It"), {-1, 0})) {
-        std::string line = "ARMATURE " + name + " SKIN SMOOTH " + std::to_string(m_armSmooth);
+        std::string line = "ARMATURE " + name + " SKIN SMOOTH " + std::to_string(m_armSmooth) + (m_armLinear ? " LINEAR" : "");
         if (m_armVoxel > 0) line += " VOXEL " + n(m_armVoxel);
         if (m_armBlend >= 0) line += " BLEND " + n(m_armBlend);
         cmd.commands.push_back(line);
@@ -641,6 +644,14 @@ void LandingUI::drawArmatureWindow(UiCommands& cmd, UiState& st, const Scene& sc
         if (b.skin && b.skin->armature == body->name) skins += (skins.empty() ? "" : ", ") + b.name;
     if (!skins.empty()) {
         ImGui::TextDisabled(tr("Skins following it: %s"), skins.c_str());
+        bool anyLinear = false;
+        for (const Body& b : scene.bodies())
+            if (b.skin && b.skin->armature == body->name) anyLinear = anyLinear || b.skin->options.linear;
+        if (ImGui::Button(anyLinear ? tr("Use Dual Quaternions") : tr("Use Linear Blending")))
+            cmd.commands.push_back("ARMATURE " + name + (anyLinear ? " SKINNING DUAL" : " SKINNING LINEAR"));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", anyLinear ? tr("Its skins are posed linearly (as glTF viewers do): pose them with dual quaternions, so twisted joints keep their volume")
+                                              : tr("Its skins are posed with dual quaternions: pose them linearly instead, as glTF viewers do"));
         // A new ball's skin starts plain: the detail sculpted round another ball copied onto it.
         if (ball.parent < 0) ImGui::BeginDisabled();
         const bool mirrored = st.armatureMirror > 0;

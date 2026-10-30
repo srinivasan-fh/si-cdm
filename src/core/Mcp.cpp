@@ -342,11 +342,11 @@ Json McpServer::toolDefinitions() {
                         "and the spring it needs. Returns the findings; the table and charts can go to files.",
                         st, {}));
         Json am = Json::object();
-        am.set("operation", enumProp({"list", "new", "add", "insert", "move", "radius", "remove", "skin", "detail", "pose", "reset", "show", "hide"},
+        am.set("operation", enumProp({"list", "new", "add", "insert", "move", "radius", "remove", "skin", "skinning", "detail", "pose", "reset", "show", "hide"},
                                      "list the armatures (or one's balls, with armature); new; add a ball on ball `to`; insert one halfway to "
                                      "ball `ball`; move or size a ball; remove it (and what hangs from it); skin it into a mesh; detail: copy "
                                      "what was sculpted round ball `from` (or, with mirror, `ball`'s mirror twin) onto ball `ball`'s skin; "
-                                     "pose: turn a ball; reset: the rest pose; show or hide it"));
+                                     "skinning: pose its skins with dual quaternions (default) or linearly (`linear`); pose: turn a ball; reset: the rest pose; show or hide it"));
         am.set("armature", prop("string", "The armature (new: its name)"));
         am.set("ball", prop("number", "The ball's number (1...)"));
         am.set("to", prop("number", "add: the ball the new one joins (default the last added)"));
@@ -363,6 +363,7 @@ Json McpServer::toolDefinitions() {
         am.set("voxel", prop("number", "skin: voxel size, mm (default from the smallest ball)"));
         am.set("blend", prop("number", "skin: the rounding where links meet, mm"));
         am.set("smooth", prop("number", "skin: smoothing passes (default 6)"));
+        am.set("linear", prop("boolean", "skin / skinning: pose linearly, as glTF viewers do (a joint twisted far thins), instead of with dual quaternions"));
         tools.push(tool("armature",
                         "Armatures (like ZSpheres): sketch a form as balls joined by tapered links, mirrored if wanted; skin it into one "
                         "smooth closed mesh bound to the balls; pose it by turning balls, which bends the skin (edits to it are kept).",
@@ -2509,6 +2510,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         }
         if (op == "radius") return runLine(arm + "RADIUS " + ball + " " + num(a["radius"].asNumber()) + mirror);
         if (op == "remove") return runLine(arm + "REMOVE " + ball);
+        if (op == "skinning") return runLine(arm + (a["linear"].asBool() ? "SKINNING LINEAR" : "SKINNING DUAL"));
         if (op == "detail") {
             std::string l = arm + "DETAIL";
             if (a["from"].isNumber()) l += " FROM " + num(a["from"].asNumber());
@@ -2520,6 +2522,7 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["voxel"].isNumber()) l += " VOXEL " + num(a["voxel"].asNumber());
             if (a["blend"].isNumber()) l += " BLEND " + num(a["blend"].asNumber());
             if (a["smooth"].isNumber()) l += " SMOOTH " + num(a["smooth"].asNumber());
+            if (a["linear"].asBool()) l += " LINEAR";
             return runLine(l);
         }
         if (op == "pose") {

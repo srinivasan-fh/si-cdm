@@ -323,7 +323,7 @@ constexpr CommandSpec kCommands[] = {
      "CURVE [body] INSERT shape|BODY \"name\" PATH ... [SIZE s] [SPACING d] [SINK f] [UNION|APPEND|NEW]",
      "Curve brushes: a round-ended tube laid along a stroke on the surface, or a row of shapes along it, each facing along the stroke"},
     {"ARMATURE", "ZSPHERE ZSPHERES", "ARMATURE | ARMATURE NEW [name] [AT x,y,z] [RADIUS r] | ARMATURE name ADD [TO n] AT x,y,z [RADIUS r] [MIRROR X|Y|Z] | "
-     "INSERT n | MOVE n TO x,y,z | BY dx,dy,dz [CHAIN] | RADIUS n r | REMOVE n | LIST | SHOW | HIDE | SKIN [NAME skin] [VOXEL v] [BLEND b] [SMOOTH k] | "
+     "INSERT n | MOVE n TO x,y,z | BY dx,dy,dz [CHAIN] | RADIUS n r | REMOVE n | LIST | SHOW | HIDE | SKIN [NAME skin] [VOXEL v] [BLEND b] [SMOOTH k] [LINEAR|DUAL] | SKINNING DUAL|LINEAR | "
      "DETAIL [FROM n] TO m [MIRROR X|Y|Z] | POSE n TURN ax,ay,az | AXIS x,y,z ANGLE a | RESET [MIRROR X|Y|Z] | POSE RESET",
      "Sketch a form as balls joined by tapered links (like ZSpheres): add balls on balls, mirrored across the root's plane; "
      "SKIN fuses them into one smooth closed mesh bound to the armature, and POSE turns a ball and everything on it, bending "

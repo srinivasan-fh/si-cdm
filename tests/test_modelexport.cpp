@@ -336,7 +336,7 @@ TEST_CASE("glTF export: an armature's skin, posed by its joints as in the model"
     REQUIRE(run(d, "ARMATURE Arm ADD AT 40,-80,20 RADIUS 6").ok);
     REQUIRE(run(d, "ARMATURE Arm ADD AT 70,-80,20 RADIUS 5").ok);
     REQUIRE(run(d, "ARMATURE Arm ADD TO 1 AT 0,-40,30 RADIUS 5").ok);
-    REQUIRE(run(d, "ARMATURE Arm SKIN VOXEL 2").ok);
+    REQUIRE(run(d, "ARMATURE Arm SKIN VOXEL 2 LINEAR").ok); // as glTF viewers pose it, so the two agree exactly
     REQUIRE(run(d, "ARMATURE Arm POSE 2 AXIS 0,0,1 ANGLE 45").ok);
     REQUIRE(run(d, "ARMATURE Arm POSE 1 AXIS 1,0,0 ANGLE 20").ok);
     REQUIRE(run(d, "MOVE 5,5,5 \"Arm skin\"").ok);

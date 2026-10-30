@@ -49,6 +49,10 @@ struct SkinOptions {
     float voxel = 0;  // mm; 0: from the smallest ball (a quarter of its radius), within 256 per side
     float blend = -1; // mm, the rounding where links meet; < 0: a quarter of the smallest ball's radius
     int smooth = 6;   // smoothing passes on the marched surface
+    // How a vertex follows its links: false (the default) blends their turns as dual
+    // quaternions, so a twisted joint keeps its volume; true sums their matrices (linear blend
+    // skinning, as glTF viewers pose skins; it thins a joint twisted far about its link).
+    bool linear = false;
 };
 
 // The bone weights of a skin: for each vertex up to four links (by the index of the ball at

@@ -362,6 +362,56 @@ TEST_CASE("armature edits after skinning: the skin follows, what was sculpted on
     CHECK(named(plain, "Arm skin")->mesh.vertices.size() != afterRemove);
 }
 
+TEST_CASE("armature: dual-quaternion skinning keeps a twisted joint's volume; LINEAR as glTF viewers do") {
+    // A bar along X, its far half twisted about the bar itself by 150 deg.
+    auto twisted = [](const char* how, double& thinnest, double& volume) {
+        Document d;
+        REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);
+        REQUIRE(run(d, "ARMATURE Arm ADD AT 60,0,0 RADIUS 10").ok);
+        REQUIRE(run(d, "ARMATURE Arm ADD AT 120,0,0 RADIUS 10").ok);
+        REQUIRE(run(d, std::string("ARMATURE Arm SKIN ") + how).ok);
+        const Body* skin = named(d, "Arm skin");
+        REQUIRE(skin);
+        const double before = std::fabs(meshVolume(skin->mesh));
+        REQUIRE(run(d, "ARMATURE Arm POSE 2 AXIS 1,0,0 ANGLE 150").ok);
+        skin = named(d, "Arm skin");
+        volume = std::fabs(meshVolume(skin->mesh)) / before;
+        // How far the skin is from the bar's line at the joint (x 55...65), least of all.
+        thinnest = 1e9;
+        for (const Vertex& v : skin->mesh.vertices)
+            if (v.position.x > 55 && v.position.x < 65) thinnest = std::min(thinnest, std::hypot(static_cast<double>(v.position.y), static_cast<double>(v.position.z)));
+        CHECK(openEdgeCount(skin->mesh) == 0);
+    };
+    double dualThin = 0, dualVolume = 0, linThin = 0, linVolume = 0;
+    twisted("", dualThin, dualVolume);
+    twisted("LINEAR", linThin, linVolume);
+    CHECK(dualThin > 8.5);           // round still: about the bar's radius
+    CHECK(linThin < 0.6 * dualThin); // linear blending pinches it
+    CHECK(std::fabs(dualVolume - 1) < 0.02);
+    CHECK(linVolume < dualVolume - 0.03);
+    // Switching a skin over keeps its pose and its edits.
+    Document d;
+    REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 60,0,0 RADIUS 10").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 120,0,0 RADIUS 10").ok);
+    REQUIRE(run(d, "ARMATURE Arm SKIN LINEAR").ok);
+    CHECK(named(d, "Arm skin")->skin->options.linear);
+    REQUIRE(run(d, "ARMATURE Arm POSE 2 AXIS 1,0,0 ANGLE 150").ok);
+    REQUIRE(run(d, "ARMATURE Arm SKINNING DUAL").ok);
+    const Body* skin = named(d, "Arm skin");
+    CHECK(!skin->skin->options.linear);
+    double thin = 1e9;
+    for (const Vertex& v : skin->mesh.vertices)
+        if (v.position.x > 55 && v.position.x < 65) thin = std::min(thin, std::hypot(static_cast<double>(v.position.y), static_cast<double>(v.position.z)));
+    CHECK(thin > 8.5);
+    CHECK(!run(d, "ARMATURE Arm SKINNING SOFT").ok);
+    // Saved and read back: the setting goes with it.
+    Document e;
+    std::string err;
+    REQUIRE(projectFromText(projectText(d.scene, d.state, "dual.sicdm"), "dual.sicdm", e.scene, e.state, &err));
+    CHECK(!named(e, "Arm skin")->skin->options.linear);
+}
+
 TEST_CASE("armature: weights set by hand stay through adding and removing balls") {
     Document d;
     REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);

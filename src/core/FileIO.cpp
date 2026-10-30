@@ -574,6 +574,7 @@ std::string projectText(const Scene& scene, const ProjectState& state, const std
                                .set("voxel", sk.options.voxel)
                                .set("blend", sk.options.blend)
                                .set("smooth", sk.options.smooth)
+                               .set("linear", sk.options.linear)
                                .set("base_b64", base64(base)));
         }
         if (!b.holes.empty()) {
@@ -1209,6 +1210,8 @@ bool projectFromText(const std::string& text, const std::string& path, Scene& sc
                 sk->options.voxel = js["voxel"].asFloat(0);
                 sk->options.blend = js["blend"].asFloat(-1);
                 sk->options.smooth = js["smooth"].asInt(6);
+                // Skins saved before dual quaternions were posed linearly: they stay so.
+                sk->options.linear = js.has("linear") ? js["linear"].asBool(false) : true;
                 std::vector<unsigned char> base;
                 if (unbase64(js["base_b64"].asString(), base) && base.size() == n * 12)
                     for (std::size_t i = 0; i < n; ++i) sk->base.push_back({getF32(&base[i * 12]), getF32(&base[i * 12 + 4]), getF32(&base[i * 12 + 8])});
