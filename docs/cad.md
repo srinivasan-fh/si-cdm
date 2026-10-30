@@ -1319,7 +1319,13 @@ STACK Pin REPORT
     result, further out on the side it leans to). The share outside a spec is counted from the
     same points; in a far tail (under 5%), the most likely ways past the limit are found (the
     design points, every one of them, as a bend can make two) and the tail is integrated about
-    them by importance sampling. Cpk is by percentiles (ISO 22514-2).
+    them by importance sampling, together with a wide spread about the middle that catches ways
+    out the search can't list (a whole ring of them, as for a radial distance). Cpk is by
+    percentiles (ISO 22514-2).
+  - **Checked:** against 20 million samples of folding and bent loops, within about 2% from 3%
+    down to 0.005% outside; against exact answers (a straight loop, a radial distance in 2D and
+    3D, two uniform dimensions summed) within 1–4% from 4σ out to 8σ (6 × 10⁻¹⁶), and exactly 0
+    past the worst case.
   - **Shares:** each dimension's total effect on the variance (how much the result varies when
     it alone is drawn again, interactions included), scaled to add to 100%. For a straight
     stack that is (sensitivity × σ)².
@@ -1335,9 +1341,6 @@ STACK Pin REPORT
 
 **Limits:**
 
-- A vector stack's share outside a spec is an integral: checked against 20 million samples of
-  the same loops it is within about 2%, from 3% down to 0.005% outside. Beyond 5σ it isn't
-  checked.
 - Geometric tolerances (position, flatness...) aren't turned into contributions on their own.
   Add them as dimensions with their zone as the band.
 

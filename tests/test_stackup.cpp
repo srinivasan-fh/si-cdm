@@ -435,3 +435,50 @@ TEST_CASE("STACK VECTOR: lengths along directions and angles, in any units") {
     CHECK(!d.state.stacks[0].vector);
     CHECK(!run(d, "STACK Pin ADD Bad 1 DIR W").ok);
 }
+TEST_CASE("Vector stacks: the share outside a spec far out in the tails, against exact answers") {
+    // Normal dimensions of sigma 0.1 along X, Y, Z: the distance from the start is normal (one,
+    // measured along X), Rayleigh (two) or Maxwell (three), whose tails are known exactly.
+    auto mk = [](int dims) {
+        ToleranceStack st;
+        st.vector = true;
+        const Vec3 d[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+        for (int i = 0; i < dims; ++i) {
+            StackItem it;
+            it.name = "D" + std::to_string(i);
+            it.nominal = 0, it.upper = 0.3, it.lower = -0.3, it.dir = d[i];
+            st.items.push_back(it);
+        }
+        st.samples = 1000;
+        st.hasHigh = true;
+        return st;
+    };
+    const double pi = 3.14159265358979;
+    for (const double k : {4.0, 5.0, 6.0, 7.0, 8.0}) { // sigmas out: from 3e-5 to 6e-16 past it
+        ToleranceStack lin = mk(1);
+        lin.items[0].nominal = 10, lin.measure = {1, 0, 0};
+        lin.high = 10 + k * 0.1;
+        const double e1 = 0.5 * std::erfc(k / std::sqrt(2.0));
+        CHECK(std::fabs(analyzeStack(lin).ppm / 1e6 / e1 - 1) < 0.02);
+        ToleranceStack ray = mk(2); // every direction is a way out: a whole ring of most likely points
+        ray.high = k * 0.1;
+        const double e2 = std::exp(-k * k / 2);
+        CHECK(std::fabs(analyzeStack(ray).ppm / 1e6 / e2 - 1) < 0.04);
+        ToleranceStack chi = mk(3);
+        chi.high = k * 0.1;
+        const double e3 = std::erfc(k / std::sqrt(2.0)) + std::sqrt(2 / pi) * k * std::exp(-k * k / 2);
+        CHECK(std::fabs(analyzeStack(chi).ppm / 1e6 / e3 - 1) < 0.04);
+    }
+    // Two uniform dimensions summed: a triangle, whose last eps of its reach holds eps^2 / 2;
+    // past its reach, nothing at all.
+    ToleranceStack u = mk(2);
+    u.items[1].dir = {1, 0, 0};
+    u.items[0].nominal = u.items[1].nominal = 5;
+    u.items[0].dist = u.items[1].dist = StackDist::Uniform;
+    u.measure = {1, 0, 0};
+    for (const double eps : {0.1, 0.01, 0.001}) {
+        u.high = 10 + 0.6 * (1 - eps);
+        CHECK(std::fabs(analyzeStack(u).ppm / 1e6 / (eps * eps / 2) - 1) < 0.03);
+    }
+    u.high = 10.61;
+    CHECK(analyzeStack(u).ppm == 0);
+}

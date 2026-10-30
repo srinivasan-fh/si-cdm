@@ -402,11 +402,20 @@ double sortedQuantile(const std::vector<double>& v, double p) {
 // nearest the origin) are found from several starts (a bend can make two, one each way), and the
 // share integrated with points spread about each of them, every point weighted by how much
 // likelier it is at the origin than in that spread (importance sampling).
-double tailBeyond(const ToleranceStack& st, double limit, bool above, int points = 16384) {
+double tailBeyond(const ToleranceStack& st, double limit, bool above, int points = 32768) {
     const std::size_t n = st.items.size();
     std::vector<double> x(n);
+    // A normal item straight from z (no round trip through its share, which runs out of
+    // digits by 7 sigma); the others at the share Phi(z).
+    auto size = [&](std::size_t i, double z) {
+        const StackItem& it = st.items[i];
+        if (it.dist == StackDist::Uniform || it.dist == StackDist::Triangular) return itemAt(it, normalCdf(z));
+        double lo, hi;
+        bandOf(it, lo, hi);
+        return 0.5 * (lo + hi) + stackItemSigma(it) * z;
+    };
     auto g = [&](const std::vector<double>& z) { // > 0: past the limit
-        for (std::size_t i = 0; i < n; ++i) x[i] = itemAt(st.items[i], normalCdf(z[i]));
+        for (std::size_t i = 0; i < n; ++i) x[i] = size(i, z[i]);
         const double v = stackValue(st, x);
         return above ? v - limit : limit - v;
     };
@@ -431,7 +440,7 @@ double tailBeyond(const ToleranceStack& st, double limit, bool above, int points
             if (!(gn > 1e-300)) return false;
             double lambda = 1, gNext = 0;
             for (int cut = 0; cut < 8; ++cut, lambda *= 0.5) {
-                for (std::size_t i = 0; i < n; ++i) next[i] = std::clamp(z[i] + lambda * ((gdz - gz) / gn * grad[i] - z[i]), -8.0, 8.0);
+                for (std::size_t i = 0; i < n; ++i) next[i] = std::clamp(z[i] + lambda * ((gdz - gz) / gn * grad[i] - z[i]), -12.0, 12.0);
                 gNext = g(next);
                 if (std::fabs(gNext) <= std::fabs(gz) || norm2(next) <= norm2(z)) break;
             }
@@ -470,28 +479,38 @@ double tailBeyond(const ToleranceStack& st, double limit, bool above, int points
         for (const int q : primes) prime = prime && k % q != 0;
         if (prime) primes.push_back(k);
     }
+    // Half the points about the design points; half from a wide normal about the origin (sigma
+    // s, reaching out as far as the nearest of them), which also covers ways past the limit the
+    // search didn't find, such as a whole ring of them (a radial distance past a limit).
     const std::size_t m = use.size();
+    const double wide = std::max(1.0, std::sqrt(best / static_cast<double>(n)));
     std::vector<double> zz(n);
     double sum = 0;
     for (int k = 1; k <= points; ++k) {
-        const std::vector<double>& c = use[static_cast<std::size_t>(k) % m];
+        const bool spread = k % 2 == 0;
+        const int turn = (k + 1) / 2;                                // this kind's own count
+        const std::vector<double>& c = use[static_cast<std::size_t>(turn) % m];
+        const int idx = spread ? turn : (turn - 1) / static_cast<int>(m) + 1; // each centre gets the low-discrepancy points in turn
+        double z2 = 0;
         for (std::size_t i = 0; i < n; ++i) {
             const int b = primes[i];
             double u = 0, f = 1.0 / b;
-            const int idx = (k - 1) / static_cast<int>(m) + 1; // each centre gets the low-discrepancy points in turn
             for (int q = idx; q > 0; q /= b, f /= b) u += f * (q % b);
-            u = std::fmod(u + std::fmod(0.5 + 0.6180339887498949 * static_cast<double>(i + 1), 1.0), 1.0);
-            zz[i] = c[i] + normalQuantile(u);
+            u = std::fmod(u + std::fmod((spread ? 0.25 : 0.5) + 0.6180339887498949 * static_cast<double>(i + 1), 1.0), 1.0);
+            zz[i] = spread ? wide * normalQuantile(u) : c[i] + normalQuantile(u);
+            z2 += zz[i] * zz[i];
         }
         if (g(zz) <= 0) continue;
-        // phi(z) over the spread's density, the mean of phi(z - c_j): 1 / mean exp(z.c_j - |c_j|^2 / 2).
+        // phi(z) over the mixture's density: half the mean of phi(z - c_j), half the wide
+        // normal's (both against phi: exp(z.c_j - |c_j|^2 / 2) and s^-n exp(|z|^2 (1 - 1/s^2) / 2)).
         double mix = 0;
         for (std::size_t j = 0; j < m; ++j) {
             double zc = 0;
             for (std::size_t i = 0; i < n; ++i) zc += zz[i] * use[j][i];
             mix += std::exp(zc - 0.5 * useB2[j]);
         }
-        sum += static_cast<double>(m) / mix;
+        const double q = 0.5 * mix / static_cast<double>(m) + 0.5 * std::exp(0.5 * z2 * (1 - 1 / (wide * wide)) - static_cast<double>(n) * std::log(wide));
+        sum += 1.0 / q;
     }
     return std::clamp(sum / points, 0.0, 1.0);
 }
