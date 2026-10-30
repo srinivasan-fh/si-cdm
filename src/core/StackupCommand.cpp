@@ -95,6 +95,9 @@ struct ItemOptions {
     std::optional<Vec3> dir;     // a vector stack's length: its direction
     std::optional<bool> angle;   // an angle (degrees)
     std::optional<Vec3> axis;    // ... about this
+    std::optional<double> zone;  // a geometric tolerance's zone ...
+    std::optional<double> bonus; // ... the feature's size range a material condition adds
+    std::optional<char> material; // 'M', 'L', or 0 (RFS)
 };
 
 bool readItemOptions(const std::vector<std::string>& a, const std::vector<bool>& quoted, std::size_t i, ItemOptions& o, std::vector<std::string>& loose,
@@ -180,6 +183,16 @@ bool readItemOptions(const std::vector<std::string>& a, const std::vector<bool>&
             const auto v = len(i + 1);
             if (!v) return why = "NOMINAL needs a size", false;
             o.nominal = *v, ++i;
+        } else if (k == "zone") {
+            const auto v = len(i + 1);
+            if (!v || !(*v > 0)) return why = "ZONE needs the geometric tolerance (above 0)", false;
+            o.zone = *v, ++i;
+        } else if (k == "bonus") {
+            const auto v = len(i + 1);
+            if (!v || *v < 0) return why = "BONUS needs the feature's size range (LMC - MMC)", false;
+            o.bonus = *v, ++i;
+        } else if (k == "mmc" || k == "lmc" || k == "rfs") {
+            o.material = k == "mmc" ? 'M' : k == "lmc" ? 'L' : 0;
         } else {
             loose.push_back(a[i]);
         }
@@ -202,6 +215,17 @@ bool applyItemOptions(StackItem& it, const ItemOptions& o, std::string& why, boo
     if (o.dir) it.dir = *o.dir;
     if (o.angle) it.angle = *o.angle;
     if (o.axis) it.axis = *o.axis;
+    if (o.zone) it.zone = *o.zone;
+    if (o.bonus) it.bonus = *o.bonus;
+    if (o.material) it.material = *o.material;
+    if (!it.gdt.empty() && (o.zone || o.bonus || o.material || adding)) {
+        if (o.material && *o.material && !o.bonus && !adding && it.bonus == 0)
+            return why = "With MMC or LMC, give the feature's size range too: BONUS 0.1", false;
+        if (!stackItemFromGdt(it, &why)) return false;
+        it.frame = o.zone || o.bonus || o.material ? -1 : it.frame; // typed over: no longer the drawing's
+    }
+    if ((o.tol || o.limits || o.fit || o.general || o.nominal) && !it.gdt.empty())
+        it.gdt.clear(), it.zone = 0, it.bonus = 0, it.material = 0, it.diametral = false, it.frame = -1; // a size again
     if (o.tol) it.upper = o.tol->first, it.lower = o.tol->second, it.fit.clear(), it.general = 0;
     if (o.limits) {
         if (adding && !o.nominal && it.body.empty() && it.dim < 0) it.nominal = 0.5 * (o.limits->first + o.limits->second);
@@ -217,7 +241,11 @@ bool applyItemOptions(StackItem& it, const ItemOptions& o, std::string& why, boo
 
 std::string itemLine(const StackItem& it, std::size_t index, bool vector = false) {
     std::string l = std::to_string(index + 1) + ". " + (it.sign < 0 ? "- " : "+ ") + it.name + " " + num(it.nominal) + " " + dev(it.upper) + "/" + dev(it.lower);
-    if (!it.fit.empty()) l += " (" + it.fit + ")";
+    if (!it.gdt.empty()) {
+        l += " (" + it.gdt + " " + (it.diametral ? "\xC3\x98" : "") + num(it.zone);
+        if (it.material) l += std::string(" ") + it.material + ", bonus " + num(it.bonus);
+        l += it.frame >= 0 ? ", frame " + std::to_string(it.frame + 1) + ")" : ")";
+    } else if (!it.fit.empty()) l += " (" + it.fit + ")";
     else if (it.general) l += std::string(" (ISO 2768-") + it.general + ")";
     if (it.angle) l += " deg, turning about " + dirText(it.axis);
     else if (vector) l += " along " + dirText(it.dir);
@@ -358,6 +386,25 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
             if (!stackItemFromDrawing(it, doc.state.drawing, static_cast<int>(std::lround(*n)) - 1, &why)) return out.fail(why);
             it.name = "Dimension " + std::to_string(static_cast<int>(std::lround(*n)));
             i += 2;
+        } else if (i < a.size() && unq(i) && lowerOf(a[i]) == "frame") {
+            const auto n = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
+            if (!n || *n < 1) return out.fail("ADD FRAME needs the drawing's feature control frame number (1, 2 ...)");
+            if (!stackItemFromFrame(it, doc.state.drawing, static_cast<int>(std::lround(*n)) - 1, &why)) return out.fail(why);
+            it.name = "Frame " + std::to_string(static_cast<int>(std::lround(*n))) + " (" + it.gdt + ")";
+            i += 2;
+        } else if (i < a.size() && unq(i) && lowerOf(a[i]) == "gdt") {
+            // ADD GDT characteristic zone [DIA] [MMC|LMC BONUS b]: a geometric tolerance.
+            if (i + 2 >= a.size()) return out.fail("ADD GDT needs the characteristic and its zone: ADD GDT POSITION 0.1 [DIA] [MMC BONUS 0.1]");
+            it.gdt = a[i + 1];
+            std::string w = a[i + 2];
+            if (w.rfind("\xC3\x98", 0) == 0) w = w.substr(2), it.diametral = true; // a leading diameter sign
+            const auto z = parseLength(w);
+            if (!z || !(*z > 0)) return out.fail("ADD GDT needs the zone after the characteristic (above 0): ADD GDT POSITION 0.1");
+            it.zone = *z;
+            i += 3;
+            if (i < a.size() && unq(i) && (lowerOf(a[i]) == "dia" || lowerOf(a[i]) == "diameter")) it.diametral = true, ++i;
+            if (!stackItemFromGdt(it, &why)) return out.fail(why);
+            it.name = std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(it.gdt[0])))) + it.gdt.substr(1);
         }
         ItemOptions o;
         std::vector<std::string> loose;
@@ -365,15 +412,20 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
         // What's left: a name and (by hand) the nominal size.
         for (const std::string& w : loose) {
             // An angle's size is degrees (a plain number), any other a length in the units.
-            const auto v = it.body.empty() && it.dim < 0 && !o.nominal
+            const auto v = it.body.empty() && it.dim < 0 && it.gdt.empty() && !o.nominal
                                ? (o.angle.value_or(false) ? (parseNumber(w) ? std::optional<double>(*parseNumber(w)) : std::nullopt) : parseLength(w))
                                : std::nullopt;
             if (v) o.nominal = *v;
             else if (!o.name) o.name = w;
             else return out.fail("STACK ADD doesn't know " + w + " (the name, then the size: ADD Spacer 10 TOL 0.05)");
         }
-        if (it.body.empty() && it.dim < 0 && !o.nominal && !o.limits)
-            return out.fail("STACK ADD needs the size: ADD [name] 10 TOL 0.05 (or BODY name ALONG X, or DIM n)");
+        const bool geometric = !it.gdt.empty();
+        if (it.body.empty() && it.dim < 0 && !geometric && !o.nominal && !o.limits)
+            return out.fail("STACK ADD needs the size: ADD [name] 10 TOL 0.05 (or BODY name ALONG X, DIM n, GDT ..., FRAME n)");
+        if (geometric && (o.nominal || o.tol || o.limits || o.fit || o.general))
+            return out.fail("A geometric tolerance has no size or tolerance of its own: its ZONE (and BONUS) set its band");
+        if (o.material && *o.material && !o.bonus && it.frame < 0)
+            return out.fail("With MMC or LMC, give the feature's size range too (its bonus): ADD GDT POSITION 0.1 MMC BONUS 0.2");
         if (o.nominal && (!it.body.empty() || it.dim >= 0))
             return out.fail("A measured dimension takes its size from the model or the drawing (EDIT it to type one)");
         if (it.name.empty()) it.name = "Dimension " + std::to_string(st->items.size() + 1);
@@ -391,7 +443,7 @@ CommandOutput runStackCommand(Document& doc, const std::vector<std::string>& a, 
         std::vector<std::string> loose;
         if (!readItemOptions(a, quoted, 3, o, loose, why, it.angle)) return out.fail(why);
         if (!loose.empty())
-            return out.fail("STACK EDIT doesn't know " + loose[0] + " (NAME, NOMINAL, TOL, LIMITS, FIT, GENERAL, MINUS, PLUS, SENS, NORMAL, UNIFORM, TRIANGULAR, CP, DIR, ANGLE, AXIS)");
+            return out.fail("STACK EDIT doesn't know " + loose[0] + " (NAME, NOMINAL, TOL, LIMITS, FIT, GENERAL, MINUS, PLUS, SENS, NORMAL, UNIFORM, TRIANGULAR, CP, DIR, ANGLE, AXIS, ZONE, BONUS, MMC, LMC, RFS)");
         if (o.nominal) it.body.clear(), it.dim = -1; // typed: no longer measured
         if (!applyItemOptions(it, o, why, false)) return out.fail(why);
         const std::size_t k = static_cast<std::size_t>(std::lround(*n)) - 1;

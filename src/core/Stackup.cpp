@@ -764,6 +764,58 @@ bool stackItemFromDrawing(StackItem& item, const Drawing& drawing, int index, st
     return stackItemFromGeneral(item, why);
 }
 
+bool stackItemFromGdt(StackItem& item, std::string* why) {
+    GdtSymbol sym;
+    if (!gdtFromName(item.gdt, &sym)) {
+        if (why) *why = "No geometric characteristic " + item.gdt + " (position, profile, flatness, perpendicularity, parallelism, angularity, runout, "
+                        "total-runout, concentricity, symmetry, straightness, circularity, cylindricity, line-profile)";
+        return false;
+    }
+    item.gdt = gdtName(sym);
+    if (!(item.zone > 0)) {
+        if (why) *why = "A geometric tolerance's zone is above 0";
+        return false;
+    }
+    if (item.material) {
+        const bool takes = sym == GdtSymbol::Position || sym == GdtSymbol::Perpendicularity || sym == GdtSymbol::Parallelism ||
+                           sym == GdtSymbol::Angularity || sym == GdtSymbol::Straightness;
+        if (!takes) {
+            if (why) *why = std::string("A material condition (MMC, LMC) applies to position, orientation and straightness of a feature of size, not ") + item.gdt;
+            return false;
+        }
+        if (item.bonus < 0) {
+            if (why) *why = "The bonus (the feature's size range) isn't below 0";
+            return false;
+        }
+    } else {
+        item.bonus = 0;
+    }
+    item.nominal = 0;
+    item.upper = 0.5 * (item.zone + item.bonus), item.lower = -item.upper;
+    item.fit.clear(), item.general = 0, item.angle = false;
+    return true;
+}
+
+bool stackItemFromFrame(StackItem& item, const Drawing& drawing, int index, std::string* why) {
+    if (index < 0 || index >= static_cast<int>(drawing.frames.size())) {
+        if (why) *why = "The drawing has no feature control frame " + std::to_string(index + 1) + " (it has " + std::to_string(drawing.frames.size()) + ")";
+        return false;
+    }
+    const DrawingFrame& f = drawing.frames[static_cast<std::size_t>(index)];
+    item.frame = index;
+    item.gdt = gdtName(f.symbol);
+    item.zone = f.tolerance;
+    item.diametral = f.diameter;
+    item.material = f.material;
+    item.bonus = 0;
+    if (f.material && f.dim >= 0 && f.dim < static_cast<int>(drawing.dims.size())) {
+        StackItem size;
+        if (!stackItemFromDrawing(size, drawing, f.dim, why)) return false;
+        item.bonus = size.upper - size.lower;
+    }
+    return stackItemFromGdt(item, why);
+}
+
 bool updateStack(ToleranceStack& st, const Scene& scene, const Drawing& drawing, std::vector<std::string>* report, std::string* why) {
     for (StackItem& it : st.items) {
         const double before = it.nominal, up = it.upper, low = it.lower;
@@ -775,6 +827,8 @@ bool updateStack(ToleranceStack& st, const Scene& scene, const Drawing& drawing,
             if (it.general && !stackItemFromGeneral(it, why)) return false;
         } else if (it.dim >= 0) {
             if (!stackItemFromDrawing(it, drawing, it.dim, why)) return false;
+        } else if (it.frame >= 0) {
+            if (!stackItemFromFrame(it, drawing, it.frame, why)) return false;
         } else {
             continue;
         }
@@ -968,6 +1022,12 @@ Json stacksToJson(const std::vector<ToleranceStack>& stacks) {
             if (it.dim >= 0) i.set("dim", it.dim);
             if (!it.fit.empty()) i.set("fit", it.fit);
             if (it.general) i.set("general", std::string(1, it.general));
+            if (!it.gdt.empty()) {
+                i.set("gdt", it.gdt).set("zone", it.zone);
+                if (it.diametral) i.set("diametral", true);
+                if (it.material) i.set("material", std::string(1, it.material)).set("bonus", it.bonus);
+                if (it.frame >= 0) i.set("frame", it.frame);
+            }
             if (st.vector) {
                 if (it.angle) i.set("angle", true).set("axis", Json::array().push(it.axis.x).push(it.axis.y).push(it.axis.z));
                 else i.set("dir", Json::array().push(it.dir.x).push(it.dir.y).push(it.dir.z));
@@ -1017,6 +1077,13 @@ std::vector<ToleranceStack> stacksFromJson(const Json& a) {
             it.fit = i["fit"].asString(std::string());
             const std::string g = i["general"].asString(std::string());
             it.general = g.empty() ? 0 : g[0];
+            it.gdt = i["gdt"].asString(std::string());
+            it.zone = i["zone"].asNumber(0.0);
+            it.diametral = i["diametral"].asBool(false);
+            const std::string mc = i["material"].asString(std::string());
+            it.material = mc == "M" || mc == "L" ? mc[0] : 0;
+            it.bonus = i["bonus"].asNumber(0.0);
+            it.frame = i["frame"].asInt(-1);
             it.angle = i["angle"].asBool(false);
             it.axis = vec(i["axis"], {0, 0, 1});
             it.dir = vec(i["dir"], {1, 0, 0});

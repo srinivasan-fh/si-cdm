@@ -413,6 +413,13 @@ Json McpServer::toolDefinitions() {
         ts.set("body", prop("string", "add: the body whose size this is (measured; with along)"));
         ts.set("along", prop("string", "add / gap: X, Y, Z, -X... or x,y,z"));
         ts.set("dim", prop("number", "add: a drawing dimension's number (its value and tolerance)"));
+        ts.set("gdt", prop("string", "add: a geometric tolerance instead of a size (position, profile, flatness, perpendicularity, parallelism, "
+                                     "angularity, runout, total-runout, concentricity, symmetry, straightness...): +- half its zone"));
+        ts.set("zone", prop("number", "add (gdt) / edit: the geometric tolerance's zone (mm)"));
+        ts.set("diameter", prop("boolean", "add (gdt): a cylindrical zone"));
+        ts.set("material", enumProp({"mmc", "lmc", "rfs"}, "add (gdt) / edit: material condition; mmc / lmc add the bonus"));
+        ts.set("bonus", prop("number", "add (gdt) / edit: with mmc or lmc, the feature's size range (LMC - MMC, mm)"));
+        ts.set("frame", prop("number", "add: a drawing's feature control frame number (its characteristic, zone and bonus)"));
         ts.set("low", prop("number", "new / spec: the least result allowed (mm)"));
         ts.set("high", prop("number", "new / spec: the greatest result allowed (mm)"));
         ts.set("from", prop("string", "gap: the body the gap starts at"));
@@ -423,6 +430,7 @@ Json McpServer::toolDefinitions() {
         ts.set("svg", prop("string", "report: also write the chart to this .svg file"));
         tools.push(tool("tolerance_stack",
                         "Tolerance stack-up: a chain of dimensions (typed, a body's size along a direction, or a drawing dimension) "
+                        "and geometric tolerances (position, profile, runout..., with MMC/LMC bonus; typed or a drawing's frame) "
                         "adding up to a result such as a gap, each with its tolerance (+-, two-sided, ISO 286 fit or ISO 2768 class). "
                         "Reports worst case, RSS, modified RSS and a Monte Carlo run against the spec, each dimension's share and "
                         "what to tighten.",
@@ -2557,6 +2565,9 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (a["sens"].isNumber()) l += " SENS " + num(a["sens"].asNumber());
             if (a["dist"].isString()) l += " " + toUpper(a["dist"].asString());
             if (a["cp"].isNumber()) l += " CP " + num(a["cp"].asNumber());
+            if (!a["gdt"].isString() && a["zone"].isNumber()) l += " ZONE " + num(a["zone"].asNumber());
+            if (a["material"].isString()) l += " " + toUpper(a["material"].asString());
+            if (a["bonus"].isNumber()) l += " BONUS " + num(a["bonus"].asNumber());
             return l;
         };
         auto along = [&]() {
@@ -2582,9 +2593,13 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             std::string l = st + "ADD";
             if (a["body"].isString()) l += " BODY " + quote(a["body"].asString()) + " ALONG " + along();
             else if (a["dim"].isNumber()) l += " DIM " + num(a["dim"].asNumber());
-            else if (!a["nominal"].isNumber()) return textResult("add needs nominal, body (with along) or dim", true);
-            // A measured one takes its size from the model or the drawing.
-            return runLine(l + item(!a["body"].isString() && !a["dim"].isNumber()));
+            else if (a["frame"].isNumber()) l += " FRAME " + num(a["frame"].asNumber());
+            else if (a["gdt"].isString()) {
+                if (!a["zone"].isNumber()) return textResult("add with gdt needs its zone", true);
+                l += " GDT " + a["gdt"].asString() + " " + num(a["zone"].asNumber()) + (a["diameter"].asBool() ? " DIA" : "");
+            } else if (!a["nominal"].isNumber()) return textResult("add needs nominal, body (with along), dim, gdt (with zone) or frame", true);
+            // A measured one takes its size from the model or the drawing; a geometric tolerance has none.
+            return runLine(l + item(!a["body"].isString() && !a["dim"].isNumber() && !a["gdt"].isString() && !a["frame"].isNumber()));
         }
         if (op == "edit") return runLine(st + "EDIT " + num(a["index"].asNumber()) + item(true));
         if (op == "remove") return runLine(st + "REMOVE " + num(a["index"].asNumber()));

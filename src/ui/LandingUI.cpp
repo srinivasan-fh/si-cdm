@@ -872,6 +872,50 @@ void LandingUI::drawStackWindow(UiCommands& cmd, UiState& st, const Scene& scene
     ImGui::SameLine();
     if (ImGui::Button(tr("Save Report..."))) requestFile(FileStackExport, st);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(".csv: the table and the results; .svg: the chart"));
+    // A geometric tolerance: +- half its zone (and the bonus with MMC or LMC).
+    {
+        static const char* const kGdt[] = {"position", "profile", "flatness", "perpendicularity", "parallelism", "angularity", "runout", "total-runout",
+                                           "concentricity", "symmetry", "straightness"};
+        ImGui::SetNextItemWidth(130);
+        ImGui::Combo("##gdt", &m_stackGdt, kGdt, 11);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::DragFloat("##zone", &m_stackZone, 0.001f, 0.0001f, 100.0f, "%.4g mm");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The tolerance zone"));
+        ImGui::SameLine();
+        static const char* const kMaterial[] = {"RFS", "MMC", "LMC"};
+        const bool takes = m_stackGdt == 0 || m_stackGdt == 3 || m_stackGdt == 4 || m_stackGdt == 5 || m_stackGdt == 10;
+        if (!takes) m_stackMaterial = 0;
+        if (!takes) ImGui::BeginDisabled();
+        ImGui::SetNextItemWidth(60);
+        ImGui::Combo("##mat", &m_stackMaterial, kMaterial, 3);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", tr("Material condition: with MMC or LMC the feature's size range is added to the zone as bonus"));
+        if (!takes) ImGui::EndDisabled();
+        if (m_stackMaterial > 0) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(70);
+            ImGui::DragFloat("##bonus", &m_stackBonus, 0.001f, 0.0f, 100.0f, "+%.4g mm");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The bonus: the feature's size range (LMC - MMC)"));
+        }
+        ImGui::SameLine();
+        const bool ready = m_stackZone > 0 && (m_stackMaterial == 0 || m_stackBonus > 0);
+        if (!ready) ImGui::BeginDisabled();
+        if (ImGui::Button(tr("Add a Geometric Tolerance"))) {
+            char z[64];
+            std::snprintf(z, sizeof z, " %.6gmm", static_cast<double>(m_stackZone));
+            std::string line = "STACK " + name + " ADD GDT " + kGdt[m_stackGdt] + z;
+            if (m_stackMaterial > 0) {
+                char b[64];
+                std::snprintf(b, sizeof b, " BONUS %.6gmm", static_cast<double>(m_stackBonus));
+                line += std::string(" ") + kMaterial[m_stackMaterial] + b;
+            }
+            cmd.commands.push_back(line + (cur->vector ? " DIR X" : ""));
+        }
+        if (!ready) ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", tr("A geometric tolerance as a contribution: nominal 0, +- half its zone (and bonus); a drawing's frame: STACK name ADD FRAME n"));
+    }
     ImGui::Separator();
     // The analysis, again whenever the stack changes (20000 Monte Carlo samples here; STACK
     // REPORT runs the stack's own number).

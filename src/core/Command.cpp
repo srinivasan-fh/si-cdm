@@ -329,7 +329,8 @@ constexpr CommandSpec kCommands[] = {
      "SKIN fuses them into one smooth closed mesh bound to the armature, and POSE turns a ball and everything on it, bending "
      "the skin (edits to the skin are kept); DETAIL copies what was sculpted round one ball onto another's skin"},
     {"STACK", "STACKUP TOLSTACK", "STACK | STACK NEW name [NOTE text] [SPEC lo hi | MIN lo | MAX hi] [GAP from to ALONG dir] [SAMPLES n] [VECTOR] [MEASURE dir | DISTANCE] | "
-     "STACK name ADD [label] nominal | BODY body ALONG dir | DIM n [TOL t | TOL upper lower | LIMITS hi lo | FIT code | GENERAL f|m|c|v] "
+     "STACK name ADD [label] nominal | BODY body ALONG dir | DIM n | GDT characteristic zone [DIA] [MMC|LMC BONUS b] | FRAME n "
+     "[TOL t | TOL upper lower | LIMITS hi lo | FIT code | GENERAL f|m|c|v] "
      "[MINUS] [SENS k] [NORMAL [CP c] | UNIFORM | TRIANGULAR] [DIR dir | ANGLE [AXIS dir]] | STACK name EDIT n ... | REMOVE n | SPEC ... | GAP ... | "
      "NOTE text | VECTOR | LINEAR | MEASURE dir | DISTANCE | UPDATE | "
      "LIST | RENAME new | DELETE | STACK name [REPORT] [SAMPLES n] [CSV file] [SVG file]",
@@ -337,7 +338,8 @@ constexpr CommandSpec kCommands[] = {
      "two-sided tolerance, an ISO 286 fit or an ISO 2768 general class) adding up to a gap; its range by worst case, RSS, "
      "modified RSS and Monte Carlo, against the spec, with each dimension's share and what to tighten. GAP checks the "
      "chain against the model; UPDATE measures again. VECTOR: a 2D/3D loop of lengths along directions and angles, the result its "
-     "closing distance or that along MEASURE"},
+     "closing distance or that along MEASURE. GDT / FRAME: a geometric tolerance (position, profile, flatness, runout...) "
+     "as a contribution of +- half its zone, plus the bonus with MMC or LMC"},
     {"SIM", "SIMULATE SIMULATION", "SIM [PLAY|PAUSE|STOP|TIME t|SPEED x|DURATION s|AXES|PATHS ON|OFF|AT t] | SIM CHECK [FROM t0] [TO t1] [STEP dt] [ALL] [body...]",
      "Open the Simulation window and control playback; SIM AT t reports body poses at time t; SIM CHECK finds parts that run into each other as it plays"},
     // Library

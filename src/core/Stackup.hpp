@@ -47,6 +47,17 @@ struct StackItem {
     int dim = -1;                  // a drawing dimension (index)
     std::string fit;               // an ISO 286 fit code: the deviations follow the nominal
     char general = 0;              // an ISO 2768-1 class (f m c v): likewise
+    // A geometric tolerance (ISO 1101 / ASME Y14.5) instead of a size: nominal 0, its band
+    // +-(zone + bonus) / 2 along the stack (a zone of width t lets the feature lie t/2 either
+    // way of where it should be). With `material` 'M' or 'L' (position and orientation on a
+    // feature of size), the feature's own size tolerance (`bonus`: its range, LMC - MMC) is
+    // added to the zone, as it may be when the feature departs from that condition.
+    std::string gdt;               // the characteristic ("position", "flatness" ...); empty: a size
+    double zone = 0;               // its tolerance (mm)
+    bool diametral = false;        // a cylindrical zone (shown with the diameter sign)
+    char material = 0;             // 'M', 'L' or 0 (regardless of feature size)
+    double bonus = 0;              // the feature's size range (mm) the material condition adds
+    int frame = -1;                // a drawing's feature control frame (index), read again on UPDATE
     // In a vector stack:
     Vec3 dir{1, 0, 0};             // a length's direction (turned by the angles before it)
     bool angle = false;            // an angle (degrees, its tolerance too), turning what follows ...
@@ -100,6 +111,15 @@ struct StackResult {
 // The band of an ISO 2768-1 general tolerance (class f m c v) or ISO 286 fit code on a size.
 bool stackItemFromFit(StackItem& item, std::string* why = nullptr);
 bool stackItemFromGeneral(StackItem& item, std::string* why = nullptr);
+
+// A geometric tolerance's contribution (from `gdt`, `zone`, `material`, `bonus`): nominal 0 and
+// +-(zone + bonus) / 2. False (why) for an unknown characteristic, a zone not above 0, or a
+// material condition on one that can't take it (form other than straightness, profile,
+// runout, concentricity, symmetry).
+bool stackItemFromGdt(StackItem& item, std::string* why = nullptr);
+// The same from the drawing's feature control frame `index`; a frame under a dimension with a
+// material condition takes that dimension's size tolerance as its bonus.
+bool stackItemFromFrame(StackItem& item, const Drawing& drawing, int index, std::string* why = nullptr);
 
 // The result for these values of the items (in order): the sum, or the vector loop.
 double stackValue(const ToleranceStack& stack, const std::vector<double>& values);

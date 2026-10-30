@@ -1339,10 +1339,44 @@ STACK Pin REPORT
   sigma agree with Monte Carlo's within 2–3% (the straight-line view says 0 and 0).
 - An angle's size and tolerance are always degrees, whatever the units.
 
-**Limits:**
+### Geometric tolerances in a stack
 
-- Geometric tolerances (position, flatness...) aren't turned into contributions on their own.
-  Add them as dimensions with their zone as the band.
+A geometric tolerance (ISO 1101 / ASME Y14.5) goes into a stack as a contribution of its own:
+nominal 0, ± half its zone, as a zone of width t lets the feature's surface or axis lie t/2 to
+either side of where it should be. Typed, or read from a drawing's feature control frame:
+
+```text
+STACK Gap ADD GDT POSITION 0.2 DIA MMC BONUS 0.1    a hole's position, Ø0.2 at MMC, its size range 0.1: ±0.15
+STACK Gap ADD GDT PROFILE 0.1 MINUS                 a surface profile on the shoulder: ±0.05, taking from the gap
+STACK Gap ADD FRAME 2                               the drawing's frame 2, as drawn
+STACK Gap EDIT 3 RFS                                regardless of feature size: no bonus
+```
+
+- Any characteristic: position, profile (surface or line), flatness, straightness, circularity,
+  cylindricity, perpendicularity, parallelism, angularity, circular and total runout,
+  concentricity, symmetry.
+- `MMC` / `LMC` (position, orientation and straightness of a feature of size) add the bonus: the
+  feature's size range, `BONUS b` (LMC − MMC). Its band becomes ±(zone + bonus) / 2, the most
+  the feature may move once it departs from that condition. A frame under a drawing dimension
+  takes that dimension's tolerance range as its bonus; `UPDATE` reads the frame (and its
+  dimension) again after the drawing changes.
+- The distribution, sign, sensitivity and direction (in a vector stack) are set as for any
+  dimension (`UNIFORM`, `MINUS`, `SENS`, `DIR`...).
+- Refused: an unknown characteristic, a zone not above 0, MMC or LMC on a form tolerance other
+  than straightness, on profile, runout, concentricity or symmetry, MMC or LMC without the
+  bonus, and a size tolerance on a geometric one. A tolerance (`TOL`, `LIMITS`...) given in
+  `EDIT` makes it a plain size again.
+- In the Stack-up window: the characteristic, zone, material condition and bonus, then *Add a
+  Geometric Tolerance*. Over MCP: `tolerance_stack` with `gdt` and `zone` (or `frame`).
+
+**How it counts:**
+
+- A form tolerance (flatness, straightness...) on a size that is already in the stack lies within
+  that size's tolerance (Rule #1, the envelope): add it only where the stack meets the surface
+  without the size, such as a face resting on another.
+- With MMC or LMC the whole bonus is in the band for RSS and Monte Carlo too, as if every
+  feature were at its least favourable size: safe, and a little wider than a run that drew each
+  feature's size first.
 
 ## Mass properties
 

@@ -482,3 +482,81 @@ TEST_CASE("Vector stacks: the share outside a spec far out in the tails, against
     u.high = 10.61;
     CHECK(analyzeStack(u).ppm == 0);
 }
+
+TEST_CASE("STACK: geometric tolerances as contributions (position with MMC bonus, profile, from a drawing's frames)") {
+    Document d;
+    REQUIRE(run(d, "STACK NEW Gap SPEC 0.1 0.9").ok);
+    REQUIRE(run(d, "STACK Gap ADD Housing 30 TOL 0.05").ok);
+    REQUIRE(run(d, "STACK Gap ADD Shaft 29.5 TOL 0.05 MINUS").ok);
+    // A hole's position, diameter 0.2 at MMC, the hole's size range 0.1: +-(0.2 + 0.1) / 2.
+    const CommandOutput pos = run(d, "STACK Gap ADD GDT POSITION 0.2 DIA MMC BONUS 0.1");
+    REQUIRE(pos.ok);
+    const ToleranceStack* st = &d.state.stacks.back();
+    REQUIRE(st->items.size() == 3);
+    const StackItem& p = st->items[2];
+    CHECK(p.gdt == "position");
+    CHECK(p.diametral);
+    CHECK(p.material == 'M');
+    CHECK(std::fabs(p.nominal) < 1e-12);
+    CHECK(std::fabs(p.upper - 0.15) < 1e-12);
+    CHECK(std::fabs(p.lower + 0.15) < 1e-12);
+    CHECK(joined(pos).find("position") != std::string::npos);
+    // A profile of a surface, 0.1, on the shaft's shoulder, taking from the gap.
+    REQUIRE(run(d, "STACK Gap ADD GDT PROFILE 0.1 MINUS").ok);
+    st = &d.state.stacks.back();
+    const StackResult r = analyzeStack(*st);
+    CHECK(std::fabs(r.nominal - 0.5) < 1e-9);
+    CHECK(std::fabs(r.wcHigh - (0.5 + 0.05 + 0.05 + 0.15 + 0.05)) < 1e-9);
+    CHECK(std::fabs(r.wcLow - (0.5 - 0.3)) < 1e-9);
+    // Each one's share: the position is the biggest.
+    CHECK(r.variance[2] > r.variance[0]);
+    CHECK(r.variance[2] > r.variance[3]);
+    // Edited: RFS drops the bonus; a tolerance makes it a size again.
+    REQUIRE(run(d, "STACK Gap EDIT 3 RFS").ok);
+    CHECK(std::fabs(d.state.stacks.back().items[2].upper - 0.1) < 1e-12);
+    REQUIRE(run(d, "STACK Gap EDIT 3 ZONE 0.3").ok);
+    CHECK(std::fabs(d.state.stacks.back().items[2].upper - 0.15) < 1e-12);
+    REQUIRE(run(d, "STACK Gap EDIT 3 MMC BONUS 0.2").ok);
+    CHECK(std::fabs(d.state.stacks.back().items[2].upper - 0.25) < 1e-12);
+    // What it refuses.
+    CHECK(!run(d, "STACK Gap ADD GDT WOBBLE 0.1").ok);            // no such characteristic
+    CHECK(!run(d, "STACK Gap ADD GDT FLATNESS 0.1 MMC BONUS 0.1").ok); // form takes no material condition
+    CHECK(!run(d, "STACK Gap ADD GDT RUNOUT 0.05 LMC BONUS 0.1").ok);  // nor runout
+    CHECK(!run(d, "STACK Gap ADD GDT POSITION 0.1 MMC").ok);       // MMC without the bonus
+    CHECK(!run(d, "STACK Gap ADD GDT POSITION 0").ok);             // zone above 0
+    CHECK(!run(d, "STACK Gap ADD GDT POSITION 0.1 TOL 0.2").ok);   // a geometric tolerance has no size tolerance
+    CHECK(!run(d, "STACK Gap ADD FRAME 1").ok);                    // the drawing has no frames yet
+    // Saved and read back.
+    const std::vector<ToleranceStack> back = stacksFromJson(stacksToJson(d.state.stacks));
+    REQUIRE(back.size() == 1);
+    REQUIRE(back[0].items.size() == 4);
+    CHECK(back[0].items[2].gdt == "position");
+    CHECK(back[0].items[2].material == 'M');
+    CHECK(std::fabs(back[0].items[2].bonus - 0.2) < 1e-12);
+    CHECK(back[0].items[2].diametral);
+    CHECK(std::fabs(analyzeStack(back[0]).wcHigh - analyzeStack(d.state.stacks.back()).wcHigh) < 1e-12);
+
+    // From a drawing's frames: a position at MMC under a dimension takes that size's range.
+    Document e;
+    REQUIRE(run(e, "BOX 80 50 12 @0,0,0").ok);
+    REQUIRE(run(e, "SHEET NEW SIZE A3").ok);
+    REQUIRE(run(e, "SHEET DIM HORIZONTAL Front -40,0,0 40,0,0 TOL 0.1").ok);
+    REQUIRE(run(e, "SHEET DATUM A ON Front -40,0,6").ok);
+    REQUIRE(run(e, "SHEET DATUM B ON Top 0,-25,6").ok);
+    REQUIRE(run(e, "SHEET GDT position 0.05 DIA MMC DATUMS A B DIM 1").ok);
+    REQUIRE(run(e, "SHEET GDT flatness 0.02 ON Front 0,0,12").ok);
+    REQUIRE(run(e, "STACK NEW Frames").ok);
+    REQUIRE(run(e, "STACK Frames ADD FRAME 1").ok);
+    REQUIRE(run(e, "STACK Frames ADD FRAME 2").ok);
+    const ToleranceStack& f = e.state.stacks.back();
+    REQUIRE(f.items.size() == 2);
+    CHECK(f.items[0].frame == 0);
+    // (The drawing keeps its values in single precision.)
+    CHECK(std::fabs(f.items[0].bonus - 0.2) < 1e-6);           // 80 +-0.1
+    CHECK(std::fabs(f.items[0].upper - 0.125) < 1e-6);         // (0.05 + 0.2) / 2
+    CHECK(std::fabs(f.items[1].upper - 0.01) < 1e-6);          // flatness 0.02
+    // Changed on the drawing: UPDATE reads it again.
+    REQUIRE(run(e, "SHEET TOL 1 0.2").ok);
+    REQUIRE(run(e, "STACK Frames UPDATE").ok);
+    CHECK(std::fabs(e.state.stacks.back().items[0].upper - 0.225) < 1e-6);
+}

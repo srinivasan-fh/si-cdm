@@ -394,6 +394,9 @@ private:
     StackResult m_stackResult;                               // and that analysis
     char m_stackNew[64] = "";                                // a new stack's name as it is typed
     int m_stackAxis = 0;                                     // the size of the selected body along X, Y or Z
+    int m_stackGdt = 0;                                      // Add a Geometric Tolerance: the characteristic
+    float m_stackZone = 0.1f, m_stackBonus = 0.0f;           // ... its zone, and the bonus with MMC/LMC
+    int m_stackMaterial = 0;                                 // ... 0 RFS, 1 MMC, 2 LMC
     int m_armSide = 0;                                       // the Armature window: the side a new ball goes on (+X ... -Z)
     float m_armVoxel = 0.0f, m_armBlend = -1.0f;             // the skin's voxel and blend (0 / -1: from the balls)
     int m_armSmooth = 6;                                     // and its smoothing passes

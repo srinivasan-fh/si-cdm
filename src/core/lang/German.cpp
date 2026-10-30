@@ -1272,6 +1272,11 @@ const char* const kGerman[][2] = {
     {"The tube's cross-section (flat sides lie along the surface)", "Der Querschnitt des Rohrs (flache Seiten liegen an der Oberfläche)"},
     {"The tube's size where the stroke starts and where it ends, as times the radius (1, 0: to a point)", "Die Größe des Rohrs am Anfang und am Ende des Strichs, als Vielfaches des Radius (1, 0: bis zu einer Spitze)"},
     {"Union: fused exactly. Append: fused exactly too, as a polygroup of its own (Remesh blends the joins). New body: a part of its own", "Vereinigen: exakt verschmolzen. Anhängen: ebenfalls exakt verschmolzen, als eigene Polygruppe (Remesh verrundet die Übergänge). Neuer Körper: ein eigenes Teil"},
+    {"A geometric tolerance as a contribution: nominal 0, +- half its zone (and bonus); a drawing's frame: STACK name ADD FRAME n", "Eine Form- und Lagetoleranz als Beitrag: Nennmaß 0, ± die halbe Toleranzzone (und Bonus); ein Toleranzrahmen der Zeichnung: STACK name ADD FRAME n"},
+    {"Add a Geometric Tolerance", "Form- und Lagetoleranz hinzufügen"},
+    {"Material condition: with MMC or LMC the feature's size range is added to the zone as bonus", "Materialbedingung: mit MMC oder LMC wird der Maßbereich des Elements als Bonus zur Zone addiert"},
+    {"The bonus: the feature's size range (LMC - MMC)", "Der Bonus: der Maßbereich des Elements (LMC - MMC)"},
+    {"The tolerance zone", "Die Toleranzzone"},
 };
 
 
