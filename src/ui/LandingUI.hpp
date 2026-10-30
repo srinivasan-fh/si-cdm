@@ -305,6 +305,7 @@ private:
     void runSample(UiCommands& cmd, const std::string& file);
     void drawPreferencesWindow(UiCommands& cmd, UiState& st); // PreferencesWindow.cpp
     void drawLicenceWindow(UiCommands& cmd, UiState& st);
+    void drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st, float y);
     float drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom); // returns width
     void drawSimTransport(UiState& st);
     void drawCommandBar(UiCommands& cmd, UiState& st);
@@ -349,6 +350,8 @@ private:
     float m_optionsHeight = 0.0f;
     float m_rightGroupWidth = 560.0f;
     float m_tabsBottom = 0.0f;
+    float m_rightRailWidth = 0.0f;
+    static constexpr float kViewBarHeight = 34.0f;
     float m_statusHeight = 0.0f;
     ImVec2 m_canvasMin{}, m_canvasMax{};
     float m_commandHeight = 0.0f;

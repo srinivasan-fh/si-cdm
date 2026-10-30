@@ -23,8 +23,9 @@ struct ViewCubeResult {
     Vec2 orbitDelta{};      // pixels, from dragging the cube
 };
 
-// Autodesk-style navigation cube. Faces, edges and corners are all
-// clickable (26 views); hovering highlights the region under the cursor.
+// The navigation sphere: a shaded ball turning with the camera, the face names where their
+// directions meet it. A click picks the view nearest the point under the cursor, among the 26
+// of a cube's faces, edges and corners; dragging it orbits. (The class keeps its old name.)
 class ViewCube {
 public:
     // `anchor` is the bottom-right corner the widget sits against.

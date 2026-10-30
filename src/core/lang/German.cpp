@@ -1277,6 +1277,15 @@ const char* const kGerman[][2] = {
     {"Material condition: with MMC or LMC the feature's size range is added to the zone as bonus", "Materialbedingung: mit MMC oder LMC wird der Maßbereich des Elements als Bonus zur Zone addiert"},
     {"The bonus: the feature's size range (LMC - MMC)", "Der Bonus: der Maßbereich des Elements (LMC - MMC)"},
     {"The tolerance zone", "Die Toleranzzone"},
+    {"Home view (isometric, fit all)", "Startansicht (isometrisch, alles einpassen)"},
+    {"Orthographic (off: perspective)  (P)", "Orthografisch (aus: perspektivisch)  (P)"},
+    {"SKETCH", "SKIZZE"},
+    {"Section view: cut the model with a plane", "Schnittansicht: das Modell mit einer Ebene schneiden"},
+    {"Snap to end points, middles and centres", "An End-, Mittel- und Zentrumspunkten fangen"},
+    {"Snap to the grid", "Am Raster fangen"},
+    {"VIEW", "ANSICHT"},
+    {"Zoom to fit  (F)", "Alles einpassen  (F)"},
+    {"Zoom: drag up and down in the view", "Zoomen: in der Ansicht nach oben und unten ziehen"},
 };
 
 

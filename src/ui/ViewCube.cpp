@@ -13,16 +13,15 @@ namespace sicdm {
 namespace {
 
 constexpr float kCubePx = 112.0f;  // widget size
-constexpr float kBorder = 0.30f;   // width of edge/corner strips in face units (face spans -1..1)
 constexpr float kDragPx = 3.0f;
 
 struct Face {
     Vec3 normal;
-    Vec3 s, t; // label axes: s to the right, t up when reading the label
+    Vec3 s, t; // label axes (the faces' upright reading, kept for the cube's order)
     const char* label;
 };
 
-// Label axes chosen so every label reads upright from its standard view.
+// The six named views.
 constexpr std::array<Face, 6> kFaces = {{
     {{0, 0, 1}, {1, 0, 0}, {0, 1, 0}, "TOP"},
     {{0, 0, -1}, {1, 0, 0}, {0, -1, 0}, "BOTTOM"},
@@ -32,7 +31,6 @@ constexpr std::array<Face, 6> kFaces = {{
     {{-1, 0, 0}, {0, -1, 0}, {0, 0, 1}, "LEFT"},
 }};
 
-bool sameDir(const Vec3& a, const Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 
 std::string regionName(const Vec3& d) {
     std::string n;
@@ -49,49 +47,9 @@ std::string regionName(const Vec3& d) {
     return n;
 }
 
-bool insideQuad(const ImVec2 (&q)[4], ImVec2 p) {
-    int sign = 0;
-    for (int i = 0; i < 4; ++i) {
-        const ImVec2 a = q[i], b = q[(i + 1) % 4];
-        const float c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-        const int sg = c > 0 ? 1 : (c < 0 ? -1 : 0);
-        if (sg == 0) continue;
-        if (sign == 0) sign = sg;
-        else if (sg != sign) return false;
-    }
-    return true;
-}
-
 ImU32 grey(float v, float a = 1.0f) {
     const int c = static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 255.0f);
     return IM_COL32(c, c, c + 6 > 255 ? 255 : c + 6, static_cast<int>(a * 255.0f));
-}
-
-// Draws `text` onto a cube face as projected glyph quads, so labels follow the face.
-void drawFaceLabel(ImDrawList* dl, const char* text, const Face& f, float alpha,
-                   const std::function<ImVec2(const Vec3&)>& project) {
-    ImFont* font = ImGui::GetFont();
-    float width = 0.0f;
-    for (const char* c = text; *c; ++c)
-        if (const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(*c))) width += g->AdvanceX;
-    // Fit the word into ~70% of the face width, capped so short words stay modest.
-    const float scale = std::min(1.4f / width, 0.62f / font->FontSize);
-    float x = -width * 0.5f;
-    const float yTop = font->FontSize * 0.5f; // vertically centred
-    const ImTextureID tex = font->ContainerAtlas->TexID;
-    const ImU32 col = IM_COL32(70, 74, 82, static_cast<int>(alpha * 255.0f));
-    const Vec3 base = f.normal * 1.002f;
-    for (const char* c = text; *c; ++c) {
-        const ImFontGlyph* g = font->FindGlyph(static_cast<ImWchar>(*c));
-        if (!g) continue;
-        auto at = [&](float gx, float gy) {
-            return project(base + f.s * ((x + gx) * scale) + f.t * ((yTop - gy) * scale));
-        };
-        if (g->Visible)
-            dl->AddImageQuad(tex, at(g->X0, g->Y0), at(g->X1, g->Y0), at(g->X1, g->Y1), at(g->X0, g->Y1),
-                             {g->U0, g->V0}, {g->U1, g->V0}, {g->U1, g->V1}, {g->U0, g->V1}, col);
-        x += g->AdvanceX;
-    }
 }
 
 bool iconButton(const char* id, ImVec2 pos, float size, const char* tip) {
@@ -125,71 +83,93 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
     const ImVec2 center{origin.x + size.x * 0.5f, origin.y + size.y * 0.5f + 2.0f};
     const float half = kCubePx * 0.33f;
 
-    // Rotation-only projection: the cube turns with the camera but never moves.
+    // Rotation-only: the sphere turns with the camera but never moves.
     const Mat4 view = cam.view();
-    auto project = [&](const Vec3& p) {
-        const Vec3 e = view.transformDir(p);
-        return ImVec2{center.x + e.x * half, center.y - e.y * half};
-    };
 
-    // Hit area for the cube itself.
+    // Hit area for the sphere.
     ImGui::SetCursorScreenPos({center.x - kCubePx * 0.5f, center.y - kCubePx * 0.5f});
     ImGui::InvisibleButton("cube", {kCubePx, kCubePx}, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     const bool cubeHovered = ImGui::IsItemHovered();
     const bool cubeActive = ImGui::IsItemActive();
     const ImVec2 mouse = ImGui::GetIO().MousePos;
 
-    // Find the hovered region among front-facing cells (they never overlap).
+    // A sphere: the view direction under the mouse is the sphere's own point there (in the
+    // eye's frame, x right, y up, z towards the eye), snapped to the nearest of the 26 views
+    // (6 faces, 12 edges, 8 corners of the cube it stands for).
+    const float radius = half * 1.62f;
     std::optional<Vec3> hoverDir;
-    struct Cell {
-        ImVec2 q[4];
-        Vec3 dir;
+    std::array<Vec3, 26> dirs{};
+    {
+        int n = 0;
+        for (int x = -1; x <= 1; ++x)
+            for (int y = -1; y <= 1; ++y)
+                for (int z = -1; z <= 1; ++z)
+                    if (x || y || z) dirs[static_cast<std::size_t>(n++)] = Vec3{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)};
+    }
+    auto onSphere = [&](const Vec3& d) { // where a direction meets the sphere, and how much it faces us
+        const Vec3 e = view.transformDir(normalize(d));
+        return std::pair<ImVec2, float>{ImVec2{center.x + e.x * radius, center.y - e.y * radius}, e.z};
     };
-    std::array<Cell, 54> cells{};
-    std::array<float, 54> cellFacing{};
-    int cellCount = 0;
-    const float edges[4] = {-1.0f, -1.0f + kBorder, 1.0f - kBorder, 1.0f};
-    for (const Face& f : kFaces) {
-        const float facing = view.transformDir(f.normal).z;
-        if (facing <= 0.02f) continue;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j) {
-                Cell& c = cells[static_cast<std::size_t>(cellCount)];
-                cellFacing[static_cast<std::size_t>(cellCount)] = facing;
-                ++cellCount;
-                const float s0 = edges[i], s1 = edges[i + 1], t0 = edges[j], t1 = edges[j + 1];
-                c.q[0] = project(f.normal + f.s * s0 + f.t * t0);
-                c.q[1] = project(f.normal + f.s * s1 + f.t * t0);
-                c.q[2] = project(f.normal + f.s * s1 + f.t * t1);
-                c.q[3] = project(f.normal + f.s * s0 + f.t * t1);
-                c.dir = f.normal + f.s * static_cast<float>(i - 1) + f.t * static_cast<float>(j - 1);
-                if (cubeHovered && !m_dragging && insideQuad(c.q, mouse)) hoverDir = c.dir;
+    {
+        const float dx = (mouse.x - center.x) / radius, dy = -(mouse.y - center.y) / radius;
+        const float r2 = dx * dx + dy * dy;
+        if (cubeHovered && !m_dragging && r2 <= 1.0f) {
+            const Vec3 eye{dx, dy, std::sqrt(std::max(0.0f, 1.0f - r2))};
+            float best = -2;
+            for (const Vec3& d : dirs) {
+                const float c = dot(view.transformDir(normalize(d)), eye);
+                if (c > best) best = c, hoverDir = d;
             }
+        }
     }
 
-    // Soft shadow + faces.
-    dl->AddCircleFilled({center.x + 2, center.y + 4}, half * 1.75f, IM_COL32(0, 0, 0, 50), 40);
-    for (int k = 0; k < cellCount; ++k) {
-        const Cell& c = cells[static_cast<std::size_t>(k)];
-        const float shade = 0.50f + 0.36f * cellFacing[static_cast<std::size_t>(k)];
-        const bool hot = hoverDir && sameDir(*hoverDir, c.dir);
-        const ImU32 fill = hot ? IM_COL32(74, 140, 230, 255) : grey(shade);
-        dl->AddQuadFilled(c.q[0], c.q[1], c.q[2], c.q[3], fill);
+    // Shadow, then the ball: lit from the upper left (rings from the rim in to the highlight).
+    dl->AddCircleFilled({center.x + 2, center.y + 5}, radius * 1.03f, IM_COL32(0, 0, 0, 60), 48);
+    constexpr int kRings = 28;
+    const ImVec2 light{center.x - radius * 0.32f, center.y - radius * 0.38f};
+    for (int k = 0; k < kRings; ++k) {
+        const float t = static_cast<float>(k) / static_cast<float>(kRings - 1); // 0 rim .. 1 highlight
+        const float rr = radius * (1.0f - 0.92f * t);
+        const ImVec2 c{center.x + (light.x - center.x) * t, center.y + (light.y - center.y) * t};
+        dl->AddCircleFilled(c, rr, grey(0.52f + 0.45f * std::pow(t, 0.8f)), 48);
     }
-    for (const Face& f : kFaces) {
-        const float facing = view.transformDir(f.normal).z;
-        if (facing <= 0.02f) continue;
-        const ImVec2 a = project(f.normal - f.s - f.t), b = project(f.normal + f.s - f.t);
-        const ImVec2 c = project(f.normal + f.s + f.t), d = project(f.normal - f.s + f.t);
-        dl->AddQuad(a, b, c, d, IM_COL32(60, 64, 72, 255), 1.2f);
-        drawFaceLabel(dl, f.label, f, std::clamp(facing * 2.0f - 0.2f, 0.0f, 1.0f), project);
-    }
-    // Orange outline around every cell of the hovered region (edges span 2 faces, corners 3).
-    if (hoverDir)
-        for (int k = 0; k < cellCount; ++k) {
-            const Cell& c = cells[static_cast<std::size_t>(k)];
-            if (sameDir(*hoverDir, c.dir)) dl->AddQuad(c.q[0], c.q[1], c.q[2], c.q[3], IM_COL32(255, 170, 40, 255), 2.0f);
+    // Its three great circles (the planes of the standard views): solid in front, faint behind.
+    auto greatCircle = [&](const Vec3& u, const Vec3& v) {
+        constexpr int kSeg = 72;
+        for (int k = 0; k < kSeg; ++k) {
+            const float a0 = 2 * kPi * static_cast<float>(k) / kSeg, a1 = 2 * kPi * static_cast<float>(k + 1) / kSeg;
+            const auto [p0, f0] = onSphere(u * std::cos(a0) + v * std::sin(a0));
+            const auto [p1, f1] = onSphere(u * std::cos(a1) + v * std::sin(a1));
+            const bool front = f0 + f1 > 0;
+            if (!front && k % 2) continue; // dashed behind
+            dl->AddLine(p0, p1, front ? IM_COL32(70, 76, 88, 200) : IM_COL32(70, 76, 88, 70), front ? 1.2f : 1.0f);
         }
+    };
+    greatCircle({1, 0, 0}, {0, 1, 0});
+    greatCircle({1, 0, 0}, {0, 0, 1});
+    greatCircle({0, 1, 0}, {0, 0, 1});
+    dl->AddCircle(center, radius, IM_COL32(60, 64, 72, 255), 64, 1.2f);
+    // The face names where their directions meet the sphere, upright, fading as they turn away.
+    for (const Face& f : kFaces) {
+        const auto [p, facing] = onSphere(f.normal);
+        if (facing <= 0.15f) continue;
+        const float a = std::clamp((facing - 0.15f) * 2.5f, 0.0f, 1.0f);
+        ImFont* font = ImGui::GetFont();
+        const float fs = ImGui::GetFontSize() * (0.85f + 0.3f * facing);
+        const ImVec2 ts = font->CalcTextSizeA(fs, 1e9f, 0, f.label);
+        // On the ball, a little in from where the direction meets it, so a name near the rim stays on.
+        const ImVec2 q{center.x + (p.x - center.x) * 0.8f, center.y + (p.y - center.y) * 0.8f};
+        const ImU32 col = IM_COL32(34, 38, 46, static_cast<int>(a * 255.0f));
+        dl->AddText(font, fs, {q.x - ts.x * 0.5f, q.y - ts.y * 0.5f}, col, f.label);
+        dl->AddText(font, fs, {q.x - ts.x * 0.5f + 0.6f, q.y - ts.y * 0.5f}, col, f.label); // a touch bolder
+    }
+    // The view under the mouse: a spot where it meets the sphere.
+    if (hoverDir) {
+        const auto [p, facing] = onSphere(*hoverDir);
+        (void)facing;
+        dl->AddCircleFilled(p, 8.0f, IM_COL32(74, 140, 230, 230), 24);
+        dl->AddCircle(p, 8.0f, IM_COL32(255, 170, 40, 255), 24, 2.0f);
+    }
 
     // Click selects the view; dragging the cube orbits the camera.
     if (ImGui::IsItemActivated()) {

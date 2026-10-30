@@ -344,15 +344,20 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     drawOptionsBar(cmd, cam, vp, st);
     drawStatusBar(cmd, scene, cam, st);
     drawCommandBar(cmd, st);
+    // Tools on all four sides of the canvas: rails left, top and right, the view bar below.
     const float railTop = mv->WorkPos.y + m_optionsHeight;
-    const float bottom = mv->WorkPos.y + mv->WorkSize.y - m_statusHeight - m_commandHeight;
+    const float viewBarTop = mv->WorkPos.y + mv->WorkSize.y - m_statusHeight - m_commandHeight - kViewBarHeight;
+    const float bottom = viewBarTop;
+    drawViewBar(cmd, cam, vp, st, viewBarTop);
     m_toolboxWidth = m_toolbox.draw(railTop, bottom, st.mode == ViewMode::Drawing2D, st.showModelTree, st.dockTab);
+    m_rightRailWidth = m_toolbox.drawRight(railTop, bottom, mv->WorkPos.x + mv->WorkSize.x);
     // The Model panel docks beside the rail; tabs, rulers and canvas start after it.
     m_leftDockWidth = m_toolboxWidth;
     if (st.showModelTree) m_leftDockWidth += drawModelTree(cmd, scene, st, mv->WorkPos.x + m_toolboxWidth, railTop, bottom);
     drawFileTabs(cmd, st);
-    // The Simulation window docks the motion study on the right.
-    const float rightDock = st.mode == ViewMode::Simulation ? drawMotionPanel(scene, cmd, st, m_tabsBottom, bottom) : 0.0f;
+    m_tabsBottom += m_toolbox.drawTop(mv->WorkPos.x + m_leftDockWidth, mv->WorkPos.x + mv->WorkSize.x - m_rightRailWidth, m_tabsBottom);
+    // The Simulation window docks the motion study on the right, inside the right rail.
+    const float rightDock = (st.mode == ViewMode::Simulation ? drawMotionPanel(scene, cmd, st, m_tabsBottom, bottom) : 0.0f) + m_rightRailWidth;
 
     const bool is2D = st.mode == ViewMode::Drawing2D;
     m_canvasMin = {mv->WorkPos.x + m_leftDockWidth + (is2D ? kRulerSize : 0.0f), m_tabsBottom + (is2D ? kRulerSize : 0.0f)};
@@ -2830,7 +2835,7 @@ void LandingUI::drawFileTabs(UiCommands& cmd, const UiState& st) {
     const float x = mv->WorkPos.x + m_leftDockWidth;
     const float y = mv->WorkPos.y + m_optionsHeight;
     ImGui::SetNextWindowPos({x, y});
-    ImGui::SetNextWindowSize({mv->WorkSize.x - m_leftDockWidth, 0.0f});
+    ImGui::SetNextWindowSize({mv->WorkSize.x - m_leftDockWidth - m_rightRailWidth, 0.0f});
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
                                        ImGuiWindowFlags_AlwaysAutoResize;
@@ -3389,6 +3394,150 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
     return width;
 }
 
+// The view bar along the bottom of the canvas: going home, fitting and zooming, the standard
+// views, how bodies are drawn, the section, grid, snapping and the projection.
+void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st, float y) {
+    const ImGuiViewport* mv = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({mv->WorkPos.x, y});
+    ImGui::SetNextWindowSize({mv->WorkSize.x, kViewBarHeight});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {10, 4});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {3, 0});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::Begin("##viewbar", nullptr, flags);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    {
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        dl->AddLine(wp, {wp.x + ws.x, wp.y}, theme::kBorder);
+    }
+    const bool is2D = st.mode == ViewMode::Drawing2D;
+    const float bs = kViewBarHeight - 8.0f;
+    ImGui::SetCursorPosY((kViewBarHeight - ImGui::GetFontSize()) * 0.5f);
+    ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("VIEW"));
+    ImGui::SameLine(0, 14);
+    // A button with an icon drawn into it; `on` shows it pressed.
+    auto button = [&](const char* id, bool on, const char* tip, const std::function<void(ImVec2, ImU32)>& icon) {
+        ImGui::SetCursorPosY(4);
+        ImGui::InvisibleButton(id, {bs, bs});
+        const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+        const bool hov = ImGui::IsItemHovered();
+        if (on) dl->AddRectFilled(lo, hi, theme::kAccent, 4.0f);
+        else if (hov) dl->AddRectFilled(lo, hi, theme::kHover, 4.0f);
+        icon({(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, on ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 210, 218, 255));
+        if (hov) ImGui::SetTooltip("%s", tip);
+        ImGui::SameLine();
+        return ImGui::IsItemClicked();
+    };
+    auto divider = [&]() {
+        ImGui::SetCursorPosY(4);
+        ImGui::Dummy({9.0f, bs});
+        const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        dl->AddLine({(a.x + b.x) * 0.5f, a.y + 5}, {(a.x + b.x) * 0.5f, b.y - 5}, theme::kLine);
+        ImGui::SameLine();
+    };
+    // Going about.
+    if (button("##vhome", false, tr("Home view (isometric, fit all)"), [&](ImVec2 c, ImU32 col) {
+            dl->AddTriangle({c.x - 8, c.y - 1}, {c.x, c.y - 8}, {c.x + 8, c.y - 1}, col, 1.4f);
+            dl->AddRect({c.x - 6, c.y - 1}, {c.x + 6, c.y + 7}, col, 0, 0, 1.4f);
+        }))
+        cmd.home = true;
+    if (button("##vfit", false, tr("Zoom to fit  (F)"), [&](ImVec2 c, ImU32 col) {
+            for (int k = 0; k < 4; ++k) {
+                const float sx = k & 1 ? 1.0f : -1.0f, sy = k & 2 ? 1.0f : -1.0f;
+                dl->AddLine({c.x + sx * 8, c.y + sy * 8}, {c.x + sx * 8, c.y + sy * 3}, col, 1.4f);
+                dl->AddLine({c.x + sx * 8, c.y + sy * 8}, {c.x + sx * 3, c.y + sy * 8}, col, 1.4f);
+            }
+        }))
+        cmd.fit = true;
+    if (button("##vzoom", m_toolbox.active() == ToolId::Zoom, tr("Zoom: drag up and down in the view"), [&](ImVec2 c, ImU32 col) {
+            dl->AddCircle({c.x - 2, c.y - 2}, 6, col, 16, 1.4f);
+            dl->AddLine({c.x + 2.5f, c.y + 2.5f}, {c.x + 8, c.y + 8}, col, 2.0f);
+        }))
+        m_toolbox.setActive(ToolId::Zoom);
+    divider();
+    // The standard views: little cubes with the face looked at filled.
+    struct V {
+        const char* id;
+        const char* tip;
+        StandardView v;
+        int face; // 0 top, 1 front, 2 right, 3 iso
+    };
+    static const V kViews[] = {{"##vtop", "Top view", StandardView::Top, 0},
+                               {"##vfront", "Front view", StandardView::Front, 1},
+                               {"##vright", "Right view", StandardView::Right, 2},
+                               {"##viso", "Isometric view", StandardView::Isometric, 3}};
+    for (const V& v : kViews)
+        if (button(v.id, false, tr(v.tip), [&](ImVec2 c, ImU32 col) {
+                const ImVec2 t{c.x, c.y - 8}, l{c.x - 7, c.y - 4}, r{c.x + 7, c.y - 4}, m{c.x, c.y}, bl{c.x - 7, c.y + 4}, br{c.x + 7, c.y + 4}, b{c.x, c.y + 8};
+                if (v.face == 0) dl->AddQuadFilled(t, r, m, l, col);
+                if (v.face == 1) dl->AddQuadFilled(l, m, b, bl, col);
+                if (v.face == 2) dl->AddQuadFilled(m, r, br, b, col);
+                dl->AddQuad(t, r, m, l, col, 1.2f);
+                dl->AddQuad(l, m, b, bl, col, 1.2f);
+                dl->AddQuad(m, r, br, b, col, 1.2f);
+            })) {
+            cmd.view = v.v;
+            if (is2D) cmd.mode = ViewMode::Model3D;
+        }
+    divider();
+    // How bodies are drawn.
+    struct D {
+        const char* id;
+        const char* tip;
+        DisplayMode m;
+    };
+    static const D kModes[] = {{"##dshade", "Shaded", DisplayMode::Shaded},
+                               {"##dedges", "Shaded with edges", DisplayMode::ShadedWithEdges},
+                               {"##dwire", "Wireframe", DisplayMode::Wireframe},
+                               {"##dhidden", "Hidden lines", DisplayMode::HiddenLine}};
+    for (const D& d : kModes)
+        if (button(d.id, vp.displayMode == d.m, tr(d.tip), [&](ImVec2 c, ImU32 col) {
+                if (d.m == DisplayMode::Shaded || d.m == DisplayMode::ShadedWithEdges) dl->AddCircleFilled(c, 7.5f, (col & 0x00FFFFFFu) | 0x90000000u, 20);
+                if (d.m != DisplayMode::Shaded) dl->AddCircle(c, 7.5f, col, 20, 1.3f);
+                if (d.m == DisplayMode::Wireframe || d.m == DisplayMode::HiddenLine) {
+                    dl->AddEllipse(c, {7.5f, 3.0f}, col, 0, 20, 1.0f);
+                    if (d.m == DisplayMode::Wireframe) dl->AddEllipse(c, {3.0f, 7.5f}, col, 0, 20, 1.0f);
+                }
+            }))
+            vp.displayMode = d.m;
+    divider();
+    if (st.project && !is2D &&
+        button("##vsection", st.showSection, tr("Section view: cut the model with a plane"), [&](ImVec2 c, ImU32 col) {
+            dl->AddCircle(c, 7.5f, col, 20, 1.3f);
+            dl->AddLine({c.x - 9, c.y + 3}, {c.x + 9, c.y - 3}, col, 2.0f);
+        }))
+        st.showSection = !st.showSection;
+    if (button("##vgrid", vp.showGrid, tr("Grid"), [&](ImVec2 c, ImU32 col) {
+            for (int k = -1; k <= 1; ++k) {
+                dl->AddLine({c.x - 8, c.y + 5.0f * static_cast<float>(k)}, {c.x + 8, c.y + 5.0f * static_cast<float>(k)}, col, 1.0f);
+                dl->AddLine({c.x + 5.0f * static_cast<float>(k), c.y - 8}, {c.x + 5.0f * static_cast<float>(k), c.y + 8}, col, 1.0f);
+            }
+        }))
+        vp.showGrid = !vp.showGrid;
+    if (button("##vsnapg", st.snapGrid, tr("Snap to the grid"), [&](ImVec2 c, ImU32 col) {
+            dl->PathArcTo({c.x, c.y - 1}, 6.0f, 0.0f, kPi, 16); // a magnet
+            dl->PathStroke(col, 0, 2.2f);
+            dl->AddLine({c.x - 6, c.y - 1}, {c.x - 6, c.y - 7}, col, 2.2f);
+            dl->AddLine({c.x + 6, c.y - 1}, {c.x + 6, c.y - 7}, col, 2.2f);
+        }))
+        st.snapGrid = !st.snapGrid;
+    if (button("##vsnapp", st.snapPoints, tr("Snap to end points, middles and centres"), [&](ImVec2 c, ImU32 col) {
+            dl->AddRect({c.x - 5, c.y - 5}, {c.x + 5, c.y + 5}, col, 0, 0, 1.4f);
+            dl->AddCircleFilled(c, 1.8f, col);
+        }))
+        st.snapPoints = !st.snapPoints;
+    if (!is2D && button("##vpersp", cam.projection() == Projection::Orthographic, tr("Orthographic (off: perspective)  (P)"), [&](ImVec2 c, ImU32 col) {
+            dl->AddQuad({c.x - 8, c.y - 6}, {c.x + 8, c.y - 6}, {c.x + 8, c.y + 6}, {c.x - 8, c.y + 6}, col, 1.3f);
+            dl->AddLine({c.x - 3, c.y - 6}, {c.x - 3, c.y + 6}, col, 1.0f);
+            dl->AddLine({c.x + 3, c.y - 6}, {c.x + 3, c.y + 6}, col, 1.0f);
+        }))
+        cmd.toggleProjection = true;
+    ImGui::End();
+    ImGui::PopStyleVar(4);
+}
+
 void LandingUI::drawStatusBar(UiCommands& cmd, const Scene& scene, const OrbitCamera& cam, const UiState& st) {
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     const float h = theme::kStatusBarHeight;
@@ -3664,7 +3813,7 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
         const auto matches = completeCommand(typed);
         if (!matches.empty()) {
             const std::size_t n = std::min<std::size_t>(matches.size(), 8);
-            ImGui::SetNextWindowPos({inputMin.x, y - 6.0f}, ImGuiCond_Always, {0.0f, 1.0f});
+            ImGui::SetNextWindowPos({inputMin.x, y - kViewBarHeight - 6.0f}, ImGuiCond_Always, {0.0f, 1.0f}); // above the view bar
             ImGui::SetNextWindowBgAlpha(0.96f);
             ImGui::Begin("##complete", nullptr,
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
@@ -3683,10 +3832,10 @@ void LandingUI::drawCommandBar(UiCommands& cmd, UiState& st) {
         // History panel (toggle) or the last few lines after a command.
         const int lines = m_showHistory ? 12 : 3;
         const float ph = lineH * static_cast<float>(lines) + 16.0f;
-        // Over the canvas: clear of the tool rail and of the ViewCube in the right corner.
+        // Over the canvas: clear of the tool rails and of the view sphere in the right corner.
         const float left = mv->WorkPos.x + m_leftDockWidth;
         const float right = std::max(left + 320.0f, m_canvasMax.x - (m_showHistory ? 0.0f : 190.0f));
-        ImGui::SetNextWindowPos({left, y - ph});
+        ImGui::SetNextWindowPos({left, y - kViewBarHeight - ph}); // above the view bar
         ImGui::SetNextWindowSize({right - left, ph});
         ImGui::SetNextWindowBgAlpha(m_showHistory ? 0.97f : 0.82f);
         ImGuiWindowFlags hf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
@@ -3917,9 +4066,9 @@ void LandingUI::drawControlsWindow(UiState& st) {
             // The mouse and the fixed keys, then every shortcut as bound now (Preferences >
             // Keyboard Shortcuts changes them).
             std::vector<std::pair<std::string, std::string>> rows = {
-                {"ViewCube click", "Face / edge / corner view (26 views)"},
-                {"ViewCube drag", "Orbit (3D)"},
-                {"ViewCube right-click", "More views & windows"},
+                {"View sphere click", "The nearest of 26 views (faces, edges, corners)"},
+                {"View sphere drag", "Orbit (3D)"},
+                {"View sphere right-click", "More views & windows"},
                 {"Left drag (empty space)", "Orbit in 3D, pan in 2D"},
                 {"Right drag", "Orbit in 3D, pan in 2D"},
                 {"Right-click a body", "Its menu (or the selection's): rename, copy, hide, material..."},
@@ -4559,7 +4708,7 @@ void LandingUI::drawSimTransport(UiState& st) {
 float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom) {
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     constexpr float kWidth = 340.0f;
-    ImGui::SetNextWindowPos({mv->WorkPos.x + mv->WorkSize.x - kWidth, top});
+    ImGui::SetNextWindowPos({mv->WorkPos.x + mv->WorkSize.x - m_rightRailWidth - kWidth, top});
     ImGui::SetNextWindowSize({kWidth, bottom - top});
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |

@@ -145,11 +145,13 @@ The top bar of the canvas switches between three windows of the active file (als
 
 Each window keeps its own camera, so switching back and forth never loses your view.
 
-**ViewCube** (bottom right): click any face, edge or corner for one of 26 views, drag it to orbit,
+**View sphere** (bottom right): a shaded ball turning with the view, the face names (*Top*, *Front*,
+*Right*...) where their directions meet it. Click on it for the view nearest that spot (26 views: a
+cube's faces, edges and corners; a spot marks the one under the mouse), drag it to orbit,
 use Home, the roll arrows (top right: spin the view 90° around the viewing direction, Shift for 15°)
 and the ◀ ▶ arrows by the projection badge (turn 90° around Z). The badge shows the roll angle;
 right-click for more views, including Level View to reset the roll. Picking a face, edge or corner
-always comes back level. In the 2D window its faces pick
+always comes back level. In the 2D window its face views pick
 the drawing plane; edges and corners open the 3D window at that angle.
 
 **Pictures and videos:** `RENDER picture.png` makes a photoreal, path-traced picture of the model

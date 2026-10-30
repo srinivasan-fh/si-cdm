@@ -11,12 +11,20 @@ page takes you through the window and a first part, from a sketch to G-code.
 - **Options bar** (below it): the active tool's options on the left; on the right the
   *2D Drawing*, *3D Model* and *Simulation* windows, the display mode, perspective, *Fit* and
   the grid.
-- **Tool rail** (left edge): select, move and view tools, sketch tools, solids, cuts,
-  sculpting brushes and more. Hover over one for its name and key.
+- **Tool rails** on all four sides of the canvas. Hover over a tool for its name and key;
+  right-click or hold one with a corner mark for the rest of its kind.
+  - **Left:** select, move and view tools, solids, features, surfaces and mesh tools.
+  - **Top (*Sketch*):** point, line, arc, circle, rectangle and spline, then trim, extend and
+    offset.
+  - **Right:** sculpting brushes, cuts and booleans, direct editing, and armour.
+  - **Bottom (*View*):** home, fit and zoom; top, front, right and isometric views; shaded,
+    shaded with edges, wireframe and hidden-line display; the section view, grid, snapping to the
+    grid and to points, and perspective or orthographic.
 - **Panel** (beside the rail): *Model* (`M`) lists the bodies, sketches, mates and images;
   *Library* (`K`) has ready-made parts; *CAM* (`J`) runs the machining jobs.
-- **Canvas**: the model. The ViewCube (bottom right) turns the view; click a face, edge or
-  corner of it.
+- **Canvas**: the model. The view sphere (bottom right) turns the view: click on it for the
+  view nearest that spot (the 26 of a cube's faces, edges and corners: *Top*, *Front*, *Right*
+  are named on it), or drag it to orbit.
 - **Command bar** (bottom): everything the menus and tools do is also a command you can
   type, such as `BOX 40 20 10`. `HELP` lists them, `HELP BOX` explains one, and Tab completes
   a name. The log above it shows what each action did.

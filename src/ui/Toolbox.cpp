@@ -82,8 +82,104 @@ std::string toolKeysText(ToolId id) {
     return c.empty() ? std::string() : chordText(c.front());
 }
 
+Toolbox::Rail Toolbox::railOf(ToolCategory c) {
+    switch (c) {
+    case ToolCategory::Sketch: return Rail::Top;
+    case ToolCategory::Sculpt:
+    case ToolCategory::Cut:
+    case ToolCategory::Wearable: return Rail::Right;
+    default: return Rail::Left;
+    }
+}
+
+float Toolbox::topHeight() { return kSlot + kPad * 2.0f; }
+float Toolbox::rightWidth() { return kSlot + kPad * 2.0f; }
+
+namespace {
+
+void beginRail(const char* id, ImVec2 pos, ImVec2 size) {
+    ImGui::SetNextWindowPos(pos);
+    ImGui::SetNextWindowSize(size);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {kPad, kPad});
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {kGap, kGap});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::Begin(id, nullptr, flags);
+}
+
+void endRail() {
+    ImGui::End();
+    ImGui::PopStyleVar(4);
+}
+
+} // namespace
+
+float Toolbox::drawTop(float x0, float x1, float y) {
+    m_rail = Rail::Top;
+    const float h = topHeight();
+    beginRail("##toolstop", {x0, y}, {x1 - x0, h});
+    {
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        ImGui::GetWindowDrawList()->AddLine({wp.x, wp.y + ws.y - 1}, {wp.x + ws.x, wp.y + ws.y - 1}, theme::kBorder);
+    }
+    // "SKETCH", then its tools in a row, a divider between kinds.
+    {
+        // The caption, centred on the row of slots.
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const ImVec2 ts = ImGui::CalcTextSize(tr("SKETCH"));
+        ImGui::GetWindowDrawList()->AddText({at.x + 4, at.y + (kSlot - ts.y) * 0.5f}, theme::kTextDim, tr("SKETCH"));
+        ImGui::Dummy({ts.x + 14, kSlot});
+        ImGui::SameLine();
+    }
+    const auto groups = toolGroups();
+    bool first = true;
+    for (std::size_t g = 0; g < groups.size(); ++g) {
+        if (railOf(groups[g].category) != Rail::Top) continue;
+        const bool edit = !groups[g].tools.empty() && isSketchEditTool(groups[g].tools[0]);
+        if (!first) ImGui::SameLine();
+        if (edit && !first) { // the editing tools apart from the drawing ones
+            ImGui::Dummy({9.0f, kSlot});
+            const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddLine({(a.x + b.x) * 0.5f, a.y + 6}, {(a.x + b.x) * 0.5f, b.y - 6}, theme::kLine);
+            ImGui::SameLine();
+        }
+        drawSlot(static_cast<int>(g), kSlot);
+        first = false;
+    }
+    endRail();
+    return h;
+}
+
+float Toolbox::drawRight(float top, float bottom, float right) {
+    m_rail = Rail::Right;
+    const float w = rightWidth();
+    beginRail("##toolsright", {right - w, top}, {w, bottom - top});
+    {
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        ImGui::GetWindowDrawList()->AddLine({wp.x, wp.y}, {wp.x, wp.y + ws.y}, theme::kBorder);
+    }
+    const auto groups = toolGroups();
+    bool any = false;
+    for (std::size_t g = 0; g < groups.size(); ++g) {
+        if (railOf(groups[g].category) != Rail::Right) continue;
+        if (any && groups[g].category != groups[g - 1].category) {
+            ImGui::Dummy({kSlot, 5.0f});
+            const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+            const float yy = (a.y + b.y) * 0.5f;
+            ImGui::GetWindowDrawList()->AddLine({a.x + 4, yy}, {b.x - 4, yy}, theme::kLine, 1.0f);
+        }
+        drawSlot(static_cast<int>(g), kSlot);
+        any = true;
+    }
+    endRail();
+    return w;
+}
+
 float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen, int& panelTab) {
     m_drawing2D = drawing2D;
+    m_rail = Rail::Left;
     const int cols = m_twoColumns ? 2 : 1;
     const float width = kPad * 2.0f + kSlot * static_cast<float>(cols) + kGap * static_cast<float>(cols - 1);
 
@@ -175,6 +271,7 @@ float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen, in
     const auto groups = toolGroups();
     int col = 0;
     for (std::size_t g = 0; g < groups.size(); ++g) {
+        if (railOf(groups[g].category) != Rail::Left) continue;
         if (g == 0 || groups[g].category != groups[g - 1].category) {
             // Section divider: always starts a new row.
             col = 0;
@@ -249,8 +346,10 @@ void Toolbox::drawSlot(int gi, float size) {
         ImGui::EndTooltip();
     }
 
-    // Flyout opens beside the rail, aligned with the slot.
-    ImGui::SetNextWindowPos({ImGui::GetWindowPos().x + ImGui::GetWindowWidth() + 4.0f, lo.y - 4.0f});
+    // Flyout opens beside the rail, towards the canvas, aligned with the slot.
+    if (m_rail == Rail::Top) ImGui::SetNextWindowPos({lo.x - 4.0f, ImGui::GetWindowPos().y + ImGui::GetWindowHeight() + 4.0f});
+    else if (m_rail == Rail::Right) ImGui::SetNextWindowPos({ImGui::GetWindowPos().x - 4.0f, lo.y - 4.0f}, ImGuiCond_Always, {1.0f, 0.0f});
+    else ImGui::SetNextWindowPos({ImGui::GetWindowPos().x + ImGui::GetWindowWidth() + 4.0f, lo.y - 4.0f});
     drawFlyout(gi);
     ImGui::PopID();
 }
