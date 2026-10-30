@@ -716,6 +716,9 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
       (so two blocks meet face to face exactly). The dot and a drag on the body land on a point
       you can see in full 3D (closer or further away too: point on point); a point hidden
       behind something is snapped to only within the view, never pulling the body through.
+      Holding Alt while dragging sees through: any point, hidden or not, in full 3D (the
+      square turns orange, marked *snap (through)*), to put a part inside another or against
+      its far side.
     - `V` again switches mode. *Snap* (or holding Ctrl) moves in steps (1 mm, 15°, ×0.1 by
       default). Esc cancels a drag.
     - Each drag is recorded as a command, so it is in the history and UNDO takes it back:

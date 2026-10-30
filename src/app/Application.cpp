@@ -1607,8 +1607,9 @@ void Application::handleViewportInput() {
             if (!intersectPlane(ray, m_movePlanePoint, cam.forward(), t)) break;
             Vec3 by = ray.at(t) - m_movePlanePoint;
             m_snapHit.reset();
-            // Onto a point in sight, in full 3D; else a hidden one, within the view.
-            if (m_uiState.snapMoveToPoints && (m_snapHit = freeSnap(by))) by = m_snapHit->move;
+            // Onto a point in sight, in full 3D; else a hidden one, within the view (Alt held:
+            // any point in full 3D, hidden or not).
+            if (m_uiState.snapMoveToPoints && (m_snapHit = freeSnap(by, io.KeyAlt))) by = m_snapHit->move;
             for (std::size_t k = 0; k < m_moveBodies.size(); ++k)
                 if (m_moveBodies[k] >= 0 && m_moveBodies[k] < static_cast<int>(m_doc.scene.bodies().size()))
                     m_doc.scene.bodies()[static_cast<std::size_t>(m_moveBodies[k])].offset = m_moveStarts[k] + by;
@@ -1625,9 +1626,10 @@ void Application::handleViewportInput() {
             if (gizmoMode == GizmoMode::Move && m_uiState.snapMoveToPoints) { // onto another body's corner, edge or face middle
                 const Vec3 e = m_gizmoHandle.axis == 0 ? Vec3{1, 0, 0} : m_gizmoHandle.axis == 1 ? Vec3{0, 1, 0} : Vec3{0, 0, 1};
                 const bool along = m_gizmoHandle.kind == GizmoHandle::Axis, inPlane = m_gizmoHandle.kind == GizmoHandle::Plane;
-                // The dot: onto a point in sight in full 3D, else a hidden one within the view.
+                // The dot: onto a point in sight in full 3D, else a hidden one within the view
+                // (Alt held: any, in full 3D).
                 if (along || inPlane) m_snapHit = gizmoSnap(m_snapMoving, m_snapTargets, m_gizmoDelta.move, gizmoProjector(), 12.0f, along ? e : Vec3{}, inPlane ? e : Vec3{});
-                else m_snapHit = freeSnap(m_gizmoDelta.move);
+                else m_snapHit = freeSnap(m_gizmoDelta.move, io.KeyAlt);
                 if (m_snapHit) m_gizmoDelta.move = m_snapHit->move;
             }
             // The preview: the body as it began, done to as the drag says so far.
@@ -3062,9 +3064,11 @@ void Application::startSnap(const std::vector<int>& moving) {
     }
 }
 
-std::optional<GizmoSnapHit> Application::freeSnap(const Vec3& move) {
-    if (m_snapSeen.size() != m_snapTargets.size()) m_snapSeen.assign(m_snapTargets.size(), -1);
+std::optional<GizmoSnapHit> Application::freeSnap(const Vec3& move, bool xray) {
     const GizmoProject project = gizmoProjector();
+    m_snapXray = xray;
+    if (xray) return gizmoSnap(m_snapMoving, m_snapTargets, move, project, 12.0f, {}, {}); // seen through: any point
+    if (m_snapSeen.size() != m_snapTargets.size()) m_snapSeen.assign(m_snapTargets.size(), -1);
     // In sight: nothing but what is being moved between the camera and the point (asked once
     // per point a drag: the camera and the other bodies hold still meanwhile).
     auto seen = [&](std::size_t i) {
@@ -3091,10 +3095,10 @@ void Application::drawSnapMarker() {
     const auto at = gizmoProjector()(m_snapHit->to);
     if (!at) return;
     ImDrawList* fg = ImGui::GetForegroundDrawList();
-    const ImU32 col = IM_COL32(80, 230, 255, 255);
+    const ImU32 col = m_snapXray ? IM_COL32(255, 170, 60, 255) : IM_COL32(80, 230, 255, 255);
     fg->AddRect({at->x - 6, at->y - 6}, {at->x + 6, at->y + 6}, col, 0.0f, 0, 2.0f);
     fg->AddCircleFilled({at->x, at->y}, 2.5f, col);
-    fg->AddText({at->x + 9, at->y - 18}, col, tr("snap"));
+    fg->AddText({at->x + 9, at->y - 18}, col, m_snapXray ? tr("snap (through)") : tr("snap"));
 }
 
 void Application::drawGizmo() {

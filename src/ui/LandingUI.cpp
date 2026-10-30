@@ -2582,7 +2582,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
         if (st.gizmoMode == 0) {
             ImGui::SameLine();
             ImGui::Checkbox(tr("Points"), &st.snapMoveToPoints);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A move lands on another body's corner, edge or face middle when it comes near one on screen"));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A move lands on another body's corner, edge or face middle when it comes near one on screen (hold Alt while dragging to land on hidden ones too)"));
         }
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
