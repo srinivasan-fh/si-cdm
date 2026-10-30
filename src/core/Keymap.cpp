@@ -146,6 +146,7 @@ const std::vector<KeyAction>& keyActions() {
         {"edit.show-all", "Alt+Shift+H", SICDM_TR_NOOP("Show every body"), SICDM_TR_NOOP("Edit")},
         {"edit.cancel", "Escape", SICDM_TR_NOOP("Cancel, or clear the selection"), SICDM_TR_NOOP("Edit")},
         {"edit.finish", "Enter, NumEnter", SICDM_TR_NOOP("Finish (a polyline, an extrusion's depth, a brush size)"), SICDM_TR_NOOP("Edit")},
+        {"dialog.close", "Escape", SICDM_TR_NOOP("Close a dialog (as its Cancel)"), SICDM_TR_NOOP("Edit"), "dialog"},
         {"commandline.focus", "Space", SICDM_TR_NOOP("Type a command"), SICDM_TR_NOOP("Edit"), "model"},
         {"view.fit", "F", SICDM_TR_NOOP("Zoom to fit"), SICDM_TR_NOOP("View")},
         {"view.front", "1, Num1", SICDM_TR_NOOP("Front view"), SICDM_TR_NOOP("View")},
@@ -214,6 +215,8 @@ bool keyContextsApart(const std::string& a, const std::string& b) {
         return std::string(k ? k->context : "");
     };
     const std::string x = ctx(a), y = ctx(b);
+    // A dialog's keys act only while one is open, when nothing else does.
+    if ((x == "dialog") != (y == "dialog")) return true;
     // "model" and "sim" never overlap; "sculpt" is outside the Simulation window, so it
     // overlaps "model" but not "sim".
     auto apart = [](const std::string& p, const std::string& q) { return (p == "sim" && (q == "model" || q == "sculpt")); };

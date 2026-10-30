@@ -1996,7 +1996,7 @@ void Application::frame(float dt) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(tr("Later"), {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(tr("Later"), {90, 0}) || keyActionPressed("dialog.close", false, true)) ImGui::CloseCurrentPopup();
         ImGui::TextDisabled("%s", tr("Restored files open in their own tabs, still unsaved. Later: type RECOVER."));
         ImGui::EndPopup();
     }
@@ -2018,7 +2018,7 @@ void Application::frame(float dt) {
             ImGui::SetClipboardText(text.str().c_str());
         }
         ImGui::SameLine();
-        if (ImGui::Button(tr("OK"), {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        if (ImGui::Button(tr("OK"), {90, 0}) || keyActionPressed("dialog.close", false, true)) {
             acknowledgeCrashReports();
             m_newCrashes.clear();
             ImGui::CloseCurrentPopup();
@@ -2054,7 +2054,7 @@ void Application::frame(float dt) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(tr("Cancel"), {90, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(tr("Cancel"), {90, 0}) || keyActionPressed("dialog.close", false, true)) ImGui::CloseCurrentPopup();
         if (!canSave) ImGui::TextDisabled("%s", tr("Some files were never saved: use File > Save As on them first."));
         ImGui::EndPopup();
     }

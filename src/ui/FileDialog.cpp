@@ -1,4 +1,5 @@
 #include "ui/FileDialog.hpp"
+#include "ui/KeyInput.hpp"
 #include "core/Translate.hpp"
 
 #include "ui/Theme.hpp"
@@ -199,7 +200,7 @@ std::optional<std::string> FileDialog::draw() {
         ImGui::PopClipRect();
     }
     ImGui::SameLine(buttonsX);
-    const bool cancel = ImGui::Button(tr("Cancel"), {kButton, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    const bool cancel = ImGui::Button(tr("Cancel"), {kButton, 0}) || keyActionPressed("dialog.close", false, true);
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, theme::vec(theme::kAccent));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::vec(theme::kAccentHover));

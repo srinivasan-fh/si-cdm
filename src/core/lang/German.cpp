@@ -1257,6 +1257,7 @@ const char* const kGerman[][2] = {
     {"Stronger brush", "Stärkerer Pinsel"},
     {"Type a command", "Befehl eingeben"},
     {"Weaker brush", "Schwächerer Pinsel"},
+    {"Close a dialog (as its Cancel)", "Dialog schließen (wie Abbrechen)"},
 };
 
 

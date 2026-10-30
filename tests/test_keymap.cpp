@@ -131,3 +131,14 @@ TEST_CASE("Keymap: Esc, Enter, the player's and the brush keys; places that neve
     CHECK(!setKeyBinding(p, "view.grid", "Escape", false, &why));
     CHECK(why.find("edit.cancel") != std::string::npos);
 }
+
+TEST_CASE("Keymap: a dialog's Esc is an action of its own, apart from everything else") {
+    Preferences p;
+    std::string why;
+    CHECK(chordsText(boundChords(p, "dialog.close")) == "Escape");
+    CHECK(keyContextsApart("dialog.close", "edit.cancel")); // both Esc by default, never together
+    CHECK(keyContextsApart("dialog.close", "tool.move"));
+    CHECK(actionsOnChord(p, parseChords("Escape")->front(), "dialog.close").empty());
+    REQUIRE(setKeyBinding(p, "dialog.close", "F9, Escape", false, &why));
+    CHECK(chordsText(boundChords(p, "dialog.close")) == "F9, Escape");
+}

@@ -35,7 +35,7 @@ struct KeyAction {
     const char* label;    // what it does
     const char* group;    // File, Edit, View, Panels ...
     // Where it acts: "" everywhere; "sim" only in the Simulation window, "model" only outside
-    // it, "sculpt" only with a sculpt brush. Actions in two different such places may share keys.
+    // it, "sculpt" only with a sculpt brush, "dialog" only in a dialog (when nothing else acts). Actions in two different such places may share keys.
     const char* context = "";
 };
 // The actions other than the tools (whose ids are "tool." and the tool's name, lower case,

@@ -954,7 +954,7 @@ void LandingUI::drawRenamePopup(UiCommands& cmd, UiState& st, const Scene& scene
         else if (name.find('"') != std::string::npos) problem = tr("A name can't contain quotes");
         else if (name != old && std::any_of(bodies.begin(), bodies.end(), [&](const Body& b) { return b.name == name; })) problem = tr("Another body has this name");
         if (problem) ImGui::TextColored(theme::vec(theme::kError), "%s", problem);
-        bool done = ImGui::IsKeyPressed(ImGuiKey_Escape);
+        bool done = keyActionPressed("dialog.close", false, true);
         ImGui::BeginDisabled(problem != nullptr);
         if ((ImGui::Button(tr("Rename")) || enter) && !problem) {
             if (name != old) cmd.commands.push_back("RENAME \"" + old + "\" TO \"" + name + "\"");
@@ -3775,7 +3775,7 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(tr("Cancel"), {110, 0}) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(tr("Cancel"), {110, 0}) || keyActionPressed("dialog.close", false, true)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -5398,7 +5398,7 @@ void LandingUI::drawSheetWindow(UiCommands& cmd, UiState& st) {
                 }
             }
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_sheetDimFirst = -1;
+        if (keyActionPressed("edit.cancel")) m_sheetDimFirst = -1;
     }
     dl->PopClipRect();
     ImGui::End();
@@ -5428,7 +5428,7 @@ void LandingUI::drawMateWindow(UiCommands& cmd, UiState& st) {
     }
     if (st.mateFirst.empty()) ImGui::TextUnformatted(tr("Click a face on the part that stays"));
     else ImGui::Text(tr("%s picked: now click a face on the part to move"), st.mateFirst.c_str());
-    if (ImGui::Button(tr("Cancel")) || ImGui::IsKeyPressed(ImGuiKey_Escape)) open = false;
+    if (ImGui::Button(tr("Cancel")) || keyActionPressed("dialog.close", false, true)) open = false;
     ImGui::End();
     if (!open) {
         st.mateTool.clear();

@@ -66,8 +66,8 @@ bool chordPressed(const KeyChord& c, bool repeat) {
     return commandModifierHeld() == c.ctrl && io.KeyShift == c.shift && io.KeyAlt == c.alt;
 }
 
-bool keyActionPressed(const std::string& id, bool repeat) {
-    const bool typing = ImGui::GetIO().WantTextInput;
+bool keyActionPressed(const std::string& id, bool repeat, bool whileTyping) {
+    const bool typing = ImGui::GetIO().WantTextInput && !whileTyping;
     for (const KeyChord& c : boundChords(preferences(), id)) {
         if (typing && !c.ctrl && !c.alt) continue; // a plain key is typed into the field
         if (chordPressed(c, repeat)) return true;

@@ -11,7 +11,8 @@
 namespace sicdm {
 
 // Any of the action's chords pressed now. `repeat`: also while the key is held down.
-bool keyActionPressed(const std::string& id, bool repeat = false);
+// `whileTyping`: also plain keys while a text field has the keyboard (a dialog's own keys).
+bool keyActionPressed(const std::string& id, bool repeat = false, bool whileTyping = false);
 bool chordPressed(const KeyChord& chord, bool repeat = false);
 // The tools' own keys, for the keymap's defaults (once, at start).
 void registerToolKeys();

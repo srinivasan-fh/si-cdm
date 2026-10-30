@@ -73,7 +73,9 @@ KEYS RESET edit.hide | KEYS RESET ALL
   punctuation, with `Ctrl` (`Cmd` on a Mac), `Shift` and `Alt`. The modifiers must be held exactly
   as named. In the window, a click on the action's button again stops listening (so Esc can be
   set as a key too).
-- **Not keys:** the mouse; and a dialog's own Esc (closing it) stays as it is.
+- **Dialogs:** `dialog.close` (Esc) closes a dialog as its Cancel would; it acts only while a
+  dialog is open, so it may share a key with anything else.
+- **Not keys:** the mouse.
 - **Typing:** while you type in a field, only keys with Ctrl or Alt act, so a single-letter
   shortcut never takes a typed letter.
 - **Where they are kept:** with the preferences (above), so they apply to every project.
