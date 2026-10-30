@@ -339,6 +339,62 @@ SecondOrder secondOrder(const ToleranceStack& st) {
     return so;
 }
 
+// The inverse of the standard normal distribution (Acklam's, about 1e-9 relative).
+double normalQuantile(double p) {
+    static const double a[] = {-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00};
+    static const double b[] = {-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01};
+    static const double c[] = {-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00};
+    static const double d[] = {7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00};
+    p = std::clamp(p, 1e-12, 1 - 1e-12);
+    if (p < 0.02425) {
+        const double q = std::sqrt(-2 * std::log(p));
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+    }
+    if (p > 1 - 0.02425) {
+        const double q = std::sqrt(-2 * std::log(1 - p));
+        return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+    }
+    const double q = p - 0.5, r = q * q;
+    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+}
+
+// The loop's own mean and variance, integrated over every item's distribution with a fixed
+// quasi-random point set (Halton, shifted once by a fixed amount): the same every time, close
+// to exact with smooth loops and at kinks alike (no derivatives taken).
+std::pair<double, double> vectorMoments(const ToleranceStack& st, int points = 32768) {
+    const std::size_t n = st.items.size();
+    std::vector<int> primes;
+    for (int k = 2; primes.size() < n; ++k) {
+        bool prime = true;
+        for (const int q : primes) prime = prime && k % q != 0;
+        if (prime) primes.push_back(k);
+    }
+    std::vector<double> lo(n), hi(n), sd(n), shift(n), x(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        bandOf(st.items[i], lo[i], hi[i]);
+        sd[i] = stackItemSigma(st.items[i]);
+        shift[i] = std::fmod(0.5 + 0.6180339887498949 * static_cast<double>(i + 1), 1.0);
+    }
+    double sum = 0, sum2 = 0;
+    for (int k = 1; k <= points; ++k) {
+        for (std::size_t i = 0; i < n; ++i) {
+            double u = 0, f = 1.0 / primes[i];
+            for (int m = k; m > 0; m /= primes[i], f /= primes[i]) u += f * (m % primes[i]);
+            u = std::fmod(u + shift[i], 1.0);
+            const double mid = 0.5 * (lo[i] + hi[i]), w = hi[i] - lo[i];
+            switch (st.items[i].dist) {
+            case StackDist::Uniform: x[i] = lo[i] + w * u; break;
+            case StackDist::Triangular: x[i] = u < 0.5 ? lo[i] + w * std::sqrt(u / 2) : hi[i] - w * std::sqrt((1 - u) / 2); break;
+            default: x[i] = mid + sd[i] * normalQuantile(u); break;
+            }
+        }
+        const double v = stackValue(st, x);
+        sum += v, sum2 += v * v;
+    }
+    const double mean = sum / points;
+    return {mean, std::max(0.0, sum2 / points - mean * mean)};
+}
+
 } // namespace
 
 StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
@@ -372,10 +428,13 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
     if (st.vector && n > 0) {
         const VectorExtremes ex = vectorExtremes(st);
         r.wcLow = ex.low, r.wcHigh = ex.high;
+        // The spread: the loop's own mean and variance (integrated, not a Taylor estimate, so
+        // right at a kink too); each item's share of it from the second-order breakdown.
         const SecondOrder so = secondOrder(st);
-        r.mean = so.mean;
-        var = so.variance;
-        for (std::size_t i = 0; i < n; ++i) r.variance[i] = so.share[i];
+        const auto [mean, variance] = vectorMoments(st);
+        r.mean = mean;
+        var = variance;
+        for (std::size_t i = 0; i < n; ++i) r.variance[i] = so.variance > 0 ? so.share[i] / so.variance * variance : 0.0;
     }
     for (std::size_t i = 0; i < n; ++i) {
         r.variance[i] = var > 0 ? 100.0 * r.variance[i] / var : 0.0;
@@ -487,8 +546,8 @@ StackResult analyzeStack(const ToleranceStack& st, std::uint64_t seed) {
         }
     }
     if (st.vector)
-        r.notes.push_back("A vector stack: the worst case is the loop's own extremes over the tolerance box, RSS is taken to second order (the loop's bend "
-                          "moves the mean and adds spread), and the Monte Carlo run uses the loop itself");
+        r.notes.push_back("A vector stack: the worst case is the loop's own extremes over the tolerance box, RSS the loop's own mean and spread "
+                          "(integrated over every dimension's distribution), and the Monte Carlo run uses the loop itself");
     if (rssCapped)
         r.notes.push_back("With so few dimensions, 3 sigma reaches past the worst case: RSS is taken as the worst case there (the Monte Carlo run shows the real spread)");
     // The RSS figure takes the result as normal; the Monte Carlo run draws each dimension

@@ -1312,21 +1312,25 @@ STACK Pin REPORT
   - **Worst case:** the loop's least and greatest result over the tolerance box. Every corner is
     tried (up to 14 dimensions; beyond, the corners the sensitivities point to), then a search
     along each dimension finds an extreme inside a band, such as a loop folding back to close.
-  - **RSS:** to second order: the loop's bend moves the mean and adds spread, worked out from its
-    first and second derivatives over each dimension's own sigma.
+  - **RSS:** the loop's own mean and spread, integrated over every dimension's distribution
+    (normal, uniform or triangular) with a quasi-random set of 32768 points, so the bend's shift
+    of the mean and a kink (a loop that can close to exactly nothing) are both counted. Each
+    dimension's share comes from the second-order sensitivities.
   - **Monte Carlo:** the loop evaluated for every sample.
   - **Sensitivities:** each dimension's effect at the nominal sizes, worked out numerically, are
     listed (an angle's in mm per degree), with each one's share of the variance.
 - Checked by hand on the example above: nominal √(100² + 50²) = 111.803 mm; sensitivities
   0.894, 0.447 and −0.781 mm/deg; worst case ±0.524 mm. Measured along Y with the turn
-  ±10°, the mean is 50·e^(−σ²/2) = 49.915 mm, not the straight-line 50 (second order and Monte
-  Carlo agree); a loop folding back on itself has a least result of exactly 0.
+  ±10°, the mean is 50·e^(−σ²/2) = 49.915 mm, not the straight-line 50 (RSS and Monte Carlo
+  agree); a loop folding back on itself has a least result of exactly 0, and its RSS mean and
+  sigma agree with Monte Carlo's within 2–3% (the straight-line view says 0 and 0).
 - An angle's size and tolerance are always degrees, whatever the units.
 
 **Limits:**
 
-- A vector stack's RSS is second order: right for loops that bend smoothly, approximate at a
-  kink (a loop that can close to exactly nothing); there the Monte Carlo figures are the closest.
+- A vector stack's RSS is the integrated mean ± k·sigma: it doesn't model a skewed result's
+  tails (a folding loop is skewed); for its yield, use the Monte Carlo figures. The shares of
+  the variance are from the second-order view, so they are approximate at a kink.
 - Geometric tolerances (position, flatness...) aren't turned into contributions on their own.
   Add them as dimensions with their zone as the band.
 

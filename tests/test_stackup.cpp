@@ -339,10 +339,10 @@ TEST_CASE("Vector stacks: a 2D loop with an angle, by its sensitivities and the 
                 most = std::max(most, std::hypot(a + b * std::cos(q), b * std::sin(q)));
             }
     CHECK(std::fabs(r.wcHigh - most) < 1e-6);
-    // The second-order middle is nearer what the loop really gives than the straight-line
-    // view (which says 0).
-    CHECK(std::fabs(r.mean - r.mcMean) < r.mcMean);
-    CHECK(r.sigma > 0.3);
+    // RSS at the kink: the loop's own mean and spread, integrated over every dimension, agree
+    // with the sampled loop (the straight-line view says 0 and 0).
+    CHECK(std::fabs(r.mean - r.mcMean) < 0.02 * r.mcMean);
+    CHECK(std::fabs(r.sigma - r.mcSigma) < 0.03 * r.mcSigma);
     bool noted = false;
     for (const std::string& n : r.notes) noted = noted || n.find("vector stack") != std::string::npos;
     CHECK(noted);
