@@ -639,7 +639,25 @@ void LandingUI::drawArmatureWindow(UiCommands& cmd, UiState& st, const Scene& sc
     std::string skins;
     for (const Body& b : scene.bodies())
         if (b.skin && b.skin->armature == body->name) skins += (skins.empty() ? "" : ", ") + b.name;
-    if (!skins.empty()) ImGui::TextDisabled(tr("Skins following it: %s"), skins.c_str());
+    if (!skins.empty()) {
+        ImGui::TextDisabled(tr("Skins following it: %s"), skins.c_str());
+        // A new ball's skin starts plain: the detail sculpted round another ball copied onto it.
+        if (ball.parent < 0) ImGui::BeginDisabled();
+        const bool mirrored = st.armatureMirror > 0;
+        if (!mirrored) {
+            ImGui::SetNextItemWidth(90);
+            ImGui::InputInt(tr("From ball"), &m_armDetailFrom);
+            m_armDetailFrom = std::clamp(m_armDetailFrom, 1, static_cast<int>(arm.balls.size()));
+            ImGui::SameLine();
+        }
+        if (ImGui::Button(tr("Copy Detail Onto It"))) {
+            const std::string to = std::to_string(sel + 1);
+            cmd.commands.push_back("ARMATURE " + name + " DETAIL " + (mirrored ? "TO " + to + mirrorWord : "FROM " + std::to_string(m_armDetailFrom) + " TO " + to));
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", tr("What was sculpted round the other ball (or, with Mirror on, round this one's mirror twin) copied onto this ball's skin"));
+        if (ball.parent < 0) ImGui::EndDisabled();
+    }
     ImGui::End();
 }
 

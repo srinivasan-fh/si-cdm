@@ -98,6 +98,16 @@ struct SkinCarry {
 };
 bool reskinWithDetail(const Armature& newRest, const SkinOptions& o, const SkinCarry& carry, MeshData& out, SkinData& skin, std::string* why = nullptr);
 
+// What was sculpted round ball `from` (its link's skin: the vertices it weights most) copied
+// onto ball `to`'s (a new ball's skin starts plain): the skin's rest pose with each vertex on
+// `to`'s link given the detail of the place that matches it on `from`'s (as far along, turned
+// and sized with the link), in proportion to how much `to`'s link weights it (so it blends
+// into what is about it). `mirrorAxis` 0, 1, 2: the place is instead the vertex mirrored
+// across the plane through the root ball square to X, Y or Z, and the detail mirrored with it.
+// Both balls must have a link (not the root); the skin must keep its unsculpted shape (`base`).
+// `rest`: the armature at rest. False, with why, when it can't.
+bool copySkinDetail(const SkinData& skin, const Armature& rest, int from, int to, int mirrorAxis, std::vector<Vec3>& out, std::string* why = nullptr);
+
 // The nearest of a set of points to a place, by cells (a cube a 64th of their extent unless
 // given): its index, or -1 when none is within `within`.
 class NearestPoints {

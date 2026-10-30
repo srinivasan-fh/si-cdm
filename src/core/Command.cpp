@@ -324,10 +324,10 @@ constexpr CommandSpec kCommands[] = {
      "Curve brushes: a round-ended tube laid along a stroke on the surface, or a row of shapes along it, each facing along the stroke"},
     {"ARMATURE", "ZSPHERE ZSPHERES", "ARMATURE | ARMATURE NEW [name] [AT x,y,z] [RADIUS r] | ARMATURE name ADD [TO n] AT x,y,z [RADIUS r] [MIRROR X|Y|Z] | "
      "INSERT n | MOVE n TO x,y,z | BY dx,dy,dz [CHAIN] | RADIUS n r | REMOVE n | LIST | SHOW | HIDE | SKIN [NAME skin] [VOXEL v] [BLEND b] [SMOOTH k] | "
-     "POSE n TURN ax,ay,az | AXIS x,y,z ANGLE a | RESET [MIRROR X|Y|Z] | POSE RESET",
+     "DETAIL [FROM n] TO m [MIRROR X|Y|Z] | POSE n TURN ax,ay,az | AXIS x,y,z ANGLE a | RESET [MIRROR X|Y|Z] | POSE RESET",
      "Sketch a form as balls joined by tapered links (like ZSpheres): add balls on balls, mirrored across the root's plane; "
      "SKIN fuses them into one smooth closed mesh bound to the armature, and POSE turns a ball and everything on it, bending "
-     "the skin (edits to the skin are kept)"},
+     "the skin (edits to the skin are kept); DETAIL copies what was sculpted round one ball onto another's skin"},
     {"STACK", "STACKUP TOLSTACK", "STACK | STACK NEW name [NOTE text] [SPEC lo hi | MIN lo | MAX hi] [GAP from to ALONG dir] [SAMPLES n] [VECTOR] [MEASURE dir | DISTANCE] | "
      "STACK name ADD [label] nominal | BODY body ALONG dir | DIM n [TOL t | TOL upper lower | LIMITS hi lo | FIT code | GENERAL f|m|c|v] "
      "[MINUS] [SENS k] [NORMAL [CP c] | UNIFORM | TRIANGULAR] [DIR dir | ANGLE [AXIS dir]] | STACK name EDIT n ... | REMOVE n | SPEC ... | GAP ... | "

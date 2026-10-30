@@ -216,24 +216,32 @@ enum class Refit {
     Rebuilt   // balls added or taken away: skinned again, what was sculpted or painted kept
 };
 
+// A skin's data as its mesh stands now: bound again if it was remeshed since, and its rest pose
+// taken back from the mesh if it was sculpted or smoothed since (`before`: the armature it is
+// posed by).
+std::shared_ptr<SkinData> currentSkin(const Body& b, const Armature& before, const std::string& armature, CommandOutput& out) {
+    std::shared_ptr<SkinData> s;
+    if (b.mesh.vertices.size() != b.skin->rest.size()) { // remeshed since: bound again as it is now
+        s = rebind(b, before);
+        out.say(b.name + " was remeshed since it was skinned: bound to " + armature + " again as it is");
+    } else {
+        s = std::make_shared<SkinData>(*b.skin);
+    }
+    if (meshKey(b.mesh) != s->key) {
+        std::vector<Vec3> now(b.mesh.vertices.size());
+        for (std::size_t i = 0; i < now.size(); ++i) now[i] = b.mesh.vertices[i].position;
+        s->rest = unposeSkin(*s, before, now);
+    }
+    return s;
+}
+
 // Fits the skins bound to the armature to it after an edit, keeping what was sculpted on them.
 void refitSkins(Document& doc, const std::string& armature, const Armature& before, const Armature& arm, CommandOutput& out, Refit how, int mid = -1,
                 int child = -1) {
     const Armature oldRest = atRest(before), newRest = atRest(arm);
     for (Body& b : doc.scene.bodies()) {
         if (!b.skin || b.skin->armature != armature) continue;
-        std::shared_ptr<SkinData> s;
-        if (b.mesh.vertices.size() != b.skin->rest.size()) { // remeshed since: bound again as it is now
-            s = rebind(b, before);
-            out.say(b.name + " was remeshed since it was skinned: bound to " + armature + " again as it is");
-        } else {
-            s = std::make_shared<SkinData>(*b.skin);
-        }
-        if (meshKey(b.mesh) != s->key) { // sculpted, smoothed...: its rest pose from how it is now
-            std::vector<Vec3> now(b.mesh.vertices.size());
-            for (std::size_t i = 0; i < now.size(); ++i) now[i] = b.mesh.vertices[i].position;
-            s->rest = unposeSkin(*s, before, now);
-        }
+        std::shared_ptr<SkinData> s = currentSkin(b, before, armature, out);
         if (how == Refit::Moved) {
             if (s->base.size() == s->rest.size()) { // the unsculpted shape goes the same way
                 SkinData bare = *s;
@@ -573,6 +581,51 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
                 vecText(quatToEuler(arm.balls[static_cast<std::size_t>(*n)].turn)) + " deg");
         return out;
     }
+    if (sub == "detail") {
+        // DETAIL [FROM n] TO m [MIRROR X|Y|Z]: what was sculpted round n copied onto m's skin.
+        std::optional<int> from, to;
+        for (std::size_t i = 2; i < a.size(); ++i) {
+            const std::string k = unq(i) ? lowerOf(a[i]) : std::string();
+            if (skipMirror(i)) continue;
+            if (k == "from" || k == "to") {
+                const auto n = ballNumber(a, i + 1, arm);
+                if (!n) return out.fail(toUpper(k) + " needs a ball's number (1 to " + std::to_string(arm.balls.size()) + ")");
+                (k == "from" ? from : to) = *n, ++i;
+            } else {
+                return out.fail("ARMATURE DETAIL doesn't take " + a[i] + " (FROM n, TO m, MIRROR X|Y|Z)");
+            }
+        }
+        if (!to) return out.fail("ARMATURE DETAIL needs the ball the detail goes to: TO m");
+        if (!from && mirror) from = twinOf(arm, *to, *mirror);
+        if (!from || *from < 0) return out.fail(mirror ? "Ball " + std::to_string(*to + 1) + " has no mirror twin: name the ball the detail comes from (FROM n)"
+                                                       : "ARMATURE DETAIL needs the ball the detail comes from: FROM n (or MIRROR X|Y|Z)");
+        const Armature rest = atRest(arm);
+        bool any = false;
+        for (Body& b : bodies) {
+            if (!b.skin || b.skin->armature != name) continue;
+            std::shared_ptr<SkinData> sk = currentSkin(b, arm, name, out);
+            std::vector<Vec3> moved;
+            if (!copySkinDetail(*sk, rest, *from, *to, mirror.value_or(-1), moved, &why)) {
+                out.say(b.name + ": " + why);
+                continue;
+            }
+            sk->rest = std::move(moved);
+            const std::vector<Vec3> posed = poseSkin(*sk, arm);
+            for (std::size_t i = 0; i < posed.size(); ++i) b.mesh.vertices[i].position = posed[i];
+            smoothVertexNormals(b.mesh);
+            b.mesh.computeFeatureEdges(60.0f);
+            b.brep.reset();
+            sk->key = meshKey(b.mesh);
+            b.skin = std::move(sk);
+            out.say(b.name + ": the detail round ball " + std::to_string(*from + 1) + (mirror ? ", mirrored," : "") + " copied onto ball " +
+                    std::to_string(*to + 1) + "'s skin");
+            any = true;
+        }
+        if (!any) return out.fail("No skin of " + name + " took the detail" + (why.empty() ? std::string(" (ARMATURE \"" + name + "\" SKIN makes one)") : ""));
+        doc.scene.touchBodies();
+        doc.dirty = true;
+        return out;
+    }
     if (sub == "skin") {
         SkinOptions o;
         std::string skinName;
@@ -622,7 +675,7 @@ CommandOutput runArmatureCommand(Document& doc, const std::vector<std::string>& 
                 (arm.balls.size() == 2 ? " link" : " links") + " (POSE bends it; the armature is hidden: ARMATURE \"" + name + "\" SHOW to edit it)");
         return out;
     }
-    return out.fail("ARMATURE " + name + " doesn't know " + a[1] + " (ADD, INSERT, MOVE, RADIUS, REMOVE, LIST, SKIN, POSE, SHOW, HIDE)");
+    return out.fail("ARMATURE " + name + " doesn't know " + a[1] + " (ADD, INSERT, MOVE, RADIUS, REMOVE, LIST, SKIN, DETAIL, POSE, SHOW, HIDE)");
 }
 
 } // namespace sicdm

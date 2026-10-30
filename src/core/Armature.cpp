@@ -513,6 +513,68 @@ std::vector<Vec3> refitSkinRest(const SkinData& s, const Armature& o, const Arma
     return out;
 }
 
+bool copySkinDetail(const SkinData& s, const Armature& rest, int from, int to, int mirrorAxis, std::vector<Vec3>& out, std::string* why) {
+    auto fail = [&](const std::string& w) {
+        if (why) *why = w;
+        return false;
+    };
+    const int n = static_cast<int>(rest.balls.size());
+    auto linked = [&](int b) { return b >= 0 && b < n && rest.balls[static_cast<std::size_t>(b)].parent >= 0; };
+    if (!linked(from) || !linked(to)) return fail("Both balls need a link (the root has none)");
+    if (from == to && mirrorAxis < 0) return fail("The detail would come from the ball it goes to");
+    if (s.base.size() != s.rest.size() || s.bone.size() != s.rest.size() || s.weight.size() != s.rest.size())
+        return fail("The skin doesn't keep its unsculpted shape (skin it again)");
+    auto weightOn = [&](std::size_t i, int bone) {
+        float w = 0;
+        for (std::size_t q = 0; q < 4; ++q)
+            if (s.bone[i][q] == bone) w += s.weight[i][q];
+        return w;
+    };
+    // Where the detail comes from: the vertices `from`'s link weights most, as unsculpted.
+    std::vector<Vec3> source;
+    std::vector<std::size_t> sourceIndex;
+    for (std::size_t i = 0; i < s.rest.size(); ++i)
+        if (weightOn(i, from) >= 0.5f) source.push_back(s.base[i]), sourceIndex.push_back(i);
+    if (source.empty()) return fail("Nothing of the skin follows the ball the detail comes from");
+    const NearestPoints near(source);
+    const ArmatureBall& f = rest.balls[static_cast<std::size_t>(from)];
+    const ArmatureBall& fp = rest.balls[static_cast<std::size_t>(f.parent)];
+    const ArmatureBall& t = rest.balls[static_cast<std::size_t>(to)];
+    const ArmatureBall& tp = rest.balls[static_cast<std::size_t>(t.parent)];
+    Vec3 root = rest.balls[0].at;
+    for (const ArmatureBall& b : rest.balls)
+        if (b.parent < 0) root = b.at;
+    auto flip = [&](Vec3 v, bool point) {
+        float& c = mirrorAxis == 0 ? v.x : mirrorAxis == 1 ? v.y : v.z;
+        const float r = mirrorAxis == 0 ? root.x : mirrorAxis == 1 ? root.y : root.z;
+        c = point ? 2 * r - c : -c;
+        return v;
+    };
+    out = s.rest;
+    std::size_t touched = 0;
+    for (std::size_t i = 0; i < s.rest.size(); ++i) {
+        const float w = std::min(1.0f, weightOn(i, to));
+        if (!(w > 0)) continue;
+        const Vec3 at = mirrorAxis >= 0 ? flip(s.base[i], true) : alongLink(s.base[i], tp.at, t.at, tp.radius, t.radius, fp.at, f.at, fp.radius, f.radius);
+        const std::int64_t j = near.find(at, 1e30f);
+        if (j < 0) continue;
+        const std::size_t k = sourceIndex[static_cast<std::size_t>(j)];
+        const Vec3 detail = s.rest[k] - s.base[k];
+        Vec3 carried;
+        if (mirrorAxis >= 0) {
+            carried = flip(detail, false);
+        } else { // turned and sized as the link is from there to here
+            carried = alongLink(s.base[k] + detail, fp.at, f.at, fp.radius, f.radius, tp.at, t.at, tp.radius, t.radius) -
+                      alongLink(s.base[k], fp.at, f.at, fp.radius, f.radius, tp.at, t.at, tp.radius, t.radius);
+        }
+        const Vec3 own = s.rest[i] - s.base[i];
+        out[i] = s.base[i] + own * (1 - w) + carried * w;
+        ++touched;
+    }
+    if (touched == 0) return fail("Nothing of the skin follows the ball the detail goes to");
+    return true;
+}
+
 NearestPoints::NearestPoints(const std::vector<Vec3>& pts, float cellSize) : m_pts(pts) {
     for (const Vec3& p : pts) m_box.expand(p);
     const Vec3 ext = m_box.max - m_box.min;

@@ -257,6 +257,10 @@ TEST_CASE("armatures and skins are saved, follow a rename, and work over MCP") {
     CHECK(named(m, "Tail skin") != nullptr);
     CHECK(tool(R"({"operation":"pose","armature":"Tail","ball":9,"angle":30})")["isError"].asBool());
     CHECK(tool(R"({"operation":"fly","armature":"Tail"})")["isError"].asBool());
+    const Json copied = tool(R"({"operation":"detail","armature":"Tail","from":2,"ball":3})");
+    CHECK(!copied["isError"].asBool());
+    CHECK(copied["content"][0]["text"].asString().find("copied onto ball 3") != std::string::npos);
+    CHECK(tool(R"({"operation":"detail","armature":"Tail","ball":3})")["isError"].asBool()); // from where?
 }
 
 TEST_CASE("armature edits after skinning: the skin follows, what was sculpted on it stays") {
@@ -356,6 +360,60 @@ TEST_CASE("armature edits after skinning: the skin follows, what was sculpted on
     const std::size_t afterRemove = named(plain, "Arm skin")->mesh.vertices.size();
     REQUIRE(run(plain, "UNDO").ok);
     CHECK(named(plain, "Arm skin")->mesh.vertices.size() != afterRemove);
+}
+
+TEST_CASE("armature: DETAIL copies what was sculpted round one ball onto another's skin") {
+    // A bar with a ball each side; the right end sculpted 2 mm proud.
+    auto build = [](Document& d) {
+        REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);
+        REQUIRE(run(d, "ARMATURE Arm ADD AT 50,0,0 RADIUS 8 MIRROR X").ok); // 2 at +50, 3 at -50
+        REQUIRE(run(d, "ARMATURE Arm SKIN").ok);
+        Body* skin = named(d, "Arm skin");
+        REQUIRE(skin);
+        for (Vertex& v : skin->mesh.vertices)
+            if (v.position.x > 52) v.position += normalize(v.position - Vec3{50, 0, 0}) * 2.0f;
+        d.scene.touchBodies();
+    };
+    // The mean distance of an end's tip from its ball.
+    auto tip = [](const Body& b, float sign) {
+        double sum = 0;
+        int n = 0;
+        for (const Vertex& v : b.mesh.vertices)
+            if (v.position.x * sign > 54) sum += length(v.position - Vec3{50 * sign, 0, 0}), ++n;
+        return n ? sum / n : 0.0;
+    };
+    for (const char* how : {"ARMATURE Arm DETAIL TO 3 MIRROR X", "ARMATURE Arm DETAIL FROM 2 TO 3"}) {
+        Document d;
+        build(d);
+        const Body* skin = named(d, "Arm skin");
+        const double right = tip(*skin, 1), left = tip(*skin, -1);
+        CHECK(right - left > 1.5); // sculpted on one side only
+        const CommandOutput o = run(d, how);
+        REQUIRE(o.ok);
+        CHECK(joined(o).find("copied onto ball 3") != std::string::npos);
+        skin = named(d, "Arm skin");
+        CHECK(std::fabs(tip(*skin, -1) - right) < 0.25); // now the left end is as proud
+        CHECK(std::fabs(tip(*skin, 1) - right) < 1e-3);  // and the right as it was
+        CHECK(openEdgeCount(skin->mesh) == 0);
+        // It stays on through a pose and back.
+        REQUIRE(run(d, "ARMATURE Arm POSE 1 AXIS 0,0,1 ANGLE 30").ok);
+        REQUIRE(run(d, "ARMATURE Arm POSE RESET").ok);
+        skin = named(d, "Arm skin");
+        CHECK(std::fabs(tip(*skin, -1) - right) < 0.25);
+    }
+    // What it won't do.
+    Document d;
+    build(d);
+    CHECK(!run(d, "ARMATURE Arm DETAIL TO 3").ok);          // from where?
+    CHECK(!run(d, "ARMATURE Arm DETAIL FROM 1 TO 3").ok);   // the root has no link
+    CHECK(!run(d, "ARMATURE Arm DETAIL FROM 2 TO 9").ok);   // no such ball
+    CHECK(!run(d, "ARMATURE Arm DETAIL FROM 2 TO 3 X").ok); // a word it doesn't know
+    // UNDO takes it back.
+    const double left = tip(*named(d, "Arm skin"), -1);
+    REQUIRE(run(d, "ARMATURE Arm DETAIL TO 3 MIRROR X").ok);
+    CHECK(tip(*named(d, "Arm skin"), -1) - left > 1.5);
+    REQUIRE(run(d, "UNDO").ok);
+    CHECK(std::fabs(tip(*named(d, "Arm skin"), -1) - left) < 1e-4);
 }
 
 TEST_CASE("armature: a remeshed skin is bound again with the weights it had, not by distance") {

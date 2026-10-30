@@ -1259,6 +1259,9 @@ const char* const kGerman[][2] = {
     {"Type a command", "Befehl eingeben"},
     {"Weaker brush", "Schwächerer Pinsel"},
     {"Close a dialog (as its Cancel)", "Dialog schließen (wie Abbrechen)"},
+    {"Copy Detail Onto It", "Details darauf kopieren"},
+    {"From ball", "Von Kugel"},
+    {"What was sculpted round the other ball (or, with Mirror on, round this one's mirror twin) copied onto this ball's skin", "Was um die andere Kugel (oder, mit Spiegeln, um das Spiegelbild dieser Kugel) modelliert wurde, auf die Haut dieser Kugel kopiert"},
 };
 
 

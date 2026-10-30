@@ -342,18 +342,20 @@ Json McpServer::toolDefinitions() {
                         "and the spring it needs. Returns the findings; the table and charts can go to files.",
                         st, {}));
         Json am = Json::object();
-        am.set("operation", enumProp({"list", "new", "add", "insert", "move", "radius", "remove", "skin", "pose", "reset", "show", "hide"},
+        am.set("operation", enumProp({"list", "new", "add", "insert", "move", "radius", "remove", "skin", "detail", "pose", "reset", "show", "hide"},
                                      "list the armatures (or one's balls, with armature); new; add a ball on ball `to`; insert one halfway to "
-                                     "ball `ball`; move or size a ball; remove it (and what hangs from it); skin it into a mesh; pose: turn a "
-                                     "ball; reset: the rest pose; show or hide it"));
+                                     "ball `ball`; move or size a ball; remove it (and what hangs from it); skin it into a mesh; detail: copy "
+                                     "what was sculpted round ball `from` (or, with mirror, `ball`'s mirror twin) onto ball `ball`'s skin; "
+                                     "pose: turn a ball; reset: the rest pose; show or hide it"));
         am.set("armature", prop("string", "The armature (new: its name)"));
         am.set("ball", prop("number", "The ball's number (1...)"));
         am.set("to", prop("number", "add: the ball the new one joins (default the last added)"));
+        am.set("from", prop("number", "detail: the ball whose sculpted detail is copied"));
         am.set("at", numberArray(3, "new / add / move: where, [x,y,z] mm (rest pose)"));
         am.set("by", numberArray(3, "move: by [dx,dy,dz] instead"));
         am.set("chain", prop("boolean", "move: what hangs from the ball moves too"));
         am.set("radius", prop("number", "new / add / radius: the ball's radius (mm)"));
-        am.set("mirror", enumProp({"X", "Y", "Z"}, "add / move / radius / pose: on both sides of the plane through the root ball"));
+        am.set("mirror", enumProp({"X", "Y", "Z"}, "add / move / radius / pose: on both sides of the plane through the root ball; detail: mirrored across it"));
         am.set("turn", numberArray(3, "pose: the ball's turn, degrees about X, then Y, then Z"));
         am.set("axis", numberArray(3, "pose: turn on about this axis (with angle) instead"));
         am.set("angle", prop("number", "pose: degrees about axis"));
@@ -2507,6 +2509,11 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         }
         if (op == "radius") return runLine(arm + "RADIUS " + ball + " " + num(a["radius"].asNumber()) + mirror);
         if (op == "remove") return runLine(arm + "REMOVE " + ball);
+        if (op == "detail") {
+            std::string l = arm + "DETAIL";
+            if (a["from"].isNumber()) l += " FROM " + num(a["from"].asNumber());
+            return runLine(l + " TO " + ball + mirror);
+        }
         if (op == "skin") {
             std::string l = arm + "SKIN";
             if (a["name"].isString()) l += " NAME " + quote(a["name"].asString());

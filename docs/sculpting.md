@@ -366,7 +366,8 @@ Then turn it into a mesh:
   - adding or removing a ball (`ADD`, `REMOVE`) skins it again with the same settings, and puts
     back what the old skin carried, from its nearest points:
     - what was sculpted, fading out smoothly over a few voxels where nothing of the old skin is
-      near (a new ball's own skin starts unsculpted, with no step where the old detail ends);
+      near (a new ball's own skin starts unsculpted, with no step where the old detail ends;
+      `DETAIL` below gives it some);
     - the paint, which also flows on over a new ball's skin from where it joins;
     - the polygroups and UVs, each new triangle from the old triangle nearest it (its UVs by
       where its corners fall on that one triangle, so no triangle straddles a seam).
@@ -376,6 +377,14 @@ Then turn it into a mesh:
     adjusted by hand are kept. Only links the armature no longer has fall back to weights by
     distance. Its rest pose is taken back from that, and its unsculpted shape from a fresh skin
     of the armature, so what was sculpted stays on later edits too.
+
+- `DETAIL FROM n TO m` copies what was sculpted round ball n onto ball m's skin: each vertex on
+  m's link takes the detail of the place that matches it on n's (as far along the link, turned
+  and sized with it), blended in by how much m's link weights it, so it runs smoothly into what is
+  about it. With `MIRROR X|Y|Z` the detail comes from the mirror image across the plane through
+  the root ball (`FROM` defaults to m's mirror twin): sculpt one hand, then
+  `ARMATURE Body DETAIL TO 6 MIRROR X` gives the other the same, mirrored. In the Armature
+  window: *Copy Detail Onto It*.
 
 ```text
 ARMATURE NEW Body AT 0,0,100 RADIUS 20
