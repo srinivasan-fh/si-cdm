@@ -234,6 +234,61 @@ MeshData armaturePreview(const Armature& a) {
 // ---------------------------------------------------------------------------
 // Skin
 
+void skinWeights(const Armature& a, float soft, const std::vector<Vec3>& pts, SkinData& skin) {
+    skin.rest = pts, skin.bone.clear(), skin.weight.clear();
+    std::vector<int> links; // the balls at the far end of each link
+    for (std::size_t i = 0; i < a.balls.size(); ++i)
+        if (a.balls[i].parent >= 0) links.push_back(static_cast<int>(i));
+    for (const Vec3& p : pts) {
+        std::array<std::int32_t, 4> bone{-1, -1, -1, -1};
+        std::array<float, 4> weight{0, 0, 0, 0};
+        if (links.empty()) {
+            skin.bone.push_back(bone), skin.weight.push_back(weight);
+            continue;
+        }
+        std::vector<std::pair<float, int>> d;
+        d.reserve(links.size());
+        float best = 1e30f;
+        for (const int c : links) {
+            const ArmatureBall& cb = a.balls[static_cast<std::size_t>(c)];
+            const ArmatureBall& pb = a.balls[static_cast<std::size_t>(cb.parent)];
+            const float dist = std::max(0.0f, linkDistance(p, pb.at, pb.radius, cb.at, cb.radius));
+            d.push_back({dist, c});
+            best = std::min(best, dist);
+        }
+        // Links much further than the nearest don't pull at all.
+        std::sort(d.begin(), d.end());
+        float sum = 0;
+        int k = 0;
+        for (const auto& [dist, c] : d) {
+            if (k == 4 || dist > best + 2 * soft) break;
+            const float x = (dist + soft) / soft;
+            const float w = 1.0f / (x * x * x * x);
+            bone[static_cast<std::size_t>(k)] = c, weight[static_cast<std::size_t>(k)] = w;
+            sum += w;
+            ++k;
+        }
+        for (int j = 0; j < k; ++j) weight[static_cast<std::size_t>(j)] /= sum;
+        skin.bone.push_back(bone), skin.weight.push_back(weight);
+    }
+}
+
+float skinSoftness(const Armature& a, const SkinOptions& o) {
+    float rmin = 1e30f;
+    AABB box;
+    for (const ArmatureBall& b : a.balls) {
+        rmin = std::min(rmin, b.radius);
+        box.expand(b.at - Vec3{b.radius, b.radius, b.radius});
+        box.expand(b.at + Vec3{b.radius, b.radius, b.radius});
+    }
+    if (a.balls.empty()) return 1.0f;
+    const float blend = o.blend >= 0 ? o.blend : rmin * 0.25f;
+    const Vec3 ext = box.max - box.min;
+    float h = o.voxel > 0 ? o.voxel : rmin / 4.0f;
+    h = std::max(h, (std::max({ext.x, ext.y, ext.z}) + 2 * blend) / 250.0f);
+    return std::max(blend, rmin * 0.25f) + h;
+}
+
 bool armatureSkin(const Armature& a, const SkinOptions& o, MeshData& out, SkinData& skin, std::string* why) {
     auto fail = [&](const std::string& w) {
         if (why) *why = w;
@@ -352,45 +407,10 @@ bool armatureSkin(const Armature& a, const SkinOptions& o, MeshData& out, SkinDa
     m.computeFeatureEdges(60.0f);
 
     // Bone weights: each vertex follows the links nearest its surface, by inverse distance.
-    skin.rest.clear(), skin.bone.clear(), skin.weight.clear();
-    skin.rest.reserve(m.vertices.size());
-    std::vector<int> links; // the balls at the far end of each link
-    for (std::size_t i = 0; i < a.balls.size(); ++i)
-        if (a.balls[i].parent >= 0) links.push_back(static_cast<int>(i));
-    const float soft = std::max(blend, rmin * 0.25f) + h;
-    for (const Vertex& v : m.vertices) {
-        skin.rest.push_back(v.position);
-        std::array<std::int32_t, 4> bone{-1, -1, -1, -1};
-        std::array<float, 4> weight{0, 0, 0, 0};
-        if (links.empty()) {
-            skin.bone.push_back(bone), skin.weight.push_back(weight);
-            continue;
-        }
-        std::vector<std::pair<float, int>> d;
-        d.reserve(links.size());
-        float best = 1e30f;
-        for (const int c : links) {
-            const ArmatureBall& cb = a.balls[static_cast<std::size_t>(c)];
-            const ArmatureBall& pb = a.balls[static_cast<std::size_t>(cb.parent)];
-            const float dist = std::max(0.0f, linkDistance(v.position, pb.at, pb.radius, cb.at, cb.radius));
-            d.push_back({dist, c});
-            best = std::min(best, dist);
-        }
-        // Links much further than the nearest don't pull at all.
-        std::sort(d.begin(), d.end());
-        float sum = 0;
-        int k = 0;
-        for (const auto& [dist, c] : d) {
-            if (k == 4 || dist > best + 2 * soft) break;
-            const float x = (dist + soft) / soft;
-            const float w = 1.0f / (x * x * x * x);
-            bone[static_cast<std::size_t>(k)] = c, weight[static_cast<std::size_t>(k)] = w;
-            sum += w;
-            ++k;
-        }
-        for (int j = 0; j < k; ++j) weight[static_cast<std::size_t>(j)] /= sum;
-        skin.bone.push_back(bone), skin.weight.push_back(weight);
-    }
+    std::vector<Vec3> pts;
+    pts.reserve(m.vertices.size());
+    for (const Vertex& v : m.vertices) pts.push_back(v.position);
+    skinWeights(a, std::max(blend, rmin * 0.25f) + h, pts, skin);
     skin.base = skin.rest;
     out = std::move(m);
     return true;
@@ -493,41 +513,116 @@ std::vector<Vec3> refitSkinRest(const SkinData& s, const Armature& o, const Arma
     return out;
 }
 
-bool reskinWithDetail(const Armature& n, const SkinOptions& o, const std::vector<Vec3>& oldFresh, const std::vector<Vec3>& detail,
-                      const std::vector<std::uint32_t>& colors, MeshData& out, SkinData& skin, std::string* why) {
+NearestPoints::NearestPoints(const std::vector<Vec3>& pts, float cellSize) : m_pts(pts) {
+    for (const Vec3& p : pts) m_box.expand(p);
+    const Vec3 ext = m_box.max - m_box.min;
+    m_cell = cellSize > 0 ? cellSize : std::max({ext.x, ext.y, ext.z, 1e-3f}) / 64.0f;
+    for (std::size_t i = 0; i < pts.size(); ++i) m_cells[key(pts[i])].push_back(static_cast<std::uint32_t>(i));
+}
+
+std::array<int, 3> NearestPoints::key(const Vec3& p) const {
+    return {static_cast<int>(std::floor((p.x - m_box.min.x) / m_cell)), static_cast<int>(std::floor((p.y - m_box.min.y) / m_cell)),
+            static_cast<int>(std::floor((p.z - m_box.min.z) / m_cell))};
+}
+
+std::int64_t NearestPoints::find(const Vec3& p, float within, float* distance) const {
+    if (m_pts.empty()) return -1;
+    const auto k = key(p);
+    const int rings = std::max(1, static_cast<int>(std::ceil(within / m_cell)));
+    float best = within;
+    std::int64_t pick = -1;
+    // Ring by ring outwards; done once the nearest found can't be beaten further out.
+    for (int r = 0; r <= rings; ++r) {
+        if (pick >= 0 && best <= (static_cast<float>(r) - 1.0f) * m_cell) break;
+        for (int dx = -r; dx <= r; ++dx)
+            for (int dy = -r; dy <= r; ++dy)
+                for (int dz = -r; dz <= r; ++dz) {
+                    if (std::max({std::abs(dx), std::abs(dy), std::abs(dz)}) != r) continue; // this ring's shell only
+                    const auto it = m_cells.find({k[0] + dx, k[1] + dy, k[2] + dz});
+                    if (it == m_cells.end()) continue;
+                    for (const std::uint32_t j : it->second)
+                        if (const float d = length(m_pts[j] - p); d < best) best = d, pick = j;
+                }
+    }
+    if (distance) *distance = best;
+    return pick;
+}
+
+bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& c, MeshData& out, SkinData& skin, std::string* why) {
     if (!armatureSkin(n, o, out, skin, why)) return false;
     skin.options = o;
-    if (oldFresh.empty() || detail.size() != oldFresh.size()) return true;
-    // The old skin's points in cells; each new vertex takes the nearest one's detail (and
-    // paint), when one is near: within a few cells (a new ball's skin has none near it).
-    AABB box;
-    for (const Vec3& p : oldFresh) box.expand(p);
-    const Vec3 ext = box.max - box.min;
-    const float cell = std::max({ext.x, ext.y, ext.z, 1e-3f}) / 64.0f;
-    auto key = [&](const Vec3& p) {
-        return std::array<int, 3>{static_cast<int>(std::floor((p.x - box.min.x) / cell)), static_cast<int>(std::floor((p.y - box.min.y) / cell)),
-                                  static_cast<int>(std::floor((p.z - box.min.z) / cell))};
-    };
-    std::map<std::array<int, 3>, std::vector<std::uint32_t>> cells;
-    for (std::size_t i = 0; i < oldFresh.size(); ++i) cells[key(oldFresh[i])].push_back(static_cast<std::uint32_t>(i));
+    if (c.bare.empty() || c.detail.size() != c.bare.size()) return true;
+    const NearestPoints near(c.bare);
+    const float cell = near.cell();
+    // Each new vertex takes its nearest old point's detail: all of it within a cell, fading to
+    // none by three (a new ball's skin starts plain, without a step where the old ends), and
+    // its paint.
+    const std::vector<Vec3> fresh = skin.rest;
+    std::vector<char> painted(out.vertices.size(), 0);
     for (std::size_t v = 0; v < out.vertices.size(); ++v) {
-        const Vec3 p = out.vertices[v].position;
-        const auto k = key(p);
-        float best = 2.0f * cell; // nearer than two cells, or nothing
-        std::int64_t pick = -1;
-        for (int dx = -2; dx <= 2; ++dx)
-            for (int dy = -2; dy <= 2; ++dy)
-                for (int dz = -2; dz <= 2; ++dz) {
-                    const auto it = cells.find({k[0] + dx, k[1] + dy, k[2] + dz});
-                    if (it == cells.end()) continue;
-                    for (const std::uint32_t j : it->second)
-                        if (const float d = length(oldFresh[j] - p); d < best) best = d, pick = j;
-                }
-        if (pick < 0) continue;
-        const std::size_t j = static_cast<std::size_t>(pick);
-        out.vertices[v].position += detail[j];
+        float d = 0;
+        const std::int64_t j = near.find(fresh[v], 3.0f * cell, &d);
+        if (j < 0) continue;
+        const float t = std::clamp((3.0f * cell - d) / (2.0f * cell), 0.0f, 1.0f);
+        const float w = t * t * (3 - 2 * t);
+        out.vertices[v].position += c.detail[static_cast<std::size_t>(j)] * w;
         skin.rest[v] = out.vertices[v].position;
-        if (j < colors.size()) out.vertices[v].color = colors[j];
+        if (static_cast<std::size_t>(j) < c.colors.size()) out.vertices[v].color = c.colors[static_cast<std::size_t>(j)], painted[v] = 1;
+    }
+    // Where nothing of the old skin is near (a new ball), the paint flows on from the painted
+    // vertices next to it, along the skin: a new ball takes the colour of where it joins.
+    if (!c.colors.empty()) {
+        std::vector<std::vector<std::uint32_t>> around(out.vertices.size());
+        for (std::size_t k = 0; k + 2 < out.indices.size(); k += 3)
+            for (int e = 0; e < 3; ++e) {
+                const std::uint32_t p = out.indices[k + static_cast<std::size_t>(e)], q = out.indices[k + static_cast<std::size_t>((e + 1) % 3)];
+                around[p].push_back(q), around[q].push_back(p);
+            }
+        std::vector<std::uint32_t> front;
+        for (std::size_t v = 0; v < painted.size(); ++v)
+            if (painted[v]) front.push_back(static_cast<std::uint32_t>(v));
+        while (!front.empty()) {
+            std::vector<std::uint32_t> next;
+            for (const std::uint32_t v : front)
+                for (const std::uint32_t w : around[v])
+                    if (!painted[w]) painted[w] = 1, out.vertices[w].color = out.vertices[v].color, next.push_back(w);
+            front = std::move(next);
+        }
+    }
+    // Polygroups and UVs, triangle by triangle: from the old triangle nearest the new one's
+    // middle; its UVs by where each corner falls on that one triangle (so a new triangle never
+    // straddles a seam).
+    const bool groups = c.groups.size() * 3 == c.indices.size() && !c.groups.empty();
+    const bool uvs = c.uvs.size() == c.indices.size() && !c.uvs.empty();
+    if (groups || uvs) {
+        std::vector<Vec3> mids;
+        for (std::size_t t = 0; t + 2 < c.indices.size(); t += 3)
+            mids.push_back((c.bare[c.indices[t]] + c.bare[c.indices[t + 1]] + c.bare[c.indices[t + 2]]) * (1.0f / 3.0f));
+        const NearestPoints nearTri(mids, cell);
+        const std::size_t tris = out.indices.size() / 3;
+        if (groups) out.groups.assign(tris, 0);
+        if (uvs) out.uvs.assign(out.indices.size(), Vec2{0, 0});
+        for (std::size_t t = 0; t < tris; ++t) {
+            const Vec3 a = fresh[out.indices[3 * t]], b = fresh[out.indices[3 * t + 1]], cc = fresh[out.indices[3 * t + 2]];
+            const std::int64_t o3 = nearTri.find((a + b + cc) * (1.0f / 3.0f), 64.0f * cell);
+            if (o3 < 0) continue;
+            const std::size_t ot = static_cast<std::size_t>(o3);
+            if (groups) out.groups[t] = c.groups[ot];
+            if (uvs) {
+                const Vec3 p0 = c.bare[c.indices[3 * ot]], p1 = c.bare[c.indices[3 * ot + 1]], p2 = c.bare[c.indices[3 * ot + 2]];
+                const Vec3 e0 = p1 - p0, e1 = p2 - p0;
+                const float d00 = dot(e0, e0), d01 = dot(e0, e1), d11 = dot(e1, e1), den = d00 * d11 - d01 * d01;
+                for (int k = 0; k < 3; ++k) {
+                    const Vec3 q = fresh[out.indices[3 * t + static_cast<std::size_t>(k)]] - p0;
+                    const float d20 = dot(q, e0), d21 = dot(q, e1);
+                    const float bv = std::fabs(den) > 1e-20f ? (d11 * d20 - d01 * d21) / den : 0.0f;
+                    const float bw = std::fabs(den) > 1e-20f ? (d00 * d21 - d01 * d20) / den : 0.0f;
+                    const Vec2 u0 = c.uvs[3 * ot], u1 = c.uvs[3 * ot + 1], u2 = c.uvs[3 * ot + 2];
+                    const float bu = 1 - bv - bw;
+                    out.uvs[3 * t + static_cast<std::size_t>(k)] = {bu * u0.x + bv * u1.x + bw * u2.x, bu * u0.y + bv * u1.y + bw * u2.y};
+                }
+            }
+        }
     }
     smoothVertexNormals(out);
     out.computeFeatureEdges(60.0f);

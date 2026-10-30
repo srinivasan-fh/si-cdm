@@ -15,6 +15,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,12 @@ struct SkinData {
     SkinOptions options;                          // what it was skinned with (to skin it again the same)
 };
 
+// Bone weights for points about the armature (as it stands: a posed armature's balls where
+// posed): each follows the links nearest it, by inverse distance; `soft` widens the blend.
+void skinWeights(const Armature& a, float soft, const std::vector<Vec3>& pts, SkinData& skin);
+// The `soft` a skin of these settings uses.
+float skinSoftness(const Armature& a, const SkinOptions& o);
+
 // The armature's skin as one closed mesh, with its bone weights (`skin`: rest and weights).
 bool armatureSkin(const Armature& a, const SkinOptions& o, MeshData& out, SkinData& skin, std::string* why = nullptr);
 
@@ -78,11 +85,34 @@ std::vector<Vec3> unposeSkin(const SkinData& skin, const Armature& a, const std:
 // - its balls moved or resized, the same balls and links: the rest pose that follows them,
 //   each vertex going with the links it follows (so sculpted detail stays);
 std::vector<Vec3> refitSkinRest(const SkinData& skin, const Armature& oldRest, const Armature& newRest);
-// - balls added or taken away: a new skin, with `detail` (how far each vertex of the old skin
-//   was from where a fresh skin of the old armature puts it: what was sculpted) and `colors`
-//   (polypaint, may be empty) carried over from the old skin's nearest vertices.
-bool reskinWithDetail(const Armature& newRest, const SkinOptions& o, const std::vector<Vec3>& oldFresh, const std::vector<Vec3>& detail,
-                      const std::vector<std::uint32_t>& colors, MeshData& out, SkinData& skin, std::string* why = nullptr);
+// - balls added or taken away: a new skin, with what the old one carried brought over from
+//   its nearest points: what was sculpted (`detail`, its rest pose less its unsculpted shape
+//   `bare`; fading out where nothing of the old is near, as round a new ball), the paint, and
+//   per triangle the polygroups and UVs (taken from the old triangle nearest each new one).
+struct SkinCarry {
+    std::vector<Vec3> bare, detail;    // per old vertex
+    std::vector<std::uint32_t> colors; // per old vertex (may be empty)
+    std::vector<std::uint32_t> indices; // the old triangles
+    std::vector<std::uint32_t> groups; // per old triangle (may be empty)
+    std::vector<Vec2> uvs;             // per old triangle corner (may be empty)
+};
+bool reskinWithDetail(const Armature& newRest, const SkinOptions& o, const SkinCarry& carry, MeshData& out, SkinData& skin, std::string* why = nullptr);
+
+// The nearest of a set of points to a place, by cells (a cube a 64th of their extent unless
+// given): its index, or -1 when none is within `within`.
+class NearestPoints {
+public:
+    explicit NearestPoints(const std::vector<Vec3>& pts, float cell = 0);
+    std::int64_t find(const Vec3& p, float within, float* distance = nullptr) const;
+    float cell() const noexcept { return m_cell; }
+
+private:
+    std::array<int, 3> key(const Vec3& p) const;
+    const std::vector<Vec3>& m_pts;
+    AABB m_box;
+    float m_cell = 1;
+    std::map<std::array<int, 3>, std::vector<std::uint32_t>> m_cells;
+};
 
 // Area-weighted vertex normals (a skin's vertices are shared between its triangles).
 void smoothVertexNormals(MeshData& m);

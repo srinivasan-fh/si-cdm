@@ -364,10 +364,16 @@ Then turn it into a mesh:
     the same mesh, reshaped;
   - `INSERT` shares a link's vertices between its two halves, so the new ball bends what is past it;
   - adding or removing a ball (`ADD`, `REMOVE`) skins it again with the same settings, and puts
-    back what was sculpted and painted from the old skin's nearest points (a new ball's own skin
-    starts plain).
-  - A skin remeshed since it was skinned (Dynamesh, retopology) can't follow; `SKIN` again for a new
-    one.
+    back what the old skin carried, from its nearest points:
+    - what was sculpted, fading out smoothly over a few voxels where nothing of the old skin is
+      near (a new ball's own skin starts unsculpted, with no step where the old detail ends);
+    - the paint, which also flows on over a new ball's skin from where it joins;
+    - the polygroups and UVs, each new triangle from the old triangle nearest it (its UVs by
+      where its corners fall on that one triangle, so no triangle straddles a seam).
+  - A skin remeshed since it was skinned (Dynamesh, retopology, subdivision) is bound again as it
+    is: weights from the links nearest each vertex where it is now, its rest pose taken back from
+    that, and its unsculpted shape from a fresh skin of the armature, so what was sculpted stays
+    on later edits too.
 
 ```text
 ARMATURE NEW Body AT 0,0,100 RADIUS 20

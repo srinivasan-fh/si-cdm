@@ -357,3 +357,79 @@ TEST_CASE("armature edits after skinning: the skin follows, what was sculpted on
     REQUIRE(run(plain, "UNDO").ok);
     CHECK(named(plain, "Arm skin")->mesh.vertices.size() != afterRemove);
 }
+
+TEST_CASE("armature: skinned again keeps polygroups, UVs and paint; a remeshed skin is bound again") {
+    Document d;
+    REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 50,0,0 RADIUS 8").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 100,0,0 RADIUS 6").ok);
+    REQUIRE(run(d, "ARMATURE Arm SKIN").ok);
+    Body* skin = named(d, "Arm skin");
+    REQUIRE(skin && skin->skin);
+    // Polygroups (two halves), UVs (a plain projection: u = x / 100, v = z / 100) and paint.
+    MeshData& m = skin->mesh;
+    m.groups.assign(m.indices.size() / 3, 0);
+    m.uvs.assign(m.indices.size(), Vec2{0, 0});
+    for (std::size_t t = 0; t < m.groups.size(); ++t) {
+        Vec3 c{0, 0, 0};
+        for (int k = 0; k < 3; ++k) {
+            const Vec3 p = m.vertices[m.indices[3 * t + static_cast<std::size_t>(k)]].position;
+            c += p * (1.0f / 3.0f);
+            m.uvs[3 * t + static_cast<std::size_t>(k)] = {p.x / 100, p.z / 100};
+        }
+        m.groups[t] = c.x > 50 ? 2u : 1u;
+    }
+    for (Vertex& v : m.vertices) v.color = 0xff2040c0u;
+    // A ball added: skinned again (more of it), all three carried over.
+    REQUIRE(run(d, "ARMATURE Arm ADD TO 2 AT 50,0,40 RADIUS 6").ok);
+    skin = named(d, "Arm skin");
+    const MeshData& n = skin->mesh;
+    REQUIRE(n.hasGroups());
+    REQUIRE(n.hasUvs());
+    std::size_t wrong = 0, far = 0, uvOff = 0;
+    for (std::size_t t = 0; t < n.indices.size() / 3; ++t) {
+        Vec3 c{0, 0, 0};
+        for (int k = 0; k < 3; ++k) c += n.vertices[n.indices[3 * t + static_cast<std::size_t>(k)]].position * (1.0f / 3.0f);
+        if (c.z > 15) continue; // the new ball's own
+        if (std::fabs(c.x - 50) > 5) {
+            ++far;
+            wrong += n.groups[t] != (c.x > 50 ? 2u : 1u) ? 1 : 0;
+        }
+        for (int k = 0; k < 3; ++k) { // where nothing changed the projection comes back exactly
+            const Vec3 p = n.vertices[n.indices[3 * t + static_cast<std::size_t>(k)]].position;
+            const Vec2 uv = n.uvs[3 * t + static_cast<std::size_t>(k)];
+            if (std::fabs(c.x - 50) > 15 && (std::fabs(uv.x - p.x / 100) > 0.01f || std::fabs(uv.y - p.z / 100) > 0.01f)) ++uvOff;
+        }
+    }
+    CHECK(far > 100);
+    CHECK(wrong == 0);
+    CHECK(uvOff == 0);
+    std::size_t unpainted = 0;
+    for (const Vertex& v : n.vertices) unpainted += v.color != 0xff2040c0u ? 1 : 0;
+    CHECK(unpainted == 0); // the new ball's skin takes the paint round it
+    // Remeshed (subdivided: other vertices): bound again, and it follows a pose.
+    REQUIRE(run(d, "SUBDIVIDE \"Arm skin\"").ok);
+    skin = named(d, "Arm skin");
+    REQUIRE(skin->mesh.vertices.size() != skin->skin->rest.size());
+    const std::vector<Vertex> before = skin->mesh.vertices;
+    const CommandOutput posed = run(d, "ARMATURE Arm POSE 2 AXIS 0,0,1 ANGLE 90");
+    REQUIRE(posed.ok);
+    CHECK(joined(posed).find("bound to Arm again") != std::string::npos);
+    skin = named(d, "Arm skin");
+    REQUIRE(skin->skin->rest.size() == skin->mesh.vertices.size());
+    double tipMoved = 0, rootMoved = 0;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        const double moved = length(skin->mesh.vertices[i].position - before[i].position);
+        if (before[i].position.x > 95) tipMoved = std::max(tipMoved, moved);
+        if (before[i].position.x < 5) rootMoved = std::max(rootMoved, moved);
+    }
+    CHECK(tipMoved > 40); // turned 90 deg about ball 2
+    CHECK(rootMoved < 0.5);
+    CHECK(openEdgeCount(skin->mesh) == 0);
+    // And a later edit keeps its shape: back to rest, a ball moved, still closed and bound.
+    REQUIRE(run(d, "ARMATURE Arm POSE RESET").ok);
+    REQUIRE(run(d, "ARMATURE Arm MOVE 3 BY 0,0,10").ok);
+    skin = named(d, "Arm skin");
+    CHECK(skin->skin != nullptr);
+    CHECK(openEdgeCount(skin->mesh) == 0);
+}

@@ -97,6 +97,35 @@ std::array<float, 4> mirroredTurn(std::array<float, 4> q, int axis) {
     return q;
 }
 
+// A skin whose mesh was remade since (Dynamesh, retopology...) bound to the armature again as it
+// stands: weights from the links nearest each vertex where they are now (the armature posed as
+// it is), its rest pose taken back from that, and its unsculpted shape the nearest points of a
+// fresh skin of the armature, so what was sculpted on it is kept on later edits.
+std::shared_ptr<SkinData> rebind(const Body& b, const Armature& arm) {
+    auto s = std::make_shared<SkinData>();
+    s->armature = b.skin ? b.skin->armature : std::string();
+    s->options = b.skin ? b.skin->options : SkinOptions{};
+    std::vector<Vec3> now(b.mesh.vertices.size());
+    for (std::size_t i = 0; i < now.size(); ++i) now[i] = b.mesh.vertices[i].position;
+    Armature posed = arm;
+    const std::vector<Vec3> at = posedBalls(arm);
+    for (std::size_t i = 0; i < posed.balls.size(); ++i) posed.balls[i].at = at[i];
+    skinWeights(posed, skinSoftness(arm, s->options), now, *s);
+    s->rest = unposeSkin(*s, arm, now);
+    Armature rest = arm;
+    for (ArmatureBall& ball : rest.balls) ball.turn = {0, 0, 0, 1};
+    MeshData fresh;
+    SkinData freshSkin;
+    s->base = s->rest;
+    if (armatureSkin(rest, s->options, fresh, freshSkin)) {
+        const NearestPoints near(freshSkin.rest);
+        for (std::size_t i = 0; i < s->rest.size(); ++i)
+            if (const std::int64_t j = near.find(s->rest[i], 1e30f); j >= 0) s->base[i] = freshSkin.rest[static_cast<std::size_t>(j)];
+    }
+    s->key = meshKey(b.mesh);
+    return s;
+}
+
 // Puts the armature back into its body, and bends the skins bound to it into its pose
 // (edits made to a skin since are kept: its rest pose is taken back from it first).
 void store(Document& doc, int index, const Armature& before, const Armature& arm, CommandOutput& out, bool poseSkins) {
@@ -106,11 +135,13 @@ void store(Document& doc, int index, const Armature& before, const Armature& arm
     if (poseSkins)
         for (Body& b : doc.scene.bodies()) {
             if (!b.skin || b.skin->armature != body.name) continue;
-            if (b.mesh.vertices.size() != b.skin->rest.size()) {
-                out.say(b.name + " was remeshed since it was skinned, so it doesn't follow the pose (SKIN again to bind a new skin)");
-                continue;
+            std::shared_ptr<SkinData> s;
+            if (b.mesh.vertices.size() != b.skin->rest.size()) { // remeshed since: bound again as it is now
+                s = rebind(b, before);
+                out.say(b.name + " was remeshed since it was skinned: bound to " + body.name + " again as it is");
+            } else {
+                s = std::make_shared<SkinData>(*b.skin);
             }
-            auto s = std::make_shared<SkinData>(*b.skin);
             if (meshKey(b.mesh) != s->key) { // sculpted, smoothed...: keep that
                 std::vector<Vec3> now(b.mesh.vertices.size());
                 for (std::size_t i = 0; i < now.size(); ++i) now[i] = b.mesh.vertices[i].position;
@@ -147,11 +178,13 @@ void refitSkins(Document& doc, const std::string& armature, const Armature& befo
     const Armature oldRest = atRest(before), newRest = atRest(arm);
     for (Body& b : doc.scene.bodies()) {
         if (!b.skin || b.skin->armature != armature) continue;
-        if (b.mesh.vertices.size() != b.skin->rest.size()) {
-            out.say(b.name + " was remeshed since it was skinned, so it can't follow the edit (SKIN again to bind a new skin)");
-            continue;
+        std::shared_ptr<SkinData> s;
+        if (b.mesh.vertices.size() != b.skin->rest.size()) { // remeshed since: bound again as it is now
+            s = rebind(b, before);
+            out.say(b.name + " was remeshed since it was skinned: bound to " + armature + " again as it is");
+        } else {
+            s = std::make_shared<SkinData>(*b.skin);
         }
-        auto s = std::make_shared<SkinData>(*b.skin);
         if (meshKey(b.mesh) != s->key) { // sculpted, smoothed...: its rest pose from how it is now
             std::vector<Vec3> now(b.mesh.vertices.size());
             for (std::size_t i = 0; i < now.size(); ++i) now[i] = b.mesh.vertices[i].position;
@@ -180,19 +213,21 @@ void refitSkins(Document& doc, const std::string& armature, const Armature& befo
                 SkinData freshSkin;
                 bare = armatureSkin(oldRest, s->options, fresh, freshSkin) ? freshSkin.rest : std::vector<Vec3>{};
             }
-            std::vector<Vec3> detail;
-            std::vector<std::uint32_t> colors;
+            SkinCarry carry;
             if (bare.size() == s->rest.size()) {
-                detail.resize(s->rest.size());
-                for (std::size_t i = 0; i < detail.size(); ++i) detail[i] = s->rest[i] - bare[i];
-                for (const Vertex& v : b.mesh.vertices) colors.push_back(v.color);
-            } else {
-                bare.clear();
+                carry.bare = std::move(bare);
+                carry.detail.resize(s->rest.size());
+                for (std::size_t i = 0; i < carry.detail.size(); ++i) carry.detail[i] = s->rest[i] - carry.bare[i];
+                for (const Vertex& v : b.mesh.vertices) carry.colors.push_back(v.color);
+                carry.indices = b.mesh.indices;
+                if (b.mesh.hasGroups()) carry.groups = b.mesh.groups;
+                if (b.mesh.hasUvs()) carry.uvs = b.mesh.uvs;
             }
+            const bool detail = !carry.detail.empty();
             MeshData mesh;
             auto ns = std::make_shared<SkinData>();
             std::string why;
-            if (!reskinWithDetail(newRest, s->options, bare, detail, colors, mesh, *ns, &why)) {
+            if (!reskinWithDetail(newRest, s->options, carry, mesh, *ns, &why)) {
                 out.say(b.name + " couldn't be skinned again: " + why);
                 continue;
             }
@@ -200,7 +235,7 @@ void refitSkins(Document& doc, const std::string& armature, const Armature& befo
             b.mesh = std::move(mesh);
             b.multires.reset();
             s = std::move(ns);
-            if (detail.empty()) out.say(b.name + " was skinned again (what was sculpted on it couldn't be carried over)");
+            if (!detail) out.say(b.name + " was skinned again (what was sculpted on it couldn't be carried over)");
         }
         const std::vector<Vec3> posed = poseSkin(*s, arm);
         for (std::size_t i = 0; i < posed.size(); ++i) b.mesh.vertices[i].position = posed[i];
