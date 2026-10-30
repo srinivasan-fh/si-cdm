@@ -76,8 +76,10 @@ struct GizmoSnapHit {
     Vec3 move{}; // the move with the snap
     Vec3 from{}, to{};
 };
+// `usable` (when given) says which targets may be snapped to (asked only of those near enough).
 std::optional<GizmoSnapHit> gizmoSnap(const std::vector<Vec3>& moving, const std::vector<Vec3>& targets, const Vec3& move,
-                                      const GizmoProject& project, float reach = 12.0f, const Vec3& axis = {}, const Vec3& plane = {});
+                                      const GizmoProject& project, float reach = 12.0f, const Vec3& axis = {}, const Vec3& plane = {},
+                                      const std::function<bool(std::size_t)>& usable = {});
 
 // The transforms themselves (the commands and the live preview use these).
 // Turns a body by `degrees` about `axis` through `about` (model space): its orientation and

@@ -192,3 +192,21 @@ TEST_CASE("gizmo: a move snaps to another body's corner, edge or face middle nea
     CHECK(snapPoints(b, 10).size() <= 16);
     CHECK(gizmoSnap({}, to, {}, topView) == std::nullopt);
 }
+
+TEST_CASE("gizmo: a free move snaps in full 3D to the points allowed, the next nearest when one isn't") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10").ok);          // z 0..10
+    REQUIRE(run(d, "BOX 10 10 10 @30,0,30").ok); // z 30..40, seen from above
+    const std::vector<Vec3> from = snapPoints(d.scene.bodies()[0]), to = snapPoints(d.scene.bodies()[1]);
+    // From the top, Block 1's corners line up with Block 2's after 19 mm along X; in full 3D
+    // the nearest pair in the model is Block 1's top corner to Block 2's bottom one: up 20.
+    auto hit = gizmoSnap(from, to, {19, 0, 0}, topView, 12.0f);
+    REQUIRE(hit.has_value());
+    CHECK(near(hit->move, {20, 0, 20}, 1e-4f));
+    // Only Block 2's top corners allowed (its bottom hidden from this view): onto those.
+    hit = gizmoSnap(from, to, {19, 0, 0}, topView, 12.0f, {}, {}, [&](std::size_t i) { return to[i].z > 39; });
+    REQUIRE(hit.has_value());
+    CHECK(near(hit->move, {20, 0, 30}, 1e-4f));
+    // None allowed: no snap.
+    CHECK(!gizmoSnap(from, to, {19, 0, 0}, topView, 12.0f, {}, {}, [](std::size_t) { return false; }));
+}

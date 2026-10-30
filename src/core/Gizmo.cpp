@@ -259,7 +259,8 @@ std::vector<Vec3> snapPoints(const Body& b, std::size_t cap) {
 }
 
 std::optional<GizmoSnapHit> gizmoSnap(const std::vector<Vec3>& moving, const std::vector<Vec3>& targets, const Vec3& move,
-                                      const GizmoProject& project, float reach, const Vec3& axis, const Vec3& plane) {
+                                      const GizmoProject& project, float reach, const Vec3& axis, const Vec3& plane,
+                                      const std::function<bool(std::size_t)>& usable) {
     if (moving.empty() || targets.empty() || !(reach > 0)) return std::nullopt;
     // The targets on screen, in cells as wide as the reach: a moving point looks only in the
     // nine cells round it.
@@ -287,6 +288,7 @@ std::optional<GizmoSnapHit> gizmoSnap(const std::vector<Vec3>& moving, const std
                     const float px = std::sqrt((t.at.x - p->x) * (t.at.x - p->x) + (t.at.y - p->y) * (t.at.y - p->y));
                     if (px > reach) continue;
                     const float score = px + 0.01f * length(targets[t.i] - (moving[m] + move));
+                    if (score >= best || (usable && !usable(t.i))) continue;
                     if (score < best) best = score, pick = std::make_pair(m, t.i);
                 }
             }

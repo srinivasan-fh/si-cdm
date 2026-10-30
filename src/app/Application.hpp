@@ -323,6 +323,11 @@ private:
     // Snapping a move to other bodies' points: what moves and what it can land on (taken as
     // the drag starts), and the pair it snapped to this frame.
     std::vector<Vec3> m_snapMoving, m_snapTargets;
+    std::vector<std::int8_t> m_snapSeen; // per target: -1 not asked yet, 1 in sight, 0 hidden behind something
+    std::vector<int> m_snapMovingBodies;
+    // A move with no line or plane to keep to: onto a point in sight, in full 3D; else onto a
+    // hidden one, within the view.
+    std::optional<GizmoSnapHit> freeSnap(const Vec3& move);
     std::optional<GizmoSnapHit> m_snapHit;
     void startSnap(const std::vector<int>& moving);
     void drawSnapMarker();
