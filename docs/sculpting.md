@@ -370,7 +370,11 @@ Then turn it into a mesh:
       `DETAIL` below gives it some);
     - the paint, which also flows on over a new ball's skin from where it joins;
     - the polygroups and UVs, each new triangle from the old triangle nearest it (its UVs by
-      where its corners fall on that one triangle, so no triangle straddles a seam).
+      where its corners fall on that one triangle, so no triangle straddles a seam);
+    - a new ball's own skin, away from the old, gets a UV island of its own instead of being
+      stretched over the old triangles: unwrapped by itself, at the old skin's texel density
+      (smaller if it must be, to fit), in the largest square the old layout leaves empty. If
+      the layout leaves no room, its UVs come from the nearest old triangles as above.
   - A skin remeshed since it was skinned (Dynamesh, retopology, subdivision) is bound again as it
     is: each vertex takes the weights the old skin had about it (blended from the old vertices
     nearest it; one sitting on an old vertex takes its weights exactly), so weights set or

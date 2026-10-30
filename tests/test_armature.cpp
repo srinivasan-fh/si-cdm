@@ -516,6 +516,32 @@ TEST_CASE("armature: skinned again keeps polygroups, UVs and paint; a remeshed s
     std::size_t unpainted = 0;
     for (const Vertex& v : n.vertices) unpainted += v.color != 0xff2040c0u ? 1 : 0;
     CHECK(unpainted == 0); // the new ball's skin takes the paint round it
+    // The new ball's own skin: an island of its own, in the room the old layout leaves (here
+    // above v = 0.1), at about the old density (0.01 per mm) and not stretched.
+    {
+        std::vector<double> scale;
+        std::size_t outside = 0, overlapping = 0;
+        for (std::size_t t = 0; t < n.indices.size() / 3; ++t) {
+            Vec3 p[3];
+            Vec2 uv[3];
+            for (int k = 0; k < 3; ++k) p[k] = n.vertices[n.indices[3 * t + static_cast<std::size_t>(k)]].position, uv[k] = n.uvs[3 * t + static_cast<std::size_t>(k)];
+            if ((p[0].z + p[1].z + p[2].z) / 3 < 30) continue;
+            const double a3 = 0.5 * length(cross(p[1] - p[0], p[2] - p[0]));
+            const double a2 = 0.5 * std::fabs((uv[1].x - uv[0].x) * (uv[2].y - uv[0].y) - (uv[1].y - uv[0].y) * (uv[2].x - uv[0].x));
+            if (a3 > 1e-6) scale.push_back(std::sqrt(a2 / a3));
+            for (const Vec2& q : uv) {
+                outside += q.x < 0 || q.x > 1 || q.y < 0 || q.y > 1 ? 1 : 0;
+                overlapping += q.y < 0.1f ? 1 : 0;
+            }
+        }
+        REQUIRE(scale.size() > 50);
+        std::sort(scale.begin(), scale.end());
+        const double lo = scale[scale.size() / 10], mid = scale[scale.size() / 2], hi = scale[scale.size() * 9 / 10];
+        CHECK(outside == 0);
+        CHECK(overlapping == 0);
+        CHECK(hi / lo < 2.0);
+        CHECK(std::fabs(mid - 0.01) < 0.004);
+    }
     // Remeshed (subdivided: other vertices): bound again, and it follows a pose.
     REQUIRE(run(d, "SUBDIVIDE \"Arm skin\"").ok);
     skin = named(d, "Arm skin");

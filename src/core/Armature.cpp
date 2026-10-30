@@ -2,6 +2,7 @@
 // one smooth mesh whose vertices follow the links near them.
 
 #include "core/Armature.hpp"
+#include "core/UvMap.hpp"
 
 #include "core/Wearable.hpp"
 
@@ -624,6 +625,102 @@ void NearestPoints::around(const Vec3& p, float radius, std::vector<std::uint32_
             }
 }
 
+namespace {
+
+// Twice a UV triangle's signed area.
+float uvCross(const Vec2& a, const Vec2& b, const Vec2& c) { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
+
+// A new ball's skin (`fresh`: the triangles `own` marks, where nothing of the old skin is near)
+// given UVs of its own: unwrapped as a mesh of its own, at the old skin's texel density (or
+// smaller, to fit), in the largest square the old UV layout leaves empty, so it isn't stretched
+// over the old triangles and doesn't overlap them. False (the UVs left as they were) when the
+// layout leaves no room.
+bool ownUvIsland(MeshData& out, const std::vector<Vec3>& fresh, const std::vector<char>& own, const SkinCarry& c) {
+    // The old layout: where it is in the unit square (each triangle widened by a cell, so the
+    // island keeps a gap), and its texel density.
+    constexpr int G = 256;
+    const float h = 1.0f / G;
+    std::vector<char> used(static_cast<std::size_t>(G) * G, 0);
+    double uvArea = 0, area = 0;
+    for (std::size_t t = 0; t + 2 < c.indices.size(); t += 3) {
+        const Vec2 a = c.uvs[t], b = c.uvs[t + 1], d = c.uvs[t + 2];
+        uvArea += 0.5 * std::fabs(static_cast<double>(uvCross(a, b, d)));
+        area += 0.5 * static_cast<double>(length(cross(c.bare[c.indices[t + 1]] - c.bare[c.indices[t]], c.bare[c.indices[t + 2]] - c.bare[c.indices[t]])));
+        const float x0 = std::min({a.x, b.x, d.x}) - h, x1 = std::max({a.x, b.x, d.x}) + h;
+        const float y0 = std::min({a.y, b.y, d.y}) - h, y1 = std::max({a.y, b.y, d.y}) + h;
+        const int i0 = std::max(0, static_cast<int>(std::floor(x0 / h))), i1 = std::min(G - 1, static_cast<int>(std::floor(x1 / h)));
+        const int j0 = std::max(0, static_cast<int>(std::floor(y0 / h))), j1 = std::min(G - 1, static_cast<int>(std::floor(y1 / h)));
+        const float sgn = uvCross(a, b, d) < 0 ? -1.0f : 1.0f;
+        for (int j = j0; j <= j1; ++j)
+            for (int i = i0; i <= i1; ++i) {
+                char& u = used[static_cast<std::size_t>(j) * G + static_cast<std::size_t>(i)];
+                if (u) continue;
+                const Vec2 p{(static_cast<float>(i) + 0.5f) * h, (static_cast<float>(j) + 0.5f) * h};
+                bool hit = sgn * uvCross(a, b, p) >= 0 && sgn * uvCross(b, d, p) >= 0 && sgn * uvCross(d, a, p) >= 0;
+                for (int e = 0; e < 3 && !hit; ++e) { // or within a cell of an edge
+                    const Vec2 q0 = e == 0 ? a : e == 1 ? b : d, q1 = e == 0 ? b : e == 1 ? d : a;
+                    const float ex = q1.x - q0.x, ey = q1.y - q0.y, len2 = ex * ex + ey * ey;
+                    const float k = len2 > 0 ? std::clamp(((p.x - q0.x) * ex + (p.y - q0.y) * ey) / len2, 0.0f, 1.0f) : 0.0f;
+                    const float dx = p.x - (q0.x + ex * k), dy = p.y - (q0.y + ey * k);
+                    hit = dx * dx + dy * dy <= (1.5f * h) * (1.5f * h);
+                }
+                u = hit ? 1 : 0;
+            }
+    }
+    // The largest empty square (each cell: the side of the empty square ending there).
+    std::vector<int> side(used.size(), 0);
+    int best = 0, bi = 0, bj = 0;
+    for (int j = 0; j < G; ++j)
+        for (int i = 0; i < G; ++i) {
+            const std::size_t k = static_cast<std::size_t>(j) * G + static_cast<std::size_t>(i);
+            if (used[k]) continue;
+            side[k] = i == 0 || j == 0 ? 1 : 1 + std::min({side[k - 1], side[k - G], side[k - G - 1]});
+            if (side[k] > best) best = side[k], bi = i, bj = j;
+        }
+    if (best < 6) return false;
+    // The new ball's triangles as a mesh of their own, unwrapped.
+    MeshData sub;
+    std::vector<std::int64_t> into(fresh.size(), -1);
+    std::vector<std::size_t> which;
+    for (std::size_t t = 0; t < own.size(); ++t) {
+        if (!own[t]) continue;
+        which.push_back(t);
+        for (int k = 0; k < 3; ++k) {
+            const std::uint32_t v = out.indices[3 * t + static_cast<std::size_t>(k)];
+            if (into[v] < 0) {
+                into[v] = static_cast<std::int64_t>(sub.vertices.size());
+                Vertex nv;
+                nv.position = fresh[v];
+                sub.vertices.push_back(nv);
+            }
+            sub.indices.push_back(static_cast<std::uint32_t>(into[v]));
+        }
+    }
+    if (which.empty() || !unwrapUv(sub, UvOptions{}) || sub.uvs.size() != sub.indices.size()) return false;
+    // At the old density, smaller if it must be to fit the square (less a cell each side).
+    double subUv = 0, subArea = 0;
+    float u0 = 1e30f, u1 = -1e30f, v0 = 1e30f, v1 = -1e30f;
+    for (std::size_t t = 0; t + 2 < sub.indices.size(); t += 3) {
+        subUv += 0.5 * std::fabs(static_cast<double>(uvCross(sub.uvs[t], sub.uvs[t + 1], sub.uvs[t + 2])));
+        subArea += 0.5 * static_cast<double>(length(cross(sub.vertices[sub.indices[t + 1]].position - sub.vertices[sub.indices[t]].position,
+                                                          sub.vertices[sub.indices[t + 2]].position - sub.vertices[sub.indices[t]].position)));
+    }
+    for (const Vec2& uv : sub.uvs) u0 = std::min(u0, uv.x), u1 = std::max(u1, uv.x), v0 = std::min(v0, uv.y), v1 = std::max(v1, uv.y);
+    const float room = static_cast<float>(best - 2) * h, size = std::max(u1 - u0, v1 - v0);
+    if (!(size > 0) || !(subUv > 0)) return false;
+    float k = uvArea > 0 && area > 0 && subArea > 0 ? static_cast<float>(std::sqrt((uvArea / area) / (subUv / subArea))) : room / size;
+    k = std::min(k, room / size);
+    const float ox = static_cast<float>(bi - best + 2) * h, oy = static_cast<float>(bj - best + 2) * h; // the square's corner, a cell in
+    for (std::size_t n = 0; n < which.size(); ++n)
+        for (std::size_t q = 0; q < 3; ++q) {
+            const Vec2 uv = sub.uvs[3 * n + q];
+            out.uvs[3 * which[n] + q] = {ox + (uv.x - u0) * k, oy + (uv.y - v0) * k};
+        }
+    return true;
+}
+
+} // namespace
+
 bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& c, MeshData& out, SkinData& skin, std::string* why) {
     if (!armatureSkin(n, o, out, skin, why)) return false;
     skin.options = o;
@@ -634,10 +731,11 @@ bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& 
     // none by three (a new ball's skin starts plain, without a step where the old ends), and
     // its paint.
     const std::vector<Vec3> fresh = skin.rest;
-    std::vector<char> painted(out.vertices.size(), 0);
+    std::vector<char> painted(out.vertices.size(), 0), apart(out.vertices.size(), 0); // apart: nothing old within a cell
     for (std::size_t v = 0; v < out.vertices.size(); ++v) {
         float d = 0;
         const std::int64_t j = near.find(fresh[v], 3.0f * cell, &d);
+        apart[v] = j < 0 || d > cell ? 1 : 0;
         if (j < 0) continue;
         const float t = std::clamp((3.0f * cell - d) / (2.0f * cell), 0.0f, 1.0f);
         const float w = t * t * (3 - 2 * t);
@@ -698,6 +796,16 @@ bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& 
                     out.uvs[3 * t + static_cast<std::size_t>(k)] = {bu * u0.x + bv * u1.x + bw * u2.x, bu * u0.y + bv * u1.y + bw * u2.y};
                 }
             }
+        }
+        // A new ball's skin, away from the old: an island of its own rather than stretched
+        // over the old triangle nearest it.
+        if (uvs) {
+            std::vector<char> own(tris, 0);
+            bool any = false;
+            for (std::size_t t = 0; t < tris; ++t)
+                for (int k = 0; k < 3; ++k)
+                    if (apart[out.indices[3 * t + static_cast<std::size_t>(k)]]) own[t] = 1, any = true;
+            if (any) ownUvIsland(out, fresh, own, c);
         }
     }
     smoothVertexNormals(out);
