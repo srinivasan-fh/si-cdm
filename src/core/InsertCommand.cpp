@@ -10,6 +10,7 @@
 #include "core/Units.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -48,7 +49,7 @@ std::string freeName(const Document& d, const std::string& base) {
 
 bool keyword(const std::string& w) {
     static const char* const kKeys[] = {"sphere", "ball", "cube", "box", "cylinder", "peg", "cone", "spike", "torus", "ring", "body", "at", "size", "dir",
-                                        "spin", "sink", "union", "append", "new", "tube", "insert", "path", "radius", "spacing"};
+                                        "spin", "sink", "union", "append", "new", "tube", "insert", "path", "radius", "spacing", "profile", "taper"};
     const std::string k = lowerOf(w);
     for (const char* q : kKeys)
         if (k == q) return true;
@@ -61,7 +62,7 @@ CommandOutput runInsertCommand(Document& doc, const std::string& cmd, const std:
     CommandOutput out;
     auto unq = [&](std::size_t k) { return !(k < quoted.size() && quoted[k]); };
     const bool curve = cmd == "CURVE";
-    const char* usage = curve ? "CURVE [body] TUBE PATH x,y,z x,y,z ... [RADIUS r] [SINK f] [UNION|APPEND|NEW]  |  CURVE [body] INSERT shape|BODY \"name\" PATH ... "
+    const char* usage = curve ? "CURVE [body] TUBE PATH x,y,z x,y,z ... [RADIUS r] [PROFILE ROUND|SQUARE|FLAT|TRIANGLE|STAR] [TAPER a b] [SINK f] [UNION|APPEND|NEW]  |  CURVE [body] INSERT shape|BODY \"name\" PATH ... "
                                 "[SIZE s] [SPACING d] [SINK f] [UNION|APPEND|NEW]"
                               : "INSERTMESH [body] SPHERE|CUBE|CYLINDER|CONE|TORUS|BODY \"name\" AT x,y,z [SIZE s] [DIR x,y,z] [SPIN deg] [SINK f] "
                                 "[UNION|APPEND|NEW]";
@@ -79,6 +80,8 @@ CommandOutput runInsertCommand(Document& doc, const std::string& cmd, const std:
     std::string custom;
     std::vector<Vec3> points;
     std::optional<float> size, radius, spacing, spin, sink;
+    TubeProfile profile = TubeProfile::Round;
+    std::array<float, 2> taper{1.0f, 1.0f};
     std::optional<Vec3> dir;
     InsertJoin join = InsertJoin::Union;
     auto length = [&](std::size_t k) -> std::optional<float> {
@@ -119,6 +122,16 @@ CommandOutput runInsertCommand(Document& doc, const std::string& cmd, const std:
             const auto v = i + 1 < a.size() ? parseVec3(a[i + 1]) : std::nullopt;
             if (!v || !(sicdm::length(*v) > 0)) return out.fail("DIR needs a direction x,y,z");
             dir = *v, ++i;
+        } else if (k == "profile") {
+            const auto p = i + 1 < a.size() ? tubeProfileFromName(a[i + 1]) : std::nullopt;
+            if (!p) return out.fail("PROFILE is ROUND, SQUARE, FLAT, TRIANGLE or STAR");
+            profile = *p, ++i;
+        } else if (k == "taper") {
+            const auto t0 = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
+            const auto t1 = i + 2 < a.size() ? parseNumber(a[i + 2]) : std::nullopt;
+            if (!t0 || !t1 || *t0 < 0 || *t1 < 0 || *t0 > 10 || *t1 > 10 || (*t0 == 0 && *t1 == 0))
+                return out.fail("TAPER needs the tube's size at its start and end, as factors of RADIUS (TAPER 1 0: to a point)");
+            taper = {static_cast<float>(*t0), static_cast<float>(*t1)}, i += 2;
         } else if (k == "union") {
             join = InsertJoin::Union;
         } else if (k == "append") {
@@ -166,8 +179,9 @@ CommandOutput runInsertCommand(Document& doc, const std::string& cmd, const std:
         what = std::string(shape == InsertShape::Mesh ? custom : insertShapeName(*shape)) + " " + num(s) + " mm at " + pointText(ps[0]);
     } else if (tube) {
         const float r = radius.value_or(std::max(0.02f * bodySize, 0.25f));
-        piece = curveTube(evenStroke(ps, ns, r * 0.5f), r, sink.value_or(0.5f));
-        what = "tube " + num(2 * r) + " mm across";
+        piece = curveTube(evenStroke(ps, ns, r * 0.5f), r, sink.value_or(0.5f), profile, taper[0], taper[1]);
+        what = std::string(profile == TubeProfile::Round ? "tube " : std::string(tubeProfileName(profile)) + " tube ") + num(2 * r) + " mm across" +
+               (taper[0] != 1 || taper[1] != 1 ? ", tapered " + num(taper[0]) + " to " + num(taper[1]) : std::string());
     } else {
         const float d = spacing.value_or(s);
         piece = curveCopies(evenStroke(ps, ns, std::min(d, s) * 0.25f), *shape, s, d, sink.value_or(0.15f), shape == InsertShape::Mesh ? &customMesh : nullptr);
@@ -189,9 +203,12 @@ CommandOutput runInsertCommand(Document& doc, const std::string& cmd, const std:
     doc.scene.touchBodies();
     doc.dirty = true;
     const std::size_t open = openEdgeCount(body.mesh);
-    out.say(body.name + ": " + what + (join == InsertJoin::Append ? " appended (a polygroup of its own: REMESH fuses it)" : " united") + ", " +
-            std::to_string(body.mesh.indices.size() / 3) + " triangles (was " + std::to_string(before) + ")" +
-            (join == InsertJoin::Append ? std::string() : open == 0 ? ", closed" : ", " + std::to_string(open) + " open edges"));
+    std::string how = " united";
+    if (join == InsertJoin::Append)
+        how = open == 0 ? " appended: fused into one closed solid, a polygroup of its own (REMESH blends the joins)"
+                        : " appended as it is, a polygroup of its own (it couldn't be fused exactly: REMESH fuses it)";
+    out.say(body.name + ": " + what + how + ", " + std::to_string(body.mesh.indices.size() / 3) + " triangles (was " + std::to_string(before) + ")" +
+            (join == InsertJoin::Append && open != 0 ? std::string() : open == 0 ? ", closed" : ", " + std::to_string(open) + " open edges"));
     return out;
 }
 

@@ -1251,7 +1251,17 @@ void Application::finishCutDrag(ToolId tool, float x, float y) {
                            (u.curveTube ? std::string(" TUBE") : " INSERT " + insertShapeWords(u)) + " PATH";
         for (std::size_t i = 0; i < m_cutPath.size(); i += every) line += " " + mmVec(m_cutPath[i]);
         if ((m_cutPath.size() - 1) % every != 0) line += " " + mmVec(m_cutPath.back());
-        if (u.curveTube) line += " RADIUS " + mmText(u.curveRadius);
+        if (u.curveTube) {
+            static const char* const kProfiles[] = {"ROUND", "SQUARE", "FLAT", "TRIANGLE", "STAR"};
+            line += " RADIUS " + mmText(u.curveRadius);
+            if (u.curveProfile > 0 && u.curveProfile < 5) line += std::string(" PROFILE ") + kProfiles[u.curveProfile];
+            const float t0 = std::clamp(u.curveTaperStart, 0.0f, 10.0f), t1 = std::clamp(u.curveTaperEnd, 0.0f, 10.0f);
+            if ((t0 != 1.0f || t1 != 1.0f) && (t0 > 0 || t1 > 0)) {
+                char tp[48];
+                std::snprintf(tp, sizeof tp, " TAPER %.3g %.3g", static_cast<double>(t0), static_cast<double>(t1));
+                line += tp;
+            }
+        }
         else line += " SIZE " + mmText(u.insertSize) + (u.curveSpacing > 0 ? " SPACING " + mmText(u.curveSpacing) : std::string());
         line += insertTailWords(u);
         m_cutPath.clear();

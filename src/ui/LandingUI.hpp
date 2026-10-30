@@ -180,6 +180,8 @@ struct UiState {
     float insertSize = 8.0f, insertSink = 0.15f;
     bool curveTube = true;
     float curveRadius = 1.5f, curveSpacing = 0.0f;
+    int curveProfile = 0;                       // 0 round, 1 square, 2 flat, 3 triangle, 4 star
+    float curveTaperStart = 1.0f, curveTaperEnd = 1.0f; // the tube's size at the stroke's start and end (x radius)
     int booleanOp = 1; // 0 union, 1 subtract, 2 intersect
     bool booleanKeep = false;
     std::string booleanFirst; // the body picked first

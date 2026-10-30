@@ -38,16 +38,26 @@ MeshData insertShapeMesh(InsertShape shape, float size, const InsertPlace& place
 // their normals and directions.
 std::vector<InsertPlace> evenStroke(const std::vector<Vec3>& points, const std::vector<Vec3>& normals, float step);
 
-// A tube of radius r along the stroke, round at both ends, its centre line `sink` of its
-// diameter below the surface (0: resting on it, 0.5: half in).
-MeshData curveTube(const std::vector<InsertPlace>& stroke, float radius, float sink = 0.5f);
+// A tube's cross-section: round (round ends), square, flat (a ribbon a third as thick as it is
+// wide), triangle (a point up) or a five-pointed star (flat ends); flat sides lie along the
+// surface.
+enum class TubeProfile { Round, Square, Flat, Triangle, Star };
+const char* tubeProfileName(TubeProfile p);
+std::optional<TubeProfile> tubeProfileFromName(const std::string& word);
+
+// A tube of radius r along the stroke, its centre line `sink` of its height below the surface
+// (0: resting on it, 0.5: half in); its size goes from taperStart x r at the stroke's start to
+// taperEnd x r at its end.
+MeshData curveTube(const std::vector<InsertPlace>& stroke, float radius, float sink = 0.5f, TubeProfile profile = TubeProfile::Round, float taperStart = 1.0f,
+                   float taperEnd = 1.0f);
 
 // Copies of a shape along the stroke every `spacing` mm, each facing along it.
 MeshData curveCopies(const std::vector<InsertPlace>& stroke, InsertShape shape, float size, float spacing, float sink = 0.15f,
                      const MeshData* custom = nullptr);
 
-// Puts `piece` (model space) into the body: exactly united, appended as a polygroup of its
-// own, or (NewBody) left for the caller in `separate`. False (why) when the union fails.
+// Puts `piece` (model space) into the body: exactly united; appended (united exactly too, what
+// shows of it a polygroup of its own; where the union can't be made, its triangles added as they
+// are, to fuse with REMESH); or (NewBody) left for the caller. False (why) when the union fails.
 bool joinInsert(Body& body, const MeshData& piece, InsertJoin join, std::string* why = nullptr);
 
 } // namespace sicdm

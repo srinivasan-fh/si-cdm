@@ -473,18 +473,22 @@ click or drag, rather than sculpting them out of it.
   normal, with `SINK` of its height (0 to 1) sunk into the surface. The shape is a sphere, cube,
   cylinder, cone or torus, or any other body's shape (`BODY "name"`), fitted to `SIZE`. `DIR` stands
   it along another direction, and `SPIN` turns it about its axis.
-- **Curve Brush** (`CURVE`) works on a stroke over the surface. `TUBE` lays a round-ended tube of
-  `RADIUS` along it, with its centre line `SINK` of its diameter below the surface (half in by
-  default). `INSERT shape` lays a row of shapes along it, every `SPACING` mm (their size by
+- **Curve Brush** (`CURVE`) works on a stroke over the surface. `TUBE` lays a tube of `RADIUS`
+  along it, with its centre line `SINK` of its height below the surface (half in by default).
+  `PROFILE` sets its cross-section: `ROUND` (the default, with round ends), `SQUARE`, `FLAT` (a
+  ribbon a third as thick as it is wide), `TRIANGLE` (a point up) or `STAR` (five points); flat
+  sides lie along the surface, and those ends are flat. `TAPER a b` sizes it from `a` × the radius
+  where the stroke starts to `b` × where it ends (`TAPER 1 0` runs to a point). `INSERT shape` lays a row of shapes along it, every `SPACING` mm (their size by
   default), each facing along the stroke. The stroke is evened out and smoothed a little, as a
   hand's stroke wobbles.
 
 What it does with the shape:
 
 - `UNION` (the default) fuses it with the body exactly, into one closed solid.
-- `APPEND` adds its triangles as they are, as a polygroup of its own. This is the sculpting
-  workflow: place several, then `REMESH` fuses them all with blended joins. The body becomes a mesh
-  body.
+- `APPEND` fuses it exactly as well, so the body is one closed solid at once, and what shows of the
+  shape becomes a polygroup of its own, to mask or sculpt apart. `REMESH` later blends the joins.
+  The body becomes a mesh body. Where an exact union can't be made (an open body), the shape's
+  triangles are added as they are and the command says so; `REMESH` fuses them.
 - `NEW` makes it a body of its own ("Insert 1", "Tube 1").
 
 Points given away from the body are put onto its surface first. A point further away than the
@@ -494,6 +498,7 @@ shape's size (or a twentieth of the body's, if that is larger) is refused.
 INSERTMESH "Head" CONE AT 0,0,60 SIZE 14
 INSERTMESH "Head" BODY "Ear" AT 28,0,40 SIZE 20 SPIN 90
 CURVE "Head" TUBE PATH -25,-10,40 0,-24,50 25,-10,40 RADIUS 2.5
+CURVE "Head" TUBE PATH 0,-28,30 0,-30,10 RADIUS 2 PROFILE FLAT TAPER 1 0.2
 CURVE "Head" INSERT SPHERE PATH -28,0,20 0,28,22 28,0,20 SIZE 5 SPACING 7
 INSERTMESH "Head" TORUS AT 0,-29,25 SIZE 12 APPEND
 ```
@@ -501,14 +506,9 @@ INSERTMESH "Head" TORUS AT 0,-29,25 SIZE 12 APPEND
 **In the app:** *Insert Mesh* and *Curve Brush* are in the toolbar's cuts group, with *Add Volume
 (Boss)* (right-click or hold it). The options bar has the shape (the primitives, then the scene's
 bodies), its size, the tube's radius or the row's spacing, *Sink*, and *Union*, *Append* or *New
-body*. Click a surface to insert; drag over one to lay a curve. Over MCP, use the `insert_mesh`
-tool.
+body*; for a tube, its profile and taper. Click a surface to insert; drag over one to lay a
+curve. Over MCP, use the `insert_mesh` tool.
 
-**Limits:**
-
-- The tube's cross-section is round. There is no profile or taper along it yet.
-- Appended shapes overlap the body. Until `REMESH` fuses them, the body is not one closed solid, so
-  fuse it before 3D printing or a boolean.
 
 ## Voxel remesh
 

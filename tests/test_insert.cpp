@@ -33,6 +33,12 @@ Body* named(Document& d, const std::string& n) {
 
 AABB meshBox(const MeshData& m) { return m.bounds(); }
 
+std::string joined(const CommandOutput& o) {
+    std::string s;
+    for (const std::string& l : o.lines) s += l + "\n";
+    return s;
+}
+
 } // namespace
 
 TEST_CASE("insert brush: each shape stands on the surface along its normal") {
@@ -103,14 +109,33 @@ TEST_CASE("INSERTMESH and CURVE: united, appended, new bodies, undo") {
     box = named(d, name);
     CHECK(openEdgeCount(box->mesh) == 0);
     CHECK(meshVolume(box->mesh) > v1 + 10);
-    // Appended: a polygroup of its own, the triangles kept as they are.
+    // Appended: fused into one closed solid at once, what shows of it a polygroup of its own.
     const std::size_t tris = box->mesh.indices.size() / 3;
-    REQUIRE(run(d, "INSERTMESH \"" + name + "\" TORUS AT 5,5,10 SIZE 4 APPEND").ok);
+    const double v2 = meshVolume(box->mesh);
+    const auto app = run(d, "INSERTMESH \"" + name + "\" TORUS AT 5,5,10 SIZE 4 APPEND");
+    REQUIRE(app.ok);
+    CHECK(joined(app).find("fused into one closed solid") != std::string::npos);
     box = named(d, name);
     CHECK(box->kind == "mesh");
     CHECK(box->mesh.hasGroups());
+    CHECK(openEdgeCount(box->mesh) == 0);
     CHECK(box->mesh.indices.size() / 3 > tris);
-    CHECK(box->mesh.groups.back() != box->mesh.groups.front());
+    CHECK(meshVolume(box->mesh) > v2 + 5);
+    {
+        // The new group: on the torus (its triangles about it), the rest the box's.
+        std::uint32_t top = 0;
+        for (const std::uint32_t g : box->mesh.groups) top = std::max(top, g);
+        std::size_t onTorus = 0, elsewhere = 0;
+        for (std::size_t t = 0; t < box->mesh.groups.size(); ++t) {
+            if (box->mesh.groups[t] != top) continue;
+            Vec3 c{0, 0, 0};
+            for (int k = 0; k < 3; ++k) c += box->mesh.vertices[box->mesh.indices[3 * t + static_cast<std::size_t>(k)]].position * (1.0f / 3);
+            const Vec3 at = c + box->offset;
+            (length(Vec3{at.x - 5, at.y - 5, 0}) < 3.5f && at.z > 9.9f ? onTorus : elsewhere) += 1;
+        }
+        CHECK(onTorus > 20);
+        CHECK(elsewhere == 0);
+    }
     // A row of spheres as a body of its own.
     const std::size_t bodies = d.scene.bodies().size();
     const auto row = run(d, "CURVE \"" + name + "\" INSERT SPHERE PATH -8,8,10 8,8,10 SIZE 2 SPACING 4 NEW");
@@ -125,6 +150,47 @@ TEST_CASE("INSERTMESH and CURVE: united, appended, new bodies, undo") {
     // Undo takes them back one by one.
     REQUIRE(run(d, "UNDO").ok);
     CHECK(meshBox(named(d, name)->mesh).max.x < 10.5f);
+}
+
+TEST_CASE("curve brush: tube profiles and taper") {
+    std::vector<Vec3> pts, ns;
+    for (int i = 0; i <= 20; ++i) pts.push_back({static_cast<float>(i), 0, 0}), ns.push_back({0, 0, 1});
+    const auto stroke = evenStroke(pts, ns, 0.5f);
+    // Each profile closed, its section about the shape it says (radius 1, 20 mm long).
+    struct Want {
+        TubeProfile p;
+        double area; // of the section
+    };
+    const double pi = 3.14159265358979;
+    for (const Want& w : {Want{TubeProfile::Square, 4.0}, Want{TubeProfile::Flat, pi * 0.35}, Want{TubeProfile::Triangle, 0.75 * std::sqrt(3.0)},
+                          Want{TubeProfile::Star, 5 * 0.5 * std::sin(2 * pi / 10)}}) {
+        const MeshData t = curveTube(stroke, 1.0f, 0.5f, w.p);
+        REQUIRE(!t.indices.empty());
+        CHECK(watertight(t));
+        CHECK(std::fabs(meshVolume(t) / 20 - w.area) < 0.06 * w.area);
+    }
+    // A flat ribbon lies on the surface: wide across, thin up.
+    const AABB flat = meshBox(curveTube(stroke, 1.0f, 0.0f, TubeProfile::Flat));
+    CHECK(std::fabs((flat.max.y - flat.min.y) - 2.0f) < 0.05f);
+    CHECK(std::fabs((flat.max.z - flat.min.z) - 0.7f) < 0.05f);
+    CHECK(std::fabs(flat.min.z) < 0.05f); // resting on it (sink 0)
+    // Tapered to a point: a cone 20 long of radius 1, so a third of the cylinder.
+    const MeshData cone = curveTube(stroke, 1.0f, 0.5f, TubeProfile::Square, 1.0f, 0.0f);
+    CHECK(watertight(cone));
+    CHECK(std::fabs(meshVolume(cone) - 4.0 * 20 / 3) < 0.08 * 4.0 * 20 / 3);
+    CHECK(tubeProfileFromName("ribbon") == TubeProfile::Flat);
+    CHECK(!tubeProfileFromName("hexagon"));
+    // From the command line.
+    Document d;
+    REQUIRE(run(d, "BOX 30 20 10").ok);
+    const std::string name = d.scene.bodies().back().name;
+    const auto o = run(d, "CURVE \"" + name + "\" TUBE PATH -10,0,10 10,0,10 RADIUS 2 PROFILE STAR TAPER 1 0.3");
+    REQUIRE(o.ok);
+    CHECK(joined(o).find("star tube") != std::string::npos);
+    CHECK(openEdgeCount(named(d, name)->mesh) == 0);
+    CHECK(!run(d, "CURVE \"" + name + "\" TUBE PATH -10,0,10 10,0,10 PROFILE HEXAGON").ok);
+    CHECK(!run(d, "CURVE \"" + name + "\" TUBE PATH -10,0,10 10,0,10 TAPER 0 0").ok);
+    CHECK(!run(d, "CURVE \"" + name + "\" TUBE PATH -10,0,10 10,0,10 TAPER 1").ok);
 }
 
 TEST_CASE("INSERTMESH and CURVE: what they refuse") {

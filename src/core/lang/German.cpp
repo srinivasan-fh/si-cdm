@@ -1268,6 +1268,10 @@ const char* const kGerman[][2] = {
     {"Pose the skin as glTF viewers do (a joint twisted far thins); off: dual quaternions, joints keep their volume", "Die Haut wie glTF-Betrachter stellen (ein stark verdrehtes Gelenk wird dünner); aus: duale Quaternionen, Gelenke behalten ihr Volumen"},
     {"Use Dual Quaternions", "Duale Quaternionen verwenden"},
     {"Use Linear Blending", "Lineare Mischung verwenden"},
+    {"Taper", "Verjüngung"},
+    {"The tube's cross-section (flat sides lie along the surface)", "Der Querschnitt des Rohrs (flache Seiten liegen an der Oberfläche)"},
+    {"The tube's size where the stroke starts and where it ends, as times the radius (1, 0: to a point)", "Die Größe des Rohrs am Anfang und am Ende des Strichs, als Vielfaches des Radius (1, 0: bis zu einer Spitze)"},
+    {"Union: fused exactly. Append: fused exactly too, as a polygroup of its own (Remesh blends the joins). New body: a part of its own", "Vereinigen: exakt verschmolzen. Anhängen: ebenfalls exakt verschmolzen, als eigene Polygruppe (Remesh verrundet die Übergänge). Neuer Körper: ein eigenes Teil"},
 };
 
 

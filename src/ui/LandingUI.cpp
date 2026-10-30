@@ -2411,9 +2411,10 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     } else if (isCutTool(tool.id)) {
         auto shapeCombo = [](const char* id, int* v, std::initializer_list<const char*> names) {
             ImGui::SetNextItemWidth(90);
-            const char* items[4];
+            const char* items[8];
             int n = 0;
-            for (const char* nm : names) items[n++] = nm;
+            for (const char* nm : names)
+                if (n < 8) items[n++] = nm;
             ImGui::Combo(id, v, items, n);
         };
         auto field = [&](const char* label, const char* id, float* v, float lo) {
@@ -2496,7 +2497,21 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
                 ImGui::SameLine();
                 field("Size", "##isize", &st.insertSize, 0.01f);
             }
-            if (curve && st.curveTube) field("Radius", "##crad", &st.curveRadius, 0.01f);
+            if (curve && st.curveTube) {
+                field("Radius", "##crad", &st.curveRadius, 0.01f);
+                shapeCombo("##cprof", &st.curveProfile, {"Round", "Square", "Flat", "Triangle", "Star"});
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The tube's cross-section (flat sides lie along the surface)"));
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", tr("Taper"));
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(46);
+                ImGui::DragFloat("##ctap0", &st.curveTaperStart, 0.01f, 0.0f, 10.0f, "%.2f");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(46);
+                ImGui::DragFloat("##ctap1", &st.curveTaperEnd, 0.01f, 0.0f, 10.0f, "%.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The tube's size where the stroke starts and where it ends, as times the radius (1, 0: to a point)"));
+                ImGui::SameLine();
+            }
             if (curve && !st.curveTube) {
                 field("Spacing", "##cspace", &st.curveSpacing, 0.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The distance between the shapes (0: their size)"));
@@ -2509,7 +2524,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
             ImGui::SameLine();
             shapeCombo("##ijoin", &st.insertJoin, {"Union", "Append (polygroup)", "New body"});
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", tr("Union: fused exactly. Append: added as a polygroup of its own, to fuse later with Remesh. New body: a part of its own"));
+                ImGui::SetTooltip("%s", tr("Union: fused exactly. Append: fused exactly too, as a polygroup of its own (Remesh blends the joins). New body: a part of its own"));
             ImGui::SameLine();
             ImGui::TextDisabled("%s", curve ? tr("Drag along a surface") : tr("Click a surface"));
             break;

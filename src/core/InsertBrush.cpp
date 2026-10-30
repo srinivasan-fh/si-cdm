@@ -5,10 +5,12 @@
 #include "core/Features.hpp"
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
+#include "core/Armature.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <map>
 
 namespace sicdm {
 
@@ -123,36 +125,102 @@ std::vector<InsertPlace> evenStroke(const std::vector<Vec3>& points, const std::
     return out;
 }
 
-MeshData curveTube(const std::vector<InsertPlace>& stroke, float r, float sink) {
+const char* tubeProfileName(TubeProfile p) {
+    switch (p) {
+    case TubeProfile::Square: return "square";
+    case TubeProfile::Flat: return "flat";
+    case TubeProfile::Triangle: return "triangle";
+    case TubeProfile::Star: return "star";
+    default: return "round";
+    }
+}
+
+std::optional<TubeProfile> tubeProfileFromName(const std::string& word) {
+    std::string w;
+    for (const char ch : word) w += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (w == "round" || w == "circle") return TubeProfile::Round;
+    if (w == "square" || w == "box") return TubeProfile::Square;
+    if (w == "flat" || w == "ribbon") return TubeProfile::Flat;
+    if (w == "triangle") return TubeProfile::Triangle;
+    if (w == "star") return TubeProfile::Star;
+    return std::nullopt;
+}
+
+namespace {
+
+// The profile's edge at angle ph, as (across, up) for radius 1: up is out from the surface.
+std::array<float, 2> profilePoint(TubeProfile p, float ph) {
+    const float c = std::cos(ph), s = std::sin(ph);
+    switch (p) {
+    case TubeProfile::Square: {
+        const float k = 1.0f / std::max(std::fabs(c), std::fabs(s));
+        return {c * k, s * k};
+    }
+    case TubeProfile::Flat: return {c, 0.35f * s}; // a ribbon a third as thick as it is wide
+    case TubeProfile::Triangle: {
+        // An equilateral triangle, a point up: the nearer of its three sides' lines.
+        float best = 1e30f;
+        for (int k = 0; k < 3; ++k) {
+            const float a = kPi * 0.5f + kPi + 2 * kPi * static_cast<float>(k) / 3.0f; // its sides' outward normals: down, then round
+            const float d = c * std::cos(a) + s * std::sin(a);
+            if (d > 1e-6f) best = std::min(best, 0.5f / d);
+        }
+        return {c * best, s * best};
+    }
+    case TubeProfile::Star: {
+        // Five points: the radius between 1 and 0.5, straight between them.
+        const float seg = 2 * kPi / 10;
+        const float a = ph - kPi * 0.5f;
+        const int k = static_cast<int>(std::floor(a / seg));
+        const float t = (a - static_cast<float>(k) * seg) / seg;
+        const float r0 = (k % 2 == 0) ? 1.0f : 0.5f, r1 = (k % 2 == 0) ? 0.5f : 1.0f;
+        const float a0 = static_cast<float>(k) * seg + kPi * 0.5f, a1 = a0 + seg;
+        const float x = (1 - t) * r0 * std::cos(a0) + t * r1 * std::cos(a1), y = (1 - t) * r0 * std::sin(a0) + t * r1 * std::sin(a1);
+        return {x, y};
+    }
+    default: return {c, s};
+    }
+}
+
+} // namespace
+
+MeshData curveTube(const std::vector<InsertPlace>& stroke, float r, float sink, TubeProfile profile, float taperStart, float taperEnd) {
     MeshData m;
     if (stroke.size() < 2 || !(r > 0)) return m;
-    const int seg = 20;
-    const float lift = r - 2 * r * std::clamp(sink, 0.0f, 1.0f); // the centre line above the surface
+    const bool round = profile == TubeProfile::Round;
+    const int seg = round ? 20 : profile == TubeProfile::Star ? 40 : 32;
     std::vector<Vec3> c(stroke.size()), t(stroke.size());
-    for (std::size_t i = 0; i < stroke.size(); ++i) c[i] = stroke[i].at + normalize(stroke[i].normal) * lift;
+    // How far along each point is (0...1), for the taper.
+    std::vector<float> along(stroke.size(), 0.0f);
+    for (std::size_t i = 1; i < stroke.size(); ++i) along[i] = along[i - 1] + length(stroke[i].at - stroke[i - 1].at);
+    const float total = along.back() > 0 ? along.back() : 1.0f;
+    std::vector<float> rad(stroke.size());
+    for (std::size_t i = 0; i < stroke.size(); ++i) {
+        const float f = along[i] / total;
+        rad[i] = r * std::max(0.02f, taperStart + (taperEnd - taperStart) * f);
+        // The centre line above the surface: `sink` of the profile's height in, at its own size there.
+        const float half = rad[i] * (profile == TubeProfile::Flat ? 0.35f : 1.0f);
+        c[i] = stroke[i].at + normalize(stroke[i].normal) * (half - 2 * half * std::clamp(sink, 0.0f, 1.0f));
+    }
     for (std::size_t i = 0; i < c.size(); ++i) {
         const Vec3 d = i + 1 < c.size() ? c[i + 1] - (i > 0 ? c[i - 1] : c[i]) : c[i] - c[i - 1];
         t[i] = length(d) > 0 ? normalize(d) : Vec3{1, 0, 0};
     }
-    // Rings round the centre line, turned along it without twisting (each frame carried on).
-    Vec3 u = cross(t[0], stroke[0].normal);
-    if (length(u) < 1e-5f) u = cross(t[0], std::fabs(t[0].z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0});
-    u = normalize(u);
+    // Frames along the centre line: `up` out from the surface (so a flat or square profile lies
+    // on it), `across` square to it and the line.
     std::vector<std::array<Vec3, 2>> frames(c.size());
     for (std::size_t i = 0; i < c.size(); ++i) {
-        if (i > 0) {
-            u = u - t[i] * dot(u, t[i]);
-            if (length(u) < 1e-6f) u = cross(t[i], std::fabs(t[i].z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0});
-            u = normalize(u);
-        }
-        frames[i] = {u, cross(t[i], u)};
+        Vec3 up = stroke[i].normal - t[i] * dot(stroke[i].normal, t[i]);
+        if (length(up) < 1e-5f) up = i > 0 ? frames[i - 1][1] : cross(t[i], std::fabs(t[i].z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0});
+        up = normalize(up);
+        frames[i] = {normalize(cross(up, t[i])), up};
     }
-    auto ring = [&](const Vec3& centre, const Vec3& a, const Vec3& b, float rr, const Vec3& axisDir, float axial) {
+    auto ring = [&](const Vec3& centre, const std::array<Vec3, 2>& f, float rr, const Vec3& axisDir, float axial) {
         for (int j = 0; j < seg; ++j) {
             const float ph = 2 * kPi * static_cast<float>(j) / static_cast<float>(seg);
-            const Vec3 radial = a * std::cos(ph) + b * std::sin(ph);
-            const Vec3 nrm = normalize(radial * rr + axisDir * axial);
-            m.vertices.push_back({centre + radial * rr + axisDir * axial, nrm});
+            const auto q = profilePoint(profile, ph);
+            const Vec3 radial = f[0] * q[0] + f[1] * q[1];
+            m.vertices.push_back({centre + radial * rr + axisDir * axial, normalize(radial * rr + axisDir * axial)});
         }
     };
     auto band = [&](std::uint32_t r0, std::uint32_t r1) {
@@ -162,36 +230,36 @@ MeshData curveTube(const std::vector<InsertPlace>& stroke, float r, float sink) 
             m.indices.insert(m.indices.end(), {a, b, d, b, e, d});
         }
     };
-    // Start cap: a half ball, pole first.
-    const int capRings = 6;
+    // Each end: a round tube's a half ball, another profile's flat, to the end's own size.
+    const int capRings = round ? 6 : 1;
     const Vec3 back = t.front() * -1.0f;
-    m.vertices.push_back({c.front() + back * r, back});
+    const float r0 = rad.front(), r1 = rad.back();
+    m.vertices.push_back({c.front() + back * (round ? r0 : 0.0f), back});
     const std::uint32_t pole0 = 0;
     std::uint32_t prev = 1;
     for (int k = 1; k <= capRings; ++k) {
         const float a = kPi * 0.5f * static_cast<float>(k) / static_cast<float>(capRings);
-        ring(c.front(), frames.front()[0], frames.front()[1], r * std::sin(a), back, r * std::cos(a));
+        if (round) ring(c.front(), frames.front(), r0 * std::sin(a), back, r0 * std::cos(a));
+        else ring(c.front(), frames.front(), r0, back, 0);
         if (k == 1)
             for (int j = 0; j < seg; ++j)
                 m.indices.insert(m.indices.end(), {pole0, prev + static_cast<std::uint32_t>((j + 1) % seg), prev + static_cast<std::uint32_t>(j)});
         else
             band(prev, prev + static_cast<std::uint32_t>(seg)), prev += static_cast<std::uint32_t>(seg);
     }
-    // Along the stroke.
     for (std::size_t i = 1; i < c.size(); ++i) {
-        ring(c[i], frames[i][0], frames[i][1], r, t[i], 0);
+        ring(c[i], frames[i], rad[i], t[i], 0);
         band(prev, prev + static_cast<std::uint32_t>(seg));
         prev += static_cast<std::uint32_t>(seg);
     }
-    // End cap.
     const Vec3 fwd = t.back();
     for (int k = capRings - 1; k >= 1; --k) {
         const float a = kPi * 0.5f * static_cast<float>(k) / static_cast<float>(capRings);
-        ring(c.back(), frames.back()[0], frames.back()[1], r * std::sin(a), fwd, r * std::cos(a));
+        ring(c.back(), frames.back(), r1 * std::sin(a), fwd, r1 * std::cos(a));
         band(prev, prev + static_cast<std::uint32_t>(seg));
         prev += static_cast<std::uint32_t>(seg);
     }
-    m.vertices.push_back({c.back() + fwd * r, fwd});
+    m.vertices.push_back({c.back() + fwd * (round ? r1 : 0.0f), fwd});
     const std::uint32_t pole1 = static_cast<std::uint32_t>(m.vertices.size() - 1);
     for (int j = 0; j < seg; ++j)
         m.indices.insert(m.indices.end(), {prev + static_cast<std::uint32_t>(j), prev + static_cast<std::uint32_t>((j + 1) % seg), pole1});
@@ -220,7 +288,75 @@ bool joinInsert(Body& body, const MeshData& piece, InsertJoin join, std::string*
         const Body tool = featureBody("insert", piece, body.color);
         return bodyBoolean(body, tool, BooleanOp::Union, why);
     }
-    // Appended as it is, in the body's frame, a polygroup of its own (REMESH fuses it later).
+    // Appended: fused exactly too (one closed solid straight away), and what of it shows a
+    // polygroup of its own, to sculpt or mask apart; REMESH still blends the joins.
+    {
+        Body fused = body;
+        std::vector<std::uint32_t> before = body.mesh.hasGroups() ? body.mesh.groups : std::vector<std::uint32_t>(body.mesh.indices.size() / 3, 0);
+        const std::uint32_t g = before.empty() ? 1 : *std::max_element(before.begin(), before.end()) + 1;
+        const Body tool = featureBody("insert", piece, body.color);
+        std::string unionWhy;
+        if (bodyBoolean(fused, tool, BooleanOp::Union, &unionWhy)) {
+            // Each triangle of the result: the piece's where it lies on the piece's surface (a
+            // grid over the piece's triangles finds the few near it), else the body's own group
+            // of the body triangle nearest.
+            MeshData local = piece;
+            local.transform(translate(fused.offset * -1.0f));
+            AABB box;
+            for (const Vertex& v : local.vertices) box.expand(v.position);
+            const Vec3 ext = box.max - box.min;
+            const float size = std::max({ext.x, ext.y, ext.z, 1e-3f});
+            const float cell = size / 24.0f, eps = std::max(1e-4f, size * 1e-4f);
+            std::map<std::array<int, 3>, std::vector<std::uint32_t>> grid;
+            auto key = [&](const Vec3& p) {
+                return std::array<int, 3>{static_cast<int>(std::floor((p.x - box.min.x) / cell)), static_cast<int>(std::floor((p.y - box.min.y) / cell)),
+                                          static_cast<int>(std::floor((p.z - box.min.z) / cell))};
+            };
+            for (std::uint32_t t3 = 0; t3 + 2 < local.indices.size(); t3 += 3) {
+                const Vec3 a = local.vertices[local.indices[t3]].position, b = local.vertices[local.indices[t3 + 1]].position,
+                           cc = local.vertices[local.indices[t3 + 2]].position;
+                AABB tb;
+                tb.expand(a), tb.expand(b), tb.expand(cc);
+                const auto lo = key(tb.min - Vec3{eps, eps, eps}), hi = key(tb.max + Vec3{eps, eps, eps});
+                for (int x = lo[0]; x <= hi[0]; ++x)
+                    for (int y = lo[1]; y <= hi[1]; ++y)
+                        for (int z = lo[2]; z <= hi[2]; ++z) grid[{x, y, z}].push_back(t3);
+            }
+            auto onPiece = [&](const Vec3& p) {
+                const auto it = grid.find(key(p));
+                if (it == grid.end()) return false;
+                for (const std::uint32_t t3 : it->second) {
+                    const Vec3 q = closestPointOnTriangle(p, local.vertices[local.indices[t3]].position, local.vertices[local.indices[t3 + 1]].position,
+                                                          local.vertices[local.indices[t3 + 2]].position);
+                    if (length(q - p) <= eps) return true;
+                }
+                return false;
+            };
+            std::vector<Vec3> mids;
+            for (std::size_t t3 = 0; t3 + 2 < body.mesh.indices.size(); t3 += 3)
+                mids.push_back((body.mesh.vertices[body.mesh.indices[t3]].position + body.mesh.vertices[body.mesh.indices[t3 + 1]].position +
+                                body.mesh.vertices[body.mesh.indices[t3 + 2]].position) *
+                               (1.0f / 3.0f));
+            const NearestPoints nearMid(mids);
+            MeshData& out = fused.mesh;
+            std::vector<std::uint32_t> groups(out.indices.size() / 3, 0);
+            for (std::size_t t3 = 0; t3 + 2 < out.indices.size(); t3 += 3) {
+                const Vec3 mid = (out.vertices[out.indices[t3]].position + out.vertices[out.indices[t3 + 1]].position + out.vertices[out.indices[t3 + 2]].position) *
+                                 (1.0f / 3.0f);
+                if (onPiece(mid)) {
+                    groups[t3 / 3] = g;
+                } else if (const std::int64_t j = nearMid.find(mid, 1e30f); j >= 0 && static_cast<std::size_t>(j) < before.size()) {
+                    groups[t3 / 3] = before[static_cast<std::size_t>(j)];
+                }
+            }
+            out.groups = std::move(groups);
+            if (fused.kind != "mesh") fused.kind = "mesh", fused.params.clear();
+            body = std::move(fused);
+            body.mesh.computeFeatureEdges(35.0f);
+            return true;
+        }
+    }
+    // The union failed (an open body, say): appended as it is, to fuse later with REMESH.
     MeshData local = piece;
     local.transform(translate(body.offset * -1.0f));
     if (body.kind != "mesh") { // its triangles are its own from now on

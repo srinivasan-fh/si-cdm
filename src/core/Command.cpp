@@ -318,10 +318,10 @@ constexpr CommandSpec kCommands[] = {
      "the table, SVG the charts; the Motion Study window plots them"},
     {"INSERTMESH", "IMM", "INSERTMESH [body] SPHERE|CUBE|CYLINDER|CONE|TORUS|BODY \"name\" AT x,y,z [SIZE s] [DIR x,y,z] [SPIN deg] [SINK f] [UNION|APPEND|NEW]",
      "Insert-mesh brush: put a shape (or another body's) on the surface at the point, standing along its normal, SINK of it sunk in; "
-     "united exactly (UNION), appended as a polygroup of its own to fuse later with REMESH (APPEND), or a new body (NEW)"},
-    {"CURVE", "CURVEBRUSH", "CURVE [body] TUBE PATH x,y,z x,y,z ... [RADIUS r] [SINK f] [UNION|APPEND|NEW] | "
+     "united exactly (UNION), united as a polygroup of its own (APPEND; REMESH blends the joins), or a new body (NEW)"},
+    {"CURVE", "CURVEBRUSH", "CURVE [body] TUBE PATH x,y,z x,y,z ... [RADIUS r] [PROFILE ROUND|SQUARE|FLAT|TRIANGLE|STAR] [TAPER a b] [SINK f] [UNION|APPEND|NEW] | "
      "CURVE [body] INSERT shape|BODY \"name\" PATH ... [SIZE s] [SPACING d] [SINK f] [UNION|APPEND|NEW]",
-     "Curve brushes: a round-ended tube laid along a stroke on the surface, or a row of shapes along it, each facing along the stroke"},
+     "Curve brushes: a tube (round, square, flat, triangular or star-shaped, tapered if wanted) laid along a stroke on the surface, or a row of shapes along it, each facing along the stroke"},
     {"ARMATURE", "ZSPHERE ZSPHERES", "ARMATURE | ARMATURE NEW [name] [AT x,y,z] [RADIUS r] | ARMATURE name ADD [TO n] AT x,y,z [RADIUS r] [MIRROR X|Y|Z] | "
      "INSERT n | MOVE n TO x,y,z | BY dx,dy,dz [CHAIN] | RADIUS n r | REMOVE n | LIST | SHOW | HIDE | SKIN [NAME skin] [VOXEL v] [BLEND b] [SMOOTH k] [LINEAR|DUAL] | SKINNING DUAL|LINEAR | "
      "DETAIL [FROM n] TO m [MIRROR X|Y|Z] | POSE n TURN ax,ay,az | AXIS x,y,z ANGLE a | RESET [MIRROR X|Y|Z] | POSE RESET",

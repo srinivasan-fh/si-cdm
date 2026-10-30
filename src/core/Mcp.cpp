@@ -381,11 +381,13 @@ Json McpServer::toolDefinitions() {
         }());
         im.set("size", prop("number", "The shape's size across and tall (mm)"));
         im.set("radius", prop("number", "tube: its radius (mm)"));
+        im.set("profile", enumProp({"round", "square", "flat", "triangle", "star"}, "tube: its cross-section (default round; flat sides lie along the surface)"));
+        im.set("taper", numberArray(2, "tube: its size at the stroke's start and end, as times the radius ([1, 0]: to a point)"));
         im.set("spacing", prop("number", "row: the distance between copies (mm; default their size)"));
         im.set("direction", numberArray(3, "Stand along this direction instead of the surface's normal"));
         im.set("spin", prop("number", "Degrees turned about the normal"));
         im.set("sink", prop("number", "0 (resting on the surface) to 1 (sunk in)"));
-        im.set("join", enumProp({"union", "append", "new"}, "union: fused exactly (default); append: a polygroup of its own; new: a body of its own"));
+        im.set("join", enumProp({"union", "append", "new"}, "union: fused exactly (default); append: fused exactly too, a polygroup of its own; new: a body of its own"));
         tools.push(tool("insert_mesh",
                         "Insert-mesh and curve brushes: put a shape (sphere, cube, cylinder, cone, torus, or any body's) on a surface "
                         "standing along its normal, lay a tube along a stroke over it, or a row of shapes; fused, appended as a polygroup, "
@@ -2469,6 +2471,8 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         }
         if (a["size"].isNumber()) l += " SIZE " + num(a["size"].asNumber());
         if (a["radius"].isNumber()) l += " RADIUS " + num(a["radius"].asNumber());
+        if (a["profile"].isString()) l += " PROFILE " + a["profile"].asString();
+        if (a["taper"].isArray() && a["taper"].size() == 2) l += " TAPER " + num(a["taper"][0].asNumber()) + " " + num(a["taper"][1].asNumber());
         if (a["spacing"].isNumber()) l += " SPACING " + num(a["spacing"].asNumber());
         if (a["direction"].isArray()) l += " DIR " + v3(a["direction"]);
         if (a["spin"].isNumber()) l += " SPIN " + num(a["spin"].asNumber());
