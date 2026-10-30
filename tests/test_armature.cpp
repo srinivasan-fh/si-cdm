@@ -358,6 +358,57 @@ TEST_CASE("armature edits after skinning: the skin follows, what was sculpted on
     CHECK(named(plain, "Arm skin")->mesh.vertices.size() != afterRemove);
 }
 
+TEST_CASE("armature: a remeshed skin is bound again with the weights it had, not by distance") {
+    Document d;
+    REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 50,0,0 RADIUS 8").ok);
+    REQUIRE(run(d, "ARMATURE Arm ADD AT 100,0,0 RADIUS 6").ok);
+    REQUIRE(run(d, "ARMATURE Arm SKIN").ok);
+    Body* skin = named(d, "Arm skin");
+    REQUIRE(skin && skin->skin);
+    // Weighted by hand as distance never would: all of it on the first link (0 to 1), so a
+    // turn at ball 2 moves none of it. (A blend of the two links where x < 0, to see it carried.)
+    auto w = std::make_shared<SkinData>(*skin->skin);
+    for (std::size_t i = 0; i < w->rest.size(); ++i) {
+        if (w->rest[i].x < 0) w->bone[i] = {1, 2, -1, -1}, w->weight[i] = {0.75f, 0.25f, 0, 0};
+        else w->bone[i] = {1, -1, -1, -1}, w->weight[i] = {1, 0, 0, 0};
+    }
+    skin->skin = w;
+    REQUIRE(run(d, "SUBDIVIDE \"Arm skin\"").ok);
+    skin = named(d, "Arm skin");
+    REQUIRE(skin->mesh.vertices.size() != skin->skin->rest.size());
+    const std::vector<Vertex> before = skin->mesh.vertices;
+    const CommandOutput posed = run(d, "ARMATURE Arm POSE 2 AXIS 0,0,1 ANGLE 90");
+    REQUIRE(posed.ok);
+    CHECK(joined(posed).find("bound to Arm again") != std::string::npos);
+    skin = named(d, "Arm skin");
+    REQUIRE(skin->skin->rest.size() == skin->mesh.vertices.size());
+    double moved = 0;
+    for (std::size_t i = 0; i < before.size(); ++i)
+        if (before[i].position.x > 2) moved = std::max(moved, static_cast<double>(length(skin->mesh.vertices[i].position - before[i].position)));
+    CHECK(moved < 1e-3); // by distance the tip would swing round 90 deg (the blend behind does turn a little)
+    std::size_t off = 0, blended = 0, behind = 0;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        const auto& bone = skin->skin->bone[i];
+        const auto& weight = skin->skin->weight[i];
+        float on1 = 0, total = 0;
+        for (std::size_t q = 0; q < 4; ++q) {
+            if (bone[q] < 0) continue;
+            total += weight[q];
+            if (bone[q] == 1) on1 += weight[q];
+        }
+        CHECK(std::fabs(total - 1) < 1e-4f);
+        if (before[i].position.x > 2 && on1 < 0.999f) ++off;
+        if (before[i].position.x < -2) {
+            ++behind;
+            if (std::fabs(on1 - 0.75f) < 1e-3f) ++blended;
+        }
+    }
+    CHECK(off == 0);
+    CHECK(behind > 10);
+    CHECK(blended == behind);
+}
+
 TEST_CASE("armature: skinned again keeps polygroups, UVs and paint; a remeshed skin is bound again") {
     Document d;
     REQUIRE(run(d, "ARMATURE NEW Arm AT 0,0,0 RADIUS 10").ok);

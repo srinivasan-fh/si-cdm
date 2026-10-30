@@ -371,9 +371,11 @@ Then turn it into a mesh:
     - the polygroups and UVs, each new triangle from the old triangle nearest it (its UVs by
       where its corners fall on that one triangle, so no triangle straddles a seam).
   - A skin remeshed since it was skinned (Dynamesh, retopology, subdivision) is bound again as it
-    is: weights from the links nearest each vertex where it is now, its rest pose taken back from
-    that, and its unsculpted shape from a fresh skin of the armature, so what was sculpted stays
-    on later edits too.
+    is: each vertex takes the weights the old skin had about it (blended from the old vertices
+    nearest it; one sitting on an old vertex takes its weights exactly), so weights set or
+    adjusted by hand are kept. Only links the armature no longer has fall back to weights by
+    distance. Its rest pose is taken back from that, and its unsculpted shape from a fresh skin
+    of the armature, so what was sculpted stays on later edits too.
 
 ```text
 ARMATURE NEW Body AT 0,0,100 RADIUS 20
@@ -433,10 +435,8 @@ clicked, as with ZSpheres. *Skin It* makes the skin. Over MCP, use the `armature
 
 **Limits:**
 
-- `MOVE`, `RADIUS` and `ADD` after skinning change the armature but not the skin. Skin again to fit
-  it.
-- `REMOVE` unbinds the skins, because the balls are renumbered.
-- A skin that is remeshed (or subdivided, or decimated) no longer follows the pose.
+- Adding or removing a ball skins it again, so its weights are by distance again: weights set by
+  hand aren't kept through that (what was sculpted and painted, the polygroups and UVs are).
 
 ## Insert-mesh and curve brushes
 

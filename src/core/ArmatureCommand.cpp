@@ -10,9 +10,11 @@
 #include "core/Units.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <memory>
 #include <optional>
 
@@ -97,10 +99,51 @@ std::array<float, 4> mirroredTurn(std::array<float, 4> q, int axis) {
     return q;
 }
 
+// The old skin's weights brought over to the points `now` (both where they stand in the
+// armature's pose): each takes those of the old vertices about it, blended by how near they are
+// (the nearest's alone where one sits on it). Weights the armature has no link for, or points
+// with nothing old near, keep what they have (`s`'s, by distance).
+void carryWeights(const SkinData& old, const Armature& arm, const std::vector<Vec3>& now, SkinData& s) {
+    if (old.bone.size() != old.rest.size() || old.weight.size() != old.rest.size() || old.rest.empty()) return;
+    const std::vector<Vec3> was = poseSkin(old, arm);
+    const NearestPoints near(was);
+    auto usable = [&](int bone) {
+        return bone >= 0 && bone < static_cast<int>(arm.balls.size()) && arm.balls[static_cast<std::size_t>(bone)].parent >= 0;
+    };
+    std::vector<std::uint32_t> about;
+    for (std::size_t i = 0; i < now.size() && i < s.bone.size(); ++i) {
+        float d = 0;
+        const std::int64_t j = near.find(now[i], 1e30f, &d);
+        if (j < 0) continue;
+        // Within twice the nearest: on an old vertex, that one; between two, both alike.
+        const float reach = 2 * d + 1e-5f;
+        if (reach < 4 * near.cell()) near.around(now[i], reach, about);
+        else about.assign(1, static_cast<std::uint32_t>(j));
+        std::map<int, float> sum;
+        for (const std::uint32_t k : about) {
+            const float f = 1 - length(was[k] - now[i]) / reach;
+            for (std::size_t q = 0; q < 4; ++q)
+                if (usable(old.bone[k][q]) && old.weight[k][q] > 0) sum[old.bone[k][q]] += f * f * old.weight[k][q];
+        }
+        std::vector<std::pair<float, int>> by;
+        for (const auto& [bone, w] : sum) by.push_back({w, bone});
+        std::stable_sort(by.begin(), by.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+        if (by.size() > 4) by.resize(4);
+        float total = 0;
+        for (const auto& e : by) total += e.first;
+        if (!(total > 0)) continue;
+        std::array<std::int32_t, 4> bone{-1, -1, -1, -1};
+        std::array<float, 4> weight{0, 0, 0, 0};
+        for (std::size_t q = 0; q < by.size(); ++q) bone[q] = by[q].second, weight[q] = by[q].first / total;
+        s.bone[i] = bone, s.weight[i] = weight;
+    }
+}
+
 // A skin whose mesh was remade since (Dynamesh, retopology...) bound to the armature again as it
-// stands: weights from the links nearest each vertex where they are now (the armature posed as
-// it is), its rest pose taken back from that, and its unsculpted shape the nearest points of a
-// fresh skin of the armature, so what was sculpted on it is kept on later edits.
+// stands: each vertex weighted as the old skin was about it (or, where it gave none, by the links
+// nearest where it is now, the armature posed as it is), its rest pose taken back from that, and
+// its unsculpted shape the nearest points of a fresh skin of the armature, so what was sculpted
+// on it is kept on later edits.
 std::shared_ptr<SkinData> rebind(const Body& b, const Armature& arm) {
     auto s = std::make_shared<SkinData>();
     s->armature = b.skin ? b.skin->armature : std::string();
@@ -111,6 +154,7 @@ std::shared_ptr<SkinData> rebind(const Body& b, const Armature& arm) {
     const std::vector<Vec3> at = posedBalls(arm);
     for (std::size_t i = 0; i < posed.balls.size(); ++i) posed.balls[i].at = at[i];
     skinWeights(posed, skinSoftness(arm, s->options), now, *s);
+    if (b.skin) carryWeights(*b.skin, arm, now, *s);
     s->rest = unposeSkin(*s, arm, now);
     Armature rest = arm;
     for (ArmatureBall& ball : rest.balls) ball.turn = {0, 0, 0, 1};

@@ -104,6 +104,8 @@ class NearestPoints {
 public:
     explicit NearestPoints(const std::vector<Vec3>& pts, float cell = 0);
     std::int64_t find(const Vec3& p, float within, float* distance = nullptr) const;
+    // Every point within `radius` of p (in no order).
+    void around(const Vec3& p, float radius, std::vector<std::uint32_t>& out) const;
     float cell() const noexcept { return m_cell; }
 
 private:

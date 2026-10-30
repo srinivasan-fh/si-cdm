@@ -548,6 +548,20 @@ std::int64_t NearestPoints::find(const Vec3& p, float within, float* distance) c
     return pick;
 }
 
+void NearestPoints::around(const Vec3& p, float radius, std::vector<std::uint32_t>& out) const {
+    out.clear();
+    if (m_pts.empty() || !(radius >= 0)) return;
+    const auto lo = key(p - Vec3{radius, radius, radius}), hi = key(p + Vec3{radius, radius, radius});
+    for (int x = lo[0]; x <= hi[0]; ++x)
+        for (int y = lo[1]; y <= hi[1]; ++y)
+            for (int z = lo[2]; z <= hi[2]; ++z) {
+                const auto it = m_cells.find({x, y, z});
+                if (it == m_cells.end()) continue;
+                for (const std::uint32_t j : it->second)
+                    if (length(m_pts[j] - p) <= radius) out.push_back(j);
+            }
+}
+
 bool reskinWithDetail(const Armature& n, const SkinOptions& o, const SkinCarry& c, MeshData& out, SkinData& skin, std::string* why) {
     if (!armatureSkin(n, o, out, skin, why)) return false;
     skin.options = o;
