@@ -12,7 +12,7 @@ namespace sicdm {
 
 namespace {
 
-constexpr float kCubePx = 112.0f;  // widget size
+constexpr float kCubePx = 76.0f;   // widget size (the sphere about 80 px across)
 constexpr float kDragPx = 3.0f;
 
 struct Face {
@@ -155,10 +155,10 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
         if (facing <= 0.15f) continue;
         const float a = std::clamp((facing - 0.15f) * 2.5f, 0.0f, 1.0f);
         ImFont* font = ImGui::GetFont();
-        const float fs = ImGui::GetFontSize() * (0.85f + 0.3f * facing);
+        const float fs = ImGui::GetFontSize() * (0.72f + 0.2f * facing);
         const ImVec2 ts = font->CalcTextSizeA(fs, 1e9f, 0, f.label);
         // On the ball, a little in from where the direction meets it, so a name near the rim stays on.
-        const ImVec2 q{center.x + (p.x - center.x) * 0.8f, center.y + (p.y - center.y) * 0.8f};
+        const ImVec2 q{center.x + (p.x - center.x) * 0.68f, center.y + (p.y - center.y) * 0.68f};
         const ImU32 col = IM_COL32(34, 38, 46, static_cast<int>(a * 255.0f));
         dl->AddText(font, fs, {q.x - ts.x * 0.5f, q.y - ts.y * 0.5f}, col, f.label);
         dl->AddText(font, fs, {q.x - ts.x * 0.5f + 0.6f, q.y - ts.y * 0.5f}, col, f.label); // a touch bolder
