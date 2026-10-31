@@ -17,9 +17,10 @@ page takes you through the window and a first part, from a sketch to G-code.
   - **Top (*Sketch*):** point, line, arc, circle, rectangle and spline, then trim, extend and
     offset.
   - **Right:** sculpting brushes, cuts and booleans, direct editing, and armour.
-  - **Bottom (*View*):** home, fit and zoom; top, front, right and isometric views; shaded,
-    shaded with edges, wireframe and hidden-line display; the section view, grid, snapping to the
-    grid and to points, and perspective or orthographic.
+  - **Bottom (*View*, on the right):** home, fit, the zoom tool, zoom in and out; the top,
+    front, right, back, left, bottom and isometric views; shaded, shaded with edges, wireframe and
+    hidden-line display; hide the selection, show only it, show everything; the section view,
+    grid, snapping to the grid and to points, and perspective or orthographic.
 - **Panel** (beside the rail): *Model* (`M`) lists the bodies, sketches, mates and images;
   *Library* (`K`) has ready-made parts; *CAM* (`J`) runs the machining jobs.
 - **Canvas**: the model. The view sphere (bottom right) turns the view: click on it for the

@@ -352,6 +352,7 @@ private:
     float m_tabsBottom = 0.0f;
     float m_rightRailWidth = 0.0f;
     static constexpr float kViewBarHeight = 34.0f;
+    float m_viewBarWidth = 600.0f; // the view bar's buttons last frame (to right-align them)
     float m_statusHeight = 0.0f;
     ImVec2 m_canvasMin{}, m_canvasMax{};
     float m_commandHeight = 0.0f;

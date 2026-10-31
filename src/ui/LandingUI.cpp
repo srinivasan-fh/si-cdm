@@ -3414,6 +3414,10 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
     }
     const bool is2D = st.mode == ViewMode::Drawing2D;
     const float bs = kViewBarHeight - 8.0f;
+    // Right-aligned: the group starts its last measured width in from the right edge.
+    const float startX = std::max(10.0f, ImGui::GetWindowWidth() - m_viewBarWidth - 12.0f);
+    ImGui::SetCursorPosX(startX);
+    const float groupLeft = ImGui::GetCursorScreenPos().x;
     ImGui::SetCursorPosY((kViewBarHeight - ImGui::GetFontSize()) * 0.5f);
     ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("VIEW"));
     ImGui::SameLine(0, 14);
@@ -3456,6 +3460,14 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             dl->AddLine({c.x + 2.5f, c.y + 2.5f}, {c.x + 8, c.y + 8}, col, 2.0f);
         }))
         m_toolbox.setActive(ToolId::Zoom);
+    for (const bool in : {true, false})
+        if (button(in ? "##vzin" : "##vzout", false, in ? tr("Zoom in") : tr("Zoom out"), [&, in](ImVec2 c, ImU32 col) {
+                dl->AddCircle({c.x - 2, c.y - 2}, 6, col, 16, 1.4f);
+                dl->AddLine({c.x + 2.5f, c.y + 2.5f}, {c.x + 8, c.y + 8}, col, 2.0f);
+                dl->AddLine({c.x - 5, c.y - 2}, {c.x + 1, c.y - 2}, col, 1.4f);
+                if (in) dl->AddLine({c.x - 2, c.y - 5}, {c.x - 2, c.y + 1}, col, 1.4f);
+            }))
+            cmd.commands.push_back(in ? "ZOOM IN" : "ZOOM OUT");
     divider();
     // The standard views: little cubes with the face looked at filled.
     struct V {
@@ -3467,11 +3479,27 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
     static const V kBarViews[] = {{"##vtop", "Top view", StandardView::Top, 0},
                                {"##vfront", "Front view", StandardView::Front, 1},
                                {"##vright", "Right view", StandardView::Right, 2},
+                               {"##vback", "Back view", StandardView::Back, 5},
+                               {"##vleft", "Left view", StandardView::Left, 6},
+                               {"##vbottom", "Bottom view", StandardView::Bottom, 4},
                                {"##viso", "Isometric view", StandardView::Isometric, 3}};
     for (const V& v : kBarViews)
         if (button(v.id, false, tr(v.tip), [&](ImVec2 c, ImU32 col) {
-                const ImVec2 t{c.x, c.y - 8}, l{c.x - 7, c.y - 4}, r{c.x + 7, c.y - 4}, m{c.x, c.y}, bl{c.x - 7, c.y + 4}, br{c.x + 7, c.y + 4}, b{c.x, c.y + 8};
-                if (v.face == 0) dl->AddQuadFilled(t, r, m, l, col);
+                // The bottom view's cube is seen from below: the same cube upside down, its
+                // (bottom) face filled.
+                const float f = v.face == 4 ? -1.0f : 1.0f;
+                const ImVec2 t{c.x, c.y - 8 * f}, l{c.x - 7, c.y - 4 * f}, r{c.x + 7, c.y - 4 * f}, m{c.x, c.y}, bl{c.x - 7, c.y + 4 * f},
+                    br{c.x + 7, c.y + 4 * f}, b{c.x, c.y + 8 * f};
+                if (v.face == 0 || v.face == 4) dl->AddQuadFilled(t, r, m, l, col);
+                // Back and left: the far side of the front and right faces, hatched.
+                auto hatch = [&](ImVec2 a, ImVec2 bb, ImVec2 cc, ImVec2 d) {
+                    for (int k = 1; k < 4; ++k) {
+                        const float u = static_cast<float>(k) / 4.0f;
+                        dl->AddLine({a.x + (d.x - a.x) * u, a.y + (d.y - a.y) * u}, {bb.x + (cc.x - bb.x) * u, bb.y + (cc.y - bb.y) * u}, col, 1.2f);
+                    }
+                };
+                if (v.face == 5) hatch(l, m, b, bl);
+                if (v.face == 6) hatch(m, r, br, b);
                 if (v.face == 1) dl->AddQuadFilled(l, m, b, bl, col);
                 if (v.face == 2) dl->AddQuadFilled(m, r, br, b, col);
                 dl->AddQuad(t, r, m, l, col, 1.2f);
@@ -3502,6 +3530,24 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                 }
             }))
             vp.displayMode = d.m;
+    divider();
+    // What is shown: hide the selection, show only it, show everything.
+    if (button("##vhide", false, tr("Hide the selected bodies  (Alt+H)"), [&](ImVec2 c, ImU32 col) {
+            dl->AddEllipse(c, {8.0f, 4.5f}, col, 0, 20, 1.3f);
+            dl->AddCircleFilled(c, 2.2f, col);
+            dl->AddLine({c.x - 8, c.y + 6}, {c.x + 8, c.y - 6}, col, 1.6f);
+        }))
+        cmd.commands.push_back("HIDE");
+    if (button("##visolate", false, tr("Show only the selected bodies  (Alt+I)"), [&](ImVec2 c, ImU32 col) {
+            dl->AddRect({c.x - 8, c.y - 8}, {c.x + 8, c.y + 8}, (col & 0x00FFFFFFu) | 0x60000000u, 2.0f, 0, 1.0f);
+            dl->AddRectFilled({c.x - 3.5f, c.y - 3.5f}, {c.x + 3.5f, c.y + 3.5f}, col, 1.0f);
+        }))
+        cmd.commands.push_back("ISOLATE");
+    if (button("##vshowall", false, tr("Show all bodies  (Alt+Shift+H)"), [&](ImVec2 c, ImU32 col) {
+            dl->AddEllipse(c, {8.0f, 4.5f}, col, 0, 20, 1.3f);
+            dl->AddCircleFilled(c, 2.2f, col);
+        }))
+        cmd.commands.push_back("SHOW ALL");
     divider();
     if (st.project && !is2D &&
         button("##vsection", st.showSection, tr("Section view: cut the model with a plane"), [&](ImVec2 c, ImU32 col) {
@@ -3534,6 +3580,8 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             dl->AddLine({c.x + 3, c.y - 6}, {c.x + 3, c.y + 6}, col, 1.0f);
         }))
         cmd.toggleProjection = true;
+    ImGui::Dummy({0, 0}); // ends the row, to measure it
+    m_viewBarWidth = ImGui::GetItemRectMin().x - groupLeft;
     ImGui::End();
     ImGui::PopStyleVar(4);
 }

@@ -1286,6 +1286,11 @@ const char* const kGerman[][2] = {
     {"VIEW", "ANSICHT"},
     {"Zoom to fit  (F)", "Alles einpassen  (F)"},
     {"Zoom: drag up and down in the view", "Zoomen: in der Ansicht nach oben und unten ziehen"},
+    {"Hide the selected bodies  (Alt+H)", "Ausgewählte Körper ausblenden  (Alt+H)"},
+    {"Show all bodies  (Alt+Shift+H)", "Alle Körper einblenden  (Alt+Umschalt+H)"},
+    {"Show only the selected bodies  (Alt+I)", "Nur die ausgewählten Körper zeigen  (Alt+I)"},
+    {"Zoom in", "Vergrößern"},
+    {"Zoom out", "Verkleinern"},
 };
 
 
