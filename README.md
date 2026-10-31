@@ -772,8 +772,10 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
   radius, bore, semi-axes, pitch, turns, hand), and `PARAM` changes them from the command line.
   Commands: `FRUSTUM rb rt h` (or `CONE r h rt`), `TUBE R r h`, `ELLIPSOID a b c`, `CAPSULE r length`,
   `HEMISPHERE r`, `SPRING R r pitch turns [LEFT]` (coil radius to the wire's centre, wire
-  radius). Tube, capsule, hemisphere and frustum keep exact geometry (STEP: cylinders, spheres,
-  cones, planes); an ellipsoid with three different semi-axes and a spring are fine meshes.
+  radius). All of them keep exact geometry for STEP: tube, capsule, hemisphere and frustum as
+  cylinders, spheres, cones and planes; the ellipsoid as a rational B-spline (exact); the spring
+  as a B-spline tube within 0.5% of the wire's radius with flat ends (up to 20 turns; longer
+  springs export as facets).
 - **Extrude (E):** turns a closed sketch profile into a solid along its plane's normal. A profile
   is a rectangle, circle, ellipse, slot, closed polyline or spline, or a loop of lines and arcs
   that meet end to end. Concave shapes are included. Click the profile (its outline or anywhere inside),

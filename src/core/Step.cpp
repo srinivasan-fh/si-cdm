@@ -4,6 +4,7 @@
 #include "core/ExactMesh.hpp"
 #include "core/Fastener.hpp"
 #include "core/Scene.hpp"
+#include "core/Surfacing.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1204,6 +1205,80 @@ bool writeStepFile(const std::vector<StepPart>& parts, const std::string& path, 
     return static_cast<bool>(f);
 }
 
+BSplineSurface nurbsEllipsoid(double a, double b, double c) {
+    // A sphere of revolution as a rational B-spline (a semicircle from the north pole down,
+    // turned through a full circle of four quarters), scaled to the semi-axes: exact.
+    const double h = std::sqrt(0.5);
+    const double mr[5] = {0, 1, 1, 1, 0}, mz[5] = {1, 1, 0, -1, -1}, mw[5] = {1, h, 1, h, 1};
+    const double cx[9] = {1, 1, 0, -1, -1, -1, 0, 1, 1}, cy[9] = {0, 1, 1, 1, 0, -1, -1, -1, 0}, cw[9] = {1, h, 1, h, 1, h, 1, h, 1};
+    BSplineSurface s;
+    s.du = s.dv = 2;
+    s.nu = 5, s.nv = 9;
+    s.ku = {0, 0, 0, 0.5, 0.5, 1, 1, 1};
+    s.kv = {0, 0, 0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1, 1, 1};
+    for (int i = 0; i < 5; ++i)
+        for (int j = 0; j < 9; ++j) {
+            s.cp.push_back({a * mr[i] * cx[j], b * mr[i] * cy[j], c + c * mz[i]});
+            s.w.push_back(mw[i] * cw[j]);
+        }
+    return s;
+}
+
+std::shared_ptr<Brep> springBrep(double R, double r, double pitch, double turns, bool left) {
+    constexpr double kPiD = 3.14159265358979323846;
+    // The wire: a cubic B-spline through rings on the helical tube (no B-spline is the tube
+    // exactly; this one is within a few thousandths of r), with flat ends. Long springs (more
+    // than a few hundred rings) have no B-rep.
+    if (!(R > 0) || !(r > 0) || r >= R || pitch <= 2 * r || !(turns > 0)) return nullptr;
+    const int perTurn = 24, around = 16;
+    const int steps = std::max(8, static_cast<int>(std::ceil(turns * perTurn)));
+    if (steps > 480) return nullptr;
+    const double hand = left ? -1.0 : 1.0;
+    auto frame = [&](double t, DVec3& c, DVec3& tan, DVec3& out, DVec3& bin) {
+        const double th = hand * 2.0 * kPiD * t;
+        out = {std::cos(th), std::sin(th), 0};
+        c = {R * out.x, R * out.y, r + pitch * t};
+        tan = dnormalize(DVec3{-R * std::sin(th) * 2.0 * kPiD * hand, R * std::cos(th) * 2.0 * kPiD * hand, pitch});
+        bin = dnormalize(dcross(tan, out));
+    };
+    std::vector<std::vector<DVec3>> rows;
+    for (int k = 0; k <= steps; ++k) {
+        DVec3 c, tan, out, bin;
+        frame(turns * k / steps, c, tan, out, bin);
+        std::vector<DVec3> ring;
+        for (int i = 0; i <= around; ++i) {
+            const double ph = 2.0 * kPiD * (i % around) / around;
+            ring.push_back(c + (out * std::cos(ph) + bin * std::sin(ph)) * r);
+        }
+        rows.push_back(ring);
+    }
+    BSplineSurface tube;
+    if (!interpolateSurface(rows, tube)) return nullptr;
+    auto b = surfaceBrep(tube);
+    if (b->edges.size() != 3) return nullptr; // the seam and the two end rings
+    BShell& sh = b->shells[0];
+    sh.faces[0].sameSense = false; // the tube's (u x v) normal points into the wire
+    // Flat ends on the rings: the end one (edge 1) and the start one (edge 2), each the other way round.
+    for (int end = 0; end < 2; ++end) {
+        DVec3 c, tan, out, bin;
+        frame(end == 0 ? 0.0 : turns, c, tan, out, bin);
+        BSurface pl;
+        pl.kind = BSurfaceKind::Plane;
+        pl.f = Frame::make(c, end == 0 ? tan * -1.0 : tan, out);
+        BFace f;
+        b->surfaces.push_back(pl);
+        f.surface = static_cast<int>(b->surfaces.size()) - 1;
+        BLoop l;
+        l.outer = true;
+        l.edges.push_back({end == 0 ? 2 : 1, end == 0});
+        f.loops.push_back(l);
+        sh.faces.push_back(f);
+    }
+    sh.closed = true;
+    sh.name = "spring";
+    return b;
+}
+
 std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<float>& pf) {
     // The dimensions as typed (see decimal()), in double.
     std::vector<double> p;
@@ -1263,6 +1338,23 @@ std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<floa
         return exactBrepFromMesh(m, {sphereAt(0, p[0])});
     }
     if (k == "ellipsoid" && need(3) && p[0] > 0 && p[0] == p[1] && p[1] == p[2]) return brepSphere({0, 0, p[0]}, p[0]); // round: a sphere
+    if (k == "ellipsoid" && need(3) && p[0] > 0 && p[1] > 0 && p[2] > 0) { // a rational B-spline: exact
+        // One face, the whole surface (closed on itself: the poles and the seam), like a torus.
+        auto b = std::make_shared<Brep>();
+        BSurface su;
+        su.kind = BSurfaceKind::BSpline;
+        su.bs = nurbsEllipsoid(p[0], p[1], p[2]);
+        b->surfaces.push_back(su);
+        BFace f;
+        f.surface = 0;
+        f.sameSense = true;
+        BShell sh;
+        sh.faces.push_back(f);
+        sh.name = "ellipsoid";
+        b->shells.push_back(sh);
+        return b;
+    }
+    if (k == "spring" && need(4)) return springBrep(p[0], p[1], p[2], p[3], p.size() > 4 && p[4] > 0.5);
     // Flat-faced shapes: their facets are exact.
     if (k == "wedge" || k == "pyramid" || k == "prism") {
         const MeshData m = buildPrimitive(k, pf);

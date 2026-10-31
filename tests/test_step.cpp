@@ -547,3 +547,48 @@ TEST_CASE("Exact geometry through booleans of exact bodies, and not for meshes")
     REQUIRE(surfaceDistance(rs[0], {1, 0, -4.5}, dist, n));
     CHECK_NEAR(dist, 0.0, 1e-9); // on the cone
 }
+
+TEST_CASE("STEP: the ellipsoid exactly (rational B-spline) and the spring as a B-spline tube") {
+    // The ellipsoid's surface lies on the ellipsoid, at every parameter.
+    const BSplineSurface e = nurbsEllipsoid(25, 15, 12);
+    double worst = 0;
+    for (int i = 0; i <= 40; ++i)
+        for (int j = 0; j <= 40; ++j) {
+            const DVec3 p = e.eval(i / 40.0, j / 40.0);
+            worst = std::max(worst, std::fabs(std::sqrt(p.x * p.x / 625 + p.y * p.y / 225 + (p.z - 12) * (p.z - 12) / 144) - 1));
+        }
+    CHECK(worst < 1e-12);
+
+    Document d;
+    REQUIRE(run(d, "ELLIPSOID 25 15 12").ok);
+    CHECK(d.scene.bodies().back().exact());
+    REQUIRE(run(d, "SPRING 15 2 8 5 @80,0,0").ok);
+    CHECK(d.scene.bodies().back().exact());
+    const double helix = 5 * std::sqrt(std::pow(2 * kPiT * 15, 2) + 64.0);
+    // The B-reps' own volumes.
+    CHECK_NEAR(volumeOf({StepPart{"e", std::const_pointer_cast<Brep>(d.scene.bodies()[0].brep), ""}}, 0.002), 4.0 / 3 * kPiT * 25 * 15 * 12, 2e-3 * 4.0 / 3 * kPiT * 25 * 15 * 12);
+    CHECK_NEAR(volumeOf({StepPart{"s", std::const_pointer_cast<Brep>(d.scene.bodies()[1].brep), ""}}, 0.002), kPiT * 4 * helix, 0.01 * kPiT * 4 * helix);
+    // The spring's tube stays on the wire: within a few thousandths of its radius of the helix.
+    const BSurface& tube = d.scene.bodies()[1].brep->surfaces[0];
+    REQUIRE(tube.kind == BSurfaceKind::BSpline);
+    double off = 0;
+    for (int i = 0; i <= 200; ++i)
+        for (int j = 0; j <= 16; ++j) {
+            const DVec3 p = tube.bs.eval(tube.bs.u0() + (tube.bs.u1() - tube.bs.u0()) * i / 200.0, tube.bs.v0() + (tube.bs.v1() - tube.bs.v0()) * j / 16.0);
+            // Nearest point of the helix by a fine search.
+            double best = 1e9;
+            for (int k = 0; k <= 4000; ++k) {
+                const double t = 5.0 * k / 4000, th = 2 * kPiT * t;
+                best = std::min(best, std::hypot(p.x - 15 * std::cos(th), p.y - 15 * std::sin(th), p.z - (2 + 8 * t)));
+            }
+            off = std::max(off, std::fabs(best - 2));
+        }
+    CHECK(off < 0.01); // 0.5% of the wire radius
+    // Out to STEP and back.
+    const std::string path = tempPath("sicdm_round.step");
+    REQUIRE(run(d, "EXPORT " + path).ok);
+    const std::vector<StepPart> parts = readStepFile(path);
+    REQUIRE(parts.size() == 2);
+    CHECK_NEAR(volumeOf({parts[0]}, 0.002), 4.0 / 3 * kPiT * 25 * 15 * 12, 2e-3 * 4.0 / 3 * kPiT * 25 * 15 * 12);
+    CHECK_NEAR(volumeOf({parts[1]}, 0.002), kPiT * 4 * helix, 0.01 * kPiT * 4 * helix);
+}

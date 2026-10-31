@@ -49,6 +49,10 @@ std::shared_ptr<Brep> meshToBrep(const MeshData& mesh, double planarTolerance = 
 
 // The exact B-rep of a primitive body kind (see buildPrimitive), before its rotation and
 // scale; null for kinds without one.
+// An ellipsoid with semi-axes a, b, c resting on z = 0 as an exact rational B-spline, and a
+// coil spring's B-rep (a B-spline tube within a few thousandths of the wire's radius, flat ends).
+BSplineSurface nurbsEllipsoid(double a, double b, double c);
+std::shared_ptr<Brep> springBrep(double coilRadius, double wireRadius, double pitch, double turns, bool leftHand);
 std::shared_ptr<Brep> primitiveBrep(const std::string& kind, const std::vector<float>& params);
 
 // Attaches the exact geometry to a primitive body (after its mesh is built), or drops it.
