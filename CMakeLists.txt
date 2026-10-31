@@ -149,6 +149,7 @@ add_library(sicdm_core STATIC
     src/core/PickFeature.cpp
     src/core/SketchShapes.cpp
     src/core/PointCloud.cpp
+    src/core/Airfoil.cpp
     src/ui/Tools.cpp
 )
 target_include_directories(sicdm_core PUBLIC src)

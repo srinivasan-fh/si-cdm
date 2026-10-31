@@ -391,6 +391,8 @@ const char* primitiveKind(ToolId tool) {
     case ToolId::Capsule: return "capsule";
     case ToolId::Hemisphere: return "hemisphere";
     case ToolId::Spring: return "spring";
+    case ToolId::TwistedAirfoil: return "blade";
+    case ToolId::TubercleWing: return "tubercle_wing";
     default: return "box";
     }
 }
@@ -847,7 +849,7 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         return;
     }
 
-    if (isPrimitiveTool(tool)) {
+    if (isPrimitiveTool(tool) || tool == ToolId::TwistedAirfoil || tool == ToolId::TubercleWing) {
         const ImGuiIO& io = ImGui::GetIO();
         const Ray ray = camera().screenRay(x, y, io.DisplaySize.x, io.DisplaySize.y);
         Vec3 at;

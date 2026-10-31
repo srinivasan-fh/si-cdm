@@ -20,6 +20,7 @@
 #include "core/SketchEdit.hpp"
 #include "core/SketchShapes.hpp"
 #include "core/PointCloud.hpp"
+#include "core/Airfoil.hpp"
 #include "core/Collide.hpp"
 #include "core/ComponentCommand.hpp"
 #include "core/FaceCommand.hpp"
@@ -732,7 +733,9 @@ Body defaultPrimitive(const std::string& kind, int serial) {
     else if (kind == "capsule") b = makeBody("", kind, {10, 50});
     else if (kind == "hemisphere") b = makeBody("", kind, {20});
     else if (kind == "spring") b = makeBody("", kind, {15, 2, 8, 5, 0});
-    b.name = (kind == "box" ? std::string("Block") : titleCase(kind)) + " " + std::to_string(serial); // a frustum is a cone, named so
+    else if (kind == "blade") b = makeBody("", kind, {2412, 120, 40, 20, 8, 15, 0, 20});
+    else if (kind == "tubercle_wing") b = makeBody("", "blade", {21, 150, 50, 30, 0, 10, 2.5f, 20}); // NACA 0021, humpback-like
+    b.name = (kind == "box" ? std::string("Block") : kind == "tubercle_wing" ? std::string("Wing") : titleCase(kind)) + " " + std::to_string(serial);
     b.color = kPalette[static_cast<std::size_t>(serial) % std::size(kPalette)];
     return b;
 }
@@ -780,7 +783,7 @@ namespace {
 // replays them. SELECT and PLANE are there because later commands default to them.
 // The commands that edit only the sketch: UNDO takes them back from a copy of it.
 bool sketchCommand(const std::string& cmd) {
-    static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",   "CONIC", "SKETCHTEXT",
+    static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",   "CONIC", "SKETCHTEXT", "AIRFOIL",
                                           "ELLIPSE",  "SKETCHSLOT",   "POLYGON", "TRIM",  "EXTEND",    "OFFSET",     "CONSTRUCTION",
                                           "CONSTRAIN", "DIM",         "CONSTRAINT", "DRAG",  "ERASE",     "SKETCHFILLET", "SKETCHCHAMFER",
                                           "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT", "PATH3D", "DUPLICATE", "PASTE", "CUT"};
@@ -868,7 +871,7 @@ Document::JobsUndo swapSide(Document& doc, Document::JobsUndo s, std::size_t dep
 
 bool bodyCommand(const std::string& cmd) {
     static const char* const kBody[] = {"BOX",     "CYLINDER", "CONE",   "SPHERE", "TORUS",   "WEDGE",      "PYRAMID",  "PRISM",
-                                        "FRUSTUM", "TUBE",     "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "POINTCLOUD",
+                                        "FRUSTUM", "TUBE",     "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "POINTCLOUD", "BLADE", "WING",
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
@@ -881,7 +884,7 @@ bool bodyCommand(const std::string& cmd) {
 
 bool historyCommand(const std::string& cmd) {
     static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
-                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "CONIC", "SKETCHTEXT", "POINTCLOUD",
+                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "CONIC", "SKETCHTEXT", "POINTCLOUD", "BLADE", "WING", "AIRFOIL",
                                          "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
                                          "MIRROR",   "FILLET",  "CHAMFER",  "SCULPT",  "REMESH",   "MASK",      "SUBDIVIDE", "SYMMETRIZE", "DECIMATE", "HOLE",
                                          "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
@@ -1417,6 +1420,49 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         std::string why;
         return addShape(ellipticalArc(pts[0], pts[1], static_cast<float>(*ry), ends[0], ends[1], &why), why);
     }
+    if (cmd == "AIRFOIL") {
+        // AIRFOIL NACA dddd [CHORD c] [AT x,y] [ANGLE deg] [POINTS n]: a closed section on the sketch plane
+        std::string code;
+        float chord = 50.0f, angle = 0.0f;
+        int n = 60;
+        Vec2 at{};
+        for (std::size_t k = 0; k < sketchArgs.size(); ++k) {
+            const std::string key = lower(sketchArgs[k]);
+            if (k + 1 >= sketchArgs.size()) return usage();
+            const std::string& v = sketchArgs[++k];
+            if (key == "naca") code = v;
+            else if (key == "chord") {
+                const auto c = parseLength(v);
+                if (!c || !(*c > 0)) return out.fail("CHORD needs a length");
+                chord = static_cast<float>(*c);
+            } else if (key == "angle") {
+                const auto a2 = parseNumber(v);
+                if (!a2) return usage();
+                angle = *a2;
+            } else if (key == "points") {
+                const auto a2 = parseNumber(v);
+                if (!a2 || *a2 < 8 || *a2 > 1000) return out.fail("POINTS is 8 to 1000 a side");
+                n = static_cast<int>(*a2);
+            } else if (key == "at") {
+                std::vector<Vec2> p;
+                std::string bad;
+                if (!parsePoints({v}, p, bad)) return out.fail("Not a point: " + bad);
+                at = p[0];
+            } else return usage();
+        }
+        std::vector<Vec2> unit;
+        std::string why;
+        if (code.empty() || !nacaSection(code, n, unit, &why)) return out.fail("AIRFOIL needs NACA and " + (why.empty() ? std::string("a four-digit code") : why));
+        const float t = -angle * kPi / 180.0f, ct = std::cos(t), st = std::sin(t); // a positive angle: nose up
+        SketchCurve c;
+        c.kind = CurveKind::Polyline;
+        for (const Vec2& u : unit) {
+            const float x = (u.x - 0.25f) * chord, y = u.y * chord; // turned about the quarter chord
+            c.pts.push_back({at.x + 0.25f * chord + x * ct - y * st, at.y + x * st + y * ct});
+        }
+        c.pts.push_back(c.pts.front());
+        return addSketchCurve(c);
+    }
     if (cmd == "CONIC") {
         // CONIC start end apex [RHO r]
         std::vector<Vec2> pts;
@@ -1680,6 +1726,63 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.selectedCurve = doc.selectedImage = -1;
         markChanged(doc);
         out.say("Created " + doc.scene.bodies().back().name + " at " + vecText(o));
+        return out;
+    }
+
+    if (cmd == "BLADE" || cmd == "WING") {
+        // BLADE [NACA dddd] [SPAN s] [ROOT c] [TIP c] [TWIST deg] [SWEEP mm] [TUBERCLES height spacing] [@x,y,z]
+        std::vector<float> params = defaultPrimitive("blade", 0).params;
+        if (cmd == "WING") params = defaultPrimitive("tubercle_wing", 0).params, params[6] = 0;
+        std::optional<Vec3> at;
+        for (std::size_t k = 0; k < a.size(); ++k) {
+            const std::string key = lower(a[k]);
+            if (a[k].size() > 1 && a[k][0] == '@') {
+                at = parseVec3(a[k].substr(1));
+                if (!at) return usage();
+                continue;
+            }
+            if (k + 1 >= a.size()) return usage();
+            auto len = [&](float& dst) {
+                const auto v = parseLength(a[++k]);
+                if (!v) return false;
+                dst = static_cast<float>(*v);
+                return true;
+            };
+            if (key == "naca") {
+                std::vector<Vec2> tmp;
+                std::string why;
+                if (!nacaSection(a[++k], 8, tmp, &why)) return out.fail("NACA: " + why);
+                params[0] = static_cast<float>(std::stoi(a[k]));
+            } else if (key == "span") {
+                if (!len(params[1])) return usage();
+            } else if (key == "root") {
+                if (!len(params[2])) return usage();
+            } else if (key == "tip") {
+                if (!len(params[3])) return usage();
+            } else if (key == "sweep") {
+                if (!len(params[5])) return usage();
+            } else if (key == "twist") {
+                const auto v = parseNumber(a[++k]);
+                if (!v) return usage();
+                params[4] = *v;
+            } else if (key == "tubercles") {
+                if (!len(params[6]) || k + 1 >= a.size() || !len(params[7])) return out.fail("TUBERCLES needs a height and a spacing");
+            } else return usage();
+        }
+        Body b = defaultPrimitive(params[6] > 0 ? "tubercle_wing" : "blade", ++doc.primitiveSerial);
+        b.params = params;
+        b.mesh = buildPrimitive("blade", params);
+        if (b.mesh.indices.empty()) return out.fail("Those sizes make no blade (tubercles at most a third of the shortest chord)");
+        attachPrimitiveBrep(b);
+        b.offset = at.value_or(Vec3{});
+        const std::string name = b.name;
+        doc.scene.add(std::move(b));
+        doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+        doc.selectedCurve = doc.selectedImage = -1;
+        markChanged(doc);
+        out.say("Created " + name + ": NACA " + bladeCode(params) + ", span " + lengthText(params[1]) + ", chord " + lengthText(params[2]) + " to " +
+                lengthText(params[3]) + (params[4] != 0 ? fmt(", twist %g deg", params[4]) : std::string()) +
+                (params[6] > 0 ? ", tubercles " + lengthText(params[6]) + " every " + lengthText(params[7]) : std::string()));
         return out;
     }
 

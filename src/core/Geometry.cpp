@@ -1,4 +1,5 @@
 #include "core/Geometry.hpp"
+#include "core/Airfoil.hpp"
 #include "core/Armature.hpp"
 #include "core/SheetMetal.hpp"
 
@@ -220,7 +221,7 @@ void MeshData::computeFeatureEdges(float angleDeg, float shortLength, float shor
 
 bool isPrimitiveKind(const std::string& k) {
     return k == "box" || k == "wedge" || k == "cylinder" || k == "tube" || k == "cone" || k == "sphere" ||
-           k == "torus" || k == "pyramid" || k == "prism" || k == "ellipsoid" || k == "capsule" || k == "hemisphere" || k == "spring" || k == "extrude" || k == "sheet" || k == "armature" || isLibraryKind(k);
+           k == "torus" || k == "pyramid" || k == "prism" || k == "ellipsoid" || k == "capsule" || k == "hemisphere" || k == "spring" || k == "blade" || k == "extrude" || k == "sheet" || k == "armature" || isLibraryKind(k);
 }
 
 MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
@@ -254,6 +255,7 @@ MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
     if (k == "sphere" && need(1) && positive(1)) return sphere({0, 0, p[0]}, p[0]);
     if (k == "torus" && need(2) && positive(2) && p[1] < p[0]) return torus({0, 0, p[1]}, p[0], p[1]);
     if (k == "ellipsoid" && need(3) && positive(3)) return ellipsoid(p[0], p[1], p[2]);
+    if (k == "blade") return buildBlade(p);
     if (k == "capsule" && need(2) && positive(2) && p[1] >= 2.0f * p[0]) return capsule(p[0], p[1]);
     if (k == "hemisphere" && need(1) && positive(1)) return hemisphere(p[0]);
     if (k == "spring" && need(4) && positive(4) && p[1] < p[0] && p[2] > 2.0f * p[1] && p[3] <= 500.0f)

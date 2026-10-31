@@ -1,5 +1,6 @@
 #include "core/Step.hpp"
 
+#include "core/Airfoil.hpp"
 #include "core/Extrude.hpp"
 #include "core/ExactMesh.hpp"
 #include "core/Fastener.hpp"
@@ -1354,6 +1355,7 @@ std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<floa
         b->shells.push_back(sh);
         return b;
     }
+    if (k == "blade") return bladeBrep(pf);
     if (k == "spring" && need(4)) return springBrep(p[0], p[1], p[2], p[3], p.size() > 4 && p[4] > 0.5);
     // Flat-faced shapes: their facets are exact.
     if (k == "wedge" || k == "pyramid" || k == "prism") {

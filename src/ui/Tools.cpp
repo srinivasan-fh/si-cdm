@@ -76,8 +76,8 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::ClassANurbs, C::ClassA, SICDM_TR_NOOP("Class-A NURBS"), "", SICDM_TR_NOOP("Fair a B-spline surface: its curvature smoothed (the control net\'s bending taken down) with its edges and their tangents kept. Click the surface; steps in the options bar."), true},
     {T::OffsetSurface, C::ClassA, SICDM_TR_NOOP("Offset Surface"), "", SICDM_TR_NOOP("Click a surface body: a copy set off along its normals by the distance."), true},
     {T::BlendedFillet, C::ClassA, SICDM_TR_NOOP("Blended Fillet"), "", SICDM_TR_NOOP("A smooth blend surface bridging two surfaces, meeting each along its edge with its tangent. Click the two surfaces; the weight sets how far it bulges."), true},
-    {T::TwistedAirfoil, C::ClassA, SICDM_TR_NOOP("Twisted Airfoil"), "", SICDM_TR_NOOP("Blade profiles morphing along a path for propellers and wings."), false},
-    {T::TubercleWing, C::ClassA, SICDM_TR_NOOP("Tubercle Wing"), "", SICDM_TR_NOOP("Whale-fin-inspired leading edges that delay stall on UAVs."), false},
+    {T::TwistedAirfoil, C::ClassA, SICDM_TR_NOOP("Twisted Airfoil"), "", SICDM_TR_NOOP("A propeller or fan blade: NACA sections lofted along the span, tapered, twisted and swept. Click to place; section, chords, twist and sweep in Properties."), true},
+    {T::TubercleWing, C::ClassA, SICDM_TR_NOOP("Tubercle Wing"), "", SICDM_TR_NOOP("A wing with a whale-fin leading edge: rounded bumps along it. Click to place; their height and spacing in Properties."), true},
 
     {T::TopologyOptimized, C::Generative, SICDM_TR_NOOP("Topology Optimisation"), "", SICDM_TR_NOOP("Skeletal shapes stripped of dead weight, ideal for robot limbs."), false},
     {T::TpmsLattice, C::Generative, SICDM_TR_NOOP("TPMS Lattice"), "", SICDM_TR_NOOP("Periodic gyroid-type infill for light, crash-absorbent parts. Click a solid body to fill it."), true},

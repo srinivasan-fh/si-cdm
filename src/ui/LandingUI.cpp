@@ -2796,7 +2796,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
         if (ImGui::Button(tr("Undo"))) cmd.commands.push_back("UNDO");
         ImGui::SameLine();
         if (ImGui::Button(tr("Redo"))) cmd.commands.push_back("REDO");
-    } else if (isPrimitiveTool(tool.id)) {
+    } else if (isPrimitiveTool(tool.id) || tool.id == ToolId::TwistedAirfoil || tool.id == ToolId::TubercleWing) {
         const std::string snap = lengthText(5.0);
         if (is2D) ImGui::TextDisabled(tr("Click to place on the %s plane (%s snap)"), (st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : shortPlaneName(st.plane)), snap.c_str());
         else ImGui::TextDisabled(tr("Click the grid or a face to place (%s snap)"), snap.c_str());

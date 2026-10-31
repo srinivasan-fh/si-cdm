@@ -1938,6 +1938,11 @@ std::vector<LibraryParam> partParams(const std::string& k, const std::vector<flo
         return {{"radius", "Coil radius", 15.0f, 0.001f, 1e5f, "mm"}, {"wire_radius", "Wire radius", 2.0f, 0.001f, 1e5f, "mm"},
                 {"pitch", "Pitch", 8.0f, 0.002f, 1e5f, "mm"}, {"turns", "Turns", 5.0f, 0.1f, 500.0f, ""},
                 {"hand", "Hand", 0.0f, 0.0f, 1.0f, "", true, "Right|Left"}};
+    if (k == "blade")
+        return {{"naca", "NACA section", 2412.0f, 1.0f, 9999.0f, "", true},  {"span", "Span", 120.0f, 0.01f, 1e5f, "mm"},
+                {"root", "Root chord", 40.0f, 0.01f, 1e5f, "mm"},           {"tip", "Tip chord", 20.0f, 0.01f, 1e5f, "mm"},
+                {"twist", "Twist at the tip", 8.0f, -90.0f, 90.0f, "deg"}, {"sweep", "Sweep at the tip", 15.0f, -1e5f, 1e5f, "mm"},
+                {"tubercles", "Tubercle height", 0.0f, 0.0f, 1e4f, "mm"},  {"wavelength", "Tubercle spacing", 20.0f, 0.01f, 1e5f, "mm"}};
     if (k == "motor_rotor") {
         const int style = p.empty() ? 0 : std::clamp(static_cast<int>(p[0]), 0, 4);
         if (style == 4)

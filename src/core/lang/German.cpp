@@ -1379,6 +1379,8 @@ const char* const kGerman[][2] = {
     {"Laser-scan points (XYZ, PTS, ASC, CSV, PLY): import them, then make a closed mesh through them for reverse engineering. Click the window or Import Points.", "Laserscan-Punkte (XYZ, PTS, ASC, CSV, PLY): importieren, dann ein geschlossenes Netz durch sie legen für das Reverse Engineering. Ins Fenster klicken oder Punkte importieren."},
     {"Make Mesh", "Netz erzeugen"},
     {"XYZ, PTS, ASC, CSV or PLY scans; select a cloud, then Make Mesh", "XYZ-, PTS-, ASC-, CSV- oder PLY-Scans; eine Wolke wählen, dann Netz erzeugen"},
+    {"A propeller or fan blade: NACA sections lofted along the span, tapered, twisted and swept. Click to place; section, chords, twist and sweep in Properties.", "Ein Propeller- oder Lüfterblatt: NACA-Profile entlang der Spannweite ausgeformt, verjüngt, verdreht und gepfeilt. Zum Platzieren klicken; Profil, Profiltiefen, Verwindung und Pfeilung in den Eigenschaften."},
+    {"A wing with a whale-fin leading edge: rounded bumps along it. Click to place; their height and spacing in Properties.", "Ein Flügel mit Walflossen-Vorderkante: abgerundete Höcker entlang ihr. Zum Platzieren klicken; deren Höhe und Abstand in den Eigenschaften."},
 };
 
 

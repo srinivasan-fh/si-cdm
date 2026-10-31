@@ -776,6 +776,13 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
   cylinders, spheres, cones and planes; the ellipsoid as a rational B-spline (exact); the spring
   as a B-spline tube within 0.5% of the wire's radius with flat ends (up to 20 turns; longer
   springs export as facets).
+- **Blades and wings:** `AIRFOIL NACA 2412 CHORD 80 [AT x,y] [ANGLE deg]` draws a NACA four-digit
+  section on the sketch plane. `BLADE [NACA dddd] [SPAN s] [ROOT c] [TIP c] [TWIST deg] [SWEEP mm]
+  [TUBERCLES height spacing]` lofts those sections along the span (+Z) with taper, washout twist
+  about the quarter chord and sweep; tubercles move the leading edge forward and back like a
+  humpback whale's fin. `WING` starts from NACA 0021. The Twisted Airfoil and Tubercle Wing
+  tools place one; every size is editable in Properties. The skin is a B-spline through the
+  sections (exact for STEP) with flat ends.
 - **Extrude (E):** turns a closed sketch profile into a solid along its plane's normal. A profile
   is a rectangle, circle, ellipse, slot, closed polyline or spline, or a loop of lines and arcs
   that meet end to end. Concave shapes are included. Click the profile (its outline or anywhere inside),
