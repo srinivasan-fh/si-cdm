@@ -759,8 +759,14 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
   - **Drawing aids:** grid and endpoint snapping, Shift locks horizontal / vertical, live
     dimensions. Enter or double-click finishes a polyline or spline, Esc cancels.
   - **Details:** [docs/cad.md](docs/cad.md#sketching).
-- **3D solids:** Block (B), Wedge, Pyramid, Prism, Cylinder (Y), Cone, Sphere, Torus.
-  Pick one and click the grid or a face to place it.
+- **3D solids:** Block (B), Wedge, Pyramid, Prism, Cylinder (Y), Cone, Frustum, Tube / Pipe,
+  Capsule, Sphere, Hemisphere, Ellipsoid, Torus and Coil Spring. Pick one and click the grid or a
+  face to place it; the round ones show their sizes under *Parameters* in Properties (radius, top
+  radius, bore, semi-axes, pitch, turns, hand), and `PARAM` changes them from the command line.
+  Commands: `FRUSTUM rb rt h` (or `CONE r h rt`), `TUBE R r h`, `ELLIPSOID a b c`, `CAPSULE r length`,
+  `HEMISPHERE r`, `SPRING R r pitch turns [LEFT]` (coil radius to the wire's centre, wire
+  radius). Tube, capsule, hemisphere and frustum keep exact geometry (STEP: cylinders, spheres,
+  cones, planes); an ellipsoid with three different semi-axes and a spring are fine meshes.
 - **Extrude (E):** turns a closed sketch profile into a solid along its plane's normal. A profile
   is a rectangle, circle, ellipse, slot, closed polyline or spline, or a loop of lines and arcs
   that meet end to end. Concave shapes are included. Click the profile (its outline or anywhere inside),
@@ -821,6 +827,7 @@ shows the history. Type `HELP` for the full list.
 ```text
 LINE 0,0 @50,0 @0,30          RECT 0,0 @40,20          CIRCLE 10,10 5        PLINE 0,0 10,0 10,10 CLOSE
 BOX 40 30 20 @10,0,5          CYLINDER 10 30           SPHERE 8              TORUS 20 4
+TUBE 12 9 40                  CAPSULE 5 30             ELLIPSOID 20 12 8     SPRING 10 1.5 6 8
 EXTRUDE 15                    EXTRUDE "Circle 2" 20 SYMMETRIC KEEP
 SELECT Block 1   MOVE 0,0,10   ERASE        VIEW FRONT   2D RIGHT   3D   ROLL 90   DISPLAY HIDDEN
 IMPORT "plans/scan.jpg" WIDTH 150 @0,0      EXPORT part.stl      SAVE project.sicdm      OPEN project.sicdm

@@ -220,7 +220,7 @@ void MeshData::computeFeatureEdges(float angleDeg, float shortLength, float shor
 
 bool isPrimitiveKind(const std::string& k) {
     return k == "box" || k == "wedge" || k == "cylinder" || k == "tube" || k == "cone" || k == "sphere" ||
-           k == "torus" || k == "pyramid" || k == "prism" || k == "extrude" || k == "sheet" || k == "armature" || isLibraryKind(k);
+           k == "torus" || k == "pyramid" || k == "prism" || k == "ellipsoid" || k == "capsule" || k == "hemisphere" || k == "spring" || k == "extrude" || k == "sheet" || k == "armature" || isLibraryKind(k);
 }
 
 MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
@@ -245,10 +245,19 @@ MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
         return k == "box" ? box(lo, hi) : wedge(lo, hi);
     }
     if (k == "cylinder" && need(2) && positive(2)) return cylinder({0, 0, 0}, p[0], p[1]);
-    if (k == "tube" && need(3) && positive(3) && p[1] < p[0]) return tube({0, 0, 0}, p[0], p[1], p[2]);
+    if (k == "tube" && need(3) && positive(3) && p[1] < p[0]) // turned, so its seams meet exactly
+        return lathe({{{p[0], 0, 1, 0}, {p[0], p[2], 1, 0}},
+                      {{p[0], p[2], 0, 1}, {p[1], p[2], 0, 1}},
+                      {{p[1], p[2], -1, 0}, {p[1], 0, -1, 0}},
+                      {{p[1], 0, 0, -1}, {p[0], 0, 0, -1}}});
     if (k == "cone" && need(3) && p[0] > 0 && p[1] >= 0 && p[2] > 0) return cone({0, 0, 0}, p[0], p[1], p[2]);
     if (k == "sphere" && need(1) && positive(1)) return sphere({0, 0, p[0]}, p[0]);
     if (k == "torus" && need(2) && positive(2) && p[1] < p[0]) return torus({0, 0, p[1]}, p[0], p[1]);
+    if (k == "ellipsoid" && need(3) && positive(3)) return ellipsoid(p[0], p[1], p[2]);
+    if (k == "capsule" && need(2) && positive(2) && p[1] >= 2.0f * p[0]) return capsule(p[0], p[1]);
+    if (k == "hemisphere" && need(1) && positive(1)) return hemisphere(p[0]);
+    if (k == "spring" && need(4) && positive(4) && p[1] < p[0] && p[2] > 2.0f * p[1] && p[3] <= 500.0f)
+        return spring(p[0], p[1], p[2], p[3], p.size() > 4 && p[4] > 0.5f);
     if ((k == "pyramid" || k == "prism") && need(2) && positive(2)) {
         const int sides = p.size() >= 3 ? std::clamp(static_cast<int>(p[2]), 3, 64) : (k == "prism" ? 6 : 4);
         return k == "pyramid" ? pyramid({0, 0, 0}, p[0], p[1], sides) : prism({0, 0, 0}, p[0], p[1], sides);
@@ -497,3 +506,125 @@ MeshData prism(const Vec3& base, float radius, float h, int sides) {
 }
 
 } // namespace sicdm::primitives
+
+namespace sicdm::primitives {
+
+MeshData lathe(const std::vector<LatheSpan>& spans, int seg) {
+    MeshData m;
+    seg = std::max(seg, 3);
+    for (const LatheSpan& span : spans) {
+        if (span.size() < 2) continue;
+        const auto base = static_cast<std::uint32_t>(m.vertices.size());
+        const auto row = static_cast<std::uint32_t>(seg + 1);
+        for (const auto& q : span)
+            for (int i = 0; i <= seg; ++i) {
+                const float a = 2.0f * kPi * static_cast<float>(i % seg) / static_cast<float>(seg);
+                const float c = std::cos(a), s = std::sin(a);
+                m.vertices.push_back({{q[0] * c, q[0] * s, q[1]}, normalize(Vec3{q[2] * c, q[2] * s, q[3]})});
+            }
+        for (std::size_t j = 0; j + 1 < span.size(); ++j) {
+            // A face's normal is (dz, -dr) along the profile: an outline counter-clockwise in
+            // (radius, z) faces out.
+            const bool lowPole = span[j][0] <= 0.0f, highPole = span[j + 1][0] <= 0.0f;
+            for (int i = 0; i < seg; ++i) {
+                const std::uint32_t a = base + static_cast<std::uint32_t>(j) * row + static_cast<std::uint32_t>(i);
+                const std::uint32_t b = a + row;
+                if (!lowPole) m.indices.insert(m.indices.end(), {a, a + 1, b + 1});
+                if (!highPole) m.indices.insert(m.indices.end(), {a, b + 1, b});
+            }
+        }
+    }
+    return m;
+}
+
+MeshData ellipsoid(float a, float b, float c, int segments, int rings) {
+    MeshData m = sphere({0, 0, 0}, 1.0f, segments, rings);
+    for (Vertex& v : m.vertices) {
+        const Vec3 p = v.position;
+        v.position = {p.x * a, p.y * b, p.z * c + c};
+        v.normal = normalize(Vec3{p.x / a, p.y / b, p.z / c});
+    }
+    return m;
+}
+
+MeshData capsule(float r, float length, int seg) {
+    // One smooth span: the bottom half sphere, the wall, the top half sphere.
+    LatheSpan span;
+    const int quarter = std::max(4, seg / 4);
+    for (int k = 0; k <= quarter; ++k) { // from the bottom pole out to the wall
+        const float t = -0.5f * kPi + 0.5f * kPi * static_cast<float>(k) / static_cast<float>(quarter);
+        span.push_back({r * std::cos(t), r + r * std::sin(t), std::cos(t), std::sin(t)});
+    }
+    if (length > 2.0f * r) span.push_back({r, length - r, 1, 0});
+    for (int k = length > 2.0f * r ? 0 : 1; k <= quarter; ++k) { // the top
+        const float t = 0.5f * kPi * static_cast<float>(k) / static_cast<float>(quarter);
+        span.push_back({r * std::cos(t), length - r + r * std::sin(t), std::cos(t), std::sin(t)});
+    }
+    span.front()[0] = span.back()[0] = 0.0f;
+    return lathe({span}, seg);
+}
+
+MeshData hemisphere(float r, int seg) {
+    const LatheSpan base{{0, 0, 0, -1}, {r, 0, 0, -1}}; // out from the axis: facing down
+    LatheSpan dome;
+    const int quarter = std::max(4, seg / 4);
+    for (int k = 0; k <= quarter; ++k) {
+        const float t = 0.5f * kPi * static_cast<float>(k) / static_cast<float>(quarter);
+        dome.push_back({r * std::cos(t), r * std::sin(t), std::cos(t), std::sin(t)});
+    }
+    dome.back()[0] = 0.0f;
+    return lathe({base, dome}, seg);
+}
+
+MeshData spring(float R, float r, float pitch, float turns, bool left) {
+    MeshData m;
+    const int perTurn = 64, around = 24;
+    const int steps = std::max(8, static_cast<int>(std::ceil(turns * static_cast<float>(perTurn))));
+    const float hand = left ? -1.0f : 1.0f;
+    // The wire's centre, its tangent, and a frame across it (out from the axis, and the binormal).
+    auto at = [&](float t, Vec3& c, Vec3& tan, Vec3& out, Vec3& bin) {
+        const float th = hand * 2.0f * kPi * t;
+        out = {std::cos(th), std::sin(th), 0};
+        c = Vec3{R * out.x, R * out.y, r + pitch * t};
+        tan = normalize(Vec3{-R * std::sin(th) * 2.0f * kPi * hand, R * std::cos(th) * 2.0f * kPi * hand, pitch});
+        bin = normalize(cross(tan, out));
+    };
+    const auto row = static_cast<std::uint32_t>(around + 1);
+    for (int k = 0; k <= steps; ++k) {
+        Vec3 c, tan, out, bin;
+        at(turns * static_cast<float>(k) / static_cast<float>(steps), c, tan, out, bin);
+        for (int i = 0; i <= around; ++i) {
+            const float ph = 2.0f * kPi * static_cast<float>(i % around) / static_cast<float>(around);
+            const Vec3 n = out * std::cos(ph) + bin * std::sin(ph);
+            m.vertices.push_back({c + n * r, n});
+        }
+    }
+    for (int k = 0; k < steps; ++k)
+        for (int i = 0; i < around; ++i) {
+            const std::uint32_t a = static_cast<std::uint32_t>(k) * row + static_cast<std::uint32_t>(i), b = a + row;
+            m.indices.insert(m.indices.end(), {a, b, b + 1, a, b + 1, a + 1});
+        }
+    // Flat ends across the wire.
+    for (int end = 0; end < 2; ++end) {
+        Vec3 c, tan, out, bin;
+        at(end == 0 ? 0.0f : turns, c, tan, out, bin);
+        const Vec3 n = end == 0 ? tan * -1.0f : tan;
+        const auto centre = static_cast<std::uint32_t>(m.vertices.size());
+        m.vertices.push_back({c, n});
+        for (int i = 0; i <= around; ++i) {
+            const float ph = 2.0f * kPi * static_cast<float>(i % around) / static_cast<float>(around);
+            m.vertices.push_back({c + (out * std::cos(ph) + bin * std::sin(ph)) * r, n});
+        }
+        for (int i = 0; i < around; ++i) {
+            const std::uint32_t a = centre + 1 + static_cast<std::uint32_t>(i);
+            if (end == 0) m.indices.insert(m.indices.end(), {centre, a + 1, a});
+            else m.indices.insert(m.indices.end(), {centre, a, a + 1});
+        }
+    }
+    // Wound above with the ring's angle against the helix's way: turn every triangle to face out.
+    for (std::size_t i = 0; i < m.indices.size(); i += 3) std::swap(m.indices[i + 1], m.indices[i + 2]);
+    return m;
+}
+
+} // namespace sicdm::primitives
+

@@ -88,6 +88,7 @@ MeshData clusterMesh(const MeshData& m, float cell);
 // Parameters per kind (all mm, body-local; Body::offset places it):
 //   box, wedge: x0 y0 z0 x1 y1 z1     cylinder: r h      tube: R r h
 //   cone: r0 r1 h    sphere: r (rests on z=0)    torus: R r (rests on z=0)
+//   ellipsoid: a b c    capsule: r length    hemisphere: r    spring: R r pitch turns [left]
 //   pyramid, prism: r h sides         mesh: none (triangles stored as-is)
 //   extrude: see extrudeParams() (sketch plane, depth range, profile)
 bool isPrimitiveKind(const std::string& kind);
@@ -122,6 +123,26 @@ MeshData pyramid(const Vec3& base, float radius, float height, int sides = 4);
 
 // Regular n-sided prism (extruded polygon) along +Z.
 MeshData prism(const Vec3& base, float radius, float height, int sides = 6);
+
+// A profile turned once round +Z. Each span is (radius, z, normal radius, normal z) points
+// along the profile; spans meet at sharp edges (each keeps its own normals). A point on
+// the axis (radius 0) closes the solid there.
+using LatheSpan = std::vector<std::array<float, 4>>;
+MeshData lathe(const std::vector<LatheSpan>& spans, int segments = 64);
+
+// Ellipsoid with semi-axes a (X), b (Y), c (Z), resting on z = 0.
+MeshData ellipsoid(float a, float b, float c, int segments = 64, int rings = 32);
+
+// Capsule along +Z: a cylinder of `radius` with half-sphere ends, `length` overall
+// (at least 2 radius), from z = 0.
+MeshData capsule(float radius, float length, int segments = 64);
+
+// Half sphere, flat face down on z = 0.
+MeshData hemisphere(float radius, int segments = 64);
+
+// Coil spring round +Z: wire of `wireRadius` along a helix of `coilRadius` (to the wire's
+// centre), rising `pitch` a turn for `turns` turns, flat cut ends, resting on z = 0.
+MeshData spring(float coilRadius, float wireRadius, float pitch, float turns, bool leftHand = false);
 
 } // namespace primitives
 

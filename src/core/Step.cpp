@@ -1236,6 +1236,33 @@ std::shared_ptr<Brep> primitiveBrep(const std::string& k, const std::vector<floa
         if (m.indices.empty()) return nullptr;
         return exactBrepFromMesh(m, fastenerSurfaces(pf));
     }
+    // Round shapes from a turned profile: their faces lie on cylinders, spheres and planes.
+    auto sphereAt = [](double z, double r) {
+        BSurface s;
+        s.kind = BSurfaceKind::Sphere;
+        s.f = Frame::make({0, 0, z}, {0, 0, 1}, {1, 0, 0});
+        s.r1 = r;
+        return s;
+    };
+    if (k == "tube" && need(3) && p[0] > 0 && p[1] > 0 && p[1] < p[0] && p[2] > 0) {
+        const MeshData m = buildPrimitive(k, pf);
+        if (m.indices.empty()) return nullptr;
+        return exactBrepFromMesh(m, revolveSurfaces({0, 0, 0}, {0, 0, 1}, {{pf[1], 0}, {pf[0], 0}, {pf[0], pf[2]}, {pf[1], pf[2]}, {pf[1], 0}}));
+    }
+    if (k == "capsule" && need(2) && p[0] > 0 && p[1] >= 2 * p[0]) {
+        const MeshData m = buildPrimitive(k, pf);
+        if (m.indices.empty()) return nullptr;
+        std::vector<BSurface> ss{sphereAt(p[0], p[0]), sphereAt(p[1] - p[0], p[0])};
+        if (p[1] > 2 * p[0])
+            for (const BSurface& s : revolveSurfaces({0, 0, 0}, {0, 0, 1}, {{pf[0], pf[0]}, {pf[0], pf[1] - pf[0]}})) ss.push_back(s);
+        return exactBrepFromMesh(m, ss);
+    }
+    if (k == "hemisphere" && need(1) && p[0] > 0) {
+        const MeshData m = buildPrimitive(k, pf);
+        if (m.indices.empty()) return nullptr;
+        return exactBrepFromMesh(m, {sphereAt(0, p[0])});
+    }
+    if (k == "ellipsoid" && need(3) && p[0] > 0 && p[0] == p[1] && p[1] == p[2]) return brepSphere({0, 0, p[0]}, p[0]); // round: a sphere
     // Flat-faced shapes: their facets are exact.
     if (k == "wedge" || k == "pyramid" || k == "prism") {
         const MeshData m = buildPrimitive(k, pf);

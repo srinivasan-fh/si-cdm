@@ -1329,6 +1329,18 @@ const char* const kGerman[][2] = {
     {"Pitch", "Steigung"},
     {"Spacing", "Abstand"},
     {"Thickness", "Dicke"},
+    {"Ellipsoid", "Ellipsoid"},
+    {"Frustum", "Kegelstumpf"},
+    {"Hemisphere", "Halbkugel"},
+    {"Tube / Pipe", "Rohr"},
+    {"Capsule", "Kapsel"},
+    {"Coil Spring", "Schraubenfeder"},
+    {"Half sphere with a flat base, for domes, caps and feet. Click to place.", "Halbkugel mit flacher Basis, für Kuppeln, Kappen und Füße. Zum Platzieren klicken."},
+    {"Hollow cylinder for pipes, bushings and spacers. Click to place.", "Hohlzylinder für Rohre, Buchsen und Distanzstücke. Zum Platzieren klicken."},
+    {"Round wire coiled round an axis: set coil and wire radius, pitch and turns in Properties. Click to place.", "Runder Draht, um eine Achse gewickelt: Windungs- und Drahtradius, Steigung und Windungen in den Eigenschaften einstellen. Zum Platzieren klicken."},
+    {"Stretched sphere with three semi-axes, for knobs, pods and housings. Click to place.", "Gestreckte Kugel mit drei Halbachsen, für Knöpfe, Gondeln und Gehäuse. Zum Platzieren klicken."},
+    {"Cone with its top cut off, for spigots, funnels and tapered bosses. Click to place; set the top radius in Properties.", "Kegel mit abgeschnittener Spitze, für Zapfen, Trichter und konische Naben. Zum Platzieren klicken; den oberen Radius in den Eigenschaften einstellen."},
+    {"Cylinder with half-sphere ends, for pins, rollers and handles. Click to place.", "Zylinder mit Halbkugelenden, für Stifte, Rollen und Griffe. Zum Platzieren klicken."},
 };
 
 

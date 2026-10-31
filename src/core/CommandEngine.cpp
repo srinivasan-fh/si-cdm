@@ -723,7 +723,13 @@ Body defaultPrimitive(const std::string& kind, int serial) {
     else if (kind == "cone") b = makeBody("", kind, {20, 0, 40});
     else if (kind == "sphere") b = makeBody("", kind, {20});
     else if (kind == "torus") b = makeBody("", kind, {25, 7});
-    b.name = (kind == "box" ? std::string("Block") : titleCase(kind)) + " " + std::to_string(serial);
+    else if (kind == "tube") b = makeBody("", kind, {20, 14, 40});
+    else if (kind == "frustum") b = makeBody("", "cone", {20, 10, 30});
+    else if (kind == "ellipsoid") b = makeBody("", kind, {25, 15, 12});
+    else if (kind == "capsule") b = makeBody("", kind, {10, 50});
+    else if (kind == "hemisphere") b = makeBody("", kind, {20});
+    else if (kind == "spring") b = makeBody("", kind, {15, 2, 8, 5, 0});
+    b.name = (kind == "box" ? std::string("Block") : titleCase(kind)) + " " + std::to_string(serial); // a frustum is a cone, named so
     b.color = kPalette[static_cast<std::size_t>(serial) % std::size(kPalette)];
     return b;
 }
@@ -859,6 +865,7 @@ Document::JobsUndo swapSide(Document& doc, Document::JobsUndo s, std::size_t dep
 
 bool bodyCommand(const std::string& cmd) {
     static const char* const kBody[] = {"BOX",     "CYLINDER", "CONE",   "SPHERE", "TORUS",   "WEDGE",      "PYRAMID",  "PRISM",
+                                        "FRUSTUM", "TUBE",     "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING",
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
@@ -871,6 +878,7 @@ bool bodyCommand(const std::string& cmd) {
 
 bool historyCommand(const std::string& cmd) {
     static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
+                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING",
                                          "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
                                          "MIRROR",   "FILLET",  "CHAMFER",  "SCULPT",  "REMESH",   "MASK",      "SUBDIVIDE", "SYMMETRIZE", "DECIMATE", "HOLE",
                                          "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
@@ -1487,19 +1495,37 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     // ---- Solids -----------------------------------------------------------
     static const std::pair<const char*, const char*> kSolids[] = {
         {"BOX", "box"},     {"CYLINDER", "cylinder"}, {"CONE", "cone"},       {"SPHERE", "sphere"},
-        {"TORUS", "torus"}, {"WEDGE", "wedge"},       {"PYRAMID", "pyramid"}, {"PRISM", "prism"}};
+        {"TORUS", "torus"}, {"WEDGE", "wedge"},       {"PYRAMID", "pyramid"}, {"PRISM", "prism"},
+        {"FRUSTUM", "cone"}, {"TUBE", "tube"},        {"ELLIPSOID", "ellipsoid"}, {"CAPSULE", "capsule"},
+        {"HEMISPHERE", "hemisphere"}, {"SPRING", "spring"}};
     for (const auto& [name, kind] : kSolids) {
         if (cmd != name) continue;
         std::vector<float> n;
         std::vector<std::string> words;
         std::optional<Vec3> at;
-        if (!splitPrimitiveArgs(a, n, words, at)) return usage();
+        std::vector<std::string> args;
+        bool left = false;
+        for (const std::string& w : a) {
+            if (cmd == "SPRING" && (lower(w) == "left" || lower(w) == "right")) left = lower(w) == "left";
+            else args.push_back(w);
+        }
+        if (!splitPrimitiveArgs(args, n, words, at)) return usage();
         std::vector<float> params;
         const std::string k = kind;
         if ((k == "box" || k == "wedge") && n.size() == 3)
             params = {-n[0] * 0.5f, -n[1] * 0.5f, 0, n[0] * 0.5f, n[1] * 0.5f, n[2]};
         else if (k == "cylinder" && n.size() == 2) params = n;
-        else if (k == "cone" && (n.size() == 2 || n.size() == 3)) params = {n[0], n.size() == 3 ? n[2] : 0.0f, n[1]};
+        else if (cmd == "FRUSTUM" && n.size() == 3) params = {n[0], n[1], n[2]}; // bottom radius, top radius, height
+        else if (k == "cone" && cmd != "FRUSTUM" && (n.size() == 2 || n.size() == 3)) params = {n[0], n.size() == 3 ? n[2] : 0.0f, n[1]};
+        else if (k == "tube" && n.size() == 3) params = n; // outer radius, inner radius, height
+        else if (k == "ellipsoid" && (n.size() == 3 || n.size() == 2)) params = {n[0], n[1], n.size() == 3 ? n[2] : n[1]};
+        else if (k == "capsule" && n.size() == 2) params = n;
+        else if (k == "hemisphere" && n.size() == 1) params = n;
+        else if (k == "spring" && n.size() == 4) {
+            const auto turns = parseNumber(words[3]); // a count, not a length
+            if (!turns) return usage();
+            params = {n[0], n[1], n[2], *turns, left ? 1.0f : 0.0f};
+        }
         else if (k == "sphere" && n.size() == 1) params = n;
         else if (k == "torus" && n.size() == 2) params = n;
         else if ((k == "pyramid" || k == "prism") && (n.size() == 2 || n.size() == 3)) {

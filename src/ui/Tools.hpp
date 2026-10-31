@@ -13,7 +13,7 @@ enum class ToolId {
     // I. 2D sketches & profiles
     Point, Line, Polyline, Arc, Conic, Circle, Ellipse, Rectangle, Slot, Polygon, Spline, SketchTrim, SketchExtend, SketchOffset,
     // II. 3D solid primitives
-    Block, Wedge, Pyramid, Prism, Cylinder, Cone, Sphere, Torus,
+    Block, Wedge, Pyramid, Prism, Cylinder, Cone, Sphere, Torus, Frustum, Tube, Ellipsoid, Capsule, Hemisphere, Spring,
     // III. Form features
     Extrude, Revolve, Sweep, Loft, Helix, Rib,
     // IV. Analytical & synthetic surfaces

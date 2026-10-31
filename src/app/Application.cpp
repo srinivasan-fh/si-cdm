@@ -385,6 +385,12 @@ const char* primitiveKind(ToolId tool) {
     case ToolId::Cone: return "cone";
     case ToolId::Sphere: return "sphere";
     case ToolId::Torus: return "torus";
+    case ToolId::Frustum: return "frustum";
+    case ToolId::Tube: return "tube";
+    case ToolId::Ellipsoid: return "ellipsoid";
+    case ToolId::Capsule: return "capsule";
+    case ToolId::Hemisphere: return "hemisphere";
+    case ToolId::Spring: return "spring";
     default: return "box";
     }
 }

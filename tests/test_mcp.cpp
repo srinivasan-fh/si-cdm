@@ -62,6 +62,15 @@ TEST_CASE("MCP tools build 2D and 3D geometry") {
     CHECK(d.scene.bodies().size() == 1 && d.scene.bodies()[0].name == "Shaft");
     CHECK_NEAR(d.scene.bodies()[0].offset.x, 5, 1e-6);
     CHECK(tool(s, "create_solid", R"({"kind":"box","width":10})")["isError"].asBool()); // missing dims
+    // The rounder shapes.
+    for (const char* a : {R"({"kind":"frustum","radius":20,"top_radius":8,"height":30})", R"({"kind":"tube","radius":20,"inner_radius":15,"height":30})",
+                          R"({"kind":"ellipsoid","semi_axes":[20,10,8]})", R"({"kind":"capsule","radius":5,"length":40})",
+                          R"({"kind":"hemisphere","radius":12})", R"({"kind":"spring","radius":10,"tube_radius":1.5,"pitch":6,"turns":4,"left_hand":true})"})
+        CHECK(!tool(s, "create_solid", a)["isError"].asBool());
+    CHECK(d.scene.bodies().size() == 7 && d.scene.bodies().back().kind == "spring" && d.scene.bodies().back().params[4] == 1.0f);
+    CHECK(d.scene.bodies()[1].kind == "cone" && d.scene.bodies()[1].params[1] == 8.0f);
+    CHECK(tool(s, "create_solid", R"({"kind":"ellipsoid","semi_axes":[1,2]})")["isError"].asBool());
+    while (d.scene.bodies().size() > 1) d.scene.remove(d.scene.bodies().size() - 1);
 
     r = tool(s, "create_sketch", R"({"kind":"rectangle","points":[[0,0],[40,20]],"plane":"front"})");
     CHECK(!r["isError"].asBool());

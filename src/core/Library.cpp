@@ -1921,6 +1921,23 @@ std::vector<LibraryParam> partParams(const std::string& k, const std::vector<flo
     const LibraryParam width{"width", "Face width", 10.0f, 0.5f, 500.0f, "mm"};
     const LibraryParam bore{"bore", "Bore radius", 4.0f, 0.0f, 500.0f, "mm"};
     const LibraryParam phase{"phase", "Tooth phase", 0.0f, -360.0f, 360.0f, "deg"};
+    // Round primitives: their sizes (in Body::params order).
+    if (k == "cylinder") return {{"radius", "Radius", 15.0f, 0.001f, 1e5f, "mm"}, {"height", "Height", 40.0f, 0.001f, 1e5f, "mm"}};
+    if (k == "cone")
+        return {{"radius", "Base radius", 20.0f, 0.001f, 1e5f, "mm"}, {"top_radius", "Top radius", 0.0f, 0.0f, 1e5f, "mm"},
+                {"height", "Height", 40.0f, 0.001f, 1e5f, "mm"}};
+    if (k == "sphere" || k == "hemisphere") return {{"radius", "Radius", 20.0f, 0.001f, 1e5f, "mm"}};
+    if (k == "torus") return {{"radius", "Ring radius", 25.0f, 0.001f, 1e5f, "mm"}, {"tube_radius", "Tube radius", 7.0f, 0.001f, 1e5f, "mm"}};
+    if (k == "tube")
+        return {{"radius", "Outer radius", 20.0f, 0.001f, 1e5f, "mm"}, {"inner_radius", "Inner radius", 14.0f, 0.001f, 1e5f, "mm"},
+                {"height", "Height", 40.0f, 0.001f, 1e5f, "mm"}};
+    if (k == "ellipsoid")
+        return {{"a", "Semi-axis X", 25.0f, 0.001f, 1e5f, "mm"}, {"b", "Semi-axis Y", 15.0f, 0.001f, 1e5f, "mm"}, {"c", "Semi-axis Z", 12.0f, 0.001f, 1e5f, "mm"}};
+    if (k == "capsule") return {{"radius", "Radius", 10.0f, 0.001f, 1e5f, "mm"}, {"length", "Length", 50.0f, 0.002f, 1e5f, "mm"}};
+    if (k == "spring")
+        return {{"radius", "Coil radius", 15.0f, 0.001f, 1e5f, "mm"}, {"wire_radius", "Wire radius", 2.0f, 0.001f, 1e5f, "mm"},
+                {"pitch", "Pitch", 8.0f, 0.002f, 1e5f, "mm"}, {"turns", "Turns", 5.0f, 0.1f, 500.0f, ""},
+                {"hand", "Hand", 0.0f, 0.0f, 1.0f, "", true, "Right|Left"}};
     if (k == "motor_rotor") {
         const int style = p.empty() ? 0 : std::clamp(static_cast<int>(p[0]), 0, 4);
         if (style == 4)

@@ -167,13 +167,22 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
-        p.set("kind", enumProp({"box", "cylinder", "cone", "sphere", "torus", "wedge", "pyramid", "prism"}, "Solid type"));
+        p.set("kind", enumProp({"box", "cylinder", "cone", "frustum", "tube", "sphere", "hemisphere", "ellipsoid", "capsule", "torus", "spring", "wedge",
+                                "pyramid", "prism"},
+                               "Solid type"));
         p.set("width", prop("number", "box / wedge: size along X"));
         p.set("depth", prop("number", "box / wedge: size along Y"));
-        p.set("height", prop("number", "box, wedge, cylinder, cone, pyramid, prism: size along Z"));
-        p.set("radius", prop("number", "cylinder, cone (base), sphere, pyramid, prism (circumradius); torus: ring radius"));
-        p.set("top_radius", prop("number", "cone: top radius (0 = pointed)"));
-        p.set("tube_radius", prop("number", "torus: tube radius"));
+        p.set("height", prop("number", "box, wedge, cylinder, cone, frustum, tube, pyramid, prism: size along Z"));
+        p.set("radius", prop("number", "cylinder, cone / frustum (base), tube (outer), sphere, hemisphere, capsule, pyramid, prism (circumradius); torus: ring "
+                                       "radius; spring: coil radius to the wire's centre"));
+        p.set("top_radius", prop("number", "cone: top radius (0 = pointed); frustum: top radius"));
+        p.set("inner_radius", prop("number", "tube: inner radius (the bore)"));
+        p.set("tube_radius", prop("number", "torus: tube radius; spring: wire radius"));
+        p.set("length", prop("number", "capsule: overall length (at least 2 x radius)"));
+        p.set("semi_axes", numberArray(3, "ellipsoid: [a, b, c] semi-axes along X, Y, Z"));
+        p.set("pitch", prop("number", "spring: rise per turn (more than 2 x wire radius)"));
+        p.set("turns", prop("number", "spring: number of turns"));
+        p.set("left_hand", prop("boolean", "spring: coiled left-handed"));
         p.set("sides", prop("integer", "pyramid / prism: number of sides (3-64)"));
         p.set("position", numberArray(3, "[x,y,z] of the base centre (mm)"));
         p.set("name", prop("string", "Optional name"));
@@ -1301,6 +1310,17 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         else if (kind == "cone") {
             missing = needAll({"radius", "height"});
             if (a["top_radius"].isNumber()) dims += " " + n("top_radius");
+        } else if (kind == "frustum") missing = needAll({"radius", "top_radius", "height"});
+        else if (kind == "tube") missing = needAll({"radius", "inner_radius", "height"});
+        else if (kind == "capsule") missing = needAll({"radius", "length"});
+        else if (kind == "hemisphere") missing = needAll({"radius"});
+        else if (kind == "ellipsoid") {
+            if (!a["semi_axes"].isArray() || a["semi_axes"].size() != 3) missing = "missing 'semi_axes'";
+            else
+                for (int k = 0; k < 3; ++k) dims += " " + num(a["semi_axes"][k].asNumber());
+        } else if (kind == "spring") {
+            missing = needAll({"radius", "tube_radius", "pitch", "turns"});
+            if (a["left_hand"].asBool()) dims += " LEFT";
         } else if (kind == "sphere") missing = needAll({"radius"});
         else if (kind == "torus") missing = needAll({"radius", "tube_radius"});
         else if (kind == "pyramid" || kind == "prism") {

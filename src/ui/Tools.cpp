@@ -41,6 +41,12 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::Cone, C::Solid, SICDM_TR_NOOP("Cone"), "", SICDM_TR_NOOP("Tapered shape for nose cones, nozzles and countersinks. Click to place."), true},
     {T::Sphere, C::Solid, SICDM_TR_NOOP("Sphere"), "", SICDM_TR_NOOP("Round shape for ball-and-socket joints. Click to place."), true},
     {T::Torus, C::Solid, SICDM_TR_NOOP("Torus"), "", SICDM_TR_NOOP("Doughnut shape for O-rings, seals and circular sweeps. Click to place."), true},
+    {T::Frustum, C::Solid, SICDM_TR_NOOP("Frustum"), "", SICDM_TR_NOOP("Cone with its top cut off, for spigots, funnels and tapered bosses. Click to place; set the top radius in Properties."), true},
+    {T::Tube, C::Solid, SICDM_TR_NOOP("Tube / Pipe"), "", SICDM_TR_NOOP("Hollow cylinder for pipes, bushings and spacers. Click to place."), true},
+    {T::Ellipsoid, C::Solid, SICDM_TR_NOOP("Ellipsoid"), "", SICDM_TR_NOOP("Stretched sphere with three semi-axes, for knobs, pods and housings. Click to place."), true},
+    {T::Capsule, C::Solid, SICDM_TR_NOOP("Capsule"), "", SICDM_TR_NOOP("Cylinder with half-sphere ends, for pins, rollers and handles. Click to place."), true},
+    {T::Hemisphere, C::Solid, SICDM_TR_NOOP("Hemisphere"), "", SICDM_TR_NOOP("Half sphere with a flat base, for domes, caps and feet. Click to place."), true},
+    {T::Spring, C::Solid, SICDM_TR_NOOP("Coil Spring"), "", SICDM_TR_NOOP("Round wire coiled round an axis: set coil and wire radius, pitch and turns in Properties. Click to place."), true},
 
     {T::Extrude, C::Feature, "Extrude", "E",
      "Push a closed 2D profile linearly into brackets, beams and blocks. Click a rectangle, circle or closed "
@@ -123,8 +129,8 @@ constexpr ToolId gRect[] = {T::Rectangle, T::Slot, T::Polygon};
 constexpr ToolId gSpline[] = {T::Spline};
 constexpr ToolId gSketchEdit[] = {T::SketchTrim, T::SketchExtend, T::SketchOffset};
 constexpr ToolId gBlock[] = {T::Block, T::Wedge, T::Pyramid, T::Prism};
-constexpr ToolId gCylinder[] = {T::Cylinder, T::Cone};
-constexpr ToolId gSphere[] = {T::Sphere, T::Torus};
+constexpr ToolId gCylinder[] = {T::Cylinder, T::Cone, T::Frustum, T::Tube, T::Capsule};
+constexpr ToolId gSphere[] = {T::Sphere, T::Hemisphere, T::Ellipsoid, T::Torus, T::Spring};
 constexpr ToolId gExtrude[] = {T::Extrude, T::Revolve};
 constexpr ToolId gSweep[] = {T::Sweep, T::Loft, T::Helix};
 constexpr ToolId gRib[] = {T::Rib};

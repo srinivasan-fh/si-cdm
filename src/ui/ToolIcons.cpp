@@ -258,6 +258,33 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
         g.ellipse(0, 0, 0.85f, 0.5f, true);
         g.ellipse(0, -0.02f, 0.35f, 0.16f);
         break;
+    case ToolId::Frustum: cylinderShape(g, 0.7f, -0.55f, 0.6f, 0.35f); break;
+    case ToolId::Tube:
+        cylinderShape(g, 0.6f, -0.6f, 0.6f, 0.6f);
+        g.ellipse(0, -0.6f, 0.32f, 0.11f);
+        break;
+    case ToolId::Ellipsoid:
+        g.ellipse(0, 0, 0.9f, 0.55f, true);
+        g.ellipse(0, 0, 0.9f, 0.18f);
+        break;
+    case ToolId::Capsule:
+        g.arc(0, -0.4f, 0.42f, kTau * 0.5f, kTau);
+        g.arc(0, 0.4f, 0.42f, 0, kTau * 0.5f);
+        g.line(-0.42f, -0.4f, -0.42f, 0.4f);
+        g.line(0.42f, -0.4f, 0.42f, 0.4f);
+        g.ellipse(0, -0.4f, 0.42f, 0.13f);
+        break;
+    case ToolId::Hemisphere:
+        g.arc(0, 0.35f, 0.8f, kTau * 0.5f, kTau);
+        g.ellipse(0, 0.35f, 0.8f, 0.25f, true);
+        break;
+    case ToolId::Spring:
+        for (int i = 0; i < 4; ++i) {
+            const float y = -0.7f + 0.37f * static_cast<float>(i);
+            g.line(-0.6f, y, 0.6f, y + 0.18f);
+            g.line(0.6f, y + 0.18f, -0.6f, y + 0.37f);
+        }
+        break;
 
     // ---- Features -----------------------------------------------------------
     case ToolId::Extrude:
