@@ -13,6 +13,9 @@
 #include "render/GL.hpp"
 
 #include <GLFW/glfw3.h>
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -39,6 +42,7 @@
 #include <iterator>
 #include <cstdio>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <vector>
 
@@ -46,8 +50,44 @@ namespace sicdm {
 
 namespace {
 
+// The start-up log: each step of starting, written as it happens (a launch from Finder or
+// `open` shows no terminal, so this is where a start that goes wrong can be read):
+// startup.log beside the crash reports' folder (~/Library/Application Support/SI-CDM on macOS).
+std::string startupLogPath() {
+    std::error_code ec;
+    const std::filesystem::path dir = std::filesystem::path(crashDirectory()).parent_path();
+    std::filesystem::create_directories(dir, ec);
+    return (dir / "startup.log").string();
+}
+
+void startupLog(const std::string& line) {
+    static bool fresh = true; // a new log each launch
+    std::ofstream f(startupLogPath(), fresh ? std::ios::trunc : std::ios::app);
+    fresh = false;
+    // Seconds since the first line (not GLFW's clock: it may not be running yet).
+    static const auto start = std::chrono::steady_clock::now();
+    const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (f) f << std::fixed << std::setprecision(3) << t << "  " << line << "\n";
+}
+
 void glfwErrorCallback(int code, const char* msg) {
     std::fprintf(stderr, "[glfw] error %d: %s\n", code, msg);
+    startupLog(std::string("GLFW error ") + std::to_string(code) + ": " + (msg ? msg : ""));
+}
+
+// A start that can't go on: said on the terminal, in the log, and (macOS, where there is
+// often no terminal) in an alert.
+void startupFailed(const std::string& why) {
+    startupLog("FAILED: " + why);
+    reportStartupError(why.c_str());
+#if defined(__APPLE__)
+    const std::string text = why + "\n\nDetails: " + startupLogPath();
+    CFStringRef title = CFStringCreateWithCString(nullptr, "SI CDM couldn't start", kCFStringEncodingUTF8);
+    CFStringRef body = CFStringCreateWithCString(nullptr, text.c_str(), kCFStringEncodingUTF8);
+    CFUserNotificationDisplayAlert(0, kCFUserNotificationStopAlertLevel, nullptr, nullptr, nullptr, title, body, nullptr, nullptr, nullptr, nullptr);
+    if (title) CFRelease(title);
+    if (body) CFRelease(body);
+#endif
 }
 
 
@@ -59,13 +99,19 @@ Application::~Application() { shutdown(); }
 
 bool Application::init() {
     glfwSetErrorCallback(glfwErrorCallback);
+    startupLog(std::string("SI CDM ") + SICDM_VERSION + " starting");
     installOpenFileHandler(); // before GLFW sets up the application
-    if (!glfwInit()) return false;
+    if (!glfwInit()) {
+        startupFailed("The windowing system couldn't be started (GLFW).");
+        return false;
+    }
+    startupLog("windowing system ready");
 
     // Launch splash while the workbench loads (not for scripted screenshots).
     if (m_options.splash && m_options.screenshotPath.empty()) {
         m_splash = std::make_unique<Splash>(m_options.splashSeconds);
         if (!m_splash->ok()) m_splash.reset();
+        startupLog(m_splash ? "splash shown" : "no splash (its window couldn't be made); going on without it");
     }
     auto progress = [this](float p, const std::string& status, const char* subsystem) {
         if (m_splash) m_splash->step(p, status.c_str(), subsystem);
@@ -86,18 +132,21 @@ bool Application::init() {
     m_window = glfwCreateWindow(m_options.width, m_options.height, "SI CDM — CAD / CAM Workbench", nullptr, nullptr);
     glfwDefaultWindowHints();
     if (!m_window) {
-        reportStartupError("SI CDM needs OpenGL 4.1, which this graphics driver doesn't offer. Update the graphics driver.");
+        startupFailed("SI CDM needs OpenGL 4.1, which this graphics driver doesn't offer. Update the graphics driver.");
         return false;
     }
+    startupLog("main window made (hidden until the splash closes)");
     applyWindowIcon(m_window);
     glfwMakeContextCurrent(m_window);
     glfwSwapInterval(1);
     if (const char* missing = nullptr; !loadGLFunctions(&missing)) {
         const std::string why = std::string("SI CDM needs OpenGL 4.1: the graphics driver has no ") + (missing ? missing : "?") +
                                 ". Update the graphics driver.";
-        reportStartupError(why.c_str());
+        startupFailed(why);
         return false;
     }
+    startupLog(std::string("OpenGL ") + reinterpret_cast<const char*>(glGetString(GL_VERSION)) + " on " +
+               reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
 
     glfwSetWindowUserPointer(m_window, this);
     glfwSetScrollCallback(m_window, onScroll);
@@ -1427,7 +1476,7 @@ void Application::drawSculptOverlay() {
     const Vec3 n = normalize(m_brushNormal);
     const Vec3 ref = std::fabs(n.z) < 0.9f ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
     const Vec3 e1 = normalize(cross(n, ref)), e2 = cross(n, e1);
-    std::optional<ImVec2> first, prev;
+    std::optional<ImVec2> prev;
     for (int i = 0; i <= 48; ++i) {
         const float a = 6.2831853f * static_cast<float>(i) / 48.0f;
         const auto s = projectToScreen(camera(), *m_brushHit + (e1 * std::cos(a) + e2 * std::sin(a)) * r, io.DisplaySize);
@@ -4216,13 +4265,23 @@ bool Application::saveScreenshot(const std::string& path) const {
 
 int Application::run() {
     if (!init()) return 1;
+    startupLog("workbench loaded");
     if (m_splash) {
         m_splash->finish();
         m_splash.reset();
         glfwMakeContextCurrent(m_window);
-        glfwShowWindow(m_window);
-        glfwFocusWindow(m_window);
         m_framesToRender = std::max(m_framesToRender, 3);
+    }
+    // Shown and brought to the front whatever happened to the splash (macOS doesn't always
+    // bring a window from a hidden start forward on its own).
+    glfwShowWindow(m_window);
+    glfwFocusWindow(m_window);
+    {
+        int x = 0, y = 0, w = 0, h = 0;
+        glfwGetWindowPos(m_window, &x, &y);
+        glfwGetWindowSize(m_window, &w, &h);
+        startupLog("main window shown at " + std::to_string(x) + "," + std::to_string(y) + ", " + std::to_string(w) + " x " + std::to_string(h) +
+                   (glfwGetWindowAttrib(m_window, GLFW_VISIBLE) ? " (visible)" : " (NOT visible)"));
     }
 
     using clock = std::chrono::steady_clock;

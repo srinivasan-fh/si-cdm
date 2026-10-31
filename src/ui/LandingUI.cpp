@@ -3464,11 +3464,11 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         StandardView v;
         int face; // 0 top, 1 front, 2 right, 3 iso
     };
-    static const V kViews[] = {{"##vtop", "Top view", StandardView::Top, 0},
+    static const V kBarViews[] = {{"##vtop", "Top view", StandardView::Top, 0},
                                {"##vfront", "Front view", StandardView::Front, 1},
                                {"##vright", "Right view", StandardView::Right, 2},
                                {"##viso", "Isometric view", StandardView::Isometric, 3}};
-    for (const V& v : kViews)
+    for (const V& v : kBarViews)
         if (button(v.id, false, tr(v.tip), [&](ImVec2 c, ImU32 col) {
                 const ImVec2 t{c.x, c.y - 8}, l{c.x - 7, c.y - 4}, r{c.x + 7, c.y - 4}, m{c.x, c.y}, bl{c.x - 7, c.y + 4}, br{c.x + 7, c.y + 4}, b{c.x, c.y + 8};
                 if (v.face == 0) dl->AddQuadFilled(t, r, m, l, col);

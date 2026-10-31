@@ -22,7 +22,6 @@ namespace sicdm {
 
 namespace {
 
-constexpr double kPiD = 3.14159265358979323846;
 
 using namespace spatial;
 

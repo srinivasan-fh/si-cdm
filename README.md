@@ -22,6 +22,13 @@ Requires CMake 3.24+ (`brew install cmake`) and, on macOS, Xcode 15+.
 
 In Xcode, select the **sicdm** scheme and press ⌘R.
 
+**If no window appears:** each launch writes what it did to `startup.log`
+(`~/Library/Application Support/SI-CDM/startup.log` on macOS,
+`%LOCALAPPDATA%\SI-CDM\startup.log` on Windows, `~/.local/state/sicdm/startup.log` on Linux),
+and a start that fails says why in an alert as well. To see everything it prints, run it from a
+terminal: `build/xcode/Release/SICDM.app/Contents/MacOS/SICDM` (or `--no-splash` to skip the
+splash).
+
 ### Windows
 
 Build with MinGW-w64 in [MSYS2](https://www.msys2.org) (UCRT64 shell):

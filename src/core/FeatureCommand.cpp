@@ -2306,12 +2306,11 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             while (i < a.size() && (quotedAt(i) || !isKey(lower(a[i])))) ++i;
             const std::vector<std::string> names = nameList(1, i);
             float dist = 0, weight = 1;
-            for (; i < a.size(); ++i) {
+            for (; i < a.size(); i += 2) { // a word and its number
                 const std::string k = lower(a[i]);
                 const auto v = i + 1 < a.size() ? parseLength(a[i + 1]) : std::nullopt;
                 if (!v) return out.fail(toUpper(k) + " needs a number");
                 (k == "distance" ? dist : weight) = static_cast<float>(*v);
-                ++i;
             }
             std::vector<BSplineSurface> ss;
             for (const std::string& nm : names) {

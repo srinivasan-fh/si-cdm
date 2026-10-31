@@ -33,9 +33,9 @@ std::array<double, 24 * 24> unitStiffness(double nu) {
         for (int n = 0; n < 8; ++n) {
             const double s[3] = {static_cast<double>(n & 1), static_cast<double>((n >> 1) & 1), static_cast<double>((n >> 2) & 1)};
             double f[3];
-            for (int k = 0; k < 3; ++k) f[k] = s[k] ? xi[k] : 1 - xi[k];
+            for (int k = 0; k < 3; ++k) f[k] = s[k] > 0.5 ? xi[k] : 1 - xi[k];
             for (int k = 0; k < 3; ++k) {
-                double d = s[k] ? 1 : -1;
+                double d = s[k] > 0.5 ? 1 : -1;
                 for (int m = 0; m < 3; ++m)
                     if (m != k) d *= f[m];
                 dN[n][k] = d;
@@ -98,9 +98,9 @@ std::array<double, 64> unitConduction() {
         for (int n = 0; n < 8; ++n) {
             const double sg[3] = {static_cast<double>(n & 1), static_cast<double>((n >> 1) & 1), static_cast<double>((n >> 2) & 1)};
             double f[3];
-            for (int k = 0; k < 3; ++k) f[k] = sg[k] ? xi[k] : 1 - xi[k];
+            for (int k = 0; k < 3; ++k) f[k] = sg[k] > 0.5 ? xi[k] : 1 - xi[k];
             for (int k = 0; k < 3; ++k) {
-                double d = sg[k] ? 1 : -1;
+                double d = sg[k] > 0.5 ? 1 : -1;
                 for (int m = 0; m < 3; ++m)
                     if (m != k) d *= f[m];
                 dN[n][k] = d;
@@ -746,9 +746,9 @@ bool runFea(const MeshData& world, const FeaSetup& setup, FeaResult& out, std::s
             for (int n = 0; n < 8; ++n) {
                 const double sgn[3] = {static_cast<double>(n & 1), static_cast<double>((n >> 1) & 1), static_cast<double>((n >> 2) & 1)};
                 double fc[3], dN[3];
-                for (int k = 0; k < 3; ++k) fc[k] = sgn[k] ? xi[k] : 1 - xi[k];
+                for (int k = 0; k < 3; ++k) fc[k] = sgn[k] > 0.5 ? xi[k] : 1 - xi[k];
                 for (int k = 0; k < 3; ++k) {
-                    double d = (sgn[k] ? 1.0 : -1.0) / static_cast<double>(h);
+                    double d = (sgn[k] > 0.5 ? 1.0 : -1.0) / static_cast<double>(h);
                     for (int m = 0; m < 3; ++m)
                         if (m != k) d *= fc[m];
                     dN[k] = d;
