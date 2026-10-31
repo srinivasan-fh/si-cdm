@@ -1888,6 +1888,111 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         return out.fail(usage);
     }
 
+    if (cmd == "TOPOLOGY") {
+        // TOPOLOGY [body] FIX FACE x,y,z | NEAR x,y,z r ... LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ...
+        //     [BEARING x,y,z r FORCE f] [GRAVITY [x,y,z]] [VOLUME share] [ITERATIONS n] [FILTER cubes] [CELL size] [MATERIAL m] [KEEP]
+        const char* usage = "Usage: TOPOLOGY [body] FIX FACE x,y,z | FIX NEAR x,y,z r ... LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ... "
+                            "[BEARING x,y,z r FORCE fx,fy,fz] [GRAVITY [x,y,z]] [VOLUME share] [ITERATIONS n] [FILTER cubes] [CELL size] [MATERIAL m] [KEEP]";
+        static const char* const kKeys[] = {"fix", "load", "bearing", "gravity", "volume", "iterations", "filter", "cell", "material", "keep", "cells"};
+        auto isKey = [](const std::string& w) {
+            for (const char* k : kKeys)
+                if (w == k) return true;
+            return w.find(',') != std::string::npos;
+        };
+        std::size_t i = 0;
+        const std::string name = leadingName(a, quoted, i, isKey);
+        const int bi = name.empty() ? doc.selectedBody : bodyNamed(doc, name);
+        if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(name.empty() ? "Select the body to optimise, or name it" : "No body named " + name);
+        TopologySetup ts;
+        ts.fea.material = *feaMaterial("steel");
+        bool keep = false;
+        auto selection = [&](FeaSelection& sel) -> bool {
+            if (i + 1 >= a.size()) return false;
+            const std::string k = lower(a[++i]);
+            const auto p = i + 1 < a.size() ? parseVec3(a[i + 1]) : std::nullopt;
+            if (!p) return false;
+            ++i;
+            sel.point = *p;
+            if (k == "face") sel.kind = FeaSelection::Kind::Face;
+            else if (k == "near") {
+                const auto r = i + 1 < a.size() ? parseLength(a[i + 1]) : std::nullopt;
+                if (!r || !(*r > 0)) return false;
+                ++i;
+                sel.kind = FeaSelection::Kind::Near, sel.radius = static_cast<float>(*r);
+            } else return false;
+            return true;
+        };
+        for (; i < a.size(); ++i) {
+            const std::string k = lower(a[i]);
+            if (k == "fix") {
+                FeaSelection sel;
+                if (!selection(sel)) return out.fail("FIX takes FACE x,y,z or NEAR x,y,z r");
+                ts.fea.fixed.push_back(sel);
+            } else if (k == "load") {
+                FeaLoad l;
+                if (!selection(l.where) || i + 2 >= a.size() || lower(a[i + 1]) != "force") return out.fail("LOAD FACE x,y,z | NEAR x,y,z r, then FORCE fx,fy,fz (N)");
+                i += 2;
+                const auto fv = parseVec3(a[i]);
+                if (!fv || !(length(*fv) > 0)) return out.fail("FORCE needs fx,fy,fz in newtons");
+                l.force = *fv;
+                ts.fea.loads.push_back(l);
+            } else if (k == "bearing") {
+                FeaBearing br;
+                const auto c = i + 1 < a.size() ? parseVec3(a[i + 1]) : std::nullopt;
+                const auto r = i + 2 < a.size() ? parseLength(a[i + 2]) : std::nullopt;
+                if (!c || !r || !(*r > 0) || i + 4 >= a.size() || lower(a[i + 3]) != "force") return out.fail("BEARING x,y,z r FORCE fx,fy,fz");
+                const auto fv = parseVec3(a[i + 4]);
+                if (!fv || !(length(*fv) > 0)) return out.fail("FORCE needs fx,fy,fz in newtons");
+                br.center = *c, br.radius = static_cast<float>(*r), br.force = *fv;
+                ts.fea.bearings.push_back(br);
+                i += 4;
+            } else if (k == "gravity") {
+                ts.fea.gravity = {0, 0, -1};
+                if (i + 1 < a.size())
+                    if (const auto gv = parseVec3(a[i + 1])) ts.fea.gravity = *gv, ++i;
+            } else if (k == "volume") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v) return out.fail("VOLUME is the share kept, 0.02 to 0.95 (or a percentage)");
+                ts.volume = *v > 1 ? *v / 100.0 : *v;
+            } else if (k == "iterations") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v || *v < 1 || *v > 500) return out.fail("ITERATIONS is 1 to 500");
+                ts.iterations = static_cast<int>(*v);
+            } else if (k == "filter") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v || *v < 1 || *v > 6) return out.fail("FILTER is 1 to 6 cubes");
+                ts.filter = *v;
+            } else if (k == "cells") {
+                const auto v = i + 1 < a.size() ? parseNumber(a[++i]) : std::nullopt;
+                if (!v || *v < 100 || *v > 200000) return out.fail("CELLS is 100 to 200000");
+                ts.maxCells = static_cast<int>(*v);
+            } else if (k == "cell") {
+                const auto v = i + 1 < a.size() ? parseLength(a[++i]) : std::nullopt;
+                if (!v || !(*v > 0)) return out.fail("CELL needs the cubes' size");
+                ts.fea.cell = static_cast<float>(*v);
+            } else if (k == "material") {
+                const auto m = i + 1 < a.size() ? feaMaterial(a[++i]) : std::nullopt;
+                if (!m) return out.fail("No such material (FEA MATERIALS lists them)");
+                ts.fea.material = *m;
+            } else if (k == "keep") keep = true;
+            else return out.fail(usage);
+        }
+        Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+        const MeshData world = worldMesh(body);
+        if (openEdgeCount(world) != 0) return out.fail(body.name + " isn't closed: REPAIR it first");
+        TopologyResult r;
+        std::string why;
+        if (!runTopology(world, ts, r, &why)) return out.fail("Cannot optimise " + body.name + ": " + why);
+        Body opt = meshBody(body.name + " Optimised", std::move(r.mesh), body.color);
+        doc.scene.pushUndo("TOPOLOGY");
+        const std::string from = body.name, made = opt.name;
+        if (!keep) body.visible = false;
+        addBody(doc, std::move(opt));
+        out.say("Made " + made + " from " + from + ": " + fmt3("%.0f%%", r.volume * 100) + " of its material, compliance " + fmt3("%.4g", r.startCompliance) + " -> " +
+                fmt3("%.4g", r.compliance) + " N mm (" + std::to_string(r.iterations) + " steps" + (r.converged ? "" : ", not settled: more ITERATIONS") + ", " +
+                std::to_string(r.cells) + " cubes of " + lengthText(r.cell) + "). Check it with FEA.");
+        return out;
+    }
     if (cmd == "FEA") {
         // FEA [body] FIX FACE x,y,z | FIX NEAR x,y,z r ...  LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ...
         //     [MATERIAL name] [E MPa] [NU v] [YIELD MPa] [CELL size] [PLOT] [DEFORM scale]

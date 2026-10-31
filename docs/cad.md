@@ -1609,6 +1609,27 @@ VAR w = 100                      the block grows to 100 x 50
 CONFIG standard                  and back
 ```
 
+## Topology optimisation
+
+```text
+TOPOLOGY [body] FIX FACE x,y,z | NEAR x,y,z r ...  LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ...
+         [BEARING x,y,z r FORCE fx,fy,fz] [GRAVITY [x,y,z]] [VOLUME share] [ITERATIONS n]
+         [FILTER cubes] [CELL size] [CELLS n] [MATERIAL m] [KEEP]
+```
+
+The stiffest shape that uses a share of the body's material (VOLUME 0.3 or 30: 30%) for its
+fixings and loads, which are given as for `FEA`. The body is filled with the FEA's cubes (at
+most CELLS, 8000 unless given). Each cube gets a density from 0 to 1, with stiffness density^3
+(SIMP). The compliance's sensitivities are filtered over FILTER cubes (1.5), and the densities
+are moved by optimality criteria for up to ITERATIONS steps (40). Cubes at the fixings and
+loads stay solid. The result is a new body: the surface where the density is one half, with only
+the material joined to the fixings and loads. The original is hidden unless KEEP is given. It
+reports the compliance at the start and the end; run `FEA` on the result to check its stresses.
+
+A cantilever of 1,728 cubes at 35% goes from 726 to 91 N mm of compliance in 30 steps (about 4
+s on four cores). The Topology Optimisation tool does the same from two clicks: the face to fix,
+then where the load goes, with the force and the share from the options bar.
+
 ## Feature history
 
 Every model command that succeeds is recorded in order: sketches, solids, features, cuts,

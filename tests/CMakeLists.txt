@@ -35,6 +35,7 @@ add_executable(sicdm_tests
     test_sketchshapes.cpp
     test_pointcloud.cpp
     test_airfoil.cpp
+    test_topology.cpp
     test_sketch_edit.cpp
     test_lathe.cpp
     test_system.cpp

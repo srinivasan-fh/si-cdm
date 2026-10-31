@@ -871,7 +871,7 @@ Document::JobsUndo swapSide(Document& doc, Document::JobsUndo s, std::size_t dep
 
 bool bodyCommand(const std::string& cmd) {
     static const char* const kBody[] = {"BOX",     "CYLINDER", "CONE",   "SPHERE", "TORUS",   "WEDGE",      "PYRAMID",  "PRISM",
-                                        "FRUSTUM", "TUBE",     "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "POINTCLOUD", "BLADE", "WING",
+                                        "FRUSTUM", "TUBE",     "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "POINTCLOUD", "BLADE", "WING", "TOPOLOGY",
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
@@ -884,7 +884,7 @@ bool bodyCommand(const std::string& cmd) {
 
 bool historyCommand(const std::string& cmd) {
     static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
-                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "CONIC", "SKETCHTEXT", "POINTCLOUD", "BLADE", "WING", "AIRFOIL",
+                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "CONIC", "SKETCHTEXT", "POINTCLOUD", "BLADE", "WING", "AIRFOIL", "TOPOLOGY",
                                          "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
                                          "MIRROR",   "FILLET",  "CHAMFER",  "SCULPT",  "REMESH",   "MASK",      "SUBDIVIDE", "SYMMETRIZE", "DECIMATE", "HOLE",
                                          "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
@@ -3125,7 +3125,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         cmd == "SKETCHMIRROR" || cmd == "SKETCHPATTERN" || cmd == "PROJECT")
         return runSketchCommand(doc, cmd, a, pc.quoted);
     if (cmd == "REVOLVE" || cmd == "SWEEP" || cmd == "LOFT" || cmd == "PATTERN" || cmd == "MIRROR" || cmd == "FILLET" || cmd == "MASSPROPS" ||
-        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT" || cmd == "THREAD" || cmd == "SHEETMETAL" || cmd == "FEA" || cmd == "DOME" || cmd == "RIB" || cmd == "EMBOSS" || cmd == "ENGRAVE" || cmd == "SURFACE" || cmd == "THICKEN" || cmd == "KNIT" || cmd == "ANALYZE")
+        cmd == "MEASURE" || cmd == "CHAMFER" || cmd == "EDGES" || cmd == "DRAFT" || cmd == "THREAD" || cmd == "SHEETMETAL" || cmd == "FEA" || cmd == "DOME" || cmd == "RIB" || cmd == "EMBOSS" || cmd == "ENGRAVE" || cmd == "SURFACE" || cmd == "THICKEN" || cmd == "KNIT" || cmd == "ANALYZE" || cmd == "TOPOLOGY")
         return runFeatureCommand(doc, cmd, a, pc.quoted);
     if (cmd == "HISTORY" || cmd == "REGEN") return runHistoryCommand(doc, cmd, a, pc.quoted);
     if (cmd == "VAR" || cmd == "CONFIG") return runVariableCommand(doc, cmd, a);

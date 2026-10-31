@@ -197,6 +197,10 @@ constexpr CommandSpec kCommands[] = {
      "SHEETMETAL BASE curve THICKNESS t [RADIUS r] [K k] | SHEETMETAL FLANGE [body] EDGE n | NEAR x,y,z LENGTH l [ANGLE deg] [DOWN] [RADIUS r] | "
      "SHEETMETAL EDGES | FLAT [SKETCH] | INFO [body]",
      "Sheet metal: a base plate, flanges bent on its edges, and the flat pattern (bend allowance from the K factor)"},
+    {"TOPOLOGY", "TOPOPT OPTIMIZE",
+     "TOPOLOGY [body] FIX FACE x,y,z | NEAR x,y,z r ... LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz ... [BEARING x,y,z r FORCE f] [GRAVITY [x,y,z]] "
+     "[VOLUME share] [ITERATIONS n] [FILTER cubes] [CELL size] [CELLS n] [MATERIAL m] [KEEP]",
+     "Topology optimisation: the stiffest shape from a share of the body's material for its fixings and loads"},
     {"FEA", "STRESS",
      "FEA [body] FIX FACE x,y,z | NEAR x,y,z r ... [LOAD FACE x,y,z | NEAR x,y,z r FORCE fx,fy,fz] [PRESSURE FACE x,y,z MPa] [BEARING x,y,z r FORCE f] "
      "[GRAVITY [x,y,z]] [TEMP FACE x,y,z C] [HEAT FACE x,y,z W] [THERMAL] [REF C] [MODES n] [MODE k] [MATERIAL m] [E MPa] [NU v] [YIELD MPa] [CELL size] "

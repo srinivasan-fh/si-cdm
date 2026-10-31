@@ -109,4 +109,32 @@ struct FeaResult {
 // frequencies (loads optional); with temperatures and no loads, the heat flow only.
 bool runFea(const MeshData& world, const FeaSetup& setup, FeaResult& out, std::string* why = nullptr);
 
+// Topology optimisation: the stiffest shape (least compliance) using `volume` of the body's
+// material for the fixings and loads in `setup` (FIX, LOAD, BEARING, GRAVITY; its CELL and
+// material), by SIMP: each cube a density 0..1, its stiffness density^3, the compliance's
+// sensitivities filtered over `filter` cubes and the densities moved by optimality criteria.
+// Cubes at the fixings and loads stay solid. The result is the surface where the density is
+// one half, a closed mesh.
+struct TopologySetup {
+    FeaSetup fea;
+    double volume = 0.3;    // share of the body's cubes kept (0..1)
+    int iterations = 40;    // at most
+    double penalty = 3.0;
+    double filter = 1.5;    // in cubes
+    int maxCells = 8000;    // the cubes grow until the body takes at most this many
+};
+
+struct TopologyResult {
+    MeshData mesh;
+    float cell = 0;
+    int cells = 0, iterations = 0;
+    double startCompliance = 0, compliance = 0; // N mm, solid and final
+    double volume = 0;                            // the share used
+    std::vector<double> history;                  // compliance each step
+    long solverIterations = 0;                    // the stiffness solves' iterations, all told
+    bool converged = false;
+};
+
+bool runTopology(const MeshData& world, const TopologySetup& setup, TopologyResult& out, std::string* why = nullptr);
+
 } // namespace sicdm

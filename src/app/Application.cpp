@@ -795,6 +795,35 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         m_uiState.requestPointCloud = true;
         return;
     }
+    if (tool == ToolId::TopologyOptimized) { // the face to fix, then where the load goes
+        const auto hit = pick(x, y);
+        if (!hit) {
+            setStatus(m_uiState.topoPicked == 0 ? "Click the face to fix, on the body to optimise" : "Click where the load goes, on the same body");
+            return;
+        }
+        if (m_uiState.topoPicked == 0 || hit->body != m_topoBody) {
+            m_topoBody = hit->body;
+            m_topoFix = hit->point;
+            m_uiState.topoPicked = 1;
+            setStatus("Fixed there; now click where the load goes");
+            return;
+        }
+        const Body& b = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)];
+        const AABB bb = b.bounds();
+        const float r = 0.06f * std::max({bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z});
+        auto v = [](const Vec3& p) {
+            char t[96];
+            std::snprintf(t, sizeof t, "%.6g,%.6g,%.6g", static_cast<double>(p.x), static_cast<double>(p.y), static_cast<double>(p.z));
+            return std::string(t);
+        };
+        char vol[32];
+        std::snprintf(vol, sizeof vol, "%.4g", static_cast<double>(m_uiState.topoVolume));
+        m_uiState.topoPicked = 0;
+        setStatus("Optimising " + b.name + "...");
+        runCommandLine("TOPOLOGY \"" + b.name + "\" FIX FACE " + v(m_topoFix) + " LOAD NEAR " + v(hit->point) + " " + v(Vec3{r, 0, 0}).substr(0, v(Vec3{r, 0, 0}).find(',')) +
+                       " FORCE " + v(m_uiState.topoForce) + " VOLUME " + vol);
+        return;
+    }
     if (tool == ToolId::SubD) {
         if (const auto hit = pick(x, y)) runCommandLine("SUBDIVIDE \"" + m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name + "\"");
         else setStatus("Click a body to subdivide it");

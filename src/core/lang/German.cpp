@@ -1381,6 +1381,11 @@ const char* const kGerman[][2] = {
     {"XYZ, PTS, ASC, CSV or PLY scans; select a cloud, then Make Mesh", "XYZ-, PTS-, ASC-, CSV- oder PLY-Scans; eine Wolke wählen, dann Netz erzeugen"},
     {"A propeller or fan blade: NACA sections lofted along the span, tapered, twisted and swept. Click to place; section, chords, twist and sweep in Properties.", "Ein Propeller- oder Lüfterblatt: NACA-Profile entlang der Spannweite ausgeformt, verjüngt, verdreht und gepfeilt. Zum Platzieren klicken; Profil, Profiltiefen, Verwindung und Pfeilung in den Eigenschaften."},
     {"A wing with a whale-fin leading edge: rounded bumps along it. Click to place; their height and spacing in Properties.", "Ein Flügel mit Walflossen-Vorderkante: abgerundete Höcker entlang ihr. Zum Platzieren klicken; deren Höhe und Abstand in den Eigenschaften."},
+    {"Click the face to fix", "Die festzuhaltende Fläche anklicken"},
+    {"Click where the load goes", "Den Lastangriffspunkt anklicken"},
+    {"Force (N)", "Kraft (N)"},
+    {"Keep %", "Behalten %"},
+    {"The stiffest shape from a share of a body's material: click the face to fix, then where the load goes (force and share in the options bar). The result is a new body; check it with FEA.", "Die steifste Form aus einem Anteil des Materials eines Körpers: die festzuhaltende Fläche anklicken, dann den Lastangriffspunkt (Kraft und Anteil in der Optionsleiste). Das Ergebnis ist ein neuer Körper; mit FEM prüfen."},
 };
 
 

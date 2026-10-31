@@ -2246,6 +2246,18 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A closed mesh through the selected point cloud"));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", tr("XYZ, PTS, ASC, CSV or PLY scans; select a cloud, then Make Mesh"));
+    } else if (tool.id == ToolId::TopologyOptimized) {
+        ImGui::TextDisabled("%s", tr("Force (N)"));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(200);
+        ImGui::InputFloat3("##topoF", &st.topoForce.x, "%.0f");
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", tr("Keep %"));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::SliderFloat("##topoV", &st.topoVolume, 5.0f, 90.0f, "%.0f");
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", st.topoPicked == 0 ? tr("Click the face to fix") : tr("Click where the load goes"));
     } else if (tool.id == ToolId::SubD) {
         ImGui::TextDisabled("%s", tr("Click a body: one level of subdivision a click (Ctrl+Z takes it back)"));
     } else if (isPickFeatureTool(tool.id)) {

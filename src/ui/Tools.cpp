@@ -79,7 +79,7 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::TwistedAirfoil, C::ClassA, SICDM_TR_NOOP("Twisted Airfoil"), "", SICDM_TR_NOOP("A propeller or fan blade: NACA sections lofted along the span, tapered, twisted and swept. Click to place; section, chords, twist and sweep in Properties."), true},
     {T::TubercleWing, C::ClassA, SICDM_TR_NOOP("Tubercle Wing"), "", SICDM_TR_NOOP("A wing with a whale-fin leading edge: rounded bumps along it. Click to place; their height and spacing in Properties."), true},
 
-    {T::TopologyOptimized, C::Generative, SICDM_TR_NOOP("Topology Optimisation"), "", SICDM_TR_NOOP("Skeletal shapes stripped of dead weight, ideal for robot limbs."), false},
+    {T::TopologyOptimized, C::Generative, SICDM_TR_NOOP("Topology Optimisation"), "", SICDM_TR_NOOP("The stiffest shape from a share of a body\'s material: click the face to fix, then where the load goes (force and share in the options bar). The result is a new body; check it with FEA."), true},
     {T::TpmsLattice, C::Generative, SICDM_TR_NOOP("TPMS Lattice"), "", SICDM_TR_NOOP("Periodic gyroid-type infill for light, crash-absorbent parts. Click a solid body to fill it."), true},
 
     {T::MeshImport, C::Mesh, SICDM_TR_NOOP("STL / OBJ Mesh"), "", SICDM_TR_NOOP("Bring in a mesh or CAD file (STL, OBJ, 3MF, PLY, glTF, STEP, IGES...): click the window or Import on the options bar."), true},

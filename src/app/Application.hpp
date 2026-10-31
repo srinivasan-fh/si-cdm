@@ -349,6 +349,9 @@ private:
     ToolId m_pickTool = ToolId::Count;
     std::vector<int> m_picks;
     std::vector<std::string> m_pickBodies;
+    // Topology tool: the body and the fixed face's point picked so far.
+    int m_topoBody = -1;
+    Vec3 m_topoFix{};
     float m_extrudeAnchorDist = 0.0f;
     float m_extrudeAnchorX = 0.0f, m_extrudeAnchorY = 0.0f;
 

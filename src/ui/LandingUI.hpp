@@ -54,6 +54,9 @@ struct UiState {
     int polygonSides = 6;
     bool requestImport = false;      // the mesh tool: open the import dialog
     bool requestPointCloud = false;  // the point cloud tool: open its import dialog
+    Vec3 topoForce{0, 0, -1000};     // topology tool: the load (N) and the share of material kept (%)
+    float topoVolume = 30.0f;
+    int topoPicked = 0;              // 0: the fixed face next, 1: the load
     float conicRho = 0.5f;           // conic tool: 0.5 a parabola
     std::string sketchText = "Text"; // sketch text tool
     float sketchTextHeight = 10.0f;
