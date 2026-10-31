@@ -73,9 +73,9 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::CoonsPatch, C::Surface, SICDM_TR_NOOP("Coons Patch"), "", SICDM_TR_NOOP("Click four curves meeting end to end: a surface filling between them."), true},
     {T::GordonSurface, C::Surface, SICDM_TR_NOOP("Gordon Surface"), "", SICDM_TR_NOOP("Network surface through two families of crossing curves: click the profiles, Now the Guides, the guides, then Apply. It passes through every curve."), true},
 
-    {T::ClassANurbs, C::ClassA, SICDM_TR_NOOP("Class-A NURBS"), "", SICDM_TR_NOOP("Ultra-smooth surfaces with reflection continuity for body panels."), false},
+    {T::ClassANurbs, C::ClassA, SICDM_TR_NOOP("Class-A NURBS"), "", SICDM_TR_NOOP("Fair a B-spline surface: its curvature smoothed (the control net\'s bending taken down) with its edges and their tangents kept. Click the surface; steps in the options bar."), true},
     {T::OffsetSurface, C::ClassA, SICDM_TR_NOOP("Offset Surface"), "", SICDM_TR_NOOP("Click a surface body: a copy set off along its normals by the distance."), true},
-    {T::BlendedFillet, C::ClassA, SICDM_TR_NOOP("Blended Fillet"), "", SICDM_TR_NOOP("Variable-radius transitions merging intersecting panels."), false},
+    {T::BlendedFillet, C::ClassA, SICDM_TR_NOOP("Blended Fillet"), "", SICDM_TR_NOOP("A smooth blend surface bridging two surfaces, meeting each along its edge with its tangent. Click the two surfaces; the weight sets how far it bulges."), true},
     {T::TwistedAirfoil, C::ClassA, SICDM_TR_NOOP("Twisted Airfoil"), "", SICDM_TR_NOOP("Blade profiles morphing along a path for propellers and wings."), false},
     {T::TubercleWing, C::ClassA, SICDM_TR_NOOP("Tubercle Wing"), "", SICDM_TR_NOOP("Whale-fin-inspired leading edges that delay stall on UAVs."), false},
 

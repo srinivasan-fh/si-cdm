@@ -112,7 +112,7 @@ private:
     void applyExtrude();
     void cancelExtrude();
     void pickFeatureClick(ToolId tool, float x, float y);
-    void applyPickFeature(const std::string& body = {});
+    void applyPickFeature();
     void clearPicks();
     void drawExtrudePreview() const;
 
@@ -347,6 +347,7 @@ private:
     // Pick tools: the tool and the curves picked for it so far.
     ToolId m_pickTool = ToolId::Count;
     std::vector<int> m_picks;
+    std::vector<std::string> m_pickBodies;
     float m_extrudeAnchorDist = 0.0f;
     float m_extrudeAnchorX = 0.0f, m_extrudeAnchorY = 0.0f;
 

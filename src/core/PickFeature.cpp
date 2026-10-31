@@ -54,7 +54,9 @@ bool isPickFeatureTool(ToolId t) noexcept {
     case ToolId::BSplinePatch:
     case ToolId::CoonsPatch:
     case ToolId::GordonSurface:
-    case ToolId::OffsetSurface: return true;
+    case ToolId::OffsetSurface:
+    case ToolId::ClassANurbs:
+    case ToolId::BlendedFillet: return true;
     default: return false;
     }
 }
@@ -72,7 +74,9 @@ PickFeatureSpec pickFeatureSpec(ToolId t, const PickFeatureOptions& o) noexcept 
     case ToolId::BSplinePatch: return {2, -1, false};
     case ToolId::CoonsPatch: return {4, 4, false};
     case ToolId::GordonSurface: return {4, -1, false};
-    case ToolId::OffsetSurface: return {0, 0, true};
+    case ToolId::OffsetSurface: return {0, 0, true, 1};
+    case ToolId::ClassANurbs: return {0, 0, true, 1};
+    case ToolId::BlendedFillet: return {0, 0, true, 2};
     default: return {};
     }
 }
@@ -108,11 +112,13 @@ std::string pickFeaturePrompt(ToolId t, const PickFeatureOptions& o, int picked)
         if (o.networkSplit < 0) return picked < 2 ? SICDM_TR_NOOP("Click the profiles (curves one way), then Now the Guides") : SICDM_TR_NOOP("More profiles, or Now the Guides");
         return picked - o.networkSplit < 2 ? SICDM_TR_NOOP("Click the guides (the curves crossing them)") : SICDM_TR_NOOP("More guides, or Apply / Enter");
     case ToolId::OffsetSurface: return SICDM_TR_NOOP("Click a surface body to offset");
+    case ToolId::ClassANurbs: return SICDM_TR_NOOP("Click a surface body to fair (smooth its curvature, edges kept)");
+    case ToolId::BlendedFillet: return picked == 0 ? SICDM_TR_NOOP("Click the first surface to blend") : SICDM_TR_NOOP("Click the second surface");
     default: return {};
     }
 }
 
-std::string pickFeatureCommand(ToolId t, const Sketch& sketch, const std::vector<int>& curves, const std::string& body,
+std::string pickFeatureCommand(ToolId t, const Sketch& sketch, const std::vector<int>& curves, const std::vector<std::string>& bodies,
                                const PickFeatureOptions& o, std::string* why) {
     auto fail = [&](const std::string& w) {
         if (why) *why = w;
@@ -121,8 +127,10 @@ std::string pickFeatureCommand(ToolId t, const Sketch& sketch, const std::vector
     const PickFeatureSpec spec = pickFeatureSpec(t, o);
     if (!isPickFeatureTool(t)) return fail("Not a pick tool");
     if (spec.body) {
-        if (body.empty()) return fail(pickFeaturePrompt(t, o, 0));
-        return "SURFACE OFFSET " + quoteWord(body) + " DISTANCE " + mm(o.surfaceDistance);
+        if (static_cast<int>(bodies.size()) < spec.bodies) return fail(pickFeaturePrompt(t, o, static_cast<int>(bodies.size())));
+        if (t == ToolId::ClassANurbs) return "SURFACE FAIR " + quoteWord(bodies[0]) + " ITERATIONS " + std::to_string(o.fairIterations);
+        if (t == ToolId::BlendedFillet) return "SURFACE BLEND " + quoteWord(bodies[0]) + " " + quoteWord(bodies[1]) + " WEIGHT " + num(o.blendWeight);
+        return "SURFACE OFFSET " + quoteWord(bodies[0]) + " DISTANCE " + mm(o.surfaceDistance);
     }
     if (static_cast<int>(curves.size()) < spec.minPicks) return fail(pickFeaturePrompt(t, o, static_cast<int>(curves.size())));
     const auto& all = sketch.curves();

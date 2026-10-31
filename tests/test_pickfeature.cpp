@@ -54,7 +54,7 @@ TEST_CASE("Pick tools: what each wants, and the command it makes") {
     std::string why;
     CHECK(pickFeatureCommand(ToolId::Sweep, d.scene.sketch(), {0}, {}, o, &why).empty()); // still needs the path
     CHECK(!why.empty());
-    CHECK(pickFeatureCommand(ToolId::OffsetSurface, d.scene.sketch(), {}, "Surface 1", o) == "SURFACE OFFSET \"Surface 1\" DISTANCE 20mm");
+    CHECK(pickFeatureCommand(ToolId::OffsetSurface, d.scene.sketch(), {}, {"Surface 1"}, o) == "SURFACE OFFSET \"Surface 1\" DISTANCE 20mm");
     // A network: the profiles, then the guides after the split.
     for (const char* l : {"LINE 0,0 10,0", "LINE 0,5 10,5", "LINE 0,0 0,5", "LINE 10,0 10,5"}) REQUIRE(run(d, l).ok);
     PickFeatureOptions g;
@@ -133,6 +133,12 @@ TEST_CASE("Pick tools make surfaces: planar, extruded, ruled, B-spline, Coons, o
     const std::string surf = d.scene.bodies().back().name;
     const std::size_t before = d.scene.bodies().size();
     o.surfaceDistance = 2;
-    CHECK(run(d, pickFeatureCommand(ToolId::OffsetSurface, d.scene.sketch(), {}, surf, o)).ok);
+    CHECK(run(d, pickFeatureCommand(ToolId::OffsetSurface, d.scene.sketch(), {}, {surf}, o)).ok);
     CHECK(d.scene.bodies().size() == before + 1);
+    // Class-A fairing of one surface, a blend between two.
+    const std::string other = d.scene.bodies()[d.scene.bodies().size() - 3].name;
+    CHECK(run(d, pickFeatureCommand(ToolId::ClassANurbs, d.scene.sketch(), {}, {surf}, o)).ok);
+    CHECK(pickFeatureCommand(ToolId::BlendedFillet, d.scene.sketch(), {}, {surf}, o).empty()); // needs two
+    const std::string blend = pickFeatureCommand(ToolId::BlendedFillet, d.scene.sketch(), {}, {surf, other}, o);
+    CHECK(blend.rfind("SURFACE BLEND ", 0) == 0);
 }

@@ -2185,6 +2185,39 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             if (!addSurface(s, "loft through " + std::to_string(names.size()) + " sections", used)) return out;
             return out;
         }
+        if (cmd == "SURFACE" && sub == "fair") {
+            // SURFACE FAIR body [ITERATIONS n] [FREE]: Class-A fairing of a B-spline surface
+            const char* usage = "Usage: SURFACE FAIR body [ITERATIONS n] [FREE]";
+            std::size_t i = 1;
+            const std::string nm = leadingName(a, quoted, i, [](const std::string& w) { return w == "iterations" || w == "free"; });
+            int iterations = 30;
+            bool keepTangent = true;
+            for (; i < a.size(); ++i) {
+                const std::string k = lower(a[i]);
+                if (k == "free") keepTangent = false;
+                else if (k == "iterations" && i + 1 < a.size()) {
+                    const auto v = parseNumber(a[++i]);
+                    if (!v || *v < 1 || *v > 10000) return out.fail("ITERATIONS is 1 to 10000");
+                    iterations = static_cast<int>(*v);
+                } else return out.fail(usage);
+            }
+            const int bi = nm.empty() ? doc.selectedBody : bodyNamed(doc, nm);
+            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail(nm.empty() ? std::string(usage) : "No body named " + nm);
+            Body& body = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            BSplineSurface srf;
+            if (!bodySurface(body, srf)) return out.fail(body.name + " is not a B-spline surface (SURFACE makes them)");
+            double e0 = 0, e1 = 0, moved = 0;
+            std::string why;
+            if (!fairSurface(srf, iterations, keepTangent, e0, e1, moved, &why)) return out.fail("Cannot fair " + body.name + ": " + why);
+            Body faired = body;
+            if (!makeSurfaceBody(faired, surfaceBrep(srf), &why)) return out.fail("The faired surface could not be made: " + why);
+            doc.scene.pushUndo("SURFACE FAIR");
+            body = std::move(faired);
+            doc.scene.touchBodies();
+            out.say("Faired " + body.name + ": bending " + fmt3("%.4g", e0) + " -> " + fmt3("%.4g", e1) + " (" + fmt3("%.0f", e0 > 0 ? 100.0 * (1.0 - e1 / e0) : 0.0) +
+                    "% less), moved " + lengthText(static_cast<float>(moved)) + " at most" + (keepTangent ? ", edges and their tangents kept" : ", edges kept"));
+            return out;
+        }
         if (cmd == "SURFACE" && sub == "network") {
             // SURFACE NETWORK profile profile ... ACROSS guide guide ...: a Gordon surface
             std::size_t across = a.size();

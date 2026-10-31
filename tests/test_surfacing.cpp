@@ -248,3 +248,45 @@ TEST_CASE("Surfaces: a Gordon network through crossing curves") {
     REQUIRE(run(d, "PATH3D 0,100,50 40,100,50").ok);
     CHECK(!run(d, "SURFACE NETWORK \"" + prof[0] + "\" \"" + d.scene.sketch().curves().back().name + "\" ACROSS \"" + guide[0] + "\" \"" + guide[1] + "\"").ok);
 }
+
+TEST_CASE("Surfaces: Class-A fairing keeps the edges and takes the bumps out") {
+    // A loft through wavy sections: bumpy across them.
+    Document d;
+    std::string loft = "SURFACE LOFT";
+    for (int k = 0; k < 7; ++k) {
+        std::string line = "PATH3D";
+        for (int i = 0; i <= 8; ++i) {
+            const double x = 5.0 * i, y = 6.0 * k, z = 0.6 * std::sin(1.7 * i + 2.3 * k) + 0.3 * std::cos(3.1 * i * k);
+            line += " " + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(z);
+        }
+        REQUIRE(run(d, line + " SPLINE").ok);
+        loft += " \"" + d.scene.sketch().curves().back().name + "\"";
+    }
+    REQUIRE(run(d, loft).ok);
+    const std::string name = d.scene.bodies().back().name;
+    BSplineSurface before;
+    REQUIRE(bodySurface(d.scene.bodies().back(), before));
+    const double e0 = netBending(before);
+    REQUIRE(run(d, "SURFACE FAIR \"" + name + "\" ITERATIONS 200").ok);
+    BSplineSurface after;
+    REQUIRE(bodySurface(d.scene.bodies().back(), after));
+    CHECK(d.scene.bodies().back().name == name); // the same body, faired in place
+    CHECK(netBending(after) < 0.5 * e0);
+    // The edges (and the rows holding their tangents) didn't move.
+    double edge = 0;
+    for (int i = 0; i < after.nu; ++i)
+        for (int j = 0; j < after.nv; ++j)
+            if (i < 2 || j < 2 || i >= after.nu - 2 || j >= after.nv - 2)
+                edge = std::max(edge, dlength(after.cp[static_cast<std::size_t>(i * after.nv + j)] - before.cp[static_cast<std::size_t>(i * before.nv + j)]));
+    CHECK(edge == 0.0);
+    // FREE lets the tangent rows move too: smoother still.
+    BSplineSurface free = before;
+    double a0, a1, mv;
+    REQUIRE(fairSurface(free, 200, false, a0, a1, mv));
+    CHECK(a1 < netBending(after));
+    // Too coarse a net to fair with its tangents held.
+    BSplineSurface tiny;
+    tiny.nu = tiny.nv = 4;
+    tiny.cp.assign(16, DVec3{});
+    CHECK(!fairSurface(tiny, 10, true, a0, a1, mv));
+}

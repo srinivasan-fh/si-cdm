@@ -24,6 +24,8 @@ struct PickFeatureOptions {
     bool ribFlip = false;
     float surfaceDistance = 20.0f; // tabulated cylinder height, offset surface distance
     bool keepSketch = false;
+    int fairIterations = 30;       // Class-A fairing steps
+    float blendWeight = 1.0f;      // blended fillet: how far the blend bulges along its ends' tangents
     int networkSplit = -1;         // Gordon surface: how many of the picks are profiles (-1: still picking them)
 };
 
@@ -33,6 +35,7 @@ struct PickFeatureSpec {
     int minPicks = 0;
     int maxPicks = 0;
     bool body = false;
+    int bodies = 1; // with `body`: how many to click
 };
 
 bool isPickFeatureTool(ToolId tool) noexcept;
@@ -42,9 +45,9 @@ bool pickWantsClosed(ToolId tool, int index) noexcept;
 // What to click next, for the options bar and command prompt.
 std::string pickFeaturePrompt(ToolId tool, const PickFeatureOptions& o, int picked);
 
-// The command for the picked curves (sketch indices) or body name; empty when more picks
+// The command for the picked curves (sketch indices) or bodies; empty when more picks
 // are needed. `why` says what is missing.
-std::string pickFeatureCommand(ToolId tool, const Sketch& sketch, const std::vector<int>& curves, const std::string& body,
+std::string pickFeatureCommand(ToolId tool, const Sketch& sketch, const std::vector<int>& curves, const std::vector<std::string>& bodies,
                                const PickFeatureOptions& o, std::string* why = nullptr);
 
 // A name as a command word: quoted, inner quotes dropped.

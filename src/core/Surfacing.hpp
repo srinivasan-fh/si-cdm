@@ -58,6 +58,14 @@ std::vector<DVec3> resample(const std::vector<DVec3>& line, int n, bool closed);
 bool gordonGrid(std::vector<std::vector<DVec3>> profiles, std::vector<std::vector<DVec3>> guides, int n, double tolerance,
                 std::vector<std::vector<DVec3>>& grid, std::string* why);
 
+// Class-A fairing: the control net's bending (the sum of its squared second differences,
+// both ways) taken down step by step, its edge rows held, and with `keepTangent` the rows
+// next to them too (so it still meets its neighbours the same way). `before` and `after` get
+// the bending; `moved` how far the surface moved at most (sampled). False with a reason when
+// no control point is free to move.
+bool fairSurface(BSplineSurface& s, int iterations, bool keepTangent, double& before, double& after, double& moved, std::string* why = nullptr);
+double netBending(const BSplineSurface& s);
+
 bool coonsGrid(std::vector<std::vector<DVec3>> sides, int n, std::vector<std::vector<DVec3>>& grid, std::string* why);
 
 // A surface body made solid: offset `t` along its normals (both ways when `both`, half

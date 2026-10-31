@@ -44,6 +44,8 @@ runs the command shown in the log, so the result is in the feature history like 
 | Ruled Surface | two curves | | `SURFACE LOFT` |
 | Bezier / B-Spline Patch | two or more curves, then *Apply* or Enter | | `SURFACE LOFT` |
 | Coons Patch | four curves meeting end to end | | `SURFACE BOUNDARY` |
+| Class-A NURBS | a surface body | steps | `SURFACE FAIR` |
+| Blended Fillet | two surface bodies | weight | `SURFACE BLEND` |
 | Gordon Surface | the profiles, *Now the Guides*, the guides, then *Apply* | | `SURFACE NETWORK` |
 | Offset Surface | a surface body | distance | `SURFACE OFFSET` |
 
@@ -51,6 +53,13 @@ Loft sections drawn on one plane are set *spacing* apart along its normal (the f
 the next is one spacing up, and so on); sections on different planes stay where they are.
 Clicking a picked curve again takes it back out; Esc or *Clear* drops the picks. *Keep sketch*
 leaves the curves showing.
+
+Class-A fairing (`SURFACE FAIR`) takes down the bending of a B-spline surface's control net
+(the sum of its squared second differences both ways) step by step, holding its edge rows and,
+unless FREE, the rows next to them, so the surface still meets its neighbours with the same
+tangent. It reports the bending before and after and how far the surface moved; more
+ITERATIONS fair it further (the default is 30). Check the result with `ANALYZE ZEBRA body` or
+`ANALYZE CURVATURE body`. It needs a control net of at least 5 x 5 (3 x 3 with FREE).
 
 Gordon (network) surface: two or more profiles one way, two or more guides across them, each
 profile crossing each guide once (within 1% of the network's size; 3D curves from `PATH3D`, or
@@ -889,6 +898,7 @@ which is kept with the body, exported to STEP as a surface model and saved in th
 SURFACE LOFT curve curve [curve ...]                     through sections, in order
 SURFACE BOUNDARY c1 c2 c3 c4                             filling four curves that meet end to end
 SURFACE NETWORK p1 p2 ... ACROSS g1 g2 ...               a Gordon surface through a network of curves
+SURFACE FAIR body [ITERATIONS n] [FREE]                  Class-A fairing: curvature smoothed, edges kept
 SURFACE EXTRUDE curve DISTANCE d [DIR x,y,z]             an open (or closed) curve pulled straight
 SURFACE REVOLVE curve AXIS x,y,z [AT x,y,z] [ANGLE deg]  a curve turned about an axis
 SURFACE PLANAR curve                                     a flat surface filling a closed curve

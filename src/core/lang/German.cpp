@@ -1367,6 +1367,13 @@ const char* const kGerman[][2] = {
     {"More profiles, or Now the Guides", "Weitere Profile, oder Jetzt die Leitkurven"},
     {"Network surface through two families of crossing curves: click the profiles, Now the Guides, the guides, then Apply. It passes through every curve.", "Netzfläche durch zwei Scharen sich kreuzender Kurven: die Profile anklicken, Jetzt die Leitkurven, die Leitkurven, dann Anwenden. Sie verläuft durch jede Kurve."},
     {"Now the Guides", "Jetzt die Leitkurven"},
+    {"A smooth blend surface bridging two surfaces, meeting each along its edge with its tangent. Click the two surfaces; the weight sets how far it bulges.", "Eine glatte Übergangsfläche zwischen zwei Flächen, die jede entlang ihrer Kante tangential trifft. Die zwei Flächen anklicken; das Gewicht bestimmt, wie weit sie sich wölbt."},
+    {"Click a surface body to fair (smooth its curvature, edges kept)", "Einen Flächenkörper zum Glätten anklicken (Krümmung geglättet, Kanten bleiben)"},
+    {"Click the first surface to blend", "Die erste zu verbindende Fläche anklicken"},
+    {"Click the second surface", "Die zweite Fläche anklicken"},
+    {"Fair a B-spline surface: its curvature smoothed (the control net's bending taken down) with its edges and their tangents kept. Click the surface; steps in the options bar.", "Eine B-Spline-Fläche glätten: ihre Krümmung ausgeglichen (die Biegung des Kontrollnetzes verringert), Kanten und deren Tangenten bleiben. Die Fläche anklicken; Schritte in der Optionsleiste."},
+    {"Steps", "Schritte"},
+    {"Weight", "Gewicht"},
 };
 
 

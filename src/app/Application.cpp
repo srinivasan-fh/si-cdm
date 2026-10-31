@@ -1919,7 +1919,7 @@ void Application::handleViewportInput() {
         m_vp3D.displayMode = static_cast<DisplayMode>((static_cast<int>(m_vp3D.displayMode) + 1) % 4);
     if (keyActionPressed("edit.finish")) {
         if (m_extrudeCurve >= 0) applyExtrude();
-        else if (!m_picks.empty()) applyPickFeature();
+        else if (!m_picks.empty() || !m_pickBodies.empty()) applyPickFeature();
         else if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
     }
     if (keyActionPressed("edit.cancel")) {
@@ -2601,6 +2601,7 @@ void Application::updatePrompt() {
 
 void Application::clearPicks() {
     m_picks.clear();
+    m_pickBodies.clear();
     m_pickTool = ToolId::Count;
     m_uiState.pickedNames.clear();
     m_uiState.pickCanApply = false;
@@ -2617,7 +2618,11 @@ void Application::pickFeatureClick(ToolId tool, float x, float y) {
             setStatus(pickFeaturePrompt(tool, m_uiState.pick, 0));
             return;
         }
-        applyPickFeature(m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name);
+        const std::string name = m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name;
+        if (std::find(m_pickBodies.begin(), m_pickBodies.end(), name) == m_pickBodies.end()) m_pickBodies.push_back(name);
+        m_uiState.pickedNames = m_pickBodies;
+        if (static_cast<int>(m_pickBodies.size()) >= spec.bodies) applyPickFeature();
+        else setStatus(pickFeaturePrompt(tool, m_uiState.pick, static_cast<int>(m_pickBodies.size())));
         return;
     }
     const int index = static_cast<int>(m_picks.size());
@@ -2648,11 +2653,11 @@ void Application::pickFeatureClick(ToolId tool, float x, float y) {
     setStatus(pickFeaturePrompt(tool, m_uiState.pick, n));
 }
 
-void Application::applyPickFeature(const std::string& body) {
+void Application::applyPickFeature() {
     const ToolId tool = m_pickTool;
     if (!isPickFeatureTool(tool)) return;
     std::string why;
-    const std::string line = pickFeatureCommand(tool, m_doc.scene.sketch(), m_picks, body, m_uiState.pick, &why);
+    const std::string line = pickFeatureCommand(tool, m_doc.scene.sketch(), m_picks, m_pickBodies, m_uiState.pick, &why);
     if (line.empty()) {
         setStatus(why);
         return;

@@ -780,5 +780,60 @@ bool gordonGrid(std::vector<std::vector<DVec3>> profilePts, std::vector<std::vec
     return true;
 }
 
+double netBending(const BSplineSurface& s) {
+    auto P = [&](int i, int j) { return s.cp[static_cast<std::size_t>(i * s.nv + j)]; };
+    double e = 0;
+    for (int i = 0; i < s.nu; ++i)
+        for (int j = 0; j < s.nv; ++j) {
+            if (i > 0 && i + 1 < s.nu) e += ddot(P(i - 1, j) - P(i, j) * 2.0 + P(i + 1, j), P(i - 1, j) - P(i, j) * 2.0 + P(i + 1, j));
+            if (j > 0 && j + 1 < s.nv) e += ddot(P(i, j - 1) - P(i, j) * 2.0 + P(i, j + 1), P(i, j - 1) - P(i, j) * 2.0 + P(i, j + 1));
+        }
+    return e;
+}
+
+bool fairSurface(BSplineSurface& s, int iterations, bool keepTangent, double& before, double& after, double& moved, std::string* why) {
+    const int hold = keepTangent ? 2 : 1; // rows held at each edge
+    auto isFree = [&](int i, int j) { return i >= hold && i < s.nu - hold && j >= hold && j < s.nv - hold; };
+    bool any = false;
+    for (int i = 0; i < s.nu && !any; ++i)
+        for (int j = 0; j < s.nv && !any; ++j) any = isFree(i, j);
+    before = after = netBending(s);
+    moved = 0;
+    if (!any) {
+        if (why) *why = "too few control points to move with its edges held (fair a denser surface, or FREE the tangents)";
+        return false;
+    }
+    const BSplineSurface original = s;
+    auto idx = [&](int i, int j) { return static_cast<std::size_t>(i * s.nv + j); };
+    std::vector<DVec3> grad(s.cp.size());
+    for (int it = 0; it < iterations; ++it) {
+        // The bending's gradient: each second difference d pushes its three points by (1, -2, 1) d.
+        std::fill(grad.begin(), grad.end(), DVec3{});
+        for (int i = 0; i < s.nu; ++i)
+            for (int j = 0; j < s.nv; ++j) {
+                if (i > 0 && i + 1 < s.nu) {
+                    const DVec3 d = s.cp[idx(i - 1, j)] - s.cp[idx(i, j)] * 2.0 + s.cp[idx(i + 1, j)];
+                    grad[idx(i - 1, j)] = grad[idx(i - 1, j)] + d * 2.0, grad[idx(i, j)] = grad[idx(i, j)] - d * 4.0, grad[idx(i + 1, j)] = grad[idx(i + 1, j)] + d * 2.0;
+                }
+                if (j > 0 && j + 1 < s.nv) {
+                    const DVec3 d = s.cp[idx(i, j - 1)] - s.cp[idx(i, j)] * 2.0 + s.cp[idx(i, j + 1)];
+                    grad[idx(i, j - 1)] = grad[idx(i, j - 1)] + d * 2.0, grad[idx(i, j)] = grad[idx(i, j)] - d * 4.0, grad[idx(i, j + 1)] = grad[idx(i, j + 1)] + d * 2.0;
+                }
+            }
+        // A step under 1 / (the Hessian's largest diagonal, 24): the bending only goes down.
+        for (int i = 0; i < s.nu; ++i)
+            for (int j = 0; j < s.nv; ++j)
+                if (isFree(i, j)) s.cp[idx(i, j)] = s.cp[idx(i, j)] - grad[idx(i, j)] * (1.0 / 48.0);
+    }
+    after = netBending(s);
+    constexpr int kN = 21;
+    for (int a = 0; a < kN; ++a)
+        for (int b = 0; b < kN; ++b) {
+            const double u = s.u0() + (s.u1() - s.u0()) * a / (kN - 1), v = s.v0() + (s.v1() - s.v0()) * b / (kN - 1);
+            moved = std::max(moved, dlength(s.eval(u, v) - original.eval(u, v)));
+        }
+    return true;
+}
+
 } // namespace sicdm
 

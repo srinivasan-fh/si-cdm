@@ -2287,6 +2287,20 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
             ImGui::Checkbox(tr("Flip"), &o.ribFlip);
             ImGui::SameLine();
             break;
+        case ToolId::ClassANurbs:
+            label(tr("Steps"));
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputInt("##fairsteps", &o.fairIterations);
+            o.fairIterations = std::clamp(o.fairIterations, 1, 10000);
+            ImGui::SameLine();
+            break;
+        case ToolId::BlendedFillet:
+            label(tr("Weight"));
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputFloat("##blendw", &o.blendWeight, 0, 0, "%.3g");
+            o.blendWeight = std::clamp(o.blendWeight, 0.01f, 10.0f);
+            ImGui::SameLine();
+            break;
         case ToolId::TabulatedCylinder:
         case ToolId::OffsetSurface:
             label(tr("Distance"));
