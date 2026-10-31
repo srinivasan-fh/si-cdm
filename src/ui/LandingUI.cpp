@@ -2200,6 +2200,82 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
             ImGui::SameLine();
             ImGui::TextDisabled("%s", tr("drag, type the depth, click or Enter"));
         }
+    } else if (isPickFeatureTool(tool.id)) {
+        PickFeatureOptions& o = st.pick;
+        auto label = [](const char* t) {
+            ImGui::TextDisabled("%s", t);
+            ImGui::SameLine();
+        };
+        switch (tool.id) {
+        case ToolId::Revolve: {
+            label(tr("Angle"));
+            ImGui::SetNextItemWidth(70);
+            ImGui::InputFloat("##revang", &o.revolveAngle, 0, 0, "%.4g");
+            o.revolveAngle = std::clamp(o.revolveAngle, -360.0f, 360.0f);
+            ImGui::SameLine();
+            label(tr("Axis"));
+            const char* axes[] = {tr("Vertical (V)"), tr("Horizontal (U)"), tr("Pick a line")};
+            ImGui::SetNextItemWidth(130);
+            ImGui::Combo("##revaxis", &o.revolveAxis, axes, 3);
+            ImGui::SameLine();
+            break;
+        }
+        case ToolId::Helix:
+            label(tr("Pitch"));
+            ImGui::SetNextItemWidth(80);
+            lengthField("##hpitch", &o.helixPitch, 0.001f, 1e5f);
+            ImGui::SameLine();
+            label(tr("Turns"));
+            ImGui::SetNextItemWidth(60);
+            ImGui::InputFloat("##hturns", &o.helixTurns, 0, 0, "%.4g");
+            o.helixTurns = std::clamp(o.helixTurns, 0.1f, 500.0f);
+            ImGui::SameLine();
+            ImGui::Checkbox(tr("Left hand"), &o.helixLeft);
+            ImGui::SameLine();
+            break;
+        case ToolId::Loft:
+            ImGui::Checkbox(tr("Smooth"), &o.loftSmooth);
+            ImGui::SameLine();
+            label(tr("Spacing"));
+            ImGui::SetNextItemWidth(80);
+            lengthField("##lspace", &o.loftSpacing, -1e5f, 1e5f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Sections drawn on one plane are set this far apart along its normal"));
+            ImGui::SameLine();
+            break;
+        case ToolId::Rib:
+            label(tr("Thickness"));
+            ImGui::SetNextItemWidth(80);
+            lengthField("##ribt", &o.ribThickness, 0.001f, 1e5f);
+            ImGui::SameLine();
+            ImGui::Checkbox(tr("Flip"), &o.ribFlip);
+            ImGui::SameLine();
+            break;
+        case ToolId::TabulatedCylinder:
+        case ToolId::OffsetSurface:
+            label(tr("Distance"));
+            ImGui::SetNextItemWidth(80);
+            lengthField("##sdist", &o.surfaceDistance, -1e5f, 1e5f);
+            ImGui::SameLine();
+            break;
+        default: break;
+        }
+        if (tool.id == ToolId::Revolve || tool.id == ToolId::Sweep || tool.id == ToolId::Helix || tool.id == ToolId::Loft || tool.id == ToolId::Rib) {
+            ImGui::Checkbox(tr("Keep sketch"), &o.keepSketch);
+            ImGui::SameLine();
+        }
+        if (!st.pickedNames.empty()) {
+            std::string names;
+            for (const std::string& n : st.pickedNames) names += (names.empty() ? "" : ", ") + n;
+            ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "%s", names.c_str());
+            ImGui::SameLine();
+            if (st.pickCanApply && pickFeatureSpec(tool.id, o).maxPicks < 0) {
+                if (ImGui::Button(tr("Apply"))) cmd.applyPick = true;
+                ImGui::SameLine();
+            }
+            if (ImGui::Button(tr("Clear"))) cmd.clearPick = true;
+            ImGui::SameLine();
+        }
+        ImGui::TextDisabled("%s", tr(pickFeaturePrompt(tool.id, o, static_cast<int>(st.pickedNames.size())).c_str()));
     } else if (isSculptTool(tool.id)) {
         ImGui::TextDisabled("%s", tr("Radius"));
         ImGui::SameLine();

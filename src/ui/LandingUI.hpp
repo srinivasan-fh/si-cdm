@@ -9,6 +9,7 @@
 #include "core/FileIO.hpp"
 #include "core/Lathe.hpp"
 #include "core/Pdm.hpp"
+#include "core/PickFeature.hpp"
 #include "core/Scene.hpp"
 #include "core/Selection.hpp"
 #include "core/SectionView.hpp"
@@ -145,6 +146,11 @@ struct UiState {
     bool extrudeKeepSketch = false;
     bool extrudeLive = true;          // mouse drag sets the distance (off once typed)
     std::string extrudeProfileName;   // empty until a profile is picked
+
+    // Pick tools (revolve, sweep, loft, rib, surfaces): options, and the curves picked so far.
+    PickFeatureOptions pick;
+    std::vector<std::string> pickedNames;
+    bool pickCanApply = false; // enough picked for Apply (loft, B-spline patch)
     std::vector<LogLine> commandLog;
 
     // Sculpting brushes (options bar). Ctrl inverts a brush, Shift smooths.
@@ -257,6 +263,8 @@ struct UiCommands {
     bool toggleMcp = false;
     bool applyExtrude = false;
     bool cancelExtrude = false;
+    bool applyPick = false;
+    bool clearPick = false;
     std::optional<int> switchFile; // file tab id; applied first
     std::optional<int> closeFile;  // file tab id; applied last, only if saved unless closeDiscard
     bool closeDiscard = false;

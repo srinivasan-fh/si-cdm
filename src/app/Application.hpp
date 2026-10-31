@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <functional>
 #include <vector>
 
 struct GLFWwindow;
@@ -110,6 +111,9 @@ private:
     void updateExtrudeFromMouse();
     void applyExtrude();
     void cancelExtrude();
+    void pickFeatureClick(ToolId tool, float x, float y);
+    void applyPickFeature(const std::string& body = {});
+    void clearPicks();
     void drawExtrudePreview() const;
 
     // Simulation window.
@@ -218,7 +222,7 @@ private:
     void updateSketchColors();
 
     // Input state
-    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip, PushPull, Gizmo, BoxSelect };
+    enum class DragMode { None, Pending, Orbit, Pan, Zoom, MoveBody, MoveImage, Sculpt, Grab, CutPath, Knife, SketchGrip, PushPull, Gizmo, BoxSelect, Lasso };
     DragMode m_leftDrag = DragMode::None;
     bool m_escapedDrag = false; // Esc cancelled the drag; the button is still held
     DragMode m_otherDrag = DragMode::None; // right / middle button
@@ -340,6 +344,9 @@ private:
     void drawSculptOverlay();
 
     int m_extrudeCurve = -1;   // profile being extruded
+    // Pick tools: the tool and the curves picked for it so far.
+    ToolId m_pickTool = ToolId::Count;
+    std::vector<int> m_picks;
     float m_extrudeAnchorDist = 0.0f;
     float m_extrudeAnchorX = 0.0f, m_extrudeAnchorY = 0.0f;
 
@@ -359,6 +366,12 @@ private:
     void pollRender();
     void pollVideo();
     void finishBoxSelect(float x, float y);
+    void finishLassoSelect();
+    // Selects what lies in a region of the screen (`inside`), wholly (`window`) or touching it;
+    // added to the selection (`add`) or in its place.
+    void selectInRegion(const std::function<bool(const ImVec2&)>& inside, bool window, bool add, const ImVec2& middle);
+    std::vector<ImVec2> m_lasso;   // the lasso's points as drawn
+    bool m_regionAdd = true;       // the box or lasso adds to the selection (Ctrl / Shift, or Ctrl+drag)
     void selectionChanged(); // says what is selected now
     struct RenderJob {
         std::vector<std::uint8_t> pixels;

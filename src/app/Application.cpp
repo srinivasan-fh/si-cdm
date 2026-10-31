@@ -584,6 +584,7 @@ void Application::addCurve(SketchCurve curve) {
 
 void Application::onCanvasClick(float x, float y, bool doubleClick) {
     ToolId tool = m_ui.toolbox().active();
+    if (tool == ToolId::BoxSelect || tool == ToolId::LassoSelect) tool = ToolId::Select; // a click selects
     if (simulating()) { // the simulation shows motion; modelling tools work in the 2D / 3D windows
         if (tool != ToolId::Select && tool != ToolId::Move && tool != ToolId::Orbit && tool != ToolId::Pan &&
             tool != ToolId::Zoom)
@@ -753,6 +754,11 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
     }
     if (isSculptTool(tool)) {
         if (!pick(x, y)) setStatus("Drag over a body to sculpt it");
+        return;
+    }
+
+    if (isPickFeatureTool(tool)) {
+        pickFeatureClick(tool, x, y);
         return;
     }
 
@@ -1412,6 +1418,13 @@ void Application::drawSculptOverlay() {
         fg->AddText({m_radialCentre.x - ts.x * 0.5f, m_radialCentre.y - ts.y * 0.5f}, IM_COL32(240, 242, 248, 255), label);
         return;
     }
+    if (m_leftDrag == DragMode::Lasso && m_lasso.size() > 1) {
+        // The loop as drawn, closed back to its start.
+        const ImU32 edge = IM_COL32(90, 160, 255, 255);
+        for (std::size_t i = 1; i < m_lasso.size(); ++i) fg->AddLine(m_lasso[i - 1], m_lasso[i], edge, 1.5f);
+        fg->AddLine(m_lasso.back(), m_lasso.front(), IM_COL32(90, 160, 255, 120), 1.0f);
+        return;
+    }
     if (m_leftDrag == DragMode::BoxSelect) {
         // Left to right: bodies wholly inside (solid); right to left: bodies it touches (dashed).
         const ImVec2 a = m_boxStart, b = io.MousePos;
@@ -1503,6 +1516,9 @@ void Application::handleViewportInput() {
     ToolId tool = m_ui.toolbox().active();
     // Simulation: only navigation; every other tool selects.
     if (simulating() && tool != ToolId::Orbit && tool != ToolId::Pan && tool != ToolId::Zoom) tool = ToolId::Select;
+    // Box and lasso select: a drag draws the region; a click selects as the Select tool does.
+    const ToolId region = tool == ToolId::BoxSelect || tool == ToolId::LassoSelect ? tool : ToolId::Count;
+    if (region != ToolId::Count) tool = ToolId::Select;
     OrbitCamera& cam = camera();
     // In the 2D window the view never tilts: every "orbit" gesture pans.
     const DragMode orbitOrPan = is2D ? DragMode::Pan : DragMode::Orbit;
@@ -1531,6 +1547,12 @@ void Application::handleViewportInput() {
         cancelExtrude();
     if (m_extrudeCurve >= 0 && onCanvas && m_otherDrag == DragMode::None && m_leftDrag == DragMode::None)
         updateExtrudeFromMouse();
+    // Pick tools: the picks belong to the tool, and to the curves still there.
+    if (!m_picks.empty()) {
+        bool gone = m_pickTool != tool;
+        for (int c : m_picks) gone = gone || c >= static_cast<int>(m_doc.scene.sketch().curves().size());
+        if (gone) clearPicks();
+    }
 
     // Right drag orbits (3D) / pans (2D); middle drag pans; any tool. A right click (no drag)
     // on a body in 3D opens its menu, for it or for the selection it is in.
@@ -1589,7 +1611,7 @@ void Application::handleViewportInput() {
             m_knifeStart = {mx, my};
         } else if (tool == ToolId::PushPull) {
             if (beginPushPull(mx, my)) m_leftDrag = DragMode::PushPull;
-        } else if (io.KeyShift && !isSketchTool(tool)) {
+        } else if (io.KeyShift && !isSketchTool(tool) && region == ToolId::Count) {
             m_leftDrag = DragMode::Pan;
         } else if (tool == ToolId::Orbit) {
             m_leftDrag = orbitOrPan;
@@ -1649,12 +1671,22 @@ void Application::handleViewportInput() {
                 m_sketchDragMoved = false;
                 m_uiState.selectedCurve = m_sketchDrag.curve;
                 m_uiState.selectedBody = m_uiState.selectedImage = -1;
+            } else if (region == ToolId::LassoSelect && !simulating()) {
+                m_leftDrag = DragMode::Lasso; // a freehand loop
+                m_lasso = {ImVec2{m_pressX, m_pressY}};
+                m_regionAdd = commandModifierHeld() || io.KeyShift;
+            } else if (region == ToolId::BoxSelect && !simulating()) {
+                m_leftDrag = DragMode::BoxSelect;
+                m_boxStart = {m_pressX, m_pressY};
+                m_regionAdd = commandModifierHeld() || io.KeyShift;
             } else if (commandModifierHeld() && (tool == ToolId::Select || tool == ToolId::Move) && !simulating()) {
                 m_leftDrag = DragMode::BoxSelect; // Ctrl+drag: a box adding the bodies in it
                 m_boxStart = {m_pressX, m_pressY};
+                m_regionAdd = true;
             } else
                 m_leftDrag = isSketchTool(tool) ? DragMode::None : orbitOrPan; // dragging empty space navigates
         }
+        if (m_leftDrag == DragMode::Lasso && !m_lasso.empty() && std::hypot(mx - m_lasso.back().x, my - m_lasso.back().y) > 3.0f) m_lasso.push_back({mx, my});
         switch (m_leftDrag) {
         case DragMode::Orbit: cam.orbit(dx, dy); break;
         case DragMode::Pan: cam.pan(dx, dy, wh); break;
@@ -1740,6 +1772,7 @@ void Application::handleViewportInput() {
         else if (m_leftDrag == DragMode::MoveBody) finishMoveDrag(true);
         else if (m_leftDrag == DragMode::Gizmo) finishGizmoDrag(true);
         else if (m_leftDrag == DragMode::BoxSelect) finishBoxSelect(mx, my);
+        else if (m_leftDrag == DragMode::Lasso) finishLassoSelect();
         m_leftDrag = DragMode::None;
         m_gripCandidate.reset();
         m_escapedDrag = false;
@@ -1853,6 +1886,7 @@ void Application::handleViewportInput() {
         m_vp3D.displayMode = static_cast<DisplayMode>((static_cast<int>(m_vp3D.displayMode) + 1) % 4);
     if (keyActionPressed("edit.finish")) {
         if (m_extrudeCurve >= 0) applyExtrude();
+        else if (!m_picks.empty()) applyPickFeature();
         else if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
     }
     if (keyActionPressed("edit.cancel")) {
@@ -1865,6 +1899,9 @@ void Application::handleViewportInput() {
         } else if (m_extrudeCurve >= 0) {
             cancelExtrude();
             setStatus("Extrude cancelled");
+        } else if (!m_picks.empty()) {
+            clearPicks();
+            setStatus("Picks cleared");
         } else if (m_sketcher.busy()) {
             m_sketcher.cancel();
             setStatus("Drawing cancelled");
@@ -1974,6 +2011,8 @@ void Application::handleCommands(const UiCommands& cmd) {
     if (cmd.toggleMcp) toggleMcp();
     if (cmd.applyExtrude) applyExtrude();
     if (cmd.cancelExtrude) cancelExtrude();
+    if (cmd.applyPick) applyPickFeature();
+    if (cmd.clearPick) clearPicks();
     for (const std::string& line : cmd.commands) runCommandLine(line);
     if (!cmd.commands.empty()) m_framesToRender = std::max(m_framesToRender, 3); // show what they did now, not at the next event
     if (cmd.closeFile) {
@@ -2205,7 +2244,7 @@ void Application::frame(float dt) {
     drawGizmo();
     drawSnapMarker();
     if (!simulating() && (isSculptTool(m_ui.toolbox().active()) || isCutTool(m_ui.toolbox().active()) ||
-                          isWearableTool(m_ui.toolbox().active()) || m_leftDrag == DragMode::BoxSelect))
+                          isWearableTool(m_ui.toolbox().active()) || m_leftDrag == DragMode::BoxSelect || m_leftDrag == DragMode::Lasso))
         drawSculptOverlay(); // (and the selection box)
     if (simulating()) {
         m_simTransforms = simulationTransforms(m_doc.scene, m_uiState.simTime); // after scrubbing / panel edits
@@ -2355,6 +2394,11 @@ void Application::runCommandLine(const std::string& raw) {
             if (auto c = m_sketcher.typedPoint(tool, m_uiState.plane, activePlaneFrame(m_doc.state), *p)) addCurve(std::move(*c));
             return;
         }
+    }
+    // A pick tool with curves picked: Enter applies it.
+    if (isPickFeatureTool(tool) && !m_picks.empty() && text.empty()) {
+        applyPickFeature();
+        return;
     }
     // Extrude waiting for a depth: a number applies it.
     if (tool == ToolId::Extrude && m_extrudeCurve >= 0) {
@@ -2512,10 +2556,77 @@ void Application::updatePrompt() {
         p = m_extrudeCurve < 0 ? "EXTRUDE  pick a closed profile:"
                                : std::string("EXTRUDE  depth (") + unitInfo(activeUnits().unit).symbol + "), drag or type; click / Enter:";
         break;
-    default: break;
+    default:
+        if (isPickFeatureTool(tool)) p = toUpper(toolInfo(tool).name) + "  " + pickFeaturePrompt(tool, m_uiState.pick, static_cast<int>(m_picks.size())) + ":";
+        break;
     }
     m_uiState.commandPrompt = p;
     m_uiState.commandKeepsFocus = isSketchTool(tool) || (tool == ToolId::Extrude && m_extrudeCurve >= 0);
+}
+
+// Pick tools --------------------------------------------------------------------
+
+void Application::clearPicks() {
+    m_picks.clear();
+    m_pickTool = ToolId::Count;
+    m_uiState.pickedNames.clear();
+    m_uiState.pickCanApply = false;
+}
+
+void Application::pickFeatureClick(ToolId tool, float x, float y) {
+    if (m_pickTool != tool) clearPicks();
+    m_pickTool = tool;
+    const PickFeatureSpec spec = pickFeatureSpec(tool, m_uiState.pick);
+    if (spec.body) {
+        const auto hit = pick(x, y);
+        if (!hit) {
+            setStatus(pickFeaturePrompt(tool, m_uiState.pick, 0));
+            return;
+        }
+        applyPickFeature(m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name);
+        return;
+    }
+    const int index = static_cast<int>(m_picks.size());
+    int curve = pickWantsClosed(tool, index) ? pickProfile(x, y) : -1;
+    if (curve < 0) curve = pickCurve(x, y);
+    if (curve < 0) {
+        setStatus(pickFeaturePrompt(tool, m_uiState.pick, index));
+        return;
+    }
+    const auto& curves = m_doc.scene.sketch().curves();
+    if (const auto at = std::find(m_picks.begin(), m_picks.end(), curve); at != m_picks.end()) {
+        m_picks.erase(at); // a second click takes it back out
+    } else {
+        m_picks.push_back(curve);
+    }
+    m_uiState.pickedNames.clear();
+    for (int c : m_picks) m_uiState.pickedNames.push_back(curves[static_cast<std::size_t>(c)].name);
+    // Show the picks as the selection.
+    selectCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection, m_picks);
+    m_uiState.selectedBody = m_uiState.selectedImage = -1;
+    m_uiState.bodySelection = {};
+    const int n = static_cast<int>(m_picks.size());
+    m_uiState.pickCanApply = n >= spec.minPicks && n > 0;
+    if (spec.maxPicks > 0 && n >= spec.maxPicks) {
+        applyPickFeature();
+        return;
+    }
+    setStatus(pickFeaturePrompt(tool, m_uiState.pick, n));
+}
+
+void Application::applyPickFeature(const std::string& body) {
+    const ToolId tool = m_pickTool;
+    if (!isPickFeatureTool(tool)) return;
+    std::string why;
+    const std::string line = pickFeatureCommand(tool, m_doc.scene.sketch(), m_picks, body, m_uiState.pick, &why);
+    if (line.empty()) {
+        setStatus(why);
+        return;
+    }
+    clearPicks();
+    m_uiState.selectedCurve = -1;
+    m_uiState.curveSelection = {};
+    runCommandLine(line);
 }
 
 // Extrude ---------------------------------------------------------------------
@@ -4039,13 +4150,35 @@ void Application::selectionChanged() {
 }
 
 void Application::finishBoxSelect(float x, float y) {
-    const ImGuiIO& io = ImGui::GetIO();
     const float x0 = std::min(m_boxStart.x, x), x1 = std::max(m_boxStart.x, x), y0 = std::min(m_boxStart.y, y), y1 = std::max(m_boxStart.y, y);
     if (x1 - x0 < 2 || y1 - y0 < 2) return;
     const bool window = x >= m_boxStart.x; // left to right: wholly inside; right to left: touching
-    auto inside = [&](const ImVec2& p) { return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1; };
+    selectInRegion([&](const ImVec2& p) { return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1; }, window, m_regionAdd,
+                   {0.5f * (x0 + x1), 0.5f * (y0 + y1)});
+}
+
+void Application::finishLassoSelect() {
+    const std::vector<ImVec2> loop = std::move(m_lasso);
+    m_lasso.clear();
+    if (loop.size() < 3) return;
+    // Inside by crossings (the loop closed back to its start); what it wholly encloses.
+    auto inside = [&](const ImVec2& p) {
+        bool in = false;
+        for (std::size_t i = 0, j = loop.size() - 1; i < loop.size(); j = i++) {
+            const ImVec2 a = loop[i], b = loop[j];
+            if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) in = !in;
+        }
+        return in;
+    };
+    ImVec2 mid{0, 0};
+    for (const ImVec2& q : loop) mid.x += q.x / static_cast<float>(loop.size()), mid.y += q.y / static_cast<float>(loop.size());
+    selectInRegion(inside, true, m_regionAdd, mid);
+}
+
+void Application::selectInRegion(const std::function<bool(const ImVec2&)>& inside, bool window, bool add, const ImVec2& middle) {
+    const ImGuiIO& io = ImGui::GetIO();
     if (m_uiState.mode == ViewMode::Drawing2D) { // the 2D window: sketch curves
-        std::vector<int> list = selectedCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection);
+        std::vector<int> list = add ? selectedCurves(m_doc.scene.sketch(), m_uiState.selectedCurve, m_uiState.curveSelection) : std::vector<int>{};
         const auto& curves = m_doc.scene.sketch().curves();
         for (std::size_t i = 0; i < curves.size(); ++i) {
             if (!curves[i].visible) continue;
@@ -4063,21 +4196,21 @@ void Application::finishBoxSelect(float x, float y) {
         selectionChanged();
         return;
     }
-    std::vector<int> list = selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection);
+    std::vector<int> list = add ? selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection) : std::vector<int>{};
     const auto& bodies = m_doc.scene.bodies();
-    const auto centre = pick(0.5f * (x0 + x1), 0.5f * (y0 + y1));
+    const auto centre = pick(middle.x, middle.y);
     for (std::size_t i = 0; i < bodies.size(); ++i) {
         const Body& b = bodies[i];
         if (!b.visible || b.mesh.vertices.empty()) continue;
         bool in = false;
-        if (window) { // its box's corners all inside
-            const AABB bb = b.bounds();
+        if (window) { // all of it inside (its points; not its box, whose corners stand off round parts)
+            const std::size_t n = b.mesh.vertices.size(), step = std::max<std::size_t>(1, n / 20000);
             in = true;
-            for (int k = 0; k < 8 && in; ++k) {
-                const auto p = projectToScreen(camera(), {k & 1 ? bb.max.x : bb.min.x, k & 2 ? bb.max.y : bb.min.y, k & 4 ? bb.max.z : bb.min.z}, io.DisplaySize);
+            for (std::size_t v = 0; v < n && in; v += step) {
+                const auto p = projectToScreen(camera(), b.mesh.vertices[v].position + b.offset, io.DisplaySize);
                 in = p && inside(*p);
             }
-        } else { // a vertex of it inside, or the box's middle on it
+        } else { // a vertex of it inside, or the middle on it
             const std::size_t n = b.mesh.vertices.size(), step = std::max<std::size_t>(1, n / 4000);
             for (std::size_t v = 0; v < n && !in; v += step)
                 if (const auto p = projectToScreen(camera(), b.mesh.vertices[v].position + b.offset, io.DisplaySize)) in = inside(*p);

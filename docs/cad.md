@@ -26,6 +26,31 @@ Every model command goes into a **feature history** that can be edited and regen
 
 The picture comes from [examples/cad-demo.txt](examples/cad-demo.txt) (`RUN docs/examples/cad-demo.txt`).
 
+## Pick tools in the toolbar
+
+The feature and surface tools in the left toolbar work by clicking sketch curves (closed
+profiles are found by clicking inside them, too). Their settings are on the options bar; each
+runs the command shown in the log, so the result is in the feature history like a typed one.
+
+| Tool | Click | Options | Runs |
+| --- | --- | --- | --- |
+| Revolve | a closed profile (then the axis line, with *Pick a line*) | angle; axis V, U or a picked line | `REVOLVE` |
+| Sweep | a closed profile, then the path | | `SWEEP ... ALONG` |
+| Helix / Spiral | a closed profile | pitch, turns, left hand | `SWEEP ... HELIX` (a coil spring) |
+| Loft | closed sections in order, then *Apply* or Enter | smooth or ruled; spacing | `LOFT` |
+| Rib / Web | an open curve above a body | thickness, flip | `RIB` |
+| Plane Surface | a closed curve | | `SURFACE PLANAR` |
+| Tabulated Cylinder | a curve | distance | `SURFACE EXTRUDE` |
+| Ruled Surface | two curves | | `SURFACE LOFT` |
+| Bezier / B-Spline Patch | two or more curves, then *Apply* or Enter | | `SURFACE LOFT` |
+| Coons Patch | four curves meeting end to end | | `SURFACE BOUNDARY` |
+| Offset Surface | a surface body | distance | `SURFACE OFFSET` |
+
+Loft sections drawn on one plane are set *spacing* apart along its normal (the first stays,
+the next is one spacing up, and so on); sections on different planes stay where they are.
+Clicking a picked curve again takes it back out; Esc or *Clear* drops the picks. *Keep sketch*
+leaves the curves showing.
+
 ## Sketching
 
 ### Sketch planes and datum planes

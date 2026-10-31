@@ -402,6 +402,8 @@ The *Design* menu (or the command line) adds part features to sketches and solid
   freedom left. Change a dimension and the part is rebuilt from the history. Drag points, rims or
   whole curves with the Select tool and the constraints hold while they move (`DRAG`).
 - **Revolve, sweep and loft:** from closed sketch curves.
+  The Revolve, Sweep, Helix, Loft and Rib tools (and the surface tools) work by clicking the sketch
+  curves: see [Pick tools](docs/cad.md#pick-tools-in-the-toolbar).
 - **Pattern:** linear, in rows, or circular. The copies can be joined into a part or cut from it.
 - **Mirror.**
 - **Fillets and chamfers:** on chosen edges, by number, filter or point. They are exact,
@@ -959,6 +961,10 @@ Details: [docs/plugins.md](docs/plugins.md).
   turning and scaling (the gizmo, `MOVE`, `ROTATE BY`, `SCALE`) take them all.
 - `Ctrl/⌘ + drag` on empty space: a box adding bodies to the selection. Left to right takes the
   bodies wholly inside it (solid box); right to left takes the bodies it touches (dashed box).
+- **Box Select** and **Lasso Select** (in the Select tool's flyout): a plain drag draws the box,
+  or a freehand loop, and selects what is in it (the lasso takes what it wholly encloses). It
+  replaces the selection; with Ctrl/⌘ or Shift held it adds to it. In the 2D window they take
+  sketch curves. A click selects as the Select tool does.
 - `Ctrl/⌘ A`: select every visible body; `Esc`: clear the selection
 - `SELECT "A" "B"`, `SELECT ADD "C"`, `SELECT REMOVE "A"`, `SELECT ALL`, `SELECT INVERT`,
   `SELECT NONE`; `SELECT` alone says what is selected
