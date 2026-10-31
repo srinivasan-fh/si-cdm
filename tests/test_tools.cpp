@@ -12,7 +12,7 @@ TEST_CASE("tool table is ordered by ToolId") {
         CHECK(static_cast<int>(toolInfo(static_cast<ToolId>(i)).id) == i);
 }
 
-TEST_CASE("every tool sits in exactly one rail slot of its own category") {
+TEST_CASE("every available tool sits in exactly one rail slot of its own category; the rest in none") {
     std::multiset<int> seen;
     for (const ToolGroup& g : toolGroups()) {
         CHECK(!g.tools.empty());
@@ -21,7 +21,8 @@ TEST_CASE("every tool sits in exactly one rail slot of its own category") {
             CHECK(toolInfo(t).category == g.category);
         }
     }
-    for (int i = 0; i < static_cast<int>(ToolId::Count); ++i) CHECK(seen.count(i) == 1);
+    for (int i = 0; i < static_cast<int>(ToolId::Count); ++i) CHECK(seen.count(i) == (toolInfo(static_cast<ToolId>(i)).available ? 1u : 0u));
+    CHECK(seen.count(static_cast<int>(ToolId::GordonSurface)) == 0); // nothing behind it yet: hidden
 }
 
 TEST_CASE("shortcuts are unique single letters") {

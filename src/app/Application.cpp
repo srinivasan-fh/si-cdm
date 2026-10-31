@@ -785,6 +785,15 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         pickFeatureClick(tool, x, y);
         return;
     }
+    if (tool == ToolId::MeshImport) {
+        m_uiState.requestImport = true;
+        return;
+    }
+    if (tool == ToolId::SubD) {
+        if (const auto hit = pick(x, y)) runCommandLine("SUBDIVIDE \"" + m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name + "\"");
+        else setStatus("Click a body to subdivide it");
+        return;
+    }
 
     if (tool == ToolId::Extrude) {
         if (m_extrudeCurve >= 0) {

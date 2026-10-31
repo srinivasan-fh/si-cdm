@@ -1,4 +1,6 @@
 #include "ui/Tools.hpp"
+
+#include <vector>
 #include "core/Translate.hpp"
 
 namespace sicdm {
@@ -80,9 +82,9 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::TopologyOptimized, C::Generative, SICDM_TR_NOOP("Topology Optimisation"), "", SICDM_TR_NOOP("Skeletal shapes stripped of dead weight, ideal for robot limbs."), false},
     {T::TpmsLattice, C::Generative, SICDM_TR_NOOP("TPMS Lattice"), "", SICDM_TR_NOOP("Periodic gyroid-type infill for light, crash-absorbent parts. Click a solid body to fill it."), true},
 
-    {T::MeshImport, C::Mesh, SICDM_TR_NOOP("STL / OBJ Mesh"), "", SICDM_TR_NOOP("Triangulated surfaces for 3D printers and slicers."), false},
+    {T::MeshImport, C::Mesh, SICDM_TR_NOOP("STL / OBJ Mesh"), "", SICDM_TR_NOOP("Bring in a mesh or CAD file (STL, OBJ, 3MF, PLY, glTF, STEP, IGES...): click the window or Import on the options bar."), true},
     {T::PointCloud, C::Mesh, SICDM_TR_NOOP("Point Cloud"), "", SICDM_TR_NOOP("Millions of points captured by 3D laser scanners."), false},
-    {T::SubD, C::Mesh, SICDM_TR_NOOP("SubD Surface"), "", SICDM_TR_NOOP("Smooth organic shapes sculpted from a low-resolution cage."), false},
+    {T::SubD, C::Mesh, SICDM_TR_NOOP("SubD Surface"), "", SICDM_TR_NOOP("Click a body to smooth it as a subdivision surface (Loop): each click splits every triangle in four and rounds the shape."), true},
 
     {T::SculptDraw, C::Sculpt, "Draw (Push / Pull)", "D",
      "Pull the surface out like pressing clay from behind; Ctrl pushes it in. Drag over a body. Shift smooths.", true},
@@ -178,7 +180,24 @@ constexpr ToolGroup kGroups[] = {
 
 const ToolInfo& toolInfo(ToolId id) { return kTools[static_cast<std::size_t>(id)]; }
 
-std::span<const ToolGroup> toolGroups() { return kGroups; }
+std::span<const ToolGroup> toolGroups() {
+    // Only the tools this build has: a slot whose tools are all still to come is left out.
+    static const std::vector<ToolGroup> groups = [] {
+        static std::vector<std::vector<ToolId>> keep; // the filtered lists, kept alive
+        keep.reserve(std::size(kGroups));
+        std::vector<ToolGroup> out;
+        for (const ToolGroup& g : kGroups) {
+            std::vector<ToolId> ids;
+            for (ToolId t : g.tools)
+                if (toolInfo(t).available) ids.push_back(t);
+            if (ids.empty()) continue;
+            keep.push_back(std::move(ids));
+            out.push_back({g.category, keep.back()});
+        }
+        return out;
+    }();
+    return groups;
+}
 
 const char* categoryName(ToolCategory c) {
     switch (c) {

@@ -2083,6 +2083,10 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
     // left; the 2D / 3D window switch and view options on the right.
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     const bool is2D = st.mode == ViewMode::Drawing2D;
+    if (st.requestImport) {
+        st.requestImport = false;
+        requestFile(FileImport, st);
+    }
     ImGui::SetNextWindowPos(mv->WorkPos);
     ImGui::SetNextWindowSize({mv->WorkSize.x, 0.0f});
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -2227,6 +2231,12 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
             ImGui::SameLine();
             ImGui::TextDisabled("%s", tr("drag, type the depth, click or Enter"));
         }
+    } else if (tool.id == ToolId::MeshImport) {
+        if (ImGui::Button(tr("Import..."))) st.requestImport = true;
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", tr("STL, OBJ, 3MF, PLY, glTF, STEP, IGES and more: a mesh file comes in as a body"));
+    } else if (tool.id == ToolId::SubD) {
+        ImGui::TextDisabled("%s", tr("Click a body: one level of subdivision a click (Ctrl+Z takes it back)"));
     } else if (isPickFeatureTool(tool.id)) {
         PickFeatureOptions& o = st.pick;
         auto label = [](const char* t) {

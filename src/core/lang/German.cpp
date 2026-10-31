@@ -1357,6 +1357,10 @@ const char* const kGerman[][2] = {
     {"Part of an ellipse. Click the centre, the end of the major axis, the minor radius, then where the arc starts and ends (counter-clockwise).", "Teil einer Ellipse. Mittelpunkt, Ende der Hauptachse, Nebenradius, dann Anfang und Ende des Bogens anklicken (gegen den Uhrzeigersinn)."},
     {"Rectangle at any angle. Click both ends of one side, then a point for its width.", "Rechteck in beliebigem Winkel. Beide Enden einer Seite anklicken, dann einen Punkt für die Breite."},
     {"Rectangle drawn out from its centre. Click the centre, then a corner.", "Rechteck vom Mittelpunkt aus. Den Mittelpunkt, dann eine Ecke anklicken."},
+    {"Bring in a mesh or CAD file (STL, OBJ, 3MF, PLY, glTF, STEP, IGES...): click the window or Import on the options bar.", "Eine Netz- oder CAD-Datei einlesen (STL, OBJ, 3MF, PLY, glTF, STEP, IGES ...): ins Fenster klicken oder Importieren in der Optionsleiste."},
+    {"Click a body to smooth it as a subdivision surface (Loop): each click splits every triangle in four and rounds the shape.", "Einen Körper anklicken, um ihn als Unterteilungsfläche (Loop) zu glätten: jeder Klick teilt jedes Dreieck in vier und rundet die Form."},
+    {"Click a body: one level of subdivision a click (Ctrl+Z takes it back)", "Einen Körper anklicken: eine Unterteilungsstufe pro Klick (Strg+Z nimmt sie zurück)"},
+    {"STL, OBJ, 3MF, PLY, glTF, STEP, IGES and more: a mesh file comes in as a body", "STL, OBJ, 3MF, PLY, glTF, STEP, IGES und mehr: eine Netzdatei wird als Körper eingelesen"},
 };
 
 

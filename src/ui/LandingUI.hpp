@@ -52,6 +52,7 @@ struct UiState {
     // Sketch tool options.
     bool sketchConstruction = false; // new curves are construction curves
     int polygonSides = 6;
+    bool requestImport = false;      // the mesh tool: open the import dialog
     float conicRho = 0.5f;           // conic tool: 0.5 a parabola
     std::string sketchText = "Text"; // sketch text tool
     float sketchTextHeight = 10.0f;
