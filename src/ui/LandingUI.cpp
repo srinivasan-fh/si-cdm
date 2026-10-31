@@ -2078,7 +2078,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
     ImGui::PopStyleVar(4);
 }
 
-void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st) {
+void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, ViewportSettings& /*vp*/, UiState& st) {
     // Photoshop-style options bar: home, active tool + its options on the
     // left; the 2D / 3D window switch and view options on the right.
     const ImGuiViewport* mv = ImGui::GetMainViewport();
@@ -2778,45 +2778,34 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& cam, Viewport
     if (segment(tr("Simulation"), isSim, ImDrawFlags_RoundCornersRight, iconSim) && !isSim)
         cmd.mode = ViewMode::Simulation;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Simulation window: circular and linear motion, live axes  [Shift+Tab]"));
-    divider();
-
-    if (is2D) {
+    // (Display mode, projection, fit and the grid are on the view bar below the canvas.)
+    if (is2D) { // the drawing window's plane: no view-bar button picks it
+        divider();
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", tr("Plane"));
         ImGui::SameLine();
+        bool firstPlane = true;
         for (SketchPlane p : {SketchPlane::Top, SketchPlane::Front, SketchPlane::Right}) {
+            if (!firstPlane) ImGui::SameLine();
+            firstPlane = false;
             const bool on = st.plane == p;
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kAccent));
             if (ImGui::Button(shortPlaneName(p))) cmd.plane = p;
             if (on) ImGui::PopStyleColor();
-            ImGui::SameLine();
         }
         if (!st.datums.empty()) { // the datum planes, in a list
+            ImGui::SameLine();
             ImGui::SetNextItemWidth(120.0f);
             if (ImGui::BeginCombo("##datum", st.plane == SketchPlane::Custom ? st.planeLabel.c_str() : "Datum...")) {
                 for (const std::string& d : st.datums)
                     if (ImGui::Selectable(d.c_str(), st.plane == SketchPlane::Custom && st.planeLabel == d)) cmd.commands.push_back(datumCommand(d));
                 ImGui::EndCombo();
             }
-            ImGui::SameLine();
         } else if (st.plane == SketchPlane::Custom) {
-            ImGui::TextUnformatted(st.planeLabel.c_str());
             ImGui::SameLine();
+            ImGui::TextUnformatted(st.planeLabel.c_str());
         }
-    } else {
-        ImGui::SetNextItemWidth(140.0f);
-        int mode = static_cast<int>(vp.displayMode);
-        if (ImGui::Combo("##display", &mode, "Shaded\0Shaded + Edges\0Wireframe\0Hidden Line\0"))
-            vp.displayMode = static_cast<DisplayMode>(mode);
-        ImGui::SameLine();
-        if (ImGui::Button(cam.projection() == Projection::Perspective ? tr("Persp") : tr("Ortho"))) cmd.toggleProjection = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Toggle projection  [P]"));
-        ImGui::SameLine();
     }
-    if (ImGui::Button(tr("Fit"))) cmd.fit = true;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Zoom to fit  [F]"));
-    ImGui::SameLine();
-    ImGui::Checkbox(tr("Grid"), &vp.showGrid);
     m_rightGroupWidth = ImGui::GetItemRectMax().x - groupStart;
 
     m_optionsHeight = ImGui::GetWindowSize().y;

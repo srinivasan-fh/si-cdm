@@ -9,8 +9,8 @@ page takes you through the window and a first part, from a sketch to G-code.
 - **Menu bar** (top): *File*, *View*, *Design*, *Drawing*, *Assembly*, *Manufacture*, *AI*,
   *Plugins* and *Help*.
 - **Options bar** (below it): the active tool's options on the left; on the right the
-  *2D Drawing*, *3D Model* and *Simulation* windows, the display mode, perspective, *Fit* and
-  the grid.
+  *2D Drawing*, *3D Model* and *Simulation* windows, and in the 2D window the plane drawn on.
+  The view options (display mode, perspective, fit, grid) are on the view bar below the canvas.
 - **Tool rails** on all four sides of the canvas. Hover over a tool for its name and key;
   right-click or hold one with a corner mark for the rest of its kind.
   - **Left:** select, move and view tools, solids, features, surfaces and mesh tools.
