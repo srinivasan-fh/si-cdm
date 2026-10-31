@@ -364,7 +364,8 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     m_canvasMax = {mv->WorkPos.x + mv->WorkSize.x - rightDock, bottom};
     if (is2D) drawRulers(cam, st);
 
-    const ViewCubeResult vc = m_viewCube.draw(cam, {m_canvasMax.x - 10.0f, m_canvasMax.y - 10.0f}, is2D);
+    drawViewSwitch(cmd, is2D, {m_canvasMax.x - 10.0f, m_canvasMax.y - 8.0f}); // the standard views, under the sphere
+    const ViewCubeResult vc = m_viewCube.draw(cam, {m_canvasMax.x - 10.0f, m_canvasMax.y - 44.0f}, is2D);
     if (vc.viewDirection) cmd.viewDirection = vc.viewDirection;
     if (vc.drawingPlane) {
         cmd.plane = vc.drawingPlane;
@@ -3539,6 +3540,77 @@ float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float
 
 // The view bar along the bottom of the canvas: going home, fitting and zooming, the standard
 // views, how bodies are drawn, the section, grid, snapping and the projection.
+// The standard views as a row of little cubes under the view sphere, right-aligned on
+// `bottomRight`.
+void LandingUI::drawViewSwitch(UiCommands& cmd, bool is2D, ImVec2 bottomRight) {
+    constexpr float bs = 22.0f;
+    const ImVec2 size{7 * (bs + 2) + 8, bs + 8};
+    ImGui::SetNextWindowPos({bottomRight.x - size.x, bottomRight.y - size.y});
+    ImGui::SetNextWindowSize(size);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {4, 4});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(24, 27, 34, 200));
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("##viewswitch", nullptr, flags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImGui::Dummy({0, bs});
+    // The standard views: little cubes with the face looked at filled.
+        struct V {
+            const char* id;
+            const char* tip;
+            StandardView v;
+            int face; // 0 top, 1 front, 2 right, 3 iso
+        };
+        static const V kBarViews[] = {{"##vtop", "Top view", StandardView::Top, 0},
+                                   {"##vfront", "Front view", StandardView::Front, 1},
+                                   {"##vright", "Right view", StandardView::Right, 2},
+                                   {"##vback", "Back view", StandardView::Back, 5},
+                                   {"##vleft", "Left view", StandardView::Left, 6},
+                                   {"##vbottom", "Bottom view", StandardView::Bottom, 4},
+                                   {"##viso", "Isometric view", StandardView::Isometric, 3}};
+        for (const V& v : kBarViews) {
+            ImGui::SameLine(0, 2);
+            ImGui::InvisibleButton(v.id, {bs, bs});
+            const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+            const bool hov = ImGui::IsItemHovered();
+            if (hov) dl->AddRectFilled(lo, hi, theme::kHover, 4.0f);
+            if (hov) ImGui::SetTooltip("%s", tr(v.tip));
+            const ImU32 col = IM_COL32(205, 210, 218, 255);
+            const ImVec2 c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f};
+            {
+                    // The bottom view's cube is seen from below: the same cube upside down, its
+                    // (bottom) face filled.
+                    const float f = v.face == 4 ? -1.0f : 1.0f;
+                    const ImVec2 t{c.x, c.y - 8 * f}, l{c.x - 7, c.y - 4 * f}, r{c.x + 7, c.y - 4 * f}, m{c.x, c.y}, bl{c.x - 7, c.y + 4 * f},
+                        br{c.x + 7, c.y + 4 * f}, b{c.x, c.y + 8 * f};
+                    if (v.face == 0 || v.face == 4) dl->AddQuadFilled(t, r, m, l, col);
+                    // Back and left: the far side of the front and right faces, hatched.
+                    auto hatch = [&](ImVec2 a, ImVec2 bb, ImVec2 cc, ImVec2 d) {
+                        for (int k = 1; k < 4; ++k) {
+                            const float u = static_cast<float>(k) / 4.0f;
+                            dl->AddLine({a.x + (d.x - a.x) * u, a.y + (d.y - a.y) * u}, {bb.x + (cc.x - bb.x) * u, bb.y + (cc.y - bb.y) * u}, col, 1.2f);
+                        }
+                    };
+                    if (v.face == 5) hatch(l, m, b, bl);
+                    if (v.face == 6) hatch(m, r, br, b);
+                    if (v.face == 1) dl->AddQuadFilled(l, m, b, bl, col);
+                    if (v.face == 2) dl->AddQuadFilled(m, r, br, b, col);
+                    dl->AddQuad(t, r, m, l, col, 1.2f);
+                    dl->AddQuad(l, m, b, bl, col, 1.2f);
+                    dl->AddQuad(m, r, br, b, col, 1.2f);
+            }
+            if (ImGui::IsItemClicked()) {
+                cmd.view = v.v;
+                if (is2D) cmd.mode = ViewMode::Model3D;
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
 void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st, float y) {
     const ImGuiViewport* mv = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos({mv->WorkPos.x, y});
@@ -3611,47 +3683,6 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
                 if (in) dl->AddLine({c.x - 2, c.y - 5}, {c.x - 2, c.y + 1}, col, 1.4f);
             }))
             cmd.commands.push_back(in ? "ZOOM IN" : "ZOOM OUT");
-    divider();
-    // The standard views: little cubes with the face looked at filled.
-    struct V {
-        const char* id;
-        const char* tip;
-        StandardView v;
-        int face; // 0 top, 1 front, 2 right, 3 iso
-    };
-    static const V kBarViews[] = {{"##vtop", "Top view", StandardView::Top, 0},
-                               {"##vfront", "Front view", StandardView::Front, 1},
-                               {"##vright", "Right view", StandardView::Right, 2},
-                               {"##vback", "Back view", StandardView::Back, 5},
-                               {"##vleft", "Left view", StandardView::Left, 6},
-                               {"##vbottom", "Bottom view", StandardView::Bottom, 4},
-                               {"##viso", "Isometric view", StandardView::Isometric, 3}};
-    for (const V& v : kBarViews)
-        if (button(v.id, false, tr(v.tip), [&](ImVec2 c, ImU32 col) {
-                // The bottom view's cube is seen from below: the same cube upside down, its
-                // (bottom) face filled.
-                const float f = v.face == 4 ? -1.0f : 1.0f;
-                const ImVec2 t{c.x, c.y - 8 * f}, l{c.x - 7, c.y - 4 * f}, r{c.x + 7, c.y - 4 * f}, m{c.x, c.y}, bl{c.x - 7, c.y + 4 * f},
-                    br{c.x + 7, c.y + 4 * f}, b{c.x, c.y + 8 * f};
-                if (v.face == 0 || v.face == 4) dl->AddQuadFilled(t, r, m, l, col);
-                // Back and left: the far side of the front and right faces, hatched.
-                auto hatch = [&](ImVec2 a, ImVec2 bb, ImVec2 cc, ImVec2 d) {
-                    for (int k = 1; k < 4; ++k) {
-                        const float u = static_cast<float>(k) / 4.0f;
-                        dl->AddLine({a.x + (d.x - a.x) * u, a.y + (d.y - a.y) * u}, {bb.x + (cc.x - bb.x) * u, bb.y + (cc.y - bb.y) * u}, col, 1.2f);
-                    }
-                };
-                if (v.face == 5) hatch(l, m, b, bl);
-                if (v.face == 6) hatch(m, r, br, b);
-                if (v.face == 1) dl->AddQuadFilled(l, m, b, bl, col);
-                if (v.face == 2) dl->AddQuadFilled(m, r, br, b, col);
-                dl->AddQuad(t, r, m, l, col, 1.2f);
-                dl->AddQuad(l, m, b, bl, col, 1.2f);
-                dl->AddQuad(m, r, br, b, col, 1.2f);
-            })) {
-            cmd.view = v.v;
-            if (is2D) cmd.mode = ViewMode::Model3D;
-        }
     divider();
     // How bodies are drawn.
     struct D {

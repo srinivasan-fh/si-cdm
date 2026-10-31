@@ -25,7 +25,8 @@ page takes you through the window and a first part, from a sketch to G-code.
   *Library* (`K`) has ready-made parts; *CAM* (`J`) runs the machining jobs.
 - **Canvas**: the model. The view sphere (bottom right) turns the view: click on it for the
   view nearest that spot (the 26 of a cube's faces, edges and corners: *Top*, *Front*, *Right*
-  are named on it), or drag it to orbit.
+  are named on it), or drag it to orbit. The row of little cubes under it gives the standard
+  views (Top, Front, Right, Back, Left, Bottom, Isometric) in one click.
 - **Command bar** (bottom): everything the menus and tools do is also a command you can
   type, such as `BOX 40 20 10`. `HELP` lists them, `HELP BOX` explains one, and Tab completes
   a name. The log above it shows what each action did.

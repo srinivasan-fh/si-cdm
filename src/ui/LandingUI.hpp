@@ -322,6 +322,7 @@ private:
     void drawPreferencesWindow(UiCommands& cmd, UiState& st); // PreferencesWindow.cpp
     void drawLicenceWindow(UiCommands& cmd, UiState& st);
     void drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSettings& vp, UiState& st, float y);
+    void drawViewSwitch(UiCommands& cmd, bool is2D, ImVec2 bottomRight);
     float drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, float top, float bottom); // returns width
     void drawSimTransport(UiState& st);
     void drawCommandBar(UiCommands& cmd, UiState& st);

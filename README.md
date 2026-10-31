@@ -159,7 +159,8 @@ use Home, the roll arrows (top right: spin the view 90° around the viewing dire
 and the ◀ ▶ arrows by the projection badge (turn 90° around Z). The badge shows the roll angle;
 right-click for more views, including Level View to reset the roll. Picking a face, edge or corner
 always comes back level. In the 2D window its face views pick
-the drawing plane; edges and corners open the 3D window at that angle.
+the drawing plane; edges and corners open the 3D window at that angle. Under it, a row of seven little cubes
+picks the standard views in one click: Top, Front, Right, Back, Left, Bottom and Isometric.
 
 **Pictures and videos:** `RENDER picture.png` makes a photoreal, path-traced picture of the model
 (metals, glass, soft shadows; *View → Render / Video...*). `VIDEO model.avi` films a turntable, or the
