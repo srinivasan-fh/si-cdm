@@ -71,7 +71,7 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::RuledSurface, C::Surface, SICDM_TR_NOOP("Ruled Surface"), "", SICDM_TR_NOOP("Click two curves: a surface of straight lines between them."), true},
     {T::BSplinePatch, C::Surface, SICDM_TR_NOOP("Bezier / B-Spline Patch"), "", SICDM_TR_NOOP("Click two or more curves in order, then Apply: a B-spline surface through them."), true},
     {T::CoonsPatch, C::Surface, SICDM_TR_NOOP("Coons Patch"), "", SICDM_TR_NOOP("Click four curves meeting end to end: a surface filling between them."), true},
-    {T::GordonSurface, C::Surface, SICDM_TR_NOOP("Gordon Surface"), "", SICDM_TR_NOOP("Network surface woven over a grid of profile curves."), false},
+    {T::GordonSurface, C::Surface, SICDM_TR_NOOP("Gordon Surface"), "", SICDM_TR_NOOP("Network surface through two families of crossing curves: click the profiles, Now the Guides, the guides, then Apply. It passes through every curve."), true},
 
     {T::ClassANurbs, C::ClassA, SICDM_TR_NOOP("Class-A NURBS"), "", SICDM_TR_NOOP("Ultra-smooth surfaces with reflection continuity for body panels."), false},
     {T::OffsetSurface, C::ClassA, SICDM_TR_NOOP("Offset Surface"), "", SICDM_TR_NOOP("Click a surface body: a copy set off along its normals by the distance."), true},

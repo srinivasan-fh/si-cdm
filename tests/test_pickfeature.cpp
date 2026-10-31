@@ -55,6 +55,14 @@ TEST_CASE("Pick tools: what each wants, and the command it makes") {
     CHECK(pickFeatureCommand(ToolId::Sweep, d.scene.sketch(), {0}, {}, o, &why).empty()); // still needs the path
     CHECK(!why.empty());
     CHECK(pickFeatureCommand(ToolId::OffsetSurface, d.scene.sketch(), {}, "Surface 1", o) == "SURFACE OFFSET \"Surface 1\" DISTANCE 20mm");
+    // A network: the profiles, then the guides after the split.
+    for (const char* l : {"LINE 0,0 10,0", "LINE 0,5 10,5", "LINE 0,0 0,5", "LINE 10,0 10,5"}) REQUIRE(run(d, l).ok);
+    PickFeatureOptions g;
+    CHECK(pickFeatureCommand(ToolId::GordonSurface, d.scene.sketch(), {1, 2, 3, 4}, {}, g).empty()); // the split isn't set yet
+    g.networkSplit = 2;
+    const std::string net = pickFeatureCommand(ToolId::GordonSurface, d.scene.sketch(), {1, 2, 3, 4}, {}, g);
+    CHECK(net.rfind("SURFACE NETWORK ", 0) == 0 && net.find(" ACROSS ") != std::string::npos);
+    CHECK(run(d, net).ok); // four lines meeting at the corners: a flat patch
 }
 
 TEST_CASE("Pick tools make solids: revolve, sweep, helix, loft, rib") {

@@ -51,6 +51,13 @@ std::vector<DVec3> resample(const std::vector<DVec3>& line, int n, bool closed);
 
 // Four curves meeting end to end, filled by a bilinearly blended (Coons) patch sampled on
 // an n x n grid. False when they don't form a loop.
+// A Gordon (network) surface: through two families of curves that cross each other, the
+// `profiles` one way and the `guides` the other (each profile meeting each guide once, within
+// `tolerance`). The grid (n x n) is the profiles' loft plus the guides' loft less the
+// surface through their crossings; it passes through every curve.
+bool gordonGrid(std::vector<std::vector<DVec3>> profiles, std::vector<std::vector<DVec3>> guides, int n, double tolerance,
+                std::vector<std::vector<DVec3>>& grid, std::string* why);
+
 bool coonsGrid(std::vector<std::vector<DVec3>> sides, int n, std::vector<std::vector<DVec3>>& grid, std::string* why);
 
 // A surface body made solid: offset `t` along its normals (both ways when `both`, half

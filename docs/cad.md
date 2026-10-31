@@ -44,12 +44,19 @@ runs the command shown in the log, so the result is in the feature history like 
 | Ruled Surface | two curves | | `SURFACE LOFT` |
 | Bezier / B-Spline Patch | two or more curves, then *Apply* or Enter | | `SURFACE LOFT` |
 | Coons Patch | four curves meeting end to end | | `SURFACE BOUNDARY` |
+| Gordon Surface | the profiles, *Now the Guides*, the guides, then *Apply* | | `SURFACE NETWORK` |
 | Offset Surface | a surface body | distance | `SURFACE OFFSET` |
 
 Loft sections drawn on one plane are set *spacing* apart along its normal (the first stays,
 the next is one spacing up, and so on); sections on different planes stay where they are.
 Clicking a picked curve again takes it back out; Esc or *Clear* drops the picks. *Keep sketch*
 leaves the curves showing.
+
+Gordon (network) surface: two or more profiles one way, two or more guides across them, each
+profile crossing each guide once (within 1% of the network's size; 3D curves from `PATH3D`, or
+sketch curves on different planes). The surface is the profiles' loft plus the guides' loft
+less the surface through their crossings, so it passes through every curve; it spans from the
+first to the last curve each way. Any order and direction of the curves is fine.
 
 ## Sketching
 
@@ -881,6 +888,7 @@ which is kept with the body, exported to STEP as a surface model and saved in th
 ```text
 SURFACE LOFT curve curve [curve ...]                     through sections, in order
 SURFACE BOUNDARY c1 c2 c3 c4                             filling four curves that meet end to end
+SURFACE NETWORK p1 p2 ... ACROSS g1 g2 ...               a Gordon surface through a network of curves
 SURFACE EXTRUDE curve DISTANCE d [DIR x,y,z]             an open (or closed) curve pulled straight
 SURFACE REVOLVE curve AXIS x,y,z [AT x,y,z] [ANGLE deg]  a curve turned about an axis
 SURFACE PLANAR curve                                     a flat surface filling a closed curve

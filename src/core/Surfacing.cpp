@@ -586,4 +586,199 @@ void meshCurvature(const MeshData& m, std::vector<float>& mean, std::vector<floa
     for (std::size_t i = 0; i < m.vertices.size(); ++i) mean[i] = H[static_cast<std::size_t>(id[i])], gauss[i] = K[static_cast<std::size_t>(id[i])];
 }
 
+namespace {
+
+// A polyline with its points' share of the length (0 .. 1).
+struct Poly {
+    std::vector<DVec3> p;
+    std::vector<double> at;
+    explicit Poly(std::vector<DVec3> pts) : p(std::move(pts)) {
+        at.assign(p.size(), 0.0);
+        for (std::size_t i = 1; i < p.size(); ++i) at[i] = at[i - 1] + dlength(p[i] - p[i - 1]);
+        const double total = at.back();
+        for (double& a : at) a = total > 0 ? a / total : 0.0;
+    }
+    DVec3 eval(double a) const {
+        a = std::clamp(a, 0.0, 1.0);
+        const std::size_t k = std::min<std::size_t>(static_cast<std::size_t>(std::upper_bound(at.begin(), at.end(), a) - at.begin()), p.size() - 1);
+        if (k == 0) return p.front();
+        const double d = at[k] - at[k - 1], f = d > 0 ? (a - at[k - 1]) / d : 0.0;
+        return p[k - 1] + (p[k] - p[k - 1]) * f;
+    }
+    void reverse() {
+        std::reverse(p.begin(), p.end());
+        for (double& a : at) a = 1.0 - a;
+        std::reverse(at.begin(), at.end());
+    }
+};
+
+// Where two polylines come closest: their parameters and the distance.
+double closestBetween(const Poly& A, const Poly& B, double& a, double& b) {
+    double best = 1e300;
+    for (std::size_t i = 1; i < A.p.size(); ++i)
+        for (std::size_t j = 1; j < B.p.size(); ++j) {
+            const DVec3 p0 = A.p[i - 1], d1 = A.p[i] - p0, q0 = B.p[j - 1], d2 = B.p[j] - q0, r = p0 - q0;
+            const double aa = ddot(d1, d1), ee = ddot(d2, d2), ff = ddot(d2, r);
+            double s = 0, t = 0;
+            if (aa <= 1e-24 && ee <= 1e-24) {
+            } else if (aa <= 1e-24) t = std::clamp(ff / ee, 0.0, 1.0);
+            else {
+                const double c = ddot(d1, r);
+                if (ee <= 1e-24) s = std::clamp(-c / aa, 0.0, 1.0);
+                else {
+                    const double bb = ddot(d1, d2), den = aa * ee - bb * bb;
+                    s = den > 1e-24 ? std::clamp((bb * ff - c * ee) / den, 0.0, 1.0) : 0.0;
+                    t = (bb * s + ff) / ee;
+                    if (t < 0) t = 0, s = std::clamp(-c / aa, 0.0, 1.0);
+                    else if (t > 1) t = 1, s = std::clamp((bb - c) / aa, 0.0, 1.0);
+                }
+            }
+            const double d = dlength((p0 + d1 * s) - (q0 + d2 * t));
+            if (d < best) {
+                best = d;
+                a = A.at[i - 1] + (A.at[i] - A.at[i - 1]) * s;
+                b = B.at[j - 1] + (B.at[j] - B.at[j - 1]) * t;
+            }
+        }
+    return best;
+}
+
+// A curve through points at the given (increasing) parameters, cubic where it can be.
+BSplineCurve curveAt(const std::vector<DVec3>& pts, const std::vector<double>& params) {
+    const int n = static_cast<int>(pts.size()) - 1, p = std::min(3, n);
+    std::vector<double> knots(static_cast<std::size_t>(n + p + 2), 0.0);
+    for (int i = 0; i <= p; ++i) knots[static_cast<std::size_t>(n + 1 + i)] = 1.0;
+    for (int j = 1; j <= n - p; ++j) {
+        double sum = 0;
+        for (int i = j; i < j + p; ++i) sum += params[static_cast<std::size_t>(i)];
+        knots[static_cast<std::size_t>(j + p)] = sum / p;
+    }
+    return interpolateCurve(pts, p, &params, &knots);
+}
+
+// A curve's position at `a` when its parameter is bent so that `from[k]` lands on `to[k]`
+// (both increasing, 0 and 1 at the ends): the network's crossings line up.
+double bend(double a, const std::vector<double>& from, const std::vector<double>& to) {
+    std::vector<double> f{0.0}, t{0.0};
+    f.insert(f.end(), from.begin(), from.end()), t.insert(t.end(), to.begin(), to.end());
+    f.push_back(1.0), t.push_back(1.0);
+    for (std::size_t k = 1; k < t.size(); ++k)
+        if (a <= t[k] || k + 1 == t.size()) {
+            const double d = t[k] - t[k - 1], u = d > 0 ? (a - t[k - 1]) / d : 0.0;
+            return f[k - 1] + (f[k] - f[k - 1]) * u;
+        }
+    return a;
+}
+
+} // namespace
+
+bool gordonGrid(std::vector<std::vector<DVec3>> profilePts, std::vector<std::vector<DVec3>> guidePts, int n, double tol, std::vector<std::vector<DVec3>>& grid,
+                std::string* why) {
+    auto fail = [&](const std::string& w) {
+        if (why) *why = w;
+        return false;
+    };
+    if (profilePts.size() < 2 || guidePts.size() < 2) return fail("a network needs two or more curves each way");
+    std::vector<Poly> U, V;
+    for (auto& c : profilePts) {
+        if (c.size() < 2) return fail("a curve has no length");
+        U.emplace_back(std::move(c));
+    }
+    for (auto& c : guidePts) {
+        if (c.size() < 2) return fail("a curve has no length");
+        V.emplace_back(std::move(c));
+    }
+    const std::size_t m = U.size(), k = V.size();
+    // Where each profile crosses each guide.
+    std::vector<std::vector<double>> a(m, std::vector<double>(k)), b(m, std::vector<double>(k));
+    auto cross = [&]() {
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < k; ++j)
+                if (closestBetween(U[i], V[j], a[i][j], b[i][j]) > tol) return false;
+        return true;
+    };
+    if (!cross()) return fail("every profile must cross every guide (some pair doesn't meet)");
+    // Each curve running the same way: the profiles' crossings in the guides' order, and back.
+    for (std::size_t i = 0; i < m; ++i)
+        if (a[i].front() > a[i].back()) U[i].reverse();
+    for (std::size_t j = 0; j < k; ++j)
+        if (b.front()[j] > b.back()[j]) V[j].reverse();
+    cross();
+    // The guides in order along the profiles, the profiles in order along the guides.
+    std::vector<std::size_t> gi(k), pi(m);
+    for (std::size_t j = 0; j < k; ++j) gi[j] = j;
+    for (std::size_t i = 0; i < m; ++i) pi[i] = i;
+    std::sort(gi.begin(), gi.end(), [&](std::size_t x, std::size_t y) { return a[0][x] < a[0][y]; });
+    std::sort(pi.begin(), pi.end(), [&](std::size_t x, std::size_t y) { return b[x][0] < b[y][0]; });
+    std::vector<Poly> U2, V2;
+    for (std::size_t i : pi) U2.push_back(U[i]);
+    for (std::size_t j : gi) V2.push_back(V[j]);
+    U = std::move(U2), V = std::move(V2);
+    cross();
+    // Common parameters: t_j along the profiles, s_i along the guides.
+    std::vector<double> t(k, 0.0), s(m, 0.0);
+    for (std::size_t j = 0; j < k; ++j) {
+        for (std::size_t i = 0; i < m; ++i) t[j] += a[i][j] / static_cast<double>(m), s[i] += b[i][j] / static_cast<double>(k);
+    }
+    for (std::size_t j = 1; j < k; ++j)
+        if (!(t[j] > t[j - 1])) return fail("the guides must cross the profiles in the same order");
+    for (std::size_t i = 1; i < m; ++i)
+        if (!(s[i] > s[i - 1])) return fail("the profiles must cross the guides in the same order");
+    // Bent to them: profile i at t_j and guide j at s_i are their crossing.
+    auto profileAt = [&](std::size_t i, double tt) { return U[i].eval(bend(tt, a[i], t)); };
+    auto guideAt = [&](std::size_t j, double ss) {
+        std::vector<double> from(m);
+        for (std::size_t i = 0; i < m; ++i) from[i] = b[i][j];
+        return V[j].eval(bend(ss, from, s));
+    };
+    // The crossings (midway between the two curves where they come closest).
+    std::vector<std::vector<DVec3>> X(m, std::vector<DVec3>(k));
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < k; ++j) X[i][j] = (U[i].eval(a[i][j]) + V[j].eval(b[i][j])) * 0.5;
+    // Lu + Lv - T on the grid.
+    n = std::max(n, 3);
+    grid.assign(static_cast<std::size_t>(n), std::vector<DVec3>(static_cast<std::size_t>(n)));
+    std::vector<double> ts(static_cast<std::size_t>(n)), ss(static_cast<std::size_t>(n));
+    for (int q = 0; q < n; ++q) { // from the first curve each way to the last
+        const double f = static_cast<double>(q) / (n - 1);
+        ts[static_cast<std::size_t>(q)] = t.front() + (t.back() - t.front()) * f;
+        ss[static_cast<std::size_t>(q)] = s.front() + (s.back() - s.front()) * f;
+    }
+    // Profiles' loft: for each t, a curve across the profiles at s_i.
+    std::vector<std::vector<DVec3>> Lu(static_cast<std::size_t>(n), std::vector<DVec3>(static_cast<std::size_t>(n)));
+    for (int q = 0; q < n; ++q) {
+        std::vector<DVec3> pts(m);
+        for (std::size_t i = 0; i < m; ++i) pts[i] = profileAt(i, ts[static_cast<std::size_t>(q)]);
+        const BSplineCurve c = curveAt(pts, s);
+        for (int r = 0; r < n; ++r) Lu[static_cast<std::size_t>(r)][static_cast<std::size_t>(q)] = c.eval(std::clamp(ss[static_cast<std::size_t>(r)], s.front(), s.back()));
+    }
+    // Guides' loft: for each s, a curve across the guides at t_j.
+    std::vector<std::vector<DVec3>> Lv(static_cast<std::size_t>(n), std::vector<DVec3>(static_cast<std::size_t>(n)));
+    for (int r = 0; r < n; ++r) {
+        std::vector<DVec3> pts(k);
+        for (std::size_t j = 0; j < k; ++j) pts[j] = guideAt(j, ss[static_cast<std::size_t>(r)]);
+        const BSplineCurve c = curveAt(pts, t);
+        for (int q = 0; q < n; ++q) Lv[static_cast<std::size_t>(r)][static_cast<std::size_t>(q)] = c.eval(std::clamp(ts[static_cast<std::size_t>(q)], t.front(), t.back()));
+    }
+    // The crossings' surface, the same way: across the profiles, then along.
+    std::vector<BSplineCurve> cols(k);
+    for (std::size_t j = 0; j < k; ++j) {
+        std::vector<DVec3> pts(m);
+        for (std::size_t i = 0; i < m; ++i) pts[i] = X[i][j];
+        cols[j] = curveAt(pts, s);
+    }
+    for (int r = 0; r < n; ++r) {
+        std::vector<DVec3> pts(k);
+        for (std::size_t j = 0; j < k; ++j) pts[j] = cols[j].eval(std::clamp(ss[static_cast<std::size_t>(r)], s.front(), s.back()));
+        const BSplineCurve c = curveAt(pts, t);
+        for (int q = 0; q < n; ++q) {
+            const DVec3 T = c.eval(std::clamp(ts[static_cast<std::size_t>(q)], t.front(), t.back()));
+            grid[static_cast<std::size_t>(r)][static_cast<std::size_t>(q)] = Lu[static_cast<std::size_t>(r)][static_cast<std::size_t>(q)] +
+                                                                             Lv[static_cast<std::size_t>(r)][static_cast<std::size_t>(q)] - T;
+        }
+    }
+    return true;
+}
+
 } // namespace sicdm
+

@@ -201,7 +201,7 @@ constexpr CommandSpec kCommands[] = {
      "Raised lettering on a face, flat or curved (\\n starts a new line)"},
     {"ENGRAVE", "", "ENGRAVE [body] TEXT \"words\" FACE x,y,z HEIGHT h DEPTH d [ANGLE deg] [FONT sans|bold|mono]",
      "Lettering cut into a face, flat or curved"},
-    {"SURFACE", "SURF", "SURFACE LOFT curve curve ... | BOUNDARY c1 c2 c3 c4 | EXTRUDE curve DISTANCE d [DIR x,y,z] | REVOLVE curve AXIS x,y,z [AT x,y,z] [ANGLE deg] | "
+    {"SURFACE", "SURF", "SURFACE LOFT curve curve ... | NETWORK profile ... ACROSS guide ... | BOUNDARY c1 c2 c3 c4 | EXTRUDE curve DISTANCE d [DIR x,y,z] | REVOLVE curve AXIS x,y,z [AT x,y,z] [ANGLE deg] | "
                         "PLANAR curve | OFFSET body DISTANCE d | BLEND bodyA bodyB [WEIGHT w]",
      "Surfaces (open B-spline bodies): lofted, filled from four curves, extruded, revolved, flat, offset, blended"},
     {"THICKEN", "", "THICKEN body THICKNESS t [BOTH]", "A solid from a surface: offset along its normals, the edges walled"},

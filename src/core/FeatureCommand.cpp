@@ -2185,6 +2185,37 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             if (!addSurface(s, "loft through " + std::to_string(names.size()) + " sections", used)) return out;
             return out;
         }
+        if (cmd == "SURFACE" && sub == "network") {
+            // SURFACE NETWORK profile profile ... ACROSS guide guide ...: a Gordon surface
+            std::size_t across = a.size();
+            for (std::size_t k = 1; k < a.size(); ++k)
+                if (!quotedAt(k) && (lower(a[k]) == "across" || lower(a[k]) == "guides")) across = k;
+            const char* usage = "Usage: SURFACE NETWORK profile profile ... ACROSS guide guide ... (each crossing each once)";
+            if (across == a.size()) return out.fail(usage);
+            const std::vector<std::string> pn = nameList(1, across), gn = nameList(across + 1, a.size());
+            if (pn.size() < 2 || gn.size() < 2) return out.fail(usage);
+            std::vector<std::vector<DVec3>> profiles, guides;
+            std::vector<int> used;
+            double size = 0;
+            for (int pass = 0; pass < 2; ++pass)
+                for (const std::string& nm : pass == 0 ? pn : gn) {
+                    std::vector<DVec3> pts;
+                    bool closed = false;
+                    std::string why;
+                    if (!curvePoints(nm, pts, closed, why)) return out.fail(why);
+                    if (closed) return out.fail(nm + " is closed: network curves are open");
+                    for (const DVec3& q : pts) size = std::max(size, dlength(q - pts.front()));
+                    (pass == 0 ? profiles : guides).push_back(pts);
+                    used.push_back(curveNamed(doc, nm));
+                }
+            std::vector<std::vector<DVec3>> grid;
+            std::string why;
+            if (!gordonGrid(profiles, guides, 25, std::max(1e-3, size * 0.01), grid, &why)) return out.fail("Cannot weave the network: " + why);
+            BSplineSurface srf;
+            if (!interpolateSurface(grid, srf, &why)) return out.fail("Cannot weave the network: " + why);
+            addSurface(srf, "network of " + std::to_string(pn.size()) + " x " + std::to_string(gn.size()) + " curves", used);
+            return out;
+        }
         if (cmd == "SURFACE" && sub == "boundary") {
             // SURFACE BOUNDARY c1 c2 c3 c4: the four sides of a patch, meeting end to end
             const std::vector<std::string> names = nameList(1, a.size());

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -202,4 +203,48 @@ TEST_CASE("Knitting surfaces into a solid, and surface analysis") {
     REQUIRE(run(s, "ANALYZE OFF").ok);
     CHECK(s.scene.bodies().size() == 1);
     CHECK(s.scene.bodies()[0].visible);
+}
+
+TEST_CASE("Surfaces: a Gordon network through crossing curves") {
+    // Curves cut from z = f(x, y): three profiles along x, three guides along y. The network
+    // must come back to f between them as well as on them.
+    auto f = [](double x, double y) { return 0.002 * (x * x - y * y) + 0.001 * x * y; };
+    auto path = [&](bool alongX, double c) {
+        std::string line = "PATH3D";
+        for (int k = 0; k <= 8; ++k) {
+            const double v = 5.0 * k, x = alongX ? v : c, y = alongX ? c : v;
+            line += " " + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(f(x, y));
+        }
+        return line + " SPLINE";
+    };
+    Document d;
+    std::vector<std::string> prof, guide;
+    for (double c : {0.0, 20.0, 40.0}) {
+        REQUIRE(run(d, path(true, c)).ok);
+        prof.push_back(d.scene.sketch().curves().back().name);
+    }
+    for (double c : {40.0, 0.0, 20.0}) { // any order; one reversed below
+        REQUIRE(run(d, path(false, c)).ok);
+        guide.push_back(d.scene.sketch().curves().back().name);
+    }
+    std::string cmd = "SURFACE NETWORK";
+    for (const std::string& n : prof) cmd += " \"" + n + "\"";
+    cmd += " ACROSS";
+    for (const std::string& n : guide) cmd += " \"" + n + "\"";
+    const CommandOutput o = run(d, cmd);
+    if (!o.ok) std::fprintf(stderr, "%s\n", o.lines.back().c_str());
+    REQUIRE(o.ok);
+    const Body& s = d.scene.bodies().back();
+    double worst = 0;
+    for (const Vertex& v : s.mesh.vertices) {
+        const Vec3 p = v.position + s.offset;
+        worst = std::max(worst, std::fabs(p.z - f(p.x, p.y)));
+    }
+    CHECK(worst < 0.02); // f spans 6.4 over the patch
+    const AABB bb = s.mesh.bounds();
+    CHECK(std::fabs(bb.min.x) < 0.05f && std::fabs(bb.max.x - 40) < 0.05f && std::fabs(bb.min.y) < 0.05f && std::fabs(bb.max.y - 40) < 0.05f);
+
+    // Curves that miss each other are refused.
+    REQUIRE(run(d, "PATH3D 0,100,50 40,100,50").ok);
+    CHECK(!run(d, "SURFACE NETWORK \"" + prof[0] + "\" \"" + d.scene.sketch().curves().back().name + "\" ACROSS \"" + guide[0] + "\" \"" + guide[1] + "\"").ok);
 }

@@ -22,7 +22,7 @@ TEST_CASE("every available tool sits in exactly one rail slot of its own categor
         }
     }
     for (int i = 0; i < static_cast<int>(ToolId::Count); ++i) CHECK(seen.count(i) == (toolInfo(static_cast<ToolId>(i)).available ? 1u : 0u));
-    CHECK(seen.count(static_cast<int>(ToolId::GordonSurface)) == 0); // nothing behind it yet: hidden
+    CHECK(seen.count(static_cast<int>(ToolId::TubercleWing)) == (toolInfo(ToolId::TubercleWing).available ? 1u : 0u));
 }
 
 TEST_CASE("shortcuts are unique single letters") {

@@ -2305,7 +2305,11 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
             for (const std::string& n : st.pickedNames) names += (names.empty() ? "" : ", ") + n;
             ImGui::TextColored({0.55f, 0.78f, 1.0f, 1.0f}, "%s", names.c_str());
             ImGui::SameLine();
-            if (st.pickCanApply && pickFeatureSpec(tool.id, o).maxPicks < 0) {
+            if (tool.id == ToolId::GordonSurface && o.networkSplit < 0 && st.pickedNames.size() >= 2) {
+                if (ImGui::Button(tr("Now the Guides"))) o.networkSplit = static_cast<int>(st.pickedNames.size());
+                ImGui::SameLine();
+            }
+            if (st.pickCanApply && pickFeatureSpec(tool.id, o).maxPicks < 0 && (tool.id != ToolId::GordonSurface || o.networkSplit >= 0)) {
                 if (ImGui::Button(tr("Apply"))) cmd.applyPick = true;
                 ImGui::SameLine();
             }

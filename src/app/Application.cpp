@@ -2604,6 +2604,7 @@ void Application::clearPicks() {
     m_pickTool = ToolId::Count;
     m_uiState.pickedNames.clear();
     m_uiState.pickCanApply = false;
+    m_uiState.pick.networkSplit = -1;
 }
 
 void Application::pickFeatureClick(ToolId tool, float x, float y) {

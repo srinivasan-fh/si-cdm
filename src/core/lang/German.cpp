@@ -1361,6 +1361,12 @@ const char* const kGerman[][2] = {
     {"Click a body to smooth it as a subdivision surface (Loop): each click splits every triangle in four and rounds the shape.", "Einen Körper anklicken, um ihn als Unterteilungsfläche (Loop) zu glätten: jeder Klick teilt jedes Dreieck in vier und rundet die Form."},
     {"Click a body: one level of subdivision a click (Ctrl+Z takes it back)", "Einen Körper anklicken: eine Unterteilungsstufe pro Klick (Strg+Z nimmt sie zurück)"},
     {"STL, OBJ, 3MF, PLY, glTF, STEP, IGES and more: a mesh file comes in as a body", "STL, OBJ, 3MF, PLY, glTF, STEP, IGES und mehr: eine Netzdatei wird als Körper eingelesen"},
+    {"Click the guides (the curves crossing them)", "Die Leitkurven anklicken (die Kurven, die sie kreuzen)"},
+    {"Click the profiles (curves one way), then Now the Guides", "Die Profile anklicken (Kurven in einer Richtung), dann Jetzt die Leitkurven"},
+    {"More guides, or Apply / Enter", "Weitere Leitkurven, oder Anwenden / Eingabe"},
+    {"More profiles, or Now the Guides", "Weitere Profile, oder Jetzt die Leitkurven"},
+    {"Network surface through two families of crossing curves: click the profiles, Now the Guides, the guides, then Apply. It passes through every curve.", "Netzfläche durch zwei Scharen sich kreuzender Kurven: die Profile anklicken, Jetzt die Leitkurven, die Leitkurven, dann Anwenden. Sie verläuft durch jede Kurve."},
+    {"Now the Guides", "Jetzt die Leitkurven"},
 };
 
 

@@ -24,6 +24,7 @@ struct PickFeatureOptions {
     bool ribFlip = false;
     float surfaceDistance = 20.0f; // tabulated cylinder height, offset surface distance
     bool keepSketch = false;
+    int networkSplit = -1;         // Gordon surface: how many of the picks are profiles (-1: still picking them)
 };
 
 // What a pick tool wants: how many curves (max < 0: any number, finished with Apply or

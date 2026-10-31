@@ -53,6 +53,7 @@ bool isPickFeatureTool(ToolId t) noexcept {
     case ToolId::RuledSurface:
     case ToolId::BSplinePatch:
     case ToolId::CoonsPatch:
+    case ToolId::GordonSurface:
     case ToolId::OffsetSurface: return true;
     default: return false;
     }
@@ -70,6 +71,7 @@ PickFeatureSpec pickFeatureSpec(ToolId t, const PickFeatureOptions& o) noexcept 
     case ToolId::RuledSurface: return {2, 2, false};
     case ToolId::BSplinePatch: return {2, -1, false};
     case ToolId::CoonsPatch: return {4, 4, false};
+    case ToolId::GordonSurface: return {4, -1, false};
     case ToolId::OffsetSurface: return {0, 0, true};
     default: return {};
     }
@@ -102,8 +104,11 @@ std::string pickFeaturePrompt(ToolId t, const PickFeatureOptions& o, int picked)
     case ToolId::BSplinePatch:
         return picked < 2 ? SICDM_TR_NOOP("Click the curves the patch passes through, in order") : SICDM_TR_NOOP("Click more curves, or Apply / Enter");
     case ToolId::CoonsPatch: return SICDM_TR_NOOP("Click four curves meeting end to end");
+    case ToolId::GordonSurface:
+        if (o.networkSplit < 0) return picked < 2 ? SICDM_TR_NOOP("Click the profiles (curves one way), then Now the Guides") : SICDM_TR_NOOP("More profiles, or Now the Guides");
+        return picked - o.networkSplit < 2 ? SICDM_TR_NOOP("Click the guides (the curves crossing them)") : SICDM_TR_NOOP("More guides, or Apply / Enter");
     case ToolId::OffsetSurface: return SICDM_TR_NOOP("Click a surface body to offset");
-    default: (void)o; return {};
+    default: return {};
     }
 }
 
@@ -161,6 +166,13 @@ std::string pickFeatureCommand(ToolId t, const Sketch& sketch, const std::vector
         s += " BOUNDARY";
         for (const std::string& n : names) s += " " + n;
         break;
+    case ToolId::GordonSurface: {
+        const int split = o.networkSplit;
+        if (split < 2 || static_cast<int>(names.size()) - split < 2) return fail(pickFeaturePrompt(t, o, static_cast<int>(curves.size())));
+        s += " NETWORK";
+        for (int k = 0; k < static_cast<int>(names.size()); ++k) s += (k == split ? " ACROSS " : " ") + names[static_cast<std::size_t>(k)];
+        break;
+    }
     default: break;
     }
     return s;
