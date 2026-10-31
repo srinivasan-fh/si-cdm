@@ -750,6 +750,13 @@ Slots with a small corner triangle hold several tools: right-click or hold to op
 - **2D sketch:** the drawing tools work on the active plane, in either window.
   - **Curves:** Point, Line (L), Polyline, Arc (A, three points), Circle (C), Ellipse, Rectangle
     (R), Slot, Polygon and Spline (a smooth curve through the points you click).
+  - **More shapes** (in the same flyouts): Centre Rectangle, 3-Point Rectangle (at any angle),
+    3-Point Circle, Tangent Arc (carries a line or arc on without a kink), Elliptical Arc, Conic
+    Section (parabola, hyperbola or ellipse arc by its rho) and Sketch Text (letters as closed
+    outlines to extrude or cut). Commands: `RECT CENTER`, `RECT 3P`, `CIRCLE 3P`,
+    `CIRCLE TTR line line r` (touching two lines), `ARC TANGENT [curve] end`, `ELLIPSE ... FROM p TO q`,
+    `CONIC start end apex [RHO r]`, `SKETCHTEXT "text" AT x,y HEIGHT h`; see
+    [docs/cad.md](docs/cad.md#more-sketch-shapes).
   - **Editing:** Trim (T) cuts a piece back to the curves crossing it. Extend carries an end on
     to the next curve. Offset makes a copy a set distance to one side.
   - **Construction:** the *Construction* option makes dashed reference curves that are left out

@@ -147,10 +147,14 @@ Json McpServer::toolDefinitions() {
     }
     {
         Json p = Json::object();
-        p.set("kind", enumProp({"point", "line", "polyline", "rectangle", "circle", "arc", "spline", "ellipse", "slot", "polygon"}, "Curve type"));
+        p.set("kind", enumProp({"point", "line", "polyline", "rectangle", "centre_rectangle", "rectangle_3p", "circle", "circle_3p", "arc", "tangent_arc", "spline",
+                                "ellipse", "elliptical_arc", "conic", "slot", "polygon", "text"},
+                               "Curve type"));
         Json pts = prop("array", "2D points [[u,v], ...] in plane mm. line: 2 or more (connected segments); "
-                                 "rectangle: 2 opposite corners; circle, polygon: centre; point: 1; arc: start, a point on it, end; "
-                                 "spline: the points it passes through; ellipse: centre, major axis end; slot: the centres of its ends");
+                                 "rectangle: 2 opposite corners; centre_rectangle: centre, corner; rectangle_3p: both ends of a side, a point for the width; "
+                                 "circle, polygon: centre; circle_3p: 3 points on it; point: 1; arc: start, a point on it, end; tangent_arc: its end (it "
+                                 "carries on from 'curve'); spline: the points it passes through; ellipse: centre, major axis end; elliptical_arc: centre, "
+                                 "major axis end, start, end; conic: start, end, apex; slot: the centres of its ends; text: where its baseline starts");
         Json pair = Json::object();
         pair.set("type", "array");
         Json num1 = Json::object();
@@ -160,6 +164,10 @@ Json McpServer::toolDefinitions() {
         p.set("points", pts);
         p.set("radius", prop("number", "Circle radius; ellipse minor radius; slot half width; polygon radius to the corners (mm)"));
         p.set("sides", prop("number", "Polygon: number of sides (default 6)"));
+        p.set("rho", prop("number", "Conic: 0.5 a parabola, less an ellipse's arc, more a hyperbola's (default 0.5)"));
+        p.set("curve", prop("string", "tangent_arc: the line, arc or open curve to carry on from (its end)"));
+        p.set("text", prop("string", "text: the letters (closed outlines)"));
+        p.set("height", prop("number", "text: capital height in mm (default 10)"));
         p.set("construction", prop("boolean", "A construction (reference) curve: dashed, not part of profiles"));
         p.set("plane", prop("string", "Sketch plane: top, front, right or a datum plane's name (default: active plane)"));
         p.set("closed", prop("boolean", "Polyline, spline: close back to the first point"));
@@ -1278,6 +1286,22 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
         } else if (kind == "ellipse") {
             if (!a["radius"].isNumber() || pts.size() < 2) return textResult("ellipse needs points [centre, major axis end] and 'radius' (the minor)", true);
             line = "ELLIPSE " + pointArg(pts[0]) + " " + pointArg(pts[1]) + " " + num(a["radius"].asNumber());
+        } else if (kind == "centre_rectangle" || kind == "rectangle_3p" || kind == "circle_3p" || kind == "conic") {
+            const std::size_t want = kind == "centre_rectangle" ? 2 : 3;
+            if (pts.size() != want) return restorePlane(), textResult(kind + " needs " + std::to_string(want) + " points", true);
+            line = kind == "centre_rectangle" ? "RECT CENTER" : kind == "rectangle_3p" ? "RECT 3P" : kind == "circle_3p" ? "CIRCLE 3P" : "CONIC";
+            for (const Json& q : pts) line += " " + pointArg(q);
+            if (kind == "conic" && a["rho"].isNumber()) line += " RHO " + num(a["rho"].asNumber());
+        } else if (kind == "tangent_arc") {
+            if (!a["curve"].isString()) return restorePlane(), textResult("tangent_arc needs 'curve' (to carry on from) and points [end]", true);
+            line = "ARC TANGENT " + quote(a["curve"].asString()) + " " + pointArg(pts[0]);
+        } else if (kind == "elliptical_arc") {
+            if (!a["radius"].isNumber() || pts.size() != 4)
+                return restorePlane(), textResult("elliptical_arc needs points [centre, major axis end, start, end] and 'radius' (the minor)", true);
+            line = "ELLIPSE " + pointArg(pts[0]) + " " + pointArg(pts[1]) + " " + num(a["radius"].asNumber()) + " FROM " + pointArg(pts[2]) + " TO " + pointArg(pts[3]);
+        } else if (kind == "text") {
+            if (!a["text"].isString() || a["text"].asString().empty()) return restorePlane(), textResult("text needs 'text'", true);
+            line = "SKETCHTEXT " + quote(a["text"].asString()) + " AT " + pointArg(pts[0]) + " HEIGHT " + num(a["height"].isNumber() ? a["height"].asNumber() : 10.0);
         } else if (kind == "slot") {
             if (!a["radius"].isNumber() || pts.size() < 2) return textResult("slot needs points [end centre, end centre] and 'radius'", true);
             line = "SKETCHSLOT " + pointArg(pts[0]) + " " + pointArg(pts[1]) + " " + num(a["radius"].asNumber());
@@ -1286,7 +1310,9 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             line = "POLYGON " + pointArg(pts[0]) + " " + num(a["radius"].asNumber()) + " " + num(a["sides"].isNumber() ? a["sides"].asNumber() : 6);
         } else {
             restorePlane();
-            return textResult("kind must be point, line, polyline, rectangle, circle, arc, spline, ellipse, slot or polygon", true);
+            return textResult("kind must be point, line, polyline, rectangle, centre_rectangle, rectangle_3p, circle, circle_3p, arc, tangent_arc, spline, ellipse, "
+                              "elliptical_arc, conic, slot, polygon or text",
+                              true);
         }
         if (a["construction"].asBool()) line += " CONSTRUCTION";
         Json r = runLine(line);

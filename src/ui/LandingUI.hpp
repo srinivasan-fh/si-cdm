@@ -52,6 +52,9 @@ struct UiState {
     // Sketch tool options.
     bool sketchConstruction = false; // new curves are construction curves
     int polygonSides = 6;
+    float conicRho = 0.5f;           // conic tool: 0.5 a parabola
+    std::string sketchText = "Text"; // sketch text tool
+    float sketchTextHeight = 10.0f;
     float sketchOffset = 5.0f;       // mm, the offset tool's distance
     // Assembly: the mates (the app points this at the document's), and the mate tool:
     // its type (COINCIDENT, FLUSH... ; empty: off), value, and the face picked first.

@@ -2159,11 +2159,38 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
             ImGui::InputInt("##sides", &st.polygonSides);
             st.polygonSides = std::clamp(st.polygonSides, 3, 64);
         }
+        if (tool.id == ToolId::Conic) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", tr("Rho"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            ImGui::SliderFloat("##rho", &st.conicRho, 0.05f, 0.95f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("0.5: a parabola; less: an ellipse's arc; more: a hyperbola's"));
+        }
+        if (tool.id == ToolId::SketchText) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(160);
+            char buf[256];
+            std::snprintf(buf, sizeof buf, "%s", st.sketchText.c_str());
+            if (ImGui::InputText("##stext", buf, sizeof buf)) st.sketchText = buf;
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", tr("Height"));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            lengthField("##stexth", &st.sketchTextHeight, 0.01f, 1e5f);
+        }
         ImGui::SameLine();
         ImGui::TextDisabled(tool.id == ToolId::Polyline || tool.id == ToolId::Spline ? "Enter / double-click to finish  ·  click the first point to close  ·  Esc cancels"
                             : tool.id == ToolId::Arc                                 ? "Start, end, then a point on the arc  ·  Esc cancels"
                             : tool.id == ToolId::Ellipse                             ? "Centre, end of the major axis, then the minor radius"
                             : tool.id == ToolId::Slot                                ? "The two end centres, then the width"
+                            : tool.id == ToolId::CenterRectangle                     ? "The centre, then a corner"
+                            : tool.id == ToolId::Rectangle3Point                     ? "Both ends of one side, then a point for the width"
+                            : tool.id == ToolId::Circle3Point                        ? "Three points on the circle"
+                            : tool.id == ToolId::TangentArc                          ? "The free end of a line or arc (it snaps), then where the arc ends"
+                            : tool.id == ToolId::EllipticalArc                       ? "Centre, major axis end, minor radius, then the start and end (counter-clockwise)"
+                            : tool.id == ToolId::Conic                               ? "Start, end, then the apex where the end tangents meet"
+                            : tool.id == ToolId::SketchText                          ? "Click where the text starts (its baseline)"
                                                                                      : "Shift: horizontal / vertical  ·  Esc cancels");
     } else if (isSketchEditTool(tool.id)) {
         if (tool.id == ToolId::SketchOffset) {

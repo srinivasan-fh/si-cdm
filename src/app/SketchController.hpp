@@ -54,6 +54,8 @@ public:
 
     // Sides of the polygon tool's polygons.
     void setPolygonSides(int n) noexcept { m_polygonSides = std::max(3, n); }
+    // The conic tool's rho (0.5: a parabola).
+    void setConicRho(float rho) noexcept { m_conicRho = std::clamp(rho, 0.01f, 0.99f); }
 
 private:
     SketchCurve makeCurve(CurveKind kind, std::vector<Vec2> pts, float radius = 0.0f) const;
@@ -69,6 +71,10 @@ private:
     bool m_snappedToPoint = false;
     ToolId m_tool = ToolId::Line; // the tool the points belong to
     int m_polygonSides = 6;
+    float m_conicRho = 0.5f;
+    // Tangent arc: the way the curve whose free end is under the cursor goes there, and once
+    // that end is clicked, the way the arc leaves it.
+    std::optional<Vec2> m_hoverTangent, m_tangent;
 };
 
 // World point to window coordinates; nullopt when behind the camera.

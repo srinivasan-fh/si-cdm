@@ -22,13 +22,19 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::Line, C::Sketch, SICDM_TR_NOOP("Line"), "L", SICDM_TR_NOOP("Straight segments defining edges, structural frames and linear boundaries. Click start, click end."), true},
     {T::Polyline, C::Sketch, SICDM_TR_NOOP("Polyline"), "", SICDM_TR_NOOP("Connected lines acting as a single continuous path. Click points; Enter, double-click or click the start to finish."), true},
     {T::Arc, C::Sketch, SICDM_TR_NOOP("Arc"), "A", SICDM_TR_NOOP("Curved segments for smooth transitions, corners and circular paths. Click the start, the end, then a point on the arc."), true},
-    {T::Conic, C::Sketch, SICDM_TR_NOOP("Conic Section"), "", SICDM_TR_NOOP("Parabolas and hyperbolas for precise trajectory paths."), false},
+    {T::Conic, C::Sketch, SICDM_TR_NOOP("Conic Section"), "", SICDM_TR_NOOP("Parabolas, hyperbolas and ellipse arcs for precise trajectory paths. Click the start, the end, then the apex where their tangents meet; rho in the options bar (0.5: a parabola)."), true},
     {T::Circle, C::Sketch, SICDM_TR_NOOP("Circle"), "C", SICDM_TR_NOOP("Closed circles for shafts, holes, fasteners and rotational axes. Click centre, click radius."), true},
     {T::Ellipse, C::Sketch, SICDM_TR_NOOP("Ellipse"), "", SICDM_TR_NOOP("Stretched circles for specialised fluid and structural profiles. Click the centre, the end of the major axis, then the minor radius."), true},
     {T::Rectangle, C::Sketch, SICDM_TR_NOOP("Rectangle"), "R", SICDM_TR_NOOP("Four-sided enclosures for blocks, pockets and stock footprints. Click two opposite corners."), true},
     {T::Slot, C::Sketch, SICDM_TR_NOOP("Slot"), "", SICDM_TR_NOOP("Elongated tracks with rounded ends for sliding joints and fasteners. Click the two end centres, then the width."), true},
     {T::Polygon, C::Sketch, SICDM_TR_NOOP("Polygon"), "", SICDM_TR_NOOP("Multi-sided shapes (hexagons) for bolts, nuts and sockets. Click the centre, then a corner (sides in the options bar)."), true},
     {T::Spline, C::Sketch, SICDM_TR_NOOP("Spline"), "", SICDM_TR_NOOP("Flexible, mathematically controlled curves for organic and aerodynamic outlines. Click the points it passes through; Enter or double-click finishes, clicking the first point closes it."), true},
+    {T::CenterRectangle, C::Sketch, SICDM_TR_NOOP("Centre Rectangle"), "", SICDM_TR_NOOP("Rectangle drawn out from its centre. Click the centre, then a corner."), true},
+    {T::Rectangle3Point, C::Sketch, SICDM_TR_NOOP("3-Point Rectangle"), "", SICDM_TR_NOOP("Rectangle at any angle. Click both ends of one side, then a point for its width."), true},
+    {T::Circle3Point, C::Sketch, SICDM_TR_NOOP("3-Point Circle"), "", SICDM_TR_NOOP("Circle through three points on its edge. Click the three points."), true},
+    {T::TangentArc, C::Sketch, SICDM_TR_NOOP("Tangent Arc"), "", SICDM_TR_NOOP("Arc carrying on smoothly from the free end of a line, arc or open curve. Click that end, then where the arc ends."), true},
+    {T::EllipticalArc, C::Sketch, SICDM_TR_NOOP("Elliptical Arc"), "", SICDM_TR_NOOP("Part of an ellipse. Click the centre, the end of the major axis, the minor radius, then where the arc starts and ends (counter-clockwise)."), true},
+    {T::SketchText, C::Sketch, SICDM_TR_NOOP("Sketch Text"), "", SICDM_TR_NOOP("Letters as closed outlines on the sketch plane, ready to extrude or cut. Type the text and height in the options bar, then click where it starts."), true},
     {T::SketchTrim, C::Sketch, SICDM_TR_NOOP("Trim"), "T", SICDM_TR_NOOP("Click a piece of a sketch curve to cut it away, back to the curves crossing it."), true},
     {T::SketchExtend, C::Sketch, SICDM_TR_NOOP("Extend"), "", SICDM_TR_NOOP("Click near the end of a line, arc or open polyline to carry it on to the next curve."), true},
     {T::SketchOffset, C::Sketch, SICDM_TR_NOOP("Offset"), "", SICDM_TR_NOOP("Click a sketch curve, then the side: a copy the distance in the options bar away."), true},
@@ -123,10 +129,10 @@ constexpr ToolId gPan[] = {T::Pan};
 constexpr ToolId gZoom[] = {T::Zoom};
 constexpr ToolId gPoint[] = {T::Point};
 constexpr ToolId gLine[] = {T::Line, T::Polyline};
-constexpr ToolId gArc[] = {T::Arc, T::Conic};
-constexpr ToolId gCircle[] = {T::Circle, T::Ellipse};
-constexpr ToolId gRect[] = {T::Rectangle, T::Slot, T::Polygon};
-constexpr ToolId gSpline[] = {T::Spline};
+constexpr ToolId gArc[] = {T::Arc, T::TangentArc, T::EllipticalArc, T::Conic};
+constexpr ToolId gCircle[] = {T::Circle, T::Circle3Point, T::Ellipse};
+constexpr ToolId gRect[] = {T::Rectangle, T::CenterRectangle, T::Rectangle3Point, T::Slot, T::Polygon};
+constexpr ToolId gSpline[] = {T::Spline, T::SketchText};
 constexpr ToolId gSketchEdit[] = {T::SketchTrim, T::SketchExtend, T::SketchOffset};
 constexpr ToolId gBlock[] = {T::Block, T::Wedge, T::Pyramid, T::Prism};
 constexpr ToolId gCylinder[] = {T::Cylinder, T::Cone, T::Frustum, T::Tube, T::Capsule};
@@ -201,7 +207,9 @@ bool isWearableTool(ToolId id) { return toolInfo(id).category == ToolCategory::W
 
 bool isSketchTool(ToolId id) {
     return id == ToolId::Point || id == ToolId::Line || id == ToolId::Polyline || id == ToolId::Rectangle || id == ToolId::Circle || id == ToolId::Arc ||
-           id == ToolId::Ellipse || id == ToolId::Slot || id == ToolId::Polygon || id == ToolId::Spline;
+           id == ToolId::Ellipse || id == ToolId::Slot || id == ToolId::Polygon || id == ToolId::Spline || id == ToolId::Conic ||
+           id == ToolId::CenterRectangle || id == ToolId::Rectangle3Point || id == ToolId::Circle3Point || id == ToolId::TangentArc ||
+           id == ToolId::EllipticalArc || id == ToolId::SketchText;
 }
 
 bool isSketchEditTool(ToolId id) { return id == ToolId::SketchTrim || id == ToolId::SketchExtend || id == ToolId::SketchOffset; }

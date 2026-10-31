@@ -1341,6 +1341,22 @@ const char* const kGerman[][2] = {
     {"Stretched sphere with three semi-axes, for knobs, pods and housings. Click to place.", "Gestreckte Kugel mit drei Halbachsen, für Knöpfe, Gondeln und Gehäuse. Zum Platzieren klicken."},
     {"Cone with its top cut off, for spigots, funnels and tapered bosses. Click to place; set the top radius in Properties.", "Kegel mit abgeschnittener Spitze, für Zapfen, Trichter und konische Naben. Zum Platzieren klicken; den oberen Radius in den Eigenschaften einstellen."},
     {"Cylinder with half-sphere ends, for pins, rollers and handles. Click to place.", "Zylinder mit Halbkugelenden, für Stifte, Rollen und Griffe. Zum Platzieren klicken."},
+    {"0.5: a parabola; less: an ellipse's arc; more: a hyperbola's", "0,5: eine Parabel; weniger: ein Ellipsenbogen; mehr: ein Hyperbelbogen"},
+    {"3-Point Circle", "3-Punkt-Kreis"},
+    {"3-Point Rectangle", "3-Punkt-Rechteck"},
+    {"Centre Rectangle", "Mittelpunkt-Rechteck"},
+    {"Elliptical Arc", "Ellipsenbogen"},
+    {"Height", "Höhe"},
+    {"Rho", "Rho"},
+    {"Sketch Text", "Skizzentext"},
+    {"Tangent Arc", "Tangentialbogen"},
+    {"Arc carrying on smoothly from the free end of a line, arc or open curve. Click that end, then where the arc ends.", "Bogen, der glatt am freien Ende einer Linie, eines Bogens oder einer offenen Kurve anschließt. Dieses Ende anklicken, dann das Ende des Bogens."},
+    {"Circle through three points on its edge. Click the three points.", "Kreis durch drei Punkte auf seinem Rand. Die drei Punkte anklicken."},
+    {"Letters as closed outlines on the sketch plane, ready to extrude or cut. Type the text and height in the options bar, then click where it starts.", "Buchstaben als geschlossene Umrisse auf der Skizzenebene, bereit zum Extrudieren oder Ausschneiden. Text und Höhe in der Optionsleiste eingeben, dann den Anfang anklicken."},
+    {"Parabolas, hyperbolas and ellipse arcs for precise trajectory paths. Click the start, the end, then the apex where their tangents meet; rho in the options bar (0.5: a parabola).", "Parabeln, Hyperbeln und Ellipsenbögen für präzise Bahnkurven. Anfang, Ende, dann den Scheitelpunkt anklicken, in dem sich ihre Tangenten treffen; Rho in der Optionsleiste (0,5: eine Parabel)."},
+    {"Part of an ellipse. Click the centre, the end of the major axis, the minor radius, then where the arc starts and ends (counter-clockwise).", "Teil einer Ellipse. Mittelpunkt, Ende der Hauptachse, Nebenradius, dann Anfang und Ende des Bogens anklicken (gegen den Uhrzeigersinn)."},
+    {"Rectangle at any angle. Click both ends of one side, then a point for its width.", "Rechteck in beliebigem Winkel. Beide Enden einer Seite anklicken, dann einen Punkt für die Breite."},
+    {"Rectangle drawn out from its centre. Click the centre, then a corner.", "Rechteck vom Mittelpunkt aus. Den Mittelpunkt, dann eine Ecke anklicken."},
 };
 
 

@@ -18,6 +18,7 @@
 #include "core/Plugin.hpp"
 #include "core/AssemblyCommand.hpp"
 #include "core/SketchEdit.hpp"
+#include "core/SketchShapes.hpp"
 #include "core/Collide.hpp"
 #include "core/ComponentCommand.hpp"
 #include "core/FaceCommand.hpp"
@@ -777,7 +778,7 @@ namespace {
 // replays them. SELECT and PLANE are there because later commands default to them.
 // The commands that edit only the sketch: UNDO takes them back from a copy of it.
 bool sketchCommand(const std::string& cmd) {
-    static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",
+    static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",   "CONIC", "SKETCHTEXT",
                                           "ELLIPSE",  "SKETCHSLOT",   "POLYGON", "TRIM",  "EXTEND",    "OFFSET",     "CONSTRUCTION",
                                           "CONSTRAIN", "DIM",         "CONSTRAINT", "DRAG",  "ERASE",     "SKETCHFILLET", "SKETCHCHAMFER",
                                           "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT", "PATH3D", "DUPLICATE", "PASTE", "CUT"};
@@ -878,7 +879,7 @@ bool bodyCommand(const std::string& cmd) {
 
 bool historyCommand(const std::string& cmd) {
     static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
-                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING",
+                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "CONIC", "SKETCHTEXT",
                                          "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
                                          "MIRROR",   "FILLET",  "CHAMFER",  "SCULPT",  "REMESH",   "MASK",      "SUBDIVIDE", "SYMMETRIZE", "DECIMATE", "HOLE",
                                          "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
@@ -1326,7 +1327,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     bool construction = false;
     std::vector<std::string> sketchArgs = a;
     if ((cmd == "LINE" || cmd == "PLINE" || cmd == "RECT" || cmd == "POINT" || cmd == "CIRCLE" || cmd == "ARC" || cmd == "SPLINE" || cmd == "ELLIPSE" ||
-         cmd == "SKETCHSLOT" || cmd == "POLYGON") &&
+         cmd == "SKETCHSLOT" || cmd == "POLYGON" || cmd == "CONIC" || cmd == "SKETCHTEXT") &&
         !sketchArgs.empty() && (iequal(sketchArgs.back(), "construction") || iequal(sketchArgs.back(), "constr"))) {
         construction = true;
         sketchArgs.pop_back();
@@ -1335,6 +1336,136 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         c.construction = construction;
         return addCurve(doc, std::move(c));
     };
+    // The shapes from a few points (SketchShapes.hpp).
+    const std::string sketchMode = sketchArgs.empty() ? std::string() : lower(sketchArgs[0]);
+    auto pointsAfter = [&](std::size_t from, std::size_t count, std::vector<Vec2>& pts) {
+        std::string bad;
+        if (sketchArgs.size() < from + count) return false;
+        return parsePoints({sketchArgs.begin() + static_cast<std::ptrdiff_t>(from), sketchArgs.begin() + static_cast<std::ptrdiff_t>(from + count)}, pts, bad);
+    };
+    auto addShape = [&](const std::optional<SketchCurve>& c, const std::string& why) { return c ? addSketchCurve(*c) : out.fail(why); };
+    // A sketch line on the active plane, by name.
+    auto planeLine = [&](const std::string& name, Vec2& p0, Vec2& p1, std::string& why) {
+        const int i = findCurve(doc, name);
+        if (i < 0) return why = "No sketch curve named " + name, false;
+        const SketchCurve& l = doc.scene.sketch().curves()[static_cast<std::size_t>(i)];
+        if (l.kind != CurveKind::Line || l.pts.size() < 2) return why = name + " is not a line", false;
+        if (!onPlane(l, doc.state.plane, doc.state.customFrame)) return why = name + " is not on the active sketch plane", false;
+        p0 = l.pts[0], p1 = l.pts[1];
+        return true;
+    };
+    if (cmd == "RECT" && (sketchMode == "center" || sketchMode == "centre" || sketchMode == "3p" || sketchMode == "3point")) {
+        // RECT CENTER centre corner | RECT 3P a b c
+        const bool centred = sketchMode == "center" || sketchMode == "centre";
+        std::vector<Vec2> pts;
+        if (sketchArgs.size() != (centred ? 3u : 4u) || !pointsAfter(1, centred ? 2 : 3, pts)) return usage();
+        std::string why;
+        return addShape(centred ? centreRectangle(pts[0], pts[1], &why) : rectangle3Points(pts[0], pts[1], pts[2], &why), why);
+    }
+    if (cmd == "CIRCLE" && (sketchMode == "3p" || sketchMode == "3point")) {
+        std::vector<Vec2> pts;
+        if (sketchArgs.size() != 4 || !pointsAfter(1, 3, pts)) return usage();
+        std::string why;
+        return addShape(circle3Points(pts[0], pts[1], pts[2], &why), why);
+    }
+    if (cmd == "CIRCLE" && sketchMode == "ttr") {
+        // CIRCLE TTR line line radius [NEAR x,y]: touching both lines
+        if (sketchArgs.size() != 4 && sketchArgs.size() != 6) return usage();
+        Vec2 a0, a1, b0, b1;
+        std::string why;
+        if (!planeLine(sketchArgs[1], a0, a1, why) || !planeLine(sketchArgs[2], b0, b1, why)) return out.fail(why);
+        const auto r = parseLength(sketchArgs[3]);
+        if (!r) return usage();
+        Vec2 near{0.25f * (a0.x + a1.x + b0.x + b1.x), 0.25f * (a0.y + a1.y + b0.y + b1.y)}; // between the lines
+        if (sketchArgs.size() == 6) {
+            std::vector<Vec2> n;
+            if (!iequal(sketchArgs[4], "near") || !pointsAfter(5, 1, n)) return usage();
+            near = n[0];
+        }
+        return addShape(circleTangentToLines(a0, a1, b0, b1, static_cast<float>(*r), near, &why), why);
+    }
+    if (cmd == "ARC" && (sketchMode == "tangent" || sketchMode == "tan")) {
+        // ARC TANGENT [curve] [START] end: on from the end (or start) of a line, arc or open curve
+        std::vector<std::string> rest(sketchArgs.begin() + 1, sketchArgs.end());
+        bool atStart = false;
+        for (auto it = rest.begin(); it != rest.end();)
+            if (iequal(*it, "start")) atStart = true, it = rest.erase(it);
+            else ++it;
+        if (rest.empty() || rest.size() > 2) return usage();
+        const int ci = rest.size() == 2 ? findCurve(doc, rest[0]) : doc.selectedCurve;
+        if (ci < 0 || ci >= static_cast<int>(doc.scene.sketch().curves().size()))
+            return out.fail(rest.size() == 2 ? "No sketch curve named " + rest[0] : "Name the curve to carry on, or select it");
+        const SketchCurve from = doc.scene.sketch().curves()[static_cast<std::size_t>(ci)];
+        if (!onPlane(from, doc.state.plane, doc.state.customFrame)) return out.fail(from.name + " is not on the active sketch plane");
+        Vec2 s0, dir;
+        if (!curveEndDirection(from, atStart, s0, dir)) return out.fail(from.name + " has no free end to carry on from");
+        std::vector<Vec2> e;
+        std::string bad;
+        if (!parsePoints({rest.back()}, e, bad)) return out.fail("Not a point: " + bad);
+        std::string why;
+        return addShape(tangentArc(s0, dir, e[0], &why), why);
+    }
+    if (cmd == "ELLIPSE" && sketchArgs.size() == 7 && iequal(sketchArgs[3], "from") && iequal(sketchArgs[5], "to")) {
+        // ELLIPSE centre major-end minor-radius FROM point TO point: an elliptical arc
+        std::vector<Vec2> pts, ends;
+        std::string bad;
+        if (!parsePoints({sketchArgs[0], sketchArgs[1]}, pts, bad) || !parsePoints({sketchArgs[4], sketchArgs[6]}, ends, bad)) return out.fail("Not a point: " + bad);
+        const auto ry = parseLength(sketchArgs[2]);
+        if (!ry) return usage();
+        std::string why;
+        return addShape(ellipticalArc(pts[0], pts[1], static_cast<float>(*ry), ends[0], ends[1], &why), why);
+    }
+    if (cmd == "CONIC") {
+        // CONIC start end apex [RHO r]
+        std::vector<Vec2> pts;
+        float rho = 0.5f;
+        if (sketchArgs.size() == 5 && iequal(sketchArgs[3], "rho")) {
+            const auto v = parseNumber(sketchArgs[4]);
+            if (!v) return usage();
+            rho = *v;
+        } else if (sketchArgs.size() != 3) return usage();
+        if (!pointsAfter(0, 3, pts)) return usage();
+        std::string why;
+        return addShape(conicCurve(pts[0], pts[1], pts[2], rho, &why), why);
+    }
+    if (cmd == "SKETCHTEXT") {
+        // SKETCHTEXT "text" [AT x,y] [HEIGHT h] [FONT sans|bold|mono] [ANGLE deg]
+        if (sketchArgs.empty()) return usage();
+        Vec2 at{};
+        float height = 10.0f, angle = 0.0f;
+        TextFont font = TextFont::SansBold;
+        for (std::size_t k = 1; k < sketchArgs.size(); k += 2) {
+            if (k + 1 >= sketchArgs.size()) return usage();
+            const std::string key = lower(sketchArgs[k]);
+            if (key == "at") {
+                std::vector<Vec2> p;
+                std::string bad;
+                if (!parsePoints({sketchArgs[k + 1]}, p, bad)) return out.fail("Not a point: " + bad);
+                at = p[0];
+            } else if (key == "height") {
+                const auto v = parseLength(sketchArgs[k + 1]);
+                if (!v) return usage();
+                height = static_cast<float>(*v);
+            } else if (key == "angle") {
+                const auto v = parseNumber(sketchArgs[k + 1]);
+                if (!v) return usage();
+                angle = *v;
+            } else if (key == "font") {
+                if (!textFontNamed(sketchArgs[k + 1], font)) return out.fail("Fonts: sans, bold, mono");
+            } else return usage();
+        }
+        std::string why;
+        std::vector<SketchCurve> loops = sketchText(sketchArgs[0], at, height, font, angle, &why);
+        if (loops.empty()) return out.fail(why.empty() ? "No letters to draw" : why);
+        const std::size_t first = doc.scene.sketch().curves().size();
+        for (SketchCurve& c : loops) {
+            c.construction = construction;
+            addCurve(doc, std::move(c));
+        }
+        out.say("Added " + std::to_string(loops.size()) + " outlines of \"" + sketchArgs[0] + "\" (" + doc.scene.sketch().curves()[first].name + " to " +
+                doc.scene.sketch().curves().back().name + ")");
+        return out;
+    }
     if (cmd == "ARC") {
         // ARC start through end | ARC CENTER c start end (counter-clockwise from start to end)
         const bool centred = !sketchArgs.empty() && (iequal(sketchArgs[0], "center") || iequal(sketchArgs[0], "centre"));

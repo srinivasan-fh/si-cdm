@@ -716,9 +716,27 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         return;
     }
 
+    if (tool == ToolId::SketchText) { // the letters' outlines, from where the text starts
+        if (const auto at = m_sketcher.cursor()) {
+            std::string text;
+            for (char ch : m_uiState.sketchText)
+                if (ch != '"') text += ch;
+            if (text.empty()) {
+                setStatus("Type the text in the options bar");
+                return;
+            }
+            char line[512];
+            std::snprintf(line, sizeof line, "SKETCHTEXT \"%s\" AT %.6gmm,%.6gmm HEIGHT %.6gmm%s", text.c_str(), static_cast<double>(at->x),
+                          static_cast<double>(at->y), static_cast<double>(m_uiState.sketchTextHeight), m_uiState.sketchConstruction ? " CONSTRUCTION" : "");
+            runCommandLine(line);
+        }
+        return;
+    }
     if (isSketchTool(tool)) {
         m_sketcher.setPolygonSides(m_uiState.polygonSides);
+        m_sketcher.setConicRho(m_uiState.conicRho);
         if (auto c = m_sketcher.click(tool, doubleClick)) addCurve(std::move(*c));
+        else if (tool == ToolId::TangentArc && !m_sketcher.busy()) setStatus("Click the free end of a line, arc or open curve (it snaps there)");
         return;
     }
     if (isSketchEditTool(tool)) { // trim, extend, offset: the curve under the cursor

@@ -66,7 +66,9 @@ enum class CurveKind { Point, Line, Polyline, Rectangle, Circle, Arc, Spline, El
 //              end), radius
 //   Spline:    the points it passes through, pts[0..n] (a smooth curve through them;
 //              `closed` joins the last back to the first)
-//   Ellipse:   centre pts[0], the end of its major axis pts[1], minor radius `radius`
+//   Ellipse:   centre pts[0], the end of its major axis pts[1], minor radius `radius`;
+//              an elliptical arc has its start pts[2] and end pts[3] on it too (counter-
+//              clockwise from start to end; see ellipseParam)
 //   Slot:      the centres of its round ends pts[0], pts[1], radius (half its width)
 struct SketchCurve {
     CurveKind kind = CurveKind::Line;
@@ -143,6 +145,14 @@ inline PlaneFrame curveFrame(const SketchCurve& c) noexcept { return c.plane == 
 inline bool onPlane(const SketchCurve& c, SketchPlane plane, const PlaneFrame& custom) noexcept {
     return !c.spatial() && c.plane == plane && (plane != SketchPlane::Custom || sameFrame(c.frame, custom));
 }
+// Ellipses: an elliptical arc (open), the parameter angle of a point (its angle on the
+// circle the ellipse is squashed from, measured from the major axis), and the point at one.
+inline bool isEllipticalArc(const SketchCurve& c) noexcept { return c.kind == CurveKind::Ellipse && c.pts.size() >= 4; }
+float ellipseParam(const SketchCurve& c, Vec2 p);
+Vec2 ellipsePointAt(const SketchCurve& c, float t);
+// An elliptical arc's start and end parameters (end > start).
+void ellipseArcParams(const SketchCurve& c, float& t0, float& t1);
+
 inline bool samePlane(const SketchCurve& a, const SketchCurve& b) noexcept { return onPlane(a, b.plane, b.frame); }
 
 // A point on the smooth curve through `pts` (centripetal Catmull-Rom: no loops or cusps

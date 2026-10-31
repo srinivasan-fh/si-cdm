@@ -244,12 +244,38 @@ void SketchCurve::arcAngles(float& a0, float& a1) const {
     while (a1 <= a0 + 1e-7f) a1 += 2.0f * kPi;
 }
 
+float ellipseParam(const SketchCurve& c, Vec2 p) {
+    if (c.pts.size() < 2) return 0.0f;
+    const Vec2 m{c.pts[1].x - c.pts[0].x, c.pts[1].y - c.pts[0].y};
+    const float rx = std::hypot(m.x, m.y), ry = c.radius;
+    if (!(rx > 0) || !(ry > 0)) return 0.0f;
+    const Vec2 u{m.x / rx, m.y / rx}, d{p.x - c.pts[0].x, p.y - c.pts[0].y};
+    return std::atan2((-u.y * d.x + u.x * d.y) / ry, (u.x * d.x + u.y * d.y) / rx);
+}
+
+Vec2 ellipsePointAt(const SketchCurve& c, float t) {
+    if (c.pts.size() < 2) return {};
+    const Vec2 m{c.pts[1].x - c.pts[0].x, c.pts[1].y - c.pts[0].y};
+    const float rx = std::hypot(m.x, m.y);
+    const Vec2 u = rx > 0 ? Vec2{m.x / rx, m.y / rx} : Vec2{1, 0};
+    const float x = rx * std::cos(t), y = c.radius * std::sin(t);
+    return {c.pts[0].x + x * u.x - y * u.y, c.pts[0].y + x * u.y + y * u.x};
+}
+
+void ellipseArcParams(const SketchCurve& c, float& t0, float& t1) {
+    t0 = 0.0f, t1 = 2.0f * kPi;
+    if (c.pts.size() < 4) return;
+    t0 = ellipseParam(c, c.pts[2]);
+    t1 = ellipseParam(c, c.pts[3]);
+    while (t1 <= t0 + 1e-6f) t1 += 2.0f * kPi;
+}
+
 bool SketchCurve::isClosed() const {
     switch (kind) {
     case CurveKind::Rectangle:
     case CurveKind::Circle:
-    case CurveKind::Ellipse:
     case CurveKind::Slot: return true;
+    case CurveKind::Ellipse: return pts.size() < 4; // an elliptical arc is open
     case CurveKind::Polyline:
         if (spatial()) return pts.size() > 3 && length(point3(0) - point3(pts.size() - 1)) < 1e-6f;
         return pts.size() > 3 && std::hypot(pts.front().x - pts.back().x, pts.front().y - pts.back().y) < 1e-6f;
@@ -314,9 +340,11 @@ std::vector<Vec2> SketchCurve::planeStrip(float chord) const {
         if (pts.size() >= 2) {
             const Vec2 c = pts[0], m = {pts[1].x - pts[0].x, pts[1].y - pts[0].y};
             const float rx = std::hypot(m.x, m.y), rot = std::atan2(m.y, m.x), ry = radius;
-            const int n = arcSegments(std::max(rx, ry), 2.0f * kPi);
+            float t0 = 0.0f, t1 = 2.0f * kPi;
+            if (pts.size() >= 4) ellipseArcParams(*this, t0, t1);
+            const int n = arcSegments(std::max(rx, ry), t1 - t0);
             for (int i = 0; i <= n; ++i) {
-                const float a = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(n);
+                const float a = t0 + (t1 - t0) * static_cast<float>(i) / static_cast<float>(n);
                 const float x = rx * std::cos(a), y = ry * std::sin(a);
                 out.push_back({c.x + x * std::cos(rot) - y * std::sin(rot), c.y + x * std::sin(rot) + y * std::cos(rot)});
             }
@@ -389,6 +417,11 @@ std::vector<Vec2> SketchCurve::keyPoints() const {
         const Vec2 c = pts[0], m = {pts[1].x - pts[0].x, pts[1].y - pts[0].y};
         const float rx = std::hypot(m.x, m.y);
         const Vec2 n = rx > 0 ? Vec2{-m.y / rx * radius, m.x / rx * radius} : Vec2{0, radius};
+        if (pts.size() >= 4) {
+            float t0, t1;
+            ellipseArcParams(*this, t0, t1);
+            return {c, ellipsePointAt(*this, t0), ellipsePointAt(*this, t1), ellipsePointAt(*this, 0.5f * (t0 + t1))};
+        }
         return {c, {c.x + m.x, c.y + m.y}, {c.x - m.x, c.y - m.y}, {c.x + n.x, c.y + n.y}, {c.x - n.x, c.y - n.y}};
     }
     if (kind == CurveKind::Slot && pts.size() >= 2) {
@@ -456,7 +489,7 @@ std::string SketchCurve::measure() const {
         return "L " + lengthText(total) + " (" + std::to_string(pts.size()) + " points" + (closed ? ", closed)" : ")");
     }
     case CurveKind::Ellipse:
-        if (pts.size() >= 2) return lengthsText({len(pts[0], pts[1]), radius}, " x ", "R ");
+        if (pts.size() >= 2) return lengthsText({len(pts[0], pts[1]), radius}, " x ", "R ") + (pts.size() >= 4 ? " arc" : "");
         break;
     case CurveKind::Slot:
         if (pts.size() >= 2) return lengthsText({len(pts[0], pts[1]) + 2.0 * radius, 2.0 * radius}, " x ");

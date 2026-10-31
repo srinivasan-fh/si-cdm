@@ -192,6 +192,43 @@ void drawToolIcon(ImDrawList* dl, ToolId id, ImVec2 center, float size, ImU32 co
     case ToolId::Rectangle:
         g.poly({{-0.8f, -0.55f}, {0.8f, -0.55f}, {0.8f, 0.55f}, {-0.8f, 0.55f}}, true);
         break;
+    case ToolId::CenterRectangle:
+        g.poly({{-0.8f, -0.55f}, {0.8f, -0.55f}, {0.8f, 0.55f}, {-0.8f, 0.55f}}, true);
+        g.dot(0, 0, 0.1f);
+        g.dashed(0, 0, 0.8f, 0.55f, 3);
+        break;
+    case ToolId::Rectangle3Point:
+        g.poly({{-0.85f, 0.25f}, {0.15f, -0.75f}, {0.85f, -0.05f}, {-0.15f, 0.95f}}, true);
+        g.dot(-0.85f, 0.25f);
+        g.dot(0.15f, -0.75f);
+        g.dot(0.85f, -0.05f);
+        break;
+    case ToolId::Circle3Point:
+        g.circle(0, 0, 0.75f);
+        g.dot(-0.75f, 0);
+        g.dot(0.53f, -0.53f);
+        g.dot(0.53f, 0.53f);
+        break;
+    case ToolId::TangentArc:
+        g.line(-0.9f, -0.6f, -0.1f, -0.6f);
+        g.arc(-0.1f, 0.0f, 0.6f, -kTau * 0.25f, kTau * 0.25f);
+        g.dot(-0.1f, -0.6f);
+        break;
+    case ToolId::EllipticalArc:
+        for (int i = 0; i < 12; ++i) { // the top half of an ellipse
+            const float a0 = kTau * 0.5f * static_cast<float>(i) / 12.0f, a1 = kTau * 0.5f * static_cast<float>(i + 1) / 12.0f;
+            g.line(0.85f * std::cos(a0), 0.25f - 0.6f * std::sin(a0), 0.85f * std::cos(a1), 0.25f - 0.6f * std::sin(a1));
+        }
+        g.dot(0.85f, 0.25f);
+        g.dot(-0.85f, 0.25f);
+        g.dot(0, 0.25f, 0.08f);
+        break;
+    case ToolId::SketchText:
+        g.line(-0.7f, -0.7f, 0.7f, -0.7f);
+        g.line(0, -0.7f, 0, 0.75f);
+        g.line(-0.7f, -0.7f, -0.7f, -0.5f);
+        g.line(0.7f, -0.7f, 0.7f, -0.5f);
+        break;
     case ToolId::Slot:
         g.arc(-0.45f, 0, 0.4f, kTau * 0.25f, kTau * 0.75f);
         g.arc(0.45f, 0, 0.4f, -kTau * 0.25f, kTau * 0.25f);

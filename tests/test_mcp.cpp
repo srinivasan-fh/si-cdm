@@ -72,6 +72,20 @@ TEST_CASE("MCP tools build 2D and 3D geometry") {
     CHECK(tool(s, "create_solid", R"({"kind":"ellipsoid","semi_axes":[1,2]})")["isError"].asBool());
     while (d.scene.bodies().size() > 1) d.scene.remove(d.scene.bodies().size() - 1);
 
+    // The shapes from a few points.
+    {
+        Document e;
+        McpServer m(e, nullptr);
+        for (const char* a : {R"({"kind":"centre_rectangle","points":[[0,0],[10,5]]})", R"({"kind":"rectangle_3p","points":[[0,0],[10,0],[0,4]]})",
+                              R"({"kind":"circle_3p","points":[[0,0],[10,0],[0,10]]})", R"({"kind":"line","points":[[50,0],[60,0]]})",
+                              R"({"kind":"elliptical_arc","points":[[0,50],[20,50],[30,50],[0,70]],"radius":10})",
+                              R"({"kind":"conic","points":[[0,100],[40,100],[20,130]],"rho":0.6})", R"({"kind":"text","points":[[0,150]],"text":"Ok","height":8})"})
+            CHECK(!tool(m, "create_sketch", a)["isError"].asBool());
+        const std::string lineName = e.scene.sketch().curves()[3].name;
+        CHECK(!tool(m, "create_sketch", R"({"kind":"tangent_arc","points":[[70,10]],"curve":")" + lineName + R"("})")["isError"].asBool());
+        CHECK(e.scene.sketch().curves().back().kind == CurveKind::Arc);
+        CHECK(tool(m, "create_sketch", R"({"kind":"circle_3p","points":[[0,0],[1,1]]})")["isError"].asBool());
+    }
     r = tool(s, "create_sketch", R"({"kind":"rectangle","points":[[0,0],[40,20]],"plane":"front"})");
     CHECK(!r["isError"].asBool());
     CHECK(d.scene.sketch().curves().size() == 1);

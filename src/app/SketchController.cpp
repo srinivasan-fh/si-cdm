@@ -1,5 +1,6 @@
 #include "app/SketchController.hpp"
 
+#include "core/SketchShapes.hpp"
 #include "core/Units.hpp"
 
 #include <cmath>
@@ -77,6 +78,16 @@ bool SketchController::hover(const Scene& scene, const OrbitCamera& cam, SketchP
         if (std::fabs(p.x - last.x) > std::fabs(p.y - last.y)) p.y = last.y;
         else p.x = last.x;
     }
+    // A free end of a curve under the cursor: the tangent arc carries on from it.
+    m_hoverTangent.reset();
+    if (m_snappedToPoint && m_points.empty())
+        for (const SketchCurve& c : scene.sketch().curves()) {
+            if (!c.visible || !onPlane(c, plane, frame)) continue;
+            for (bool atStart : {false, true}) {
+                Vec2 q, d;
+                if (curveEndDirection(c, atStart, q, d) && dist(q, p) < 1e-5f) m_hoverTangent = d;
+            }
+        }
     m_hover = p;
     m_hasHover = true;
     return true;
@@ -98,6 +109,11 @@ std::optional<SketchCurve> SketchController::pending(ToolId tool, Vec2 q) const 
         const float dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
         const float t = l2 > 0 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / l2, 0.0f, 1.0f) : 0.0f;
         return std::hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+    };
+    // A shape made in plane coordinates, put on this plane.
+    auto placed = [&](std::optional<SketchCurve> c) -> std::optional<SketchCurve> {
+        if (!c) return std::nullopt;
+        return makeCurve(c->kind, c->pts, c->radius);
     };
     switch (tool) {
     case ToolId::Arc: // start, end, then a point on it
@@ -140,6 +156,35 @@ std::optional<SketchCurve> SketchController::pending(ToolId tool, Vec2 q) const 
             return makeCurve(CurveKind::Polyline, pts);
         }
         return std::nullopt;
+    case ToolId::CenterRectangle:
+        if (n == 1) return placed(centreRectangle(m_points[0], q));
+        return std::nullopt;
+    case ToolId::Rectangle3Point:
+        if (n == 1 && dist(m_points[0], q) > 0) return makeCurve(CurveKind::Line, {m_points[0], q});
+        if (n == 2) return placed(rectangle3Points(m_points[0], m_points[1], q));
+        return std::nullopt;
+    case ToolId::Circle3Point:
+        if (n == 1 && dist(m_points[0], q) > 0) return makeCurve(CurveKind::Line, {m_points[0], q});
+        if (n == 2) return placed(circle3Points(m_points[0], m_points[1], q));
+        return std::nullopt;
+    case ToolId::TangentArc:
+        if (n == 1 && m_tangent) return placed(tangentArc(m_points[0], *m_tangent, q));
+        return std::nullopt;
+    case ToolId::Conic:
+        if (n == 1 && dist(m_points[0], q) > 0) return makeCurve(CurveKind::Line, {m_points[0], q});
+        if (n == 2) return placed(conicCurve(m_points[0], m_points[1], q, m_conicRho));
+        return std::nullopt;
+    case ToolId::EllipticalArc: // centre, major axis end, minor radius, then the arc's start and end
+        if (n <= 2) return pending(ToolId::Ellipse, q);
+        if (n >= 3) {
+            const Vec2 c = m_points[0], m = m_points[1];
+            const float l = dist(c, m);
+            if (!(l > 0)) return std::nullopt;
+            const float ry = std::fabs((m.x - c.x) * (m_points[2].y - c.y) - (m.y - c.y) * (m_points[2].x - c.x)) / l;
+            if (n == 3) return makeCurve(CurveKind::Ellipse, {c, m}, ry);
+            return placed(ellipticalArc(c, m, ry, m_points[3], q));
+        }
+        return std::nullopt;
     case ToolId::Spline:
         if (n >= 1) {
             std::vector<Vec2> pts = m_points;
@@ -168,6 +213,35 @@ std::optional<SketchCurve> SketchController::click(ToolId tool, bool doubleClick
         }
         if (auto c = pending(tool, p)) {
             m_points.clear();
+            return c;
+        }
+        return std::nullopt;
+    case ToolId::CenterRectangle:
+    case ToolId::Rectangle3Point:
+    case ToolId::Circle3Point:
+    case ToolId::Conic:
+    case ToolId::EllipticalArc: {
+        const std::size_t clicks = tool == ToolId::CenterRectangle ? 1 : tool == ToolId::EllipticalArc ? 4 : 2; // before the last
+        if (m_points.size() < clicks) {
+            if (m_points.empty() || dist(p, m_points.back()) > 1e-6f) m_points.push_back(p);
+            return std::nullopt;
+        }
+        if (auto c = pending(tool, p)) {
+            m_points.clear();
+            return c;
+        }
+        return std::nullopt;
+    }
+    case ToolId::TangentArc:
+        if (m_points.empty()) { // a free end of a curve to carry on from
+            if (!m_hoverTangent) return std::nullopt;
+            m_tangent = m_hoverTangent;
+            m_points.push_back(p);
+            return std::nullopt;
+        }
+        if (auto c = pending(tool, p)) {
+            m_points.clear();
+            m_tangent.reset();
             return c;
         }
         return std::nullopt;

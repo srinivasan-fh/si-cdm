@@ -11,7 +11,8 @@ enum class ToolId {
     // Navigate & select
     Move, Select, BoxSelect, LassoSelect, Orbit, Pan, Zoom,
     // I. 2D sketches & profiles
-    Point, Line, Polyline, Arc, Conic, Circle, Ellipse, Rectangle, Slot, Polygon, Spline, SketchTrim, SketchExtend, SketchOffset,
+    Point, Line, Polyline, Arc, Conic, Circle, Ellipse, Rectangle, Slot, Polygon, Spline,
+    CenterRectangle, Rectangle3Point, Circle3Point, TangentArc, EllipticalArc, SketchText, SketchTrim, SketchExtend, SketchOffset,
     // II. 3D solid primitives
     Block, Wedge, Pyramid, Prism, Cylinder, Cone, Sphere, Torus, Frustum, Tube, Ellipsoid, Capsule, Hemisphere, Spring,
     // III. Form features

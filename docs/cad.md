@@ -53,6 +53,26 @@ leaves the curves showing.
 
 ## Sketching
 
+### More sketch shapes
+
+```text
+RECT CENTER centre corner                      a rectangle out from its centre
+RECT 3P a b c                                  at any angle: one side a-b, the width through c (a closed polyline)
+CIRCLE 3P a b c                                through three points
+CIRCLE TTR line line r [NEAR x,y]              touching two lines (of the four, the one nearest the point)
+ARC TANGENT [curve] [START] end                on from a line's, arc's or open curve's end without a kink
+ELLIPSE centre major-end minor-r FROM p TO q   an elliptical arc, counter-clockwise from p to q
+CONIC start end apex [RHO r]                   0.5: a parabola; less: an ellipse's arc; more: a hyperbola's
+SKETCHTEXT "text" [AT x,y] [HEIGHT h] [FONT sans|bold|mono] [ANGLE deg]
+```
+
+The toolbar has a tool for each in the rectangle, circle, arc and spline flyouts. The Tangent
+Arc tool starts on a free end (it snaps there); the Conic tool takes rho from the options bar,
+the Text tool its text and height. A conic is kept as a spline through 33 points evenly along
+it, within 0.05% of its span of the exact curve; text is closed polylines, the holes in letters
+included. An elliptical arc stays an ellipse: constraints on its centre, axis and radius keep
+its ends where they were along it.
+
 ### Sketch planes and datum planes
 
 ```text

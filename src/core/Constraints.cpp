@@ -105,10 +105,14 @@ void writeParams(SketchCurve& c, const double* x) {
         return;
     }
     case CurveKind::Ellipse:
-    case CurveKind::Slot:
+    case CurveKind::Slot: {
+        float t0 = 0, t1 = 0; // an elliptical arc keeps its ends' places on the ellipse
+        if (isEllipticalArc(c)) ellipseArcParams(c, t0, t1);
         c.pts[0] = {f(0), f(1)}, c.pts[1] = {f(2), f(3)};
         c.radius = std::max(f(4), 1e-4f);
+        if (isEllipticalArc(c)) c.pts[2] = ellipsePointAt(c, t0), c.pts[3] = ellipsePointAt(c, t1);
         return;
+    }
     default: {
         const bool closed = closedPolyline(c);
         const int count = paramCount(c) / 2; // before the points move (moving the first opens the loop)

@@ -32,6 +32,7 @@ add_executable(sicdm_tests
     test_surfacing.cpp
     test_pickfeature.cpp
     test_shapes.cpp
+    test_sketchshapes.cpp
     test_sketch_edit.cpp
     test_lathe.cpp
     test_system.cpp
