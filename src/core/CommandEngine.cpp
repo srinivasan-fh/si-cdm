@@ -19,6 +19,7 @@
 #include "core/AssemblyCommand.hpp"
 #include "core/SketchEdit.hpp"
 #include "core/SketchShapes.hpp"
+#include "core/PointCloud.hpp"
 #include "core/Collide.hpp"
 #include "core/ComponentCommand.hpp"
 #include "core/FaceCommand.hpp"
@@ -65,6 +66,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -866,7 +868,7 @@ Document::JobsUndo swapSide(Document& doc, Document::JobsUndo s, std::size_t dep
 
 bool bodyCommand(const std::string& cmd) {
     static const char* const kBody[] = {"BOX",     "CYLINDER", "CONE",   "SPHERE", "TORUS",   "WEDGE",      "PYRAMID",  "PRISM",
-                                        "FRUSTUM", "TUBE",     "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING",
+                                        "FRUSTUM", "TUBE",     "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "POINTCLOUD",
                                         "EXTRUDE", "REVOLVE",  "SWEEP",  "LOFT",   "PATTERN", "MIRROR",     "FILLET",   "CHAMFER",
                                         "HOLE",    "POCKET",   "CHANNEL", "TRIM",  "BOSS",    "SUBDIVIDE",  "SYMMETRIZE", "DECIMATE",
                                         "REPAIR",  "ORIENT",   "IMPORT", "PART",   "MOVE",    "ROTATE",     "SCALE",    "RIG",    "TERRAIN", "ARM",
@@ -879,7 +881,7 @@ bool bodyCommand(const std::string& cmd) {
 
 bool historyCommand(const std::string& cmd) {
     static const char* const kModel[] = {"LINE",     "PLINE",   "RECT",    "CIRCLE",   "POINT",     "BOX",     "CYLINDER", "CONE",    "SPHERE",
-                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "CONIC", "SKETCHTEXT",
+                                         "FRUSTUM",  "TUBE",    "ELLIPSOID", "CAPSULE", "HEMISPHERE", "SPRING", "CONIC", "SKETCHTEXT", "POINTCLOUD",
                                          "TORUS",    "WEDGE",   "PYRAMID", "PRISM",    "EXTRUDE",   "REVOLVE", "SWEEP",    "LOFT",    "PATTERN",
                                          "MIRROR",   "FILLET",  "CHAMFER",  "SCULPT",  "REMESH",   "MASK",      "SUBDIVIDE", "SYMMETRIZE", "DECIMATE", "HOLE",
                                          "POCKET",   "CHANNEL", "TRIM",    "BOSS",     "BOOLEAN",   "SHELL",   "ARMOR",    "JOINT",   "LIGHTEN",
@@ -5150,8 +5152,100 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         default: return out.fail("Export supports .stl .obj .3mf .gltf .glb .fbx .step .igs .dxf .svg");
         }
     }
+    // Point clouds: a body of points (no triangles), and a mesh made from them.
+    auto importPoints = [&](const std::string& path, float scale, std::optional<Vec3> at) {
+        std::vector<Vec3> pts, nrm;
+        std::string why;
+        if (!readPointCloud(path, pts, nrm, &why)) return out.fail(why);
+        Body b;
+        b.kind = "pointcloud";
+        b.name = "Point Cloud " + std::to_string(++doc.primitiveSerial);
+        b.color = {0.35f, 0.75f, 0.95f};
+        for (std::size_t i = 0; i < pts.size(); ++i) b.mesh.vertices.push_back({pts[i] * scale, nrm.empty() ? Vec3{0, 0, 0} : nrm[i]});
+        b.offset = at.value_or(Vec3{});
+        const std::string name = b.name;
+        doc.scene.add(std::move(b));
+        doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+        doc.selectedCurve = doc.selectedImage = -1;
+        markChanged(doc);
+        out.say("Imported " + name + ": " + std::to_string(pts.size()) + " points" + (nrm.empty() ? "" : " with normals") + ", spacing about " +
+                lengthText(pointSpacing(pts) * scale) + " (POINTCLOUD MESH makes a mesh)");
+        return out;
+    };
+    if (cmd == "POINTCLOUD") {
+        // POINTCLOUD IMPORT file [SCALE s] [@x,y,z] | POINTCLOUD MESH [cloud] [VOXEL v] | POINTCLOUD NORMALS [cloud]
+        const std::string sub = a.empty() ? "" : lower(a[0]);
+        if (sub == "import") {
+            std::vector<std::string> rest(a.begin() + 1, a.end());
+            float scale = 1.0f;
+            std::optional<Vec3> at;
+            for (std::size_t i = 0; i < rest.size();) {
+                if (iequal(rest[i], "scale") && i + 1 < rest.size() && parseNumber(rest[i + 1])) {
+                    scale = *parseNumber(rest[i + 1]);
+                    rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i), rest.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+                } else if (rest[i].size() > 1 && rest[i][0] == '@' && parseVec3(rest[i].substr(1))) {
+                    at = parseVec3(rest[i].substr(1));
+                    rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i));
+                } else ++i;
+            }
+            if (rest.empty() || !(scale > 0)) return usage();
+            return importPoints(joinArgs(rest), scale, at);
+        }
+        if (sub == "mesh" || sub == "normals") {
+            std::size_t i = 1;
+            std::vector<std::string> nameWords;
+            float voxel = 0;
+            bool keep = false;
+            for (; i < a.size(); ++i) {
+                if (iequal(a[i], "voxel") && i + 1 < a.size()) {
+                    const auto v = parseLength(a[++i]);
+                    if (!v || !(*v > 0)) return out.fail("VOXEL needs a length");
+                    voxel = static_cast<float>(*v);
+                } else if (iequal(a[i], "keep")) keep = true;
+                else nameWords.push_back(a[i]);
+            }
+            const int bi = nameWords.empty() ? doc.selectedBody : findBody(doc, joinArgs(nameWords));
+            if (bi < 0 || bi >= static_cast<int>(doc.scene.bodies().size())) return out.fail("Select a point cloud, or name it");
+            Body& cloud = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            if (cloud.kind != "pointcloud") return out.fail(cloud.name + " is not a point cloud");
+            std::vector<Vec3> pts, nrm;
+            for (const Vertex& v : cloud.mesh.vertices) {
+                pts.push_back(v.position);
+                if (length(v.normal) > 0.5f) nrm.push_back(v.normal);
+            }
+            if (nrm.size() != pts.size()) nrm.clear();
+            if (sub == "normals") {
+                nrm = estimateNormals(pts);
+                for (std::size_t k = 0; k < pts.size(); ++k) cloud.mesh.vertices[k].normal = nrm[k];
+                doc.scene.touchBodies();
+                markChanged(doc);
+                out.say("Estimated " + std::to_string(pts.size()) + " normals on " + cloud.name);
+                return out;
+            }
+            ReconstructReport rep;
+            std::string why;
+            MeshData m = reconstructSurface(pts, nrm, voxel, &rep, &why);
+            if (m.indices.empty()) return out.fail("Cannot mesh " + cloud.name + ": " + why);
+            Body b = meshBody(cloud.name + " Mesh", std::move(m), {0.8f, 0.8f, 0.82f});
+            b.offset = cloud.offset;
+            const std::string name = b.name, from = cloud.name;
+            if (!keep) cloud.visible = false;
+            doc.scene.add(std::move(b));
+            doc.selectedBody = static_cast<int>(doc.scene.bodies().size()) - 1;
+            markChanged(doc);
+            out.say("Made " + name + " from " + from + ": " + std::to_string(rep.triangles) + " triangles on a " + lengthText(rep.voxel) + " grid" +
+                    (rep.dropped ? ", " + std::to_string(rep.dropped) + " far from every point left out (an open scan stays open)" : std::string()));
+            return out;
+        }
+        return usage();
+    }
     if (cmd == "IMPORT") {
         if (a.empty()) return usage();
+        {
+            const std::string p = lower(joinArgs(a));
+            for (const char* e : {".xyz", ".pts", ".asc"})
+                if (p.size() > std::strlen(e) && p.compare(p.size() - std::strlen(e), std::strlen(e), e) == 0) return importPoints(joinArgs(a), 1.0f, std::nullopt);
+        }
         std::vector<std::string> rest = a;
         std::optional<Vec2> at;
         std::optional<float> width;

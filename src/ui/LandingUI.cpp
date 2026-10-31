@@ -2087,6 +2087,10 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
         st.requestImport = false;
         requestFile(FileImport, st);
     }
+    if (st.requestPointCloud) {
+        st.requestPointCloud = false;
+        requestFile(FilePointCloud, st);
+    }
     ImGui::SetNextWindowPos(mv->WorkPos);
     ImGui::SetNextWindowSize({mv->WorkSize.x, 0.0f});
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -2235,6 +2239,13 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
         if (ImGui::Button(tr("Import..."))) st.requestImport = true;
         ImGui::SameLine();
         ImGui::TextDisabled("%s", tr("STL, OBJ, 3MF, PLY, glTF, STEP, IGES and more: a mesh file comes in as a body"));
+    } else if (tool.id == ToolId::PointCloud) {
+        if (ImGui::Button(tr("Import Points..."))) st.requestPointCloud = true;
+        ImGui::SameLine();
+        if (ImGui::Button(tr("Make Mesh"))) cmd.commands.push_back("POINTCLOUD MESH");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("A closed mesh through the selected point cloud"));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", tr("XYZ, PTS, ASC, CSV or PLY scans; select a cloud, then Make Mesh"));
     } else if (tool.id == ToolId::SubD) {
         ImGui::TextDisabled("%s", tr("Click a body: one level of subdivision a click (Ctrl+Z takes it back)"));
     } else if (isPickFeatureTool(tool.id)) {
@@ -4045,6 +4056,9 @@ void LandingUI::requestFile(int action, const UiState& st) {
         break;
     }
     case FileImportStep: m_fileDialog.open(FileDialog::Mode::Open, "Import STEP / IGES (exact solids)", {".step", ".stp", ".igs", ".iges"}, dir); break;
+    case FilePointCloud:
+        m_fileDialog.open(FileDialog::Mode::Open, "Import Point Cloud", {".xyz", ".pts", ".asc", ".ply", ".csv", ".txt"}, dir);
+        break;
     case FileExportStep:
         m_fileDialog.open(FileDialog::Mode::Save, "Export STEP (AP214) or IGES (5.3)", {".step", ".stp", ".igs", ".iges"}, dir, projectStem(st) + ".step");
         break;
@@ -4112,6 +4126,7 @@ void LandingUI::drawFileDialogs(UiCommands& cmd, UiState& st) {
         case FileImport:
         case FileImportImage:
         case FileImportStep: cmd.commands.push_back("IMPORT " + quoted(*path)); break;
+        case FilePointCloud: cmd.commands.push_back("POINTCLOUD IMPORT " + quoted(*path)); break;
         case FileSheetExport: cmd.commands.push_back("SHEET EXPORT " + quoted(*path)); break;
         case FileVideo: st.videoPath = *path + (st.videoFormat == 3 ? "/" : ""); break;
         case FileExportStep:

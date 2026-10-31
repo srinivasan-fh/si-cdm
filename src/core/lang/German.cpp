@@ -1374,6 +1374,11 @@ const char* const kGerman[][2] = {
     {"Fair a B-spline surface: its curvature smoothed (the control net's bending taken down) with its edges and their tangents kept. Click the surface; steps in the options bar.", "Eine B-Spline-Fläche glätten: ihre Krümmung ausgeglichen (die Biegung des Kontrollnetzes verringert), Kanten und deren Tangenten bleiben. Die Fläche anklicken; Schritte in der Optionsleiste."},
     {"Steps", "Schritte"},
     {"Weight", "Gewicht"},
+    {"A closed mesh through the selected point cloud", "Ein geschlossenes Netz durch die gewählte Punktwolke"},
+    {"Import Points...", "Punkte importieren ..."},
+    {"Laser-scan points (XYZ, PTS, ASC, CSV, PLY): import them, then make a closed mesh through them for reverse engineering. Click the window or Import Points.", "Laserscan-Punkte (XYZ, PTS, ASC, CSV, PLY): importieren, dann ein geschlossenes Netz durch sie legen für das Reverse Engineering. Ins Fenster klicken oder Punkte importieren."},
+    {"Make Mesh", "Netz erzeugen"},
+    {"XYZ, PTS, ASC, CSV or PLY scans; select a cloud, then Make Mesh", "XYZ-, PTS-, ASC-, CSV- oder PLY-Scans; eine Wolke wählen, dann Netz erzeugen"},
 };
 
 

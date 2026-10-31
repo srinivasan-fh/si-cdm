@@ -53,6 +53,7 @@ struct UiState {
     bool sketchConstruction = false; // new curves are construction curves
     int polygonSides = 6;
     bool requestImport = false;      // the mesh tool: open the import dialog
+    bool requestPointCloud = false;  // the point cloud tool: open its import dialog
     float conicRho = 0.5f;           // conic tool: 0.5 a parabola
     std::string sketchText = "Text"; // sketch text tool
     float sketchTextHeight = 10.0f;
@@ -387,7 +388,7 @@ private:
 
     // File menu.
     enum FileAction {
-        FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport,
+        FileNone, FileOpen, FileSaveAs, FileImport, FileImportImage, FileExport, FileSlice, File3mf, FilePost, FileImportStep, FileExportStep, FileSheetExport, FilePointCloud,
         FileLathePost, FileToolsImport, FileToolsExport, FileLicence, FileInsertComponent, FileMakeComponent, FilePackComponents,
         FileStudyExport, FileStackExport, FileExportModel, FileVideo
     };

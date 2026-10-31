@@ -127,6 +127,7 @@ private:
     void drawSimulationOverlay() const;
     void drawToolpathOverlay() const;
     void drawDatumOverlay() const;
+    void drawPointClouds() const;
     void drawFieldLegend() const;
     void drawConstraintOverlay() const;
     // What Fit / Home frame: the model, and in the Simulation where physics bodies go.

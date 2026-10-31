@@ -789,6 +789,10 @@ void Application::onCanvasClick(float x, float y, bool doubleClick) {
         m_uiState.requestImport = true;
         return;
     }
+    if (tool == ToolId::PointCloud) {
+        m_uiState.requestPointCloud = true;
+        return;
+    }
     if (tool == ToolId::SubD) {
         if (const auto hit = pick(x, y)) runCommandLine("SUBDIVIDE \"" + m_doc.scene.bodies()[static_cast<std::size_t>(hit->body)].name + "\"");
         else setStatus("Click a body to subdivide it");
@@ -1425,6 +1429,24 @@ bool Application::updateRadial() {
         m_radial = Radial::None;
     }
     return true;
+}
+
+void Application::drawPointClouds() const {
+    // Point clouds have no triangles: their points as dots (at most about 150 000 a cloud).
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    const auto sel = selectedBodies(m_doc.scene, m_uiState.selectedBody, m_uiState.bodySelection);
+    for (std::size_t i = 0; i < m_doc.scene.bodies().size(); ++i) {
+        const Body& b = m_doc.scene.bodies()[i];
+        if (b.kind != "pointcloud" || !b.visible) continue;
+        const bool on = std::find(sel.begin(), sel.end(), static_cast<int>(i)) != sel.end();
+        const Vec3 c = on ? Vec3{1.0f, 0.75f, 0.3f} : b.color;
+        const ImU32 col = IM_COL32(static_cast<int>(c.x * 255), static_cast<int>(c.y * 255), static_cast<int>(c.z * 255), 255);
+        const std::size_t n = b.mesh.vertices.size(), step = std::max<std::size_t>(1, n / 150000);
+        for (std::size_t k = 0; k < n; k += step)
+            if (const auto p = projectToScreen(camera(), b.mesh.vertices[k].position + b.offset, io.DisplaySize))
+                dl->AddRectFilled({p->x - 1.0f, p->y - 1.0f}, {p->x + 1.0f, p->y + 1.0f}, col);
+    }
 }
 
 void Application::drawSculptOverlay() {
@@ -2272,6 +2294,7 @@ void Application::frame(float dt) {
     if (m_uiState.mode == ViewMode::Model3D && (!m_doc.state.datums.empty() || !m_doc.state.refAxes.empty() || !m_doc.state.refPoints.empty()))
         drawDatumOverlay();
     if (m_uiState.mode == ViewMode::Model3D) drawFieldLegend();
+    drawPointClouds();
     if (m_explodeT > 0 && m_doc.state.assembly.explode.trails) drawExplodeOverlay();
     if (m_leftDrag == DragMode::PushPull) drawPushPullOverlay();
     drawGizmo();

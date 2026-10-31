@@ -83,7 +83,7 @@ constexpr std::array<ToolInfo, static_cast<std::size_t>(ToolId::Count)> kTools =
     {T::TpmsLattice, C::Generative, SICDM_TR_NOOP("TPMS Lattice"), "", SICDM_TR_NOOP("Periodic gyroid-type infill for light, crash-absorbent parts. Click a solid body to fill it."), true},
 
     {T::MeshImport, C::Mesh, SICDM_TR_NOOP("STL / OBJ Mesh"), "", SICDM_TR_NOOP("Bring in a mesh or CAD file (STL, OBJ, 3MF, PLY, glTF, STEP, IGES...): click the window or Import on the options bar."), true},
-    {T::PointCloud, C::Mesh, SICDM_TR_NOOP("Point Cloud"), "", SICDM_TR_NOOP("Millions of points captured by 3D laser scanners."), false},
+    {T::PointCloud, C::Mesh, SICDM_TR_NOOP("Point Cloud"), "", SICDM_TR_NOOP("Laser-scan points (XYZ, PTS, ASC, CSV, PLY): import them, then make a closed mesh through them for reverse engineering. Click the window or Import Points."), true},
     {T::SubD, C::Mesh, SICDM_TR_NOOP("SubD Surface"), "", SICDM_TR_NOOP("Click a body to smooth it as a subdivision surface (Loop): each click splits every triangle in four and rounds the shape."), true},
 
     {T::SculptDraw, C::Sculpt, "Draw (Push / Pull)", "D",

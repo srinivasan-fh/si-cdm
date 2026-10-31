@@ -907,6 +907,17 @@ components and their licences. Details: [docs/licensing.md](docs/licensing.md).
 both windows: under the sketch in 2D for tracing, in place in 3D. Select one to set its width (mm),
 centre and opacity in the Model panel, or drag it with the Move tool.
 
+### Point clouds (scans)
+
+`POINTCLOUD IMPORT scan.xyz [SCALE s] [@x,y,z]` reads XYZ / PTS / ASC / CSV text (x y z, and
+nx ny nz when the file has them) or PLY vertices (ASCII or binary); `IMPORT` does the same for
+.xyz, .pts and .asc. The points show as dots. `POINTCLOUD NORMALS` estimates normals (from each
+point's nearest neighbours, turned to agree), and `POINTCLOUD MESH [cloud] [VOXEL v]` makes a
+closed mesh through them: the points' signed distance on a voxel grid (twice their spacing
+unless given), meshed and simplified; parts of the grid far from every point are left out, so
+an open scan stays open. A sphere sampled with 6000 points comes back within 0.05 mm of its
+20 mm radius. The Point Cloud tool imports and meshes from the options bar.
+
 ## Large models
 
 | Area | What SI CDM does | Measured |

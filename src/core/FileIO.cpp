@@ -1091,7 +1091,7 @@ bool projectFromText(const std::string& text, const std::string& path, Scene& sc
             }
             b.mesh.recordLayer = std::clamp(m["record_layer"].asInt(-1), -1, static_cast<int>(b.mesh.layers.size()) - 1);
             b.name = jb["name"].asString("Mesh");
-            b.kind = "mesh";
+            b.kind = kind == "pointcloud" ? kind : "mesh"; // a point cloud stays one
             if (jb["brep_step"].isString()) {
                 const std::vector<StepPart> parts = readStep(jb["brep_step"].asString());
                 if (parts.size() == 1 && parts[0].brep) {

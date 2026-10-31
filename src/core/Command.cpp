@@ -50,6 +50,8 @@ constexpr CommandSpec kCommands[] = {
     {"CYLINDER", "CYL", "CYLINDER r h [@x,y,z]", "Cylinder along +Z"},
     {"CONE", "", "CONE r h [rtop] [@x,y,z]", "Cone along +Z (a top radius makes a frustum)"},
     {"FRUSTUM", "", "FRUSTUM rbottom rtop h [@x,y,z]", "Truncated cone along +Z"},
+    {"POINTCLOUD", "POINTS SCAN", "POINTCLOUD IMPORT file [SCALE s] [@x,y,z] | MESH [cloud] [VOXEL v] [KEEP] | NORMALS [cloud]",
+     "Point clouds from scans (XYZ, PTS, ASC, CSV, PLY): import, estimate normals, make a mesh"},
     {"TUBE", "PIPE", "TUBE router rinner h [@x,y,z]", "Tube (pipe) along +Z"},
     {"ELLIPSOID", "", "ELLIPSOID a b [c] [@x,y,z]", "Ellipsoid with semi-axes a (X), b (Y), c (Z), resting on z"},
     {"CAPSULE", "", "CAPSULE r length [@x,y,z]", "Cylinder with round ends along +Z, length overall"},
