@@ -133,107 +133,210 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
     const Preferences& p = preferences();
     auto set = [&](const char* key, const std::string& value) { cmd.commands.push_back(std::string("PREFERENCES SET ") + key + " " + quotedArg(value)); };
 
-    ImGui::SeparatorText(tr("Language"));
-    {
-        std::string shown = p.language;
-        const std::vector<LanguageInfo> langs = languages();
-        for (const LanguageInfo& l : langs)
-            if (l.code == p.language) shown = l.name;
-        ImGui::SetNextItemWidth(260);
-        if (ImGui::BeginCombo("##language", shown.c_str())) {
-            for (const LanguageInfo& l : langs)
-                if (ImGui::Selectable(l.name.c_str(), l.code == p.language)) set("language", l.code);
+    // A check box for an ON/OFF preference.
+    auto toggle = [&](const char* label, bool value, const char* key) {
+        bool on = value;
+        if (ImGui::Checkbox(label, &on)) set(key, on ? "on" : "off");
+    };
+    // A number typed or dragged: sent when the edit ends.
+    auto numberField = [&](const char* label, float value, float lo, float hi, const char* fmt, const char* key) {
+        float v = value;
+        ImGui::SetNextItemWidth(160);
+        ImGui::SliderFloat(label, &v, lo, hi, fmt, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+        static float edited = 0;
+        if (ImGui::IsItemActive()) edited = v;
+        if (ImGui::IsItemDeactivatedAfterEdit()) set(key, std::to_string(edited));
+    };
+    // A choice among names.
+    auto choice = [&](const char* label, const std::string& value, const std::vector<std::pair<std::string, const char*>>& options, const char* key) {
+        const char* shown = value.c_str();
+        for (const auto& [name, text] : options)
+            if (name == value) shown = text;
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo(label, shown)) {
+            for (const auto& [name, text] : options)
+                if (ImGui::Selectable(text, name == value)) set(key, name);
             ImGui::EndCombo();
         }
-        ImGui::SameLine();
-        ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("More: a language file in the lang folder (see the User Guide)"));
-    }
+    };
 
-    ImGui::SeparatorText(tr("New projects"));
-    {
-        const std::string shown = p.units.empty() ? std::string("As the last project") : unitInfo(*parseUnitName(p.units)).name;
-        ImGui::SetNextItemWidth(260);
-        if (ImGui::BeginCombo(tr("Units"), shown.c_str())) {
-            if (ImGui::Selectable(tr("As the last project"), p.units.empty())) set("units", "last");
-            for (const LengthUnitInfo& u : lengthUnits())
-                if (ImGui::Selectable(u.name, p.units == u.symbol)) set("units", u.symbol);
-            ImGui::EndCombo();
+    if (ImGui::BeginTabBar("##preftabs")) {
+        if (ImGui::BeginTabItem(tr("General"))) {
+            ImGui::SeparatorText(tr("Language"));
+            {
+                std::string shown = p.language;
+                const std::vector<LanguageInfo> langs = languages();
+                for (const LanguageInfo& l : langs)
+                    if (l.code == p.language) shown = l.name;
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::BeginCombo("##language", shown.c_str())) {
+                    for (const LanguageInfo& l : langs)
+                        if (ImGui::Selectable(l.name.c_str(), l.code == p.language)) set("language", l.code);
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("More: a language file in the lang folder (see the User Guide)"));
+            }
+
+            ImGui::SeparatorText(tr("New projects"));
+            {
+                const std::string shown = p.units.empty() ? std::string("As the last project") : unitInfo(*parseUnitName(p.units)).name;
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::BeginCombo(tr("Units"), shown.c_str())) {
+                    if (ImGui::Selectable(tr("As the last project"), p.units.empty())) set("units", "last");
+                    for (const LengthUnitInfo& u : lengthUnits())
+                        if (ImGui::Selectable(u.name, p.units == u.symbol)) set("units", u.symbol);
+                    ImGui::EndCombo();
+                }
+            }
+
+            ImGui::SeparatorText(tr("Start-up"));
+            {
+                bool on = p.reopenLast;
+                if (ImGui::Checkbox(tr("Reopen the projects that were open when SI CDM closed"), &on)) set("reopen", on ? "on" : "off");
+                ImGui::TextDisabled("%s", tr("Off: start with the demo part. A project given on the command line opens on its own."));
+                bool splash = p.splash;
+                if (ImGui::Checkbox(tr("Show the splash screen while SI CDM loads"), &splash)) set("splash", splash ? "on" : "off");
+            }
+
+            ImGui::SeparatorText(tr("Updates"));
+            {
+                bool on = p.checkUpdates;
+                if (ImGui::Checkbox(tr("Check for a newer release when SI CDM starts"), &on)) set("updates", on ? "on" : "off");
+                static char url[512] = "";
+                if (!ImGui::IsAnyItemActive() || ImGui::IsWindowAppearing()) std::snprintf(url, sizeof(url), "%s", p.updateUrl.c_str());
+                ImGui::SetNextItemWidth(360);
+                ImGui::InputTextWithHint(tr("Release feed"), "https://.../latest.json", url, sizeof(url));
+                if (ImGui::IsItemDeactivatedAfterEdit() && p.updateUrl != url) set("update-url", url[0] ? url : "none");
+                ImGui::BeginDisabled(p.updateUrl.empty());
+                if (ImGui::Button(tr("Check Now"))) cmd.commands.push_back("UPDATES CHECK");
+                ImGui::EndDisabled();
+                if (p.updateUrl.empty()) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("Set the release feed your administrator gave you."));
+                }
+            }
+
+            ImGui::EndTabItem();
         }
-    }
-
-    ImGui::SeparatorText(tr("Autosave"));
-    {
-        bool on = p.autosaveSeconds > 0;
-        if (ImGui::Checkbox(tr("Keep a recovery copy of unsaved work"), &on)) set("autosave", on ? "60" : "off");
-        ImGui::BeginDisabled(!on);
-        static int seconds = 60;
-        if (!ImGui::IsAnyItemActive() || !on) seconds = p.autosaveSeconds > 0 ? p.autosaveSeconds : 60;
-        ImGui::SetNextItemWidth(260);
-        ImGui::SliderInt(tr("After (seconds)"), &seconds, 5, 600);
-        if (ImGui::IsItemDeactivatedAfterEdit()) set("autosave", std::to_string(seconds));
-        ImGui::EndDisabled();
-    }
-
-    ImGui::SeparatorText(tr("CAM and lathe set-ups start with"));
-    {
-        const CamMaterial* mat = camMaterial(p.camMaterial);
-        ImGui::SetNextItemWidth(260);
-        if (ImGui::BeginCombo(tr("Material"), mat ? mat->name.c_str() : "Default (aluminium)")) {
-            if (ImGui::Selectable(tr("Default (aluminium)"), !mat)) set("material", "default");
-            for (const CamMaterial& m : camMaterials())
-                if (ImGui::Selectable(m.name.c_str(), mat && m.key == mat->key)) set("material", m.key);
-            ImGui::EndCombo();
+        if (ImGui::BeginTabItem(tr("View"))) {
+            ImGui::SeparatorText(tr("The 3D window"));
+            choice(tr("Display"), p.displayMode,
+                   {{"shaded-edges", tr("Shaded with edges")}, {"shaded", tr("Shaded")}, {"wireframe", tr("Wireframe")}, {"hidden-line", tr("Hidden lines")}},
+                   "display");
+            choice(tr("Background"), p.background,
+                   {{"dark", tr("Dark")}, {"grey", tr("Grey")}, {"light", tr("Light")}, {"white", tr("White")}, {"black", tr("Black")}}, "background");
+            toggle(tr("Perspective (off: orthographic)"), p.perspective, "perspective");
+            toggle(tr("Show the grid"), p.grid, "grid");
+            toggle(tr("Show the view sphere"), p.viewSphere, "view-sphere");
+            toggle(tr("Show rulers along the canvas's top and left edges"), p.rulers, "rulers");
+            ImGui::TextDisabled("%s", tr("The view bar still changes these for the moment; these are how the window starts."));
+            ImGui::SeparatorText(tr("Navigation"));
+            toggle(tr("Zoom about the point under the mouse"), p.zoomToCursor, "zoom-to-cursor");
+            toggle(tr("Reverse the mouse wheel's zoom"), p.zoomInvert, "zoom-invert");
+            toggle(tr("Glide to standard views and Fit (off: jump)"), p.animateViews, "animate-views");
+            numberField(tr("Zoom speed"), p.zoomSpeed, 0.25f, 4.0f, "%.2fx", "zoom-speed");
+            numberField(tr("Orbit speed"), p.orbitSpeed, 0.25f, 4.0f, "%.2fx", "orbit-speed");
+            ImGui::EndTabItem();
         }
-        ImGui::SetNextItemWidth(260);
-        if (ImGui::BeginCombo(tr("Post processor"), p.camPost.empty() ? "Default (fanuc)" : p.camPost.c_str())) {
-            if (ImGui::Selectable(tr("Default (fanuc)"), p.camPost.empty())) set("post", "default");
-            for (const std::string& q : camPosts())
-                if (ImGui::Selectable(q.c_str(), p.camPost == q)) set("post", q);
-            ImGui::EndCombo();
+        if (ImGui::BeginTabItem(tr("Modelling"))) {
+            ImGui::SeparatorText(tr("Sketching"));
+            toggle(tr("Snap sketch points to the grid"), p.snapGrid, "snap-grid");
+            toggle(tr("Snap sketch points to other curves' points"), p.snapPoints, "snap-points");
+            ImGui::SeparatorText(tr("Move gizmo snap steps (Ctrl while dragging)"));
+            numberField(tr("Distance (mm)"), p.moveStep, 0.1f, 100.0f, "%g", "move-step");
+            numberField(tr("Angle (degrees)"), p.angleStep, 1.0f, 90.0f, "%g", "angle-step");
+            ImGui::SeparatorText(tr("CAM and lathe set-ups start with"));
+            {
+                const CamMaterial* mat = camMaterial(p.camMaterial);
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::BeginCombo(tr("Material"), mat ? mat->name.c_str() : "Default (aluminium)")) {
+                    if (ImGui::Selectable(tr("Default (aluminium)"), !mat)) set("material", "default");
+                    for (const CamMaterial& m : camMaterials())
+                        if (ImGui::Selectable(m.name.c_str(), mat && m.key == mat->key)) set("material", m.key);
+                    ImGui::EndCombo();
+                }
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::BeginCombo(tr("Post processor"), p.camPost.empty() ? "Default (fanuc)" : p.camPost.c_str())) {
+                    if (ImGui::Selectable(tr("Default (fanuc)"), p.camPost.empty())) set("post", "default");
+                    for (const std::string& q : camPosts())
+                        if (ImGui::Selectable(q.c_str(), p.camPost == q)) set("post", q);
+                    ImGui::EndCombo();
+                }
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::BeginCombo(tr("Machine"), p.camMachine.empty() ? "Default (generic)" : p.camMachine.c_str())) {
+                    if (ImGui::Selectable(tr("Default (generic)"), p.camMachine.empty())) set("machine", "default");
+                    for (const CamMachine& m : camMachinePresets())
+                        if (ImGui::Selectable(m.name.c_str(), p.camMachine == m.name)) set("machine", m.name);
+                    ImGui::EndCombo();
+                }
+                ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("A lathe set-up takes the material, and the post when the lathe has it."));
+            }
+
+            ImGui::EndTabItem();
         }
-        ImGui::SetNextItemWidth(260);
-        if (ImGui::BeginCombo(tr("Machine"), p.camMachine.empty() ? "Default (generic)" : p.camMachine.c_str())) {
-            if (ImGui::Selectable(tr("Default (generic)"), p.camMachine.empty())) set("machine", "default");
-            for (const CamMachine& m : camMachinePresets())
-                if (ImGui::Selectable(m.name.c_str(), p.camMachine == m.name)) set("machine", m.name);
-            ImGui::EndCombo();
+        if (ImGui::BeginTabItem(tr("Files"))) {
+            ImGui::SeparatorText(tr("Autosave"));
+            {
+                bool on = p.autosaveSeconds > 0;
+                if (ImGui::Checkbox(tr("Keep a recovery copy of unsaved work"), &on)) set("autosave", on ? "60" : "off");
+                ImGui::BeginDisabled(!on);
+                static int seconds = 60;
+                if (!ImGui::IsAnyItemActive() || !on) seconds = p.autosaveSeconds > 0 ? p.autosaveSeconds : 60;
+                ImGui::SetNextItemWidth(260);
+                ImGui::SliderInt(tr("After (seconds)"), &seconds, 5, 600);
+                if (ImGui::IsItemDeactivatedAfterEdit()) set("autosave", std::to_string(seconds));
+                ImGui::EndDisabled();
+            }
+
+            ImGui::SeparatorText(tr("Saving"));
+            toggle(tr("Keep the file a save replaces as name.sicdm.bak"), p.backup, "backup");
+            ImGui::SeparatorText(tr("Project folder"));
+            {
+                static char folder[512] = "";
+                if (!ImGui::IsAnyItemActive() || ImGui::IsWindowAppearing()) std::snprintf(folder, sizeof(folder), "%s", p.projectFolder.c_str());
+                ImGui::SetNextItemWidth(360);
+                ImGui::InputTextWithHint("##folder", tr("The current folder"), folder, sizeof(folder));
+                if (ImGui::IsItemDeactivatedAfterEdit() && p.projectFolder != folder) set("project-folder", folder[0] ? folder : "none");
+                ImGui::TextDisabled("%s", tr("Where Open and Save As start when no project is open."));
+            }
+            ImGui::EndTabItem();
         }
-        ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("A lathe set-up takes the material, and the post when the lathe has it."));
-    }
-
-    ImGui::SeparatorText(tr("View"));
-    {
-        bool on = p.rulers;
-        if (ImGui::Checkbox(tr("Show rulers along the canvas's top and left edges"), &on)) set("rulers", on ? "on" : "off");
-    }
-
-    ImGui::SeparatorText(tr("Start-up"));
-    {
-        bool on = p.reopenLast;
-        if (ImGui::Checkbox(tr("Reopen the projects that were open when SI CDM closed"), &on)) set("reopen", on ? "on" : "off");
-        ImGui::TextDisabled("%s", tr("Off: start with the demo part. A project given on the command line opens on its own."));
-    }
-
-    ImGui::SeparatorText(tr("Updates"));
-    {
-        bool on = p.checkUpdates;
-        if (ImGui::Checkbox(tr("Check for a newer release when SI CDM starts"), &on)) set("updates", on ? "on" : "off");
-        static char url[512] = "";
-        if (!ImGui::IsAnyItemActive() || ImGui::IsWindowAppearing()) std::snprintf(url, sizeof(url), "%s", p.updateUrl.c_str());
-        ImGui::SetNextItemWidth(360);
-        ImGui::InputTextWithHint(tr("Release feed"), "https://.../latest.json", url, sizeof(url));
-        if (ImGui::IsItemDeactivatedAfterEdit() && p.updateUrl != url) set("update-url", url[0] ? url : "none");
-        ImGui::BeginDisabled(p.updateUrl.empty());
-        if (ImGui::Button(tr("Check Now"))) cmd.commands.push_back("UPDATES CHECK");
-        ImGui::EndDisabled();
-        if (p.updateUrl.empty()) {
-            ImGui::SameLine();
-            ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("Set the release feed your administrator gave you."));
+        if (ImGui::BeginTabItem(tr("Graphics"))) {
+            ImGui::SeparatorText(tr("Graphics"));
+            {
+                const int aa = p.antialiasing;
+                const char* shown = aa == 0 ? tr("Off") : aa == 2 ? "2x" : aa == 8 ? "8x" : "4x";
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::BeginCombo(tr("Antialiasing"), shown)) {
+                    if (ImGui::Selectable(tr("Off"), aa == 0)) set("antialiasing", "0");
+                    for (int n : {2, 4, 8})
+                        if (ImGui::Selectable((std::to_string(n) + "x").c_str(), aa == n)) set("antialiasing", std::to_string(n));
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", tr("from the next start"));
+            }
+            toggle(tr("Draw in step with the screen (V-sync)"), p.vsync, "vsync");
+            ImGui::SeparatorText(tr("AI agents"));
+            {
+                bool on = p.mcpPort > 0;
+                if (ImGui::Checkbox(tr("Start the MCP server for AI agents with SI CDM"), &on)) set("mcp-port", on ? "8765" : "off");
+                ImGui::BeginDisabled(!on);
+                int port = p.mcpPort > 0 ? p.mcpPort : 8765;
+                ImGui::SetNextItemWidth(160);
+                ImGui::InputInt(tr("Port"), &port, 0);
+                if (ImGui::IsItemDeactivatedAfterEdit()) set("mcp-port", std::to_string(port));
+                ImGui::EndDisabled();
+            }
+            ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem(tr("Keyboard"))) {
+            drawKeyboardShortcuts(cmd);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
     }
-
-    ImGui::SeparatorText(tr("Keyboard Shortcuts"));
-    drawKeyboardShortcuts(cmd);
 
     ImGui::Separator();
     ImGui::TextColored(theme::vec(theme::kTextDim), tr("Saved in %s"), preferencesPath().c_str());

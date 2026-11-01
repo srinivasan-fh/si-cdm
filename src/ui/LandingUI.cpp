@@ -365,7 +365,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     m_canvasMax = {mv->WorkPos.x + mv->WorkSize.x - rightDock, bottom};
     if (rulers) drawRulers(cam, st);
 
-    const ViewCubeResult vc = m_viewCube.draw(cam, {m_canvasMax.x - 10.0f, m_canvasMax.y - 10.0f}, is2D);
+    const ViewCubeResult vc = st.showViewSphere ? m_viewCube.draw(cam, {m_canvasMax.x - 10.0f, m_canvasMax.y - 10.0f}, is2D) : ViewCubeResult{};
     if (vc.viewDirection) cmd.viewDirection = vc.viewDirection;
     if (vc.drawingPlane) {
         cmd.plane = vc.drawingPlane;
@@ -3885,6 +3885,7 @@ std::string quoted(const std::string& path) { return "\"" + path + "\""; }
 std::string startDirFor(const UiState& st) {
     if (!st.projectPath.empty()) return std::filesystem::path(st.projectPath).parent_path().string();
     std::error_code ec;
+    if (const std::string& f = preferences().projectFolder; !f.empty() && std::filesystem::is_directory(f, ec)) return f; // PROJECT-FOLDER
     return std::filesystem::current_path(ec).string();
 }
 

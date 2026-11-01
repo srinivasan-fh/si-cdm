@@ -2,8 +2,9 @@
 
 ## Preferences
 
-*File → Preferences* (`Ctrl+,`) holds the settings that apply to every project. Each change
-is saved at once and is kept for the next session.
+*File → Preferences* (`Ctrl+,`) holds the settings that apply to every project, on six tabs:
+*General*, *View*, *Modelling*, *Files*, *Graphics* and *Keyboard*. Each change is saved at once,
+takes effect at once (antialiasing from the next start), and is kept for the next session.
 
 | Setting | What it does |
 | --- | --- |
@@ -12,6 +13,17 @@ is saved at once and is kept for the next session.
 | Material, post processor, machine | What *Set Up the Selected Part* on the CAM panel starts a job with. A lathe job takes the material, and the post when the lathe has it. |
 | Rulers | Show the rulers along the canvas's top and left edges. The ruler button on the view bar changes this too, and is remembered. |
 | Reopen | Start with the projects that were open when SI CDM last closed, in the same tabs, with the same one in front; with none open, the most recent project. A project moved or deleted since is left out. Off starts with the demo part. A project given on the command line (or double-clicked) opens on its own instead. If SI CDM closed while reopening them (a damaged file), the next start doesn't try again and says so; open them from *File → Recent*. |
+| Display, background | How the 3D window draws: shaded with edges, shaded, wireframe or hidden lines, on a dark, grey, light, white or black background. The view bar still changes the display for the moment. |
+| Perspective, grid, view sphere | Whether the 3D window starts in perspective (off: orthographic), with the grid, and with the view sphere in its corner. |
+| Zoom about the mouse, reverse zoom, speeds | Zoom about the point under the mouse (off: the view's centre); turn the wheel's direction round; zoom and orbit speed from 0.25x to 4x. |
+| Glide | Standard views, Fit and the view sphere glide to the new view; off, they jump. |
+| Snap | Sketch points snap to the grid and to other curves' points (the snap buttons on the options bar change these too, and are remembered). |
+| Gizmo steps | The Move gizmo's snap steps while Ctrl is held: a distance and an angle (also set, and remembered, from its options bar). |
+| Backup | A save keeps the file it replaces as `name.sicdm.bak` beside it: one step back, whatever else happens. |
+| Project folder | Where *Open* and *Save As* start when no project is open (else the open project's folder). |
+| Splash | The splash screen while SI CDM loads (`--no-splash` turns it off for one start). |
+| Antialiasing, V-sync | Smooth edges with 2, 4 (the default) or 8 samples, or off for slow graphics; drawing in step with the screen (off: as fast as it can). |
+| MCP server | Start the server AI agents connect to with SI CDM, on this port (see *AI agents (MCP)* in the README). |
 | Updates | Look for a newer release when SI CDM starts, from the release feed your administrator gives you. |
 | Language | The language of menus, buttons and tooltips: English or Deutsch built in, or one installed as a [language file](#languages). |
 
@@ -27,6 +39,18 @@ PREFERENCES SET machine vmc          a machine preset, or DEFAULT
 PREFERENCES SET updates on           ON or OFF
 PREFERENCES SET rulers off           ON or OFF
 PREFERENCES SET reopen off           ON or OFF: reopen the last work space at start-up
+PREFERENCES SET display wireframe    shaded, shaded-edges, wireframe, hidden-line
+PREFERENCES SET background light     dark, grey, light, white, black
+PREFERENCES SET perspective off      ON or OFF (off: orthographic); likewise grid, view-sphere
+PREFERENCES SET zoom-invert on       ON or OFF; likewise zoom-to-cursor, animate-views
+PREFERENCES SET zoom-speed 1.5       0.25 to 4; likewise orbit-speed
+PREFERENCES SET snap-grid off        ON or OFF; likewise snap-points
+PREFERENCES SET move-step 0.5        mm; angle-step in degrees
+PREFERENCES SET backup on            ON or OFF: keep name.sicdm.bak on each save
+PREFERENCES SET project-folder "D:\Work\Parts"   or NONE
+PREFERENCES SET splash off           ON or OFF; likewise vsync
+PREFERENCES SET antialiasing 8       0 (OFF), 2, 4 or 8, from the next start
+PREFERENCES SET mcp-port 8765        start the MCP server at start-up, or OFF
 PREFERENCES SET update-url https://example.com/sicdm/latest.json
 PREFERENCES SET language de          en, de, or an installed language's code; shown at once
 PREFERENCES LANGUAGES                the languages there are

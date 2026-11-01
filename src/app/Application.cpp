@@ -123,7 +123,7 @@ bool Application::init() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // required on macOS
-    glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_SAMPLES, preferences().antialiasing); // the ANTIALIASING preference (0: off)
     glfwWindowHint(GLFW_STENCIL_BITS, 8); // the section view's filled cuts
 #if defined(__APPLE__)
     glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
@@ -139,7 +139,7 @@ bool Application::init() {
     startupLog("main window made (hidden until the splash closes)");
     applyWindowIcon(m_window);
     glfwMakeContextCurrent(m_window);
-    glfwSwapInterval(1);
+    glfwSwapInterval(preferences().vsync ? 1 : 0);
     if (const char* missing = nullptr; !loadGLFunctions(&missing)) {
         const std::string why = std::string("SI CDM needs OpenGL 4.1: the graphics driver has no ") + (missing ? missing : "?") +
                                 ". Update the graphics driver.";
@@ -237,6 +237,8 @@ bool Application::init() {
         const auto candidate = exe.parent_path() / name;
         if (std::filesystem::exists(candidate, ec)) m_uiState.mcpExecutable = candidate.string();
     }
+    if (m_options.mcpPort == 0 && preferences().mcpPort > 0 && m_options.screenshotPath.empty())
+        m_options.mcpPort = preferences().mcpPort; // the MCP-PORT preference
     if (m_options.mcpPort > 0) {
         progress(0.8f, "Starting MCP server", "AI agent bridge");
         m_uiState.mcpPort = m_options.mcpPort;
@@ -254,7 +256,13 @@ bool Application::init() {
 
     if (const auto u = parseUnitName(preferences().units)) m_doc.state.units.unit = *u; // Preferences: units for new projects
     if (!setLanguage(m_options.language.empty() ? preferences().language : m_options.language)) setLanguage(preferences().language);
-    m_rulersPref = m_uiState.showRulers = preferences().rulers;
+    m_lastPrefs = preferences();
+    m_uiState.showRulers = m_lastPrefs.rulers;
+    m_uiState.snapGrid = m_lastPrefs.snapGrid;
+    m_uiState.snapPoints = m_lastPrefs.snapPoints;
+    m_uiState.gizmoMoveStep = m_lastPrefs.moveStep;
+    m_uiState.gizmoAngleStep = m_lastPrefs.angleStep;
+    syncPreferences(); // the 3D window's look, animations, the view sphere
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
     m_savedSignature = contentSignature(); // the demo part counts as unmodified
     if (!m_options.openPath.empty()) {
@@ -1691,7 +1699,8 @@ void Application::handleViewportInput() {
     if (onCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) m_otherDrag = DragMode::Pan;
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle))
         m_otherDrag = DragMode::None;
-    if (m_otherDrag == DragMode::Orbit) cam.orbit(dx, dy);
+    const float orbitK = preferences().orbitSpeed;
+    if (m_otherDrag == DragMode::Orbit) cam.orbit(dx * orbitK, dy * orbitK);
     if (m_otherDrag == DragMode::Pan) cam.pan(dx, dy, wh);
 
     // The gizmo on the selected body (Move tool): the handle under the mouse.
@@ -1801,9 +1810,9 @@ void Application::handleViewportInput() {
         }
         if (m_leftDrag == DragMode::Lasso && !m_lasso.empty() && std::hypot(mx - m_lasso.back().x, my - m_lasso.back().y) > 3.0f) m_lasso.push_back({mx, my});
         switch (m_leftDrag) {
-        case DragMode::Orbit: cam.orbit(dx, dy); break;
+        case DragMode::Orbit: cam.orbit(dx * orbitK, dy * orbitK); break;
         case DragMode::Pan: cam.pan(dx, dy, wh); break;
-        case DragMode::Zoom: cam.zoomAt(-dy * 0.02f, m_pressX, m_pressY, io.DisplaySize.x, wh); break;
+        case DragMode::Zoom: zoomView(cam, -dy * 0.02f, m_pressX, m_pressY, io.DisplaySize.x, wh); break;
         case DragMode::MoveBody: {
             // Slide in the plane through the grab point, facing the camera.
             const Ray ray = cam.screenRay(mx, my, io.DisplaySize.x, wh);
@@ -1926,7 +1935,7 @@ void Application::handleViewportInput() {
         if (auto c = m_sketcher.finish()) addCurve(std::move(*c));
 
     if (m_pendingScroll != 0.0f) {
-        cam.zoomAt(m_pendingScroll, mx, my, io.DisplaySize.x, wh);
+        zoomView(cam, m_pendingScroll, mx, my, io.DisplaySize.x, wh);
         m_pendingScroll = 0.0f;
     }
 
@@ -2101,7 +2110,8 @@ void Application::handleCommands(const UiCommands& cmd) {
     if (cmd.rotateZ != 0.0f) m_cam3D.rotateAroundZ(cmd.rotateZ);
     if (cmd.roll != 0.0f && !is2D) m_cam3D.rollView(cmd.roll);
     if (cmd.resetRoll) m_cam3D.resetRoll();
-    if ((cmd.orbitDelta.x != 0.0f || cmd.orbitDelta.y != 0.0f) && !is2D) m_cam3D.orbit(cmd.orbitDelta.x, cmd.orbitDelta.y);
+    if ((cmd.orbitDelta.x != 0.0f || cmd.orbitDelta.y != 0.0f) && !is2D)
+        m_cam3D.orbit(cmd.orbitDelta.x * preferences().orbitSpeed, cmd.orbitDelta.y * preferences().orbitSpeed);
     if (cmd.home) {
         m_cam3D.setStandardView(StandardView::Isometric, false);
         m_cam3D.fitToBounds(viewBounds());
@@ -2122,14 +2132,7 @@ void Application::handleCommands(const UiCommands& cmd) {
         }
     }
     if (cmd.toggleMcp) toggleMcp();
-    // Rulers: the view bar's button and the preference follow each other (and it is saved).
-    if (preferences().rulers != m_rulersPref) { // changed in Preferences (or PREFERENCES SET)
-        m_rulersPref = preferences().rulers;
-        m_uiState.showRulers = m_rulersPref;
-    } else if (m_uiState.showRulers != m_rulersPref) { // the button
-        m_rulersPref = preferences().rulers = m_uiState.showRulers;
-        savePreferences();
-    }
+    syncPreferences();
     if (cmd.applyExtrude) applyExtrude();
     if (cmd.cancelExtrude) cancelExtrude();
     if (cmd.applyPick) applyPickFeature();
@@ -3102,6 +3105,67 @@ void Application::refreshFileTabs() {
     }
     m_uiState.activeFile = m_activeFile;
     rememberSession();
+}
+
+void Application::zoomView(OrbitCamera& cam, float steps, float x, float y, float w, float h) {
+    const Preferences& p = preferences();
+    steps *= p.zoomSpeed * (p.zoomInvert ? -1.0f : 1.0f);
+    if (p.zoomToCursor) cam.zoomAt(steps, x, y, w, h);
+    else cam.zoom(steps);
+}
+
+void Application::syncPreferences() {
+    Preferences& p = preferences();
+    bool save = false;
+    // Settings with a control of their own on the bars (the ruler button, the snap toggles,
+    // the gizmo's steps): a change on either side reaches the other, and is kept.
+    auto twoWay = [&](auto& pref, auto& ui, auto& last) {
+        if (pref != last) {
+            last = pref;
+            ui = pref;
+        } else if (ui != last) {
+            last = ui;
+            pref = ui;
+            save = true;
+        }
+    };
+    twoWay(p.rulers, m_uiState.showRulers, m_lastPrefs.rulers);
+    twoWay(p.snapGrid, m_uiState.snapGrid, m_lastPrefs.snapGrid);
+    twoWay(p.snapPoints, m_uiState.snapPoints, m_lastPrefs.snapPoints);
+    twoWay(p.moveStep, m_uiState.gizmoMoveStep, m_lastPrefs.moveStep);
+    twoWay(p.angleStep, m_uiState.gizmoAngleStep, m_lastPrefs.angleStep);
+    if (save) savePreferences();
+    // The 3D window's look: applied at the start and when the preference changes (the view
+    // bar still changes it for the moment).
+    const std::string look = p.displayMode + "|" + p.background + "|" + (p.perspective ? "p" : "o") + (p.grid ? "g" : "-");
+    if (look != m_viewLook) {
+        m_viewLook = look;
+        const BackgroundColours bg = backgroundColours(p.background);
+        DisplayMode mode = DisplayMode::ShadedWithEdges;
+        if (p.displayMode == "shaded") mode = DisplayMode::Shaded;
+        else if (p.displayMode == "wireframe") mode = DisplayMode::Wireframe;
+        else if (p.displayMode == "hidden-line") mode = DisplayMode::HiddenLine;
+        auto apply = [&](ViewportSettings& vp) {
+            vp.displayMode = mode;
+            vp.showGrid = p.grid;
+            vp.backgroundTop = {bg.top[0], bg.top[1], bg.top[2]};
+            vp.backgroundBottom = {bg.bottom[0], bg.bottom[1], bg.bottom[2]};
+        };
+        apply(m_vp3D);
+        for (int i = 0; i < static_cast<int>(m_files.size()); ++i)
+            if (i != m_activeFile) apply(m_files[static_cast<std::size_t>(i)].vp3D);
+        const Projection proj = p.perspective ? Projection::Perspective : Projection::Orthographic;
+        m_cam3D.setProjection(proj);
+        for (int i = 0; i < static_cast<int>(m_files.size()); ++i)
+            if (i != m_activeFile) m_files[static_cast<std::size_t>(i)].cam3D.setProjection(proj);
+        m_framesToRender = std::max(m_framesToRender, 3);
+    }
+    OrbitCamera::setAnimations(p.animateViews);
+    m_uiState.showViewSphere = p.viewSphere;
+    if (p.vsync != m_lastPrefs.vsync) {
+        m_lastPrefs.vsync = p.vsync;
+        glfwSwapInterval(p.vsync ? 1 : 0);
+    }
 }
 
 void Application::rememberSession() {

@@ -1,5 +1,6 @@
 #include "TestFramework.hpp"
 
+#include "core/Camera.hpp"
 #include "core/Command.hpp"
 #include "core/Document.hpp"
 #include "core/Json.hpp"
@@ -106,7 +107,7 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     reloadPreferences();
     CHECK(preferences().units == "mm" && preferences().autosaveSeconds == 30);
     const CommandOutput shown = run(d, "PREFS");
-    CHECK(shown.ok && shown.lines.size() == 12);
+    CHECK(shown.ok && shown.lines.size() == 32);
     // The language: checked, shown at once, kept, and back to English on RESET.
     CHECK(!run(d, "PREFERENCES SET language klingon").ok);
     CHECK(run(d, "PREFERENCES SET language Deutsch").ok);
@@ -170,6 +171,83 @@ TEST_CASE("Preferences: projects opened and saved go to the top of the recent li
     CHECK(run(e, "RECENT CLEAR").ok);
     reloadPreferences();
     CHECK(preferences().recent.empty());
+    freshPreferences();
+}
+
+TEST_CASE("Preferences: navigation, view, modelling, files, graphics and AI settings are checked and kept") {
+    Preferences p;
+    std::string err;
+    // The defaults are how the app behaved before they were settings.
+    CHECK(!p.zoomInvert && p.zoomSpeed == 1.0f && p.orbitSpeed == 1.0f && p.zoomToCursor && p.animateViews);
+    CHECK(p.displayMode == "shaded-edges" && p.perspective && p.grid && p.background == "dark" && p.viewSphere);
+    CHECK(p.snapGrid && p.snapPoints && p.moveStep == 1.0f && p.angleStep == 15.0f);
+    CHECK(!p.backup && p.projectFolder.empty() && p.splash && p.antialiasing == 4 && p.vsync && p.mcpPort == 0);
+
+    for (const char* key : {"zoom-invert", "animate-views", "perspective", "grid", "view-sphere", "snap-grid", "snap-points", "backup", "splash", "vsync"}) {
+        CHECK(setPreference(p, key, "off", &err));
+        CHECK(!setPreference(p, key, "sometimes", &err));
+    }
+    CHECK(setPreference(p, "zoom_invert", "on", &err) && p.zoomInvert); // _ or -
+    CHECK(setPreference(p, "zoom-to-cursor", "off", &err) && !p.zoomToCursor);
+    CHECK(setPreference(p, "zoom-speed", "2.5", &err) && p.zoomSpeed == 2.5f);
+    CHECK(!setPreference(p, "zoom-speed", "10", &err) && !setPreference(p, "orbit-speed", "0.1", &err) && !setPreference(p, "orbit-speed", "fast", &err));
+    CHECK(setPreference(p, "orbit-speed", "0.5", &err) && p.orbitSpeed == 0.5f);
+    CHECK(setPreference(p, "display", "Wireframe", &err) && p.displayMode == "wireframe");
+    CHECK(!setPreference(p, "display", "x-ray", &err));
+    CHECK(setPreference(p, "background", "light", &err) && p.background == "light");
+    CHECK(!setPreference(p, "background", "purple", &err));
+    CHECK(setPreference(p, "move-step", "0.5", &err) && p.moveStep == 0.5f);
+    CHECK(!setPreference(p, "move-step", "0", &err) && !setPreference(p, "angle-step", "200", &err));
+    CHECK(setPreference(p, "angle-step", "5", &err) && p.angleStep == 5.0f);
+    CHECK(setPreference(p, "antialiasing", "8", &err) && p.antialiasing == 8);
+    CHECK(setPreference(p, "antialiasing", "off", &err) && p.antialiasing == 0);
+    CHECK(!setPreference(p, "antialiasing", "3", &err));
+    CHECK(setPreference(p, "mcp-port", "8765", &err) && p.mcpPort == 8765);
+    CHECK(!setPreference(p, "mcp-port", "80", &err) && !setPreference(p, "mcp-port", "70000", &err) && !setPreference(p, "mcp-port", "8765.5", &err));
+    CHECK(setPreference(p, "project-folder", "/work/parts", &err) && p.projectFolder == "/work/parts");
+
+    const Preferences q = preferencesFromJson(preferencesToJson(p));
+    CHECK(q.zoomInvert && q.zoomSpeed == 2.5f && q.orbitSpeed == 0.5f && !q.zoomToCursor && !q.animateViews);
+    CHECK(q.displayMode == "wireframe" && !q.perspective && !q.grid && q.background == "light" && !q.viewSphere);
+    CHECK(!q.snapGrid && !q.snapPoints && q.moveStep == 0.5f && q.angleStep == 5.0f);
+    CHECK(!q.backup && q.projectFolder == "/work/parts" && !q.splash && q.antialiasing == 0 && !q.vsync && q.mcpPort == 8765);
+
+    // A hand-edited file can't hold what PREFERENCES SET would refuse.
+    const auto j = Json::parse(R"({"zoom_speed":99,"antialiasing":5,"mcp_port":22,"display":"x-ray","background":"plaid","move_step":-1})");
+    REQUIRE(j.has_value());
+    const Preferences r = preferencesFromJson(*j);
+    CHECK(r.zoomSpeed == 1.0f && r.antialiasing == 4 && r.mcpPort == 0 && r.displayMode == "shaded-edges" && r.background == "dark" && r.moveStep == 1.0f);
+
+    // Each background has its colours; the dark one is the window's own.
+    for (const std::string& b : backgroundNames()) CHECK(backgroundColours(b).top[0] >= backgroundColours(b).bottom[0]);
+    CHECK(backgroundColours("dark").top[2] == 0.29f);
+}
+
+TEST_CASE("Preferences: BACKUP keeps the file a save replaces; views jump with ANIMATE-VIEWS off") {
+    freshPreferences();
+    const fs::path dir = freshDir("backup");
+    const std::string file = (dir / "part.sicdm").string();
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10").ok);
+    REQUIRE(run(d, "SAVE \"" + file + "\"").ok);
+    CHECK(!fs::exists(file + ".bak")); // off by default
+    CHECK(run(d, "PREFERENCES SET backup on").ok);
+    REQUIRE(run(d, "SAVE \"" + file + "\"").ok); // the first save's file is kept
+    CHECK(fs::exists(file + ".bak"));
+    REQUIRE(run(d, "BOX 5 5 5").ok);
+    const std::uintmax_t before = fs::file_size(file);
+    REQUIRE(run(d, "SAVE").ok);
+    CHECK(fs::file_size(file + ".bak") == before); // the one just replaced
+    CHECK(fs::file_size(file) > before);
+
+    OrbitCamera cam;
+    OrbitCamera::setAnimations(false);
+    cam.setStandardView(StandardView::Top);
+    CHECK(!cam.update(0.0f)); // already there
+    CHECK(cam.pitch() > 1.5f);
+    OrbitCamera::setAnimations(true);
+    cam.setStandardView(StandardView::Front);
+    CHECK(cam.update(0.001f)); // gliding
     freshPreferences();
 }
 

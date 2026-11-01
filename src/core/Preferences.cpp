@@ -9,9 +9,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <cmath>
 #include <fstream>
+#include <optional>
 #include <sstream>
 
 namespace sicdm {
@@ -47,6 +50,34 @@ Preferences readPreferences() {
     return j ? preferencesFromJson(*j) : Preferences{};
 }
 
+std::string upper(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
+
+std::optional<double> number(const std::string& s) {
+    char* end = nullptr;
+    const double x = std::strtod(s.c_str(), &end);
+    if (s.empty() || end == s.c_str() || *end != '\0' || !std::isfinite(x)) return std::nullopt;
+    return x;
+}
+
+// The settings that are ON or OFF, by name.
+bool* onOffKey(Preferences& p, const std::string& k) {
+    if (k == "zoom-invert") return &p.zoomInvert;
+    if (k == "zoom-to-cursor") return &p.zoomToCursor;
+    if (k == "animate-views" || k == "animation") return &p.animateViews;
+    if (k == "perspective") return &p.perspective;
+    if (k == "grid") return &p.grid;
+    if (k == "view-sphere") return &p.viewSphere;
+    if (k == "snap-grid") return &p.snapGrid;
+    if (k == "snap-points") return &p.snapPoints;
+    if (k == "backup") return &p.backup;
+    if (k == "splash") return &p.splash;
+    if (k == "vsync") return &p.vsync;
+    return nullptr;
+}
+
 bool g_loaded = false;
 Preferences g_prefs;
 
@@ -70,6 +101,26 @@ Json preferencesToJson(const Preferences& p) {
     j.set("session", session);
     j.set("session_active", p.sessionActive);
     if (p.sessionOpening) j.set("session_opening", true);
+    j.set("zoom_invert", p.zoomInvert);
+    j.set("zoom_speed", p.zoomSpeed);
+    j.set("orbit_speed", p.orbitSpeed);
+    j.set("zoom_to_cursor", p.zoomToCursor);
+    j.set("animate_views", p.animateViews);
+    j.set("display", p.displayMode);
+    j.set("perspective", p.perspective);
+    j.set("grid", p.grid);
+    j.set("background", p.background);
+    j.set("view_sphere", p.viewSphere);
+    j.set("snap_grid", p.snapGrid);
+    j.set("snap_points", p.snapPoints);
+    j.set("move_step", p.moveStep);
+    j.set("angle_step", p.angleStep);
+    j.set("backup", p.backup);
+    j.set("project_folder", p.projectFolder);
+    j.set("splash", p.splash);
+    j.set("antialiasing", p.antialiasing);
+    j.set("vsync", p.vsync);
+    j.set("mcp_port", p.mcpPort);
     j.set("update_url", p.updateUrl);
     j.set("language", p.language);
     j.set("vault", p.vault);
@@ -103,6 +154,30 @@ Preferences preferencesFromJson(const Json& j) {
     if (j["autosave_seconds"].isNumber()) p.autosaveSeconds = std::clamp(j["autosave_seconds"].asInt(), 0, 3600);
     p.checkUpdates = j["check_updates"].asBool(false);
     p.rulers = j["rulers"].asBool(true);
+    p.zoomInvert = j["zoom_invert"].asBool(false);
+    p.zoomToCursor = j["zoom_to_cursor"].asBool(true);
+    p.animateViews = j["animate_views"].asBool(true);
+    p.perspective = j["perspective"].asBool(true);
+    p.grid = j["grid"].asBool(true);
+    p.viewSphere = j["view_sphere"].asBool(true);
+    p.snapGrid = j["snap_grid"].asBool(true);
+    p.snapPoints = j["snap_points"].asBool(true);
+    p.backup = j["backup"].asBool(false);
+    p.splash = j["splash"].asBool(true);
+    p.vsync = j["vsync"].asBool(true);
+    // Numbers and names go through PREFERENCES SET's checks.
+    auto number = [&](const char* key, const char* name) {
+        if (j[key].isNumber()) setPreference(p, name, std::to_string(j[key].asNumber()), &err);
+    };
+    number("zoom_speed", "zoom-speed");
+    number("orbit_speed", "orbit-speed");
+    number("move_step", "move-step");
+    number("angle_step", "angle-step");
+    number("antialiasing", "antialiasing");
+    number("mcp_port", "mcp-port");
+    take("display", "display");
+    take("background", "background");
+    take("project_folder", "project-folder");
     p.reopenLast = j["reopen_last"].asBool(true);
     const Json& session = j["session"];
     for (std::size_t i = 0; i < session.size() && p.session.size() < Preferences::kMaxSession; ++i)
@@ -178,6 +253,24 @@ bool savePreferences(std::string* error) {
     return true;
 }
 
+const std::vector<std::string>& backgroundNames() {
+    static const std::vector<std::string> names{"dark", "grey", "light", "white", "black"};
+    return names;
+}
+
+const std::vector<std::string>& displayModeNames() {
+    static const std::vector<std::string> names{"shaded", "shaded-edges", "wireframe", "hidden-line"};
+    return names;
+}
+
+BackgroundColours backgroundColours(const std::string& name) {
+    if (name == "grey") return {{0.44f, 0.46f, 0.50f}, {0.22f, 0.23f, 0.26f}};
+    if (name == "light") return {{0.90f, 0.92f, 0.95f}, {0.64f, 0.68f, 0.74f}};
+    if (name == "white") return {{1.0f, 1.0f, 1.0f}, {0.93f, 0.94f, 0.96f}};
+    if (name == "black") return {{0.03f, 0.03f, 0.04f}, {0.0f, 0.0f, 0.0f}};
+    return {{0.20f, 0.23f, 0.29f}, {0.06f, 0.07f, 0.09f}}; // dark, the default
+}
+
 StartupSession startupSession(const Preferences& p) {
     StartupSession out;
     if (p.sessionOpening) {
@@ -215,7 +308,10 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (error) *error = why;
         return false;
     };
-    const std::string k = lower(key), v = lower(value);
+    std::string k = lower(key);
+    for (char& c : k)
+        if (c == '_') c = '-';
+    const std::string v = lower(value);
     const bool clear = v.empty() || v == "default" || v == "none" || v == "auto";
     if (k == "units") {
         if (clear || v == "last") {
@@ -258,6 +354,45 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (v == "on" || v == "yes" || v == "true" || v == "1") p.reopenLast = true;
         else if (v == "off" || v == "no" || v == "false" || v == "0") p.reopenLast = false;
         else return fail("REOPEN is ON or OFF");
+    } else if (bool* flag = onOffKey(p, k)) {
+        if (v == "on" || v == "yes" || v == "true" || v == "1" || v == "show") *flag = true;
+        else if (v == "off" || v == "no" || v == "false" || v == "0" || v == "hide") *flag = false;
+        else return fail(upper(key) + " is ON or OFF");
+    } else if (k == "zoom-speed" || k == "orbit-speed") {
+        const auto x = number(v);
+        if (!x || *x < 0.25 || *x > 4.0) return fail(upper(key) + " is a factor from 0.25 to 4 (1: normal)");
+        (k == "zoom-speed" ? p.zoomSpeed : p.orbitSpeed) = static_cast<float>(*x);
+    } else if (k == "move-step") {
+        const auto x = number(v);
+        if (!x || *x <= 0.0 || *x > 1000.0) return fail("MOVE-STEP is a distance in mm, above 0 and up to 1000");
+        p.moveStep = static_cast<float>(*x);
+    } else if (k == "angle-step") {
+        const auto x = number(v);
+        if (!x || *x <= 0.0 || *x > 180.0) return fail("ANGLE-STEP is in degrees, above 0 and up to 180");
+        p.angleStep = static_cast<float>(*x);
+    } else if (k == "antialiasing" || k == "aa") {
+        const auto x = number(v == "off" ? "0" : v);
+        const int n = x ? static_cast<int>(*x) : -1;
+        if (n != 0 && n != 2 && n != 4 && n != 8) return fail("ANTIALIASING is 0 (OFF), 2, 4 or 8 samples");
+        p.antialiasing = n;
+    } else if (k == "mcp-port") {
+        const auto x = number(v == "off" ? "0" : v);
+        const int n = x ? static_cast<int>(*x) : -1;
+        if (!x || *x != n || (n != 0 && (n < 1024 || n > 65535))) return fail("MCP-PORT is a port from 1024 to 65535, or OFF");
+        p.mcpPort = n;
+    } else if (k == "display") {
+        const auto& names = displayModeNames();
+        if (clear) p.displayMode = "shaded-edges";
+        else if (std::find(names.begin(), names.end(), v) != names.end()) p.displayMode = v;
+        else return fail("DISPLAY is shaded, shaded-edges, wireframe or hidden-line");
+    } else if (k == "background") {
+        const auto& names = backgroundNames();
+        if (clear) p.background = "dark";
+        else if (std::find(names.begin(), names.end(), v) != names.end()) p.background = v;
+        else return fail("BACKGROUND is dark, grey, light, white or black");
+    } else if (k == "project-folder" || k == "folder") {
+        if (clear) p.projectFolder.clear();
+        else p.projectFolder = value; // it may not be reachable yet (a network drive): the dialogs fall back
     } else if (k == "update-url" || k == "updateurl" || k == "update_url") {
         if (clear) p.updateUrl.clear();
         else if (value.rfind("https://", 0) == 0 || value.rfind("http://", 0) == 0 || value.rfind("file://", 0) == 0) p.updateUrl = value;
@@ -276,13 +411,19 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (clear) p.vault.clear();
         else p.vault = value; // it may not be reachable yet (a network drive); VAULT says so
     } else {
-        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, rulers, reopen, update-url, language, vault)");
+        return fail("Unknown preference '" + key + "' (PREFERENCES lists them)");
     }
     return true;
 }
 
 std::vector<std::string> describePreferences(const Preferences& p) {
     auto orDefault = [](const std::string& s, const char* d) { return s.empty() ? std::string(d) : s; };
+    auto onOff = [](bool b) { return b ? "on" : "off"; };
+    auto factor = [](float x) {
+        char b[32];
+        std::snprintf(b, sizeof b, "%g", static_cast<double>(x));
+        return std::string(b);
+    };
     return {
         "units: " + orDefault(p.units, "as the last project"),
         "autosave: " + (p.autosaveSeconds > 0 ? std::to_string(p.autosaveSeconds) + " s" : std::string("off")),
@@ -292,6 +433,26 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         std::string("updates: ") + (p.checkUpdates ? "on" : "off"),
         std::string("rulers: ") + (p.rulers ? "on" : "off"),
         std::string("reopen: ") + (p.reopenLast ? "on (the projects open at the last close)" : "off (start with the demo part)"),
+        std::string("zoom-invert: ") + onOff(p.zoomInvert),
+        "zoom-speed: " + factor(p.zoomSpeed),
+        "orbit-speed: " + factor(p.orbitSpeed),
+        std::string("zoom-to-cursor: ") + onOff(p.zoomToCursor),
+        std::string("animate-views: ") + onOff(p.animateViews),
+        "display: " + p.displayMode,
+        std::string("perspective: ") + (p.perspective ? "on" : "off (orthographic)"),
+        std::string("grid: ") + onOff(p.grid),
+        "background: " + p.background,
+        std::string("view-sphere: ") + onOff(p.viewSphere),
+        std::string("snap-grid: ") + onOff(p.snapGrid),
+        std::string("snap-points: ") + onOff(p.snapPoints),
+        "move-step: " + factor(p.moveStep) + " mm",
+        "angle-step: " + factor(p.angleStep) + " deg",
+        std::string("backup: ") + (p.backup ? "on (name.sicdm.bak)" : "off"),
+        "project-folder: " + orDefault(p.projectFolder, "the current folder"),
+        std::string("splash: ") + onOff(p.splash),
+        "antialiasing: " + (p.antialiasing > 0 ? std::to_string(p.antialiasing) + " samples" : std::string("off")) + " (from the next start)",
+        std::string("vsync: ") + onOff(p.vsync),
+        "mcp-port: " + (p.mcpPort > 0 ? std::to_string(p.mcpPort) : std::string("off")),
         "update-url: " + orDefault(p.updateUrl, "none"),
         "language: " + p.language,
         "vault: " + orDefault(p.vault, "none"),

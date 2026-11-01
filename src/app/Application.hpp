@@ -3,6 +3,7 @@
 #include "core/Render.hpp"
 #include "core/Video.hpp"
 #include "core/Camera.hpp"
+#include "core/Preferences.hpp"
 #include "core/Constraints.hpp"
 #include "core/Document.hpp"
 #include "core/Gizmo.hpp"
@@ -172,6 +173,8 @@ private:
     bool anyFileDirty() const;
     void refreshFileTabs();
     void rememberSession(); // the open projects, kept in the preferences for the next start
+    void syncPreferences(); // applies changed preferences; keeps the bars' own settings in them
+    void zoomView(OrbitCamera& cam, float steps, float x, float y, float w, float h); // with the zoom preferences
     void saveAll();
     void autosave(); // keeps recovery copies of files with unsaved changes
     void watchComponents(); // reloads linked part files that changed on disk
@@ -350,7 +353,8 @@ private:
     ToolId m_pickTool = ToolId::Count;
     std::vector<int> m_picks;
     std::vector<std::string> m_pickBodies;
-    bool m_rulersPref = true; // the rulers preference as last applied
+    Preferences m_lastPrefs;  // the preferences as last applied (syncPreferences)
+    std::string m_viewLook;   // the 3D window's look preferences as last applied
     bool m_sessionTracking = false;         // after start-up: open projects are remembered
     std::vector<std::string> m_sessionPaths; // as last remembered
     int m_sessionActive = -1;

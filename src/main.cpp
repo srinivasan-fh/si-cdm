@@ -1,5 +1,6 @@
 #include "app/Application.hpp"
 #include "core/CrashReport.hpp"
+#include "core/Preferences.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,7 @@
 int main(int argc, char** argv) {
     sicdm::AppOptions options;
     options.executablePath = argc > 0 ? argv[0] : "";
+    options.splash = sicdm::preferences().splash; // the SPLASH preference (--no-splash turns it off for one run)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
             options.screenshotPath = argv[++i];

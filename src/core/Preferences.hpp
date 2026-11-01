@@ -24,6 +24,31 @@ struct Preferences {
     std::vector<std::string> session; // those projects (the work space), in tab order
     int sessionActive = 0;           // the tab that was in front, an index into `session`
     bool sessionOpening = false;     // set while they are being reopened: a crash then skips it next time
+    // Navigation.
+    bool zoomInvert = false;         // the mouse wheel zooms the other way
+    float zoomSpeed = 1.0f;          // wheel and zoom-drag speed (0.25 to 4)
+    float orbitSpeed = 1.0f;         // orbit drag speed (0.25 to 4)
+    bool zoomToCursor = true;        // zoom about the point under the mouse (off: the view's centre)
+    bool animateViews = true;        // standard views, Fit and the view sphere glide (off: jump)
+    // The 3D window as it starts (and as these change).
+    std::string displayMode = "shaded-edges"; // shaded, shaded-edges, wireframe, hidden-line
+    bool perspective = true;         // off: orthographic
+    bool grid = true;
+    std::string background = "dark"; // dark, grey, light, white, black
+    bool viewSphere = true;          // the view sphere in the corner
+    // Modelling.
+    bool snapGrid = true;            // sketch points snap to the grid...
+    bool snapPoints = true;          // ...and to other curves' points
+    float moveStep = 1.0f;           // the Move gizmo's snap steps (mm, degrees)
+    float angleStep = 15.0f;
+    // Files.
+    bool backup = false;             // SAVE keeps the file it replaces as name.sicdm.bak
+    std::string projectFolder;       // where Open and Save As start with no project open; empty: the current folder
+    // Start-up and graphics (antialiasing on the next start).
+    bool splash = true;
+    int antialiasing = 4;            // multisamples: 0 (off), 2, 4 or 8
+    bool vsync = true;               // draw in step with the screen (off: as fast as it can)
+    int mcpPort = 0;                 // > 0: the AI agents' MCP server starts on this port
     std::string updateUrl;           // where the latest release is described (see UpdateCheck.hpp)
     std::string language = "en";     // the interface's language (see Translate.hpp)
     std::string vault;               // the team's vault folder (VAULT; Pdm.hpp); empty: $SICDM_VAULT, else none
@@ -42,6 +67,14 @@ struct StartupSession {
     bool crashedLastTime = false;
 };
 StartupSession startupSession(const Preferences& p);
+
+// The background colours (top, bottom of the gradient) of a BACKGROUND preference.
+struct BackgroundColours {
+    float top[3], bottom[3];
+};
+BackgroundColours backgroundColours(const std::string& name);
+const std::vector<std::string>& backgroundNames();
+const std::vector<std::string>& displayModeNames();
 
 Json preferencesToJson(const Preferences& p);
 Preferences preferencesFromJson(const Json& j); // unknown or bad fields keep their defaults

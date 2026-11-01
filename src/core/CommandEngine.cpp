@@ -5183,7 +5183,17 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (path.empty() || (cmd == "SAVEAS" && a.empty())) return out.fail("Usage: SAVEAS path.sicdm");
         if (fileKindOf(path) != FileKind::Project) path += ".sicdm";
         std::string err;
+        bool backedUp = false;
+        if (preferences().backup) { // the BACKUP preference: the file replaced is kept beside it
+            std::error_code ec;
+            if (fs::is_regular_file(path, ec)) {
+                fs::copy_file(path, path + ".bak", fs::copy_options::overwrite_existing, ec);
+                if (ec) return out.fail("Can't keep a backup copy as " + path + ".bak: " + ec.message() + " (not saved)");
+                backedUp = true;
+            }
+        }
         if (!saveProject(doc.scene, doc.state, path, &err)) return out.fail(err);
+        if (backedUp) out.say("The file it replaced is kept as " + fs::path(path + ".bak").filename().string());
         doc.path = fs::absolute(path).string();
         doc.dirty = false;
         noteRecentFile(doc.path);

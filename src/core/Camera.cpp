@@ -202,7 +202,15 @@ void OrbitCamera::fitToBounds(const AABB& bounds, bool animate) noexcept {
     startTransition(to, animate);
 }
 
+namespace {
+bool g_animations = true;
+} // namespace
+
+void OrbitCamera::setAnimations(bool on) noexcept { g_animations = on; }
+bool OrbitCamera::animations() noexcept { return g_animations; }
+
 void OrbitCamera::startTransition(const Pose& to, bool animate) noexcept {
+    animate = animate && g_animations;
     m_from = {m_target, m_yaw, m_pitch, m_distance, m_roll};
     m_to = to;
     // Take the short way round in yaw and roll.

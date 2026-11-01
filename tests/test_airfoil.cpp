@@ -81,7 +81,7 @@ TEST_CASE("Airfoils: blades with taper, twist, sweep and tubercles") {
     const std::vector<float> bumpy{21, 150, 50, 30, 0, 0, 2.5f, 20};
     float lo = 1e9f, hi = -1e9f;
     for (int k = 0; k <= 60; ++k) {
-        const std::vector<Vec3> sec = bladeSection(bumpy, 5.0f + 0.25f * k, 60);
+        const std::vector<Vec3> sec = bladeSection(bumpy, 5.0f + 0.25f * static_cast<float>(k), 60);
         lo = std::min(lo, sec[59].x), hi = std::max(hi, sec[59].x);
     }
     CHECK(hi - lo > 4.5f && hi - lo < 5.6f);

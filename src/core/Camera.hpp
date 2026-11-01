@@ -36,6 +36,11 @@ public:
     void resetRoll(bool animate = true) noexcept;
     void fitToBounds(const AABB& bounds, bool animate = true) noexcept;
 
+    // Off: view changes (standard views, FIT, the view sphere) jump instead of gliding, in
+    // every camera (the ANIMATE-VIEWS preference).
+    static void setAnimations(bool on) noexcept;
+    static bool animations() noexcept;
+
     // Advances any running view transition; returns true while animating.
     bool update(float dtSeconds) noexcept;
 

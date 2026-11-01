@@ -133,6 +133,7 @@ struct UiState {
     bool snapGrid = true;
     bool snapPoints = true;
     bool showRulers = true; // rulers along the canvas's top and left edges (2D and 3D)
+    bool showViewSphere = true; // the view sphere in the canvas's corner
     int selectedBody = -1;
     BodySelection bodySelection; // other bodies selected with selectedBody (Selection.hpp)
     BodySelection curveSelection; // other sketch curves selected with selectedCurve
