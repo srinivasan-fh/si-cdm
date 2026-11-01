@@ -20,13 +20,28 @@ struct Preferences {
     std::string camMachine;          // a machine preset's name
     bool checkUpdates = false;       // look for a newer release when the app starts
     bool rulers = true;              // rulers along the canvas's top and left edges
+    bool reopenLast = true;          // start with the projects open when the app last closed
+    std::vector<std::string> session; // those projects (the work space), in tab order
+    int sessionActive = 0;           // the tab that was in front, an index into `session`
+    bool sessionOpening = false;     // set while they are being reopened: a crash then skips it next time
     std::string updateUrl;           // where the latest release is described (see UpdateCheck.hpp)
     std::string language = "en";     // the interface's language (see Translate.hpp)
     std::string vault;               // the team's vault folder (VAULT; Pdm.hpp); empty: $SICDM_VAULT, else none
     std::map<std::string, std::string> keys; // keyboard shortcuts changed from their defaults: action -> keys (Keymap.hpp)
 
     static constexpr std::size_t kMaxRecent = 10;
+    static constexpr std::size_t kMaxSession = 32;
 };
+
+// What to open at start-up (with REOPEN on and no file given): the projects open when the
+// app last closed that are still there, else the most recent project. When the last start
+// closed while opening them, nothing (a broken file would close it every time).
+struct StartupSession {
+    std::vector<std::string> files;
+    int active = 0;              // which of `files` goes in front
+    bool crashedLastTime = false;
+};
+StartupSession startupSession(const Preferences& p);
 
 Json preferencesToJson(const Preferences& p);
 Preferences preferencesFromJson(const Json& j); // unknown or bad fields keep their defaults

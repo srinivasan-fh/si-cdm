@@ -162,7 +162,7 @@ constexpr CommandSpec kCommands[] = {
     {"KEYS", "SHORTCUTS KEYMAP", "KEYS [LIST] | SET action keys [FORCE] | RESET [action | ALL]",
      "Keyboard shortcuts: what each action is on, and changing them (KEYS SET edit.hide Ctrl+H; KEYS SET edit.redo \"Ctrl+Shift+Z, Ctrl+Y\"); "
      "a key another action has is refused unless FORCE. Kept with the preferences"},
-    {"PREFERENCES", "PREFS SETTINGS LANGUAGE", "PREFERENCES [SHOW] | SET units|autosave|material|post|machine|updates|update-url|language value | LANGUAGES | UNTRANSLATED [file.json] | RESET",
+    {"PREFERENCES", "PREFS SETTINGS LANGUAGE", "PREFERENCES [SHOW] | SET units|autosave|material|post|machine|updates|rulers|reopen|update-url|language value | LANGUAGES | UNTRANSLATED [file.json] | RESET",
      "Settings for every project: units for new projects, autosave interval, CAM set-up defaults, update check, the interface's language"},
     {"UPDATES", "UPDATE", "UPDATES [CHECK] [url]", "Is there a newer release? Reads the release feed (the update-url preference, or the address given)"},
     {"LICENCE", "LICENSE", "LICENCE [SHOW] | INSTALL licence.json | REMOVE", "This copy's licence: who it is licensed to, or the Community edition; install or remove a licence file"},

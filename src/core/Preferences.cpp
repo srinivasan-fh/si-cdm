@@ -64,6 +64,12 @@ Json preferencesToJson(const Preferences& p) {
     j.set("cam_machine", p.camMachine);
     j.set("check_updates", p.checkUpdates);
     j.set("rulers", p.rulers);
+    j.set("reopen_last", p.reopenLast);
+    Json session = Json::array();
+    for (const std::string& f : p.session) session.push(f);
+    j.set("session", session);
+    j.set("session_active", p.sessionActive);
+    if (p.sessionOpening) j.set("session_opening", true);
     j.set("update_url", p.updateUrl);
     j.set("language", p.language);
     j.set("vault", p.vault);
@@ -97,6 +103,13 @@ Preferences preferencesFromJson(const Json& j) {
     if (j["autosave_seconds"].isNumber()) p.autosaveSeconds = std::clamp(j["autosave_seconds"].asInt(), 0, 3600);
     p.checkUpdates = j["check_updates"].asBool(false);
     p.rulers = j["rulers"].asBool(true);
+    p.reopenLast = j["reopen_last"].asBool(true);
+    const Json& session = j["session"];
+    for (std::size_t i = 0; i < session.size() && p.session.size() < Preferences::kMaxSession; ++i)
+        if (session[i].isString() && !session[i].asString().empty()) p.session.push_back(session[i].asString());
+    if (j["session_active"].isNumber())
+        p.sessionActive = std::clamp(j["session_active"].asInt(), 0, std::max(0, static_cast<int>(p.session.size()) - 1));
+    p.sessionOpening = j["session_opening"].asBool(false);
     // Changed shortcuts: only keys this version can read (a hand-edited file can't break them).
     if (j["keys"].isObject())
         for (const auto& [id, v] : j["keys"].members())
@@ -165,6 +178,27 @@ bool savePreferences(std::string* error) {
     return true;
 }
 
+StartupSession startupSession(const Preferences& p) {
+    StartupSession out;
+    if (p.sessionOpening) {
+        out.crashedLastTime = true;
+        return out;
+    }
+    std::error_code ec;
+    for (std::size_t i = 0; i < p.session.size(); ++i) {
+        if (!fs::is_regular_file(p.session[i], ec)) continue; // moved or deleted since
+        if (static_cast<int>(i) == p.sessionActive) out.active = static_cast<int>(out.files.size());
+        out.files.push_back(p.session[i]);
+    }
+    if (out.files.empty())
+        for (const std::string& r : p.recent)
+            if (fs::is_regular_file(r, ec)) {
+                out.files.push_back(r);
+                break;
+            }
+    return out;
+}
+
 void noteRecentFile(const std::string& path) {
     if (path.empty()) return;
     std::error_code ec;
@@ -220,6 +254,10 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (v == "on" || v == "yes" || v == "true" || v == "1" || v == "show") p.rulers = true;
         else if (v == "off" || v == "no" || v == "false" || v == "0" || v == "hide") p.rulers = false;
         else return fail("RULERS is ON or OFF");
+    } else if (k == "reopen" || k == "reopen-last" || k == "reopen_last") {
+        if (v == "on" || v == "yes" || v == "true" || v == "1") p.reopenLast = true;
+        else if (v == "off" || v == "no" || v == "false" || v == "0") p.reopenLast = false;
+        else return fail("REOPEN is ON or OFF");
     } else if (k == "update-url" || k == "updateurl" || k == "update_url") {
         if (clear) p.updateUrl.clear();
         else if (value.rfind("https://", 0) == 0 || value.rfind("http://", 0) == 0 || value.rfind("file://", 0) == 0) p.updateUrl = value;
@@ -238,7 +276,7 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (clear) p.vault.clear();
         else p.vault = value; // it may not be reachable yet (a network drive); VAULT says so
     } else {
-        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, rulers, update-url, language, vault)");
+        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, rulers, reopen, update-url, language, vault)");
     }
     return true;
 }
@@ -253,6 +291,7 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         "machine: " + orDefault(p.camMachine, "default (generic)"),
         std::string("updates: ") + (p.checkUpdates ? "on" : "off"),
         std::string("rulers: ") + (p.rulers ? "on" : "off"),
+        std::string("reopen: ") + (p.reopenLast ? "on (the projects open at the last close)" : "off (start with the demo part)"),
         "update-url: " + orDefault(p.updateUrl, "none"),
         "language: " + p.language,
         "vault: " + orDefault(p.vault, "none"),

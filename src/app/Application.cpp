@@ -1,5 +1,6 @@
 #include "app/Application.hpp"
 #include "app/PenInput.hpp"
+#include "app/WindowFront.hpp"
 #include "core/Armature.hpp"
 #include "core/Components.hpp"
 #include "core/DirectEdit.hpp"
@@ -262,7 +263,32 @@ bool Application::init() {
         const FileKind kind = fileKindOf(m_options.openPath);
         runCommandLine((kind == FileKind::Project ? "OPEN \"" : "IMPORT \"") + m_options.openPath + "\"");
         if (kind != FileKind::Project) m_savedSignature = contentSignature();
+    } else if (m_options.screenshotPath.empty() && preferences().reopenLast) {
+        // The work space as it was left: the projects that were open, the same one in front.
+        // A project that crashed the app while reopening isn't tried again next time.
+        Preferences& prefs = preferences();
+        const StartupSession plan = startupSession(prefs);
+        if (plan.crashedLastTime)
+            log("The projects open last time weren't reopened: the app closed while opening them. Open them from File > Recent.", UiState::LogLine::Error);
+        if (!plan.files.empty()) {
+            prefs.sessionOpening = true;
+            savePreferences();
+            int front = -1;
+            for (std::size_t i = 0; i < plan.files.size(); ++i) {
+                progress(0.82f + 0.1f * static_cast<float>(i) / static_cast<float>(plan.files.size()),
+                         "Opening " + std::filesystem::path(plan.files[i]).filename().string(), "Last work space");
+                runCommandLine("OPEN \"" + plan.files[i] + "\"");
+                if (static_cast<int>(i) == plan.active) front = m_activeFile;
+            }
+            if (front >= 0 && front != m_activeFile) activateFile(front);
+            prefs.sessionOpening = false;
+            savePreferences();
+        } else if (plan.crashedLastTime) {
+            prefs.sessionOpening = false;
+            savePreferences();
+        }
     }
+    m_sessionTracking = m_options.screenshotPath.empty(); // test pictures don't change the user's work space
     for (const std::string& line : m_options.commands) runCommandLine(line);
     if (preferences().checkUpdates && !preferences().updateUrl.empty() && m_options.screenshotPath.empty())
         m_updateCheck = std::async(std::launch::async, [url = preferences().updateUrl] {
@@ -3075,6 +3101,32 @@ void Application::refreshFileTabs() {
         files[i].mode = static_cast<int>(i) == m_activeFile ? m_uiState.mode : m_files[i].mode;
     }
     m_uiState.activeFile = m_activeFile;
+    rememberSession();
+}
+
+void Application::rememberSession() {
+    if (!m_sessionTracking) return;
+    std::vector<std::string> paths;
+    int active = 0;
+    for (int i = 0; i < static_cast<int>(m_files.size()); ++i) {
+        const std::string& p = fileDoc(i).path;
+        if (p.empty() || fileKindOf(p) != FileKind::Project) continue;
+        if (i == m_activeFile) active = static_cast<int>(paths.size());
+        paths.push_back(p);
+    }
+    if (paths == m_sessionPaths && active == m_sessionActive) return; // checked every frame: only a change is written
+    m_sessionPaths = paths;
+    m_sessionActive = active;
+    Preferences& prefs = preferences();
+    prefs.session.clear();
+    for (const std::string& p : paths) {
+        std::error_code ec;
+        const std::string abs = std::filesystem::absolute(p, ec).lexically_normal().string();
+        prefs.session.push_back(ec ? p : abs);
+        if (prefs.session.size() >= Preferences::kMaxSession) break;
+    }
+    prefs.sessionActive = std::min(active, std::max(0, static_cast<int>(prefs.session.size()) - 1));
+    savePreferences();
 }
 
 void Application::saveAll() {
@@ -4501,16 +4553,18 @@ bool Application::saveScreenshot(const std::string& path) const {
 int Application::run() {
     if (!init()) return 1;
     startupLog("workbench loaded");
+    // The main window is shown and brought to the front while the splash is still up: the
+    // splash holds the foreground then, and Windows only lets a program that has it hand it
+    // on (once the splash is gone it goes to another program and the taskbar button flashes).
+    if (m_splash) m_splash->finish();
+    glfwShowWindow(m_window);
+    bringWindowToFront(m_window);
     if (m_splash) {
-        m_splash->finish();
         m_splash.reset();
         glfwMakeContextCurrent(m_window);
         m_framesToRender = std::max(m_framesToRender, 3);
+        bringWindowToFront(m_window); // again with the splash gone (macOS, X11 window managers)
     }
-    // Shown and brought to the front whatever happened to the splash (macOS doesn't always
-    // bring a window from a hidden start forward on its own).
-    glfwShowWindow(m_window);
-    glfwFocusWindow(m_window);
     {
         int x = 0, y = 0, w = 0, h = 0;
         glfwGetWindowPos(m_window, &x, &y);

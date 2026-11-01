@@ -216,6 +216,7 @@ if(SICDM_BUILD_APP)
         src/app/SketchController.cpp
         src/app/PenInput.cpp
         src/app/Splash.cpp
+        src/app/WindowFront.cpp
         src/render/GL.cpp
         src/render/Renderer.cpp
         src/render/Shader.cpp
@@ -236,6 +237,7 @@ if(SICDM_BUILD_APP)
     if(APPLE)
         enable_language(OBJCXX)
         list(APPEND SICDM_APP_SOURCES src/app/PenInput_mac.mm) # tablet pressure (Cocoa events)
+        list(APPEND SICDM_APP_SOURCES src/app/WindowFront_mac.mm) # the app made active after the splash
         set(SICDM_BUNDLE_NAME "SI CDM")
         set(SICDM_BUNDLE_ID "com.sicdm.workbench")
         # App icon (Dock, Finder, Launchpad), rendered by tools/make_icon.py.

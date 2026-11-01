@@ -2039,7 +2039,9 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         }
         if (sub == "reset") {
             Preferences fresh;
-            fresh.recent = preferences().recent; // the recent list isn't a setting
+            fresh.recent = preferences().recent; // the recent list isn't a setting, nor the open projects
+            fresh.session = preferences().session;
+            fresh.sessionActive = preferences().sessionActive;
             preferences() = fresh;
             if (!savePreferences(&err)) return out.fail(err);
             setLanguage(preferences().language);

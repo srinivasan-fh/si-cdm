@@ -207,6 +207,13 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
         if (ImGui::Checkbox(tr("Show rulers along the canvas's top and left edges"), &on)) set("rulers", on ? "on" : "off");
     }
 
+    ImGui::SeparatorText(tr("Start-up"));
+    {
+        bool on = p.reopenLast;
+        if (ImGui::Checkbox(tr("Reopen the projects that were open when SI CDM closed"), &on)) set("reopen", on ? "on" : "off");
+        ImGui::TextDisabled("%s", tr("Off: start with the demo part. A project given on the command line opens on its own."));
+    }
+
     ImGui::SeparatorText(tr("Updates"));
     {
         bool on = p.checkUpdates;

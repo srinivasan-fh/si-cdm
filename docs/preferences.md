@@ -11,6 +11,7 @@ is saved at once and is kept for the next session.
 | Autosave | How old unsaved changes get (in seconds) before a recovery copy is written; off writes none. See [autosave and recovery](#autosave-and-recovery). |
 | Material, post processor, machine | What *Set Up the Selected Part* on the CAM panel starts a job with. A lathe job takes the material, and the post when the lathe has it. |
 | Rulers | Show the rulers along the canvas's top and left edges. The ruler button on the view bar changes this too, and is remembered. |
+| Reopen | Start with the projects that were open when SI CDM last closed, in the same tabs, with the same one in front; with none open, the most recent project. A project moved or deleted since is left out. Off starts with the demo part. A project given on the command line (or double-clicked) opens on its own instead. If SI CDM closed while reopening them (a damaged file), the next start doesn't try again and says so; open them from *File → Recent*. |
 | Updates | Look for a newer release when SI CDM starts, from the release feed your administrator gives you. |
 | Language | The language of menus, buttons and tooltips: English or Deutsch built in, or one installed as a [language file](#languages). |
 
@@ -25,10 +26,11 @@ PREFERENCES SET post haas            fanuc, haas, grbl, linuxcnc, or DEFAULT
 PREFERENCES SET machine vmc          a machine preset, or DEFAULT
 PREFERENCES SET updates on           ON or OFF
 PREFERENCES SET rulers off           ON or OFF
+PREFERENCES SET reopen off           ON or OFF: reopen the last work space at start-up
 PREFERENCES SET update-url https://example.com/sicdm/latest.json
 PREFERENCES SET language de          en, de, or an installed language's code; shown at once
 PREFERENCES LANGUAGES                the languages there are
-PREFERENCES RESET                    back to the defaults (the recent files stay)
+PREFERENCES RESET                    back to the defaults (the recent and open files stay)
 ```
 
 **Where they are kept:**

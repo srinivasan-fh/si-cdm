@@ -6,6 +6,10 @@ page takes you through the window and a first part, from a sketch to G-code.
 
 ## The window
 
+SI CDM starts where you left off: the projects that were open when it last closed come back
+in their tabs, the same one in front (the first time, a demo part). *File → Preferences →
+Start-up* turns this off.
+
 - **Menu bar** (top): *File*, *View*, *Design*, *Drawing*, *Assembly*, *Manufacture*, *AI*,
   *Plugins* and *Help*.
 - **Options bar** (below it): the active tool's options on the left; on the right the

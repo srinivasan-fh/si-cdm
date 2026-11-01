@@ -76,13 +76,19 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     CHECK(p.rulers); // on unless turned off
     CHECK(setPreference(p, "rulers", "off", &err) && !p.rulers);
     CHECK(!setPreference(p, "rulers", "maybe", &err));
+    CHECK(p.reopenLast); // on unless turned off
+    CHECK(setPreference(p, "reopen", "off", &err) && !p.reopenLast);
+    CHECK(!setPreference(p, "reopen", "later", &err));
     p.recent = {"/a/one.sicdm", "/b/two.sicdm"};
+    p.session = {"/a/one.sicdm", "/c/three.sicdm"};
+    p.sessionActive = 1;
 
     const Preferences q = preferencesFromJson(preferencesToJson(p));
     CHECK(q.recent == p.recent);
     CHECK(q.units == "in" && q.autosaveSeconds == 0 && q.camMaterial == p.camMaterial && q.camPost == "haas");
     CHECK(q.camMachine == "vmc" && q.checkUpdates && q.updateUrl == p.updateUrl);
     CHECK(!q.rulers); // saved off, read back off
+    CHECK(!q.reopenLast && q.session == p.session && q.sessionActive == 1 && !q.sessionOpening);
 
     // A hand-edited file with values the app would refuse: those keep their defaults.
     const auto j = Json::parse(R"({"units":"furlongs","autosave_seconds":"soon","cam_post":"rm -rf","update_url":"javascript:x","recent":[1,"/ok.sicdm"]})");
@@ -100,7 +106,7 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     reloadPreferences();
     CHECK(preferences().units == "mm" && preferences().autosaveSeconds == 30);
     const CommandOutput shown = run(d, "PREFS");
-    CHECK(shown.ok && shown.lines.size() == 11);
+    CHECK(shown.ok && shown.lines.size() == 12);
     // The language: checked, shown at once, kept, and back to English on RESET.
     CHECK(!run(d, "PREFERENCES SET language klingon").ok);
     CHECK(run(d, "PREFERENCES SET language Deutsch").ok);
@@ -164,6 +170,49 @@ TEST_CASE("Preferences: projects opened and saved go to the top of the recent li
     CHECK(run(e, "RECENT CLEAR").ok);
     reloadPreferences();
     CHECK(preferences().recent.empty());
+    freshPreferences();
+}
+
+TEST_CASE("Preferences: start-up reopens the projects open at the last close") {
+    const fs::path dir = freshDir("session");
+    for (const char* n : {"a.sicdm", "b.sicdm", "c.sicdm"}) std::ofstream(dir / n) << "{}";
+    const std::string a = (dir / "a.sicdm").string(), b = (dir / "b.sicdm").string(), c = (dir / "c.sicdm").string();
+    const std::string gone = (dir / "gone.sicdm").string();
+
+    Preferences p;
+    CHECK(startupSession(p).files.empty()); // nothing open, nothing recent: the demo part
+
+    // The open projects, in order, with the one that was in front.
+    p.session = {a, gone, c};
+    p.sessionActive = 2;
+    StartupSession s = startupSession(p);
+    CHECK(s.files.size() == 2 && s.files[0] == a && s.files[1] == c); // a moved or deleted one is left out
+    CHECK(s.active == 1 && !s.crashedLastTime);
+
+    // None open (only untitled work): the most recent project that is still there.
+    p.session.clear();
+    p.recent = {gone, b, a};
+    s = startupSession(p);
+    CHECK(s.files.size() == 1 && s.files[0] == b && s.active == 0);
+
+    // The app closed while reopening them last time: not tried again.
+    p.session = {a};
+    p.sessionOpening = true;
+    s = startupSession(p);
+    CHECK(s.crashedLastTime && s.files.empty());
+
+    // Kept between sessions, and RESET keeps them (they aren't a setting).
+    freshPreferences();
+    preferences().session = {a, b};
+    preferences().sessionActive = 1;
+    CHECK(savePreferences());
+    reloadPreferences();
+    CHECK(preferences().session.size() == 2 && preferences().sessionActive == 1);
+    Document d;
+    CHECK(run(d, "PREFERENCES SET reopen off").ok);
+    CHECK(!preferences().reopenLast);
+    CHECK(run(d, "PREFERENCES RESET").ok);
+    CHECK(preferences().reopenLast && preferences().session.size() == 2);
     freshPreferences();
 }
 

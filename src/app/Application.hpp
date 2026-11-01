@@ -171,6 +171,7 @@ private:
     const Document& fileDoc(int index) const;
     bool anyFileDirty() const;
     void refreshFileTabs();
+    void rememberSession(); // the open projects, kept in the preferences for the next start
     void saveAll();
     void autosave(); // keeps recovery copies of files with unsaved changes
     void watchComponents(); // reloads linked part files that changed on disk
@@ -350,6 +351,9 @@ private:
     std::vector<int> m_picks;
     std::vector<std::string> m_pickBodies;
     bool m_rulersPref = true; // the rulers preference as last applied
+    bool m_sessionTracking = false;         // after start-up: open projects are remembered
+    std::vector<std::string> m_sessionPaths; // as last remembered
+    int m_sessionActive = -1;
     // Topology tool: the body and the fixed face's point picked so far.
     int m_topoBody = -1;
     Vec3 m_topoFix{};
