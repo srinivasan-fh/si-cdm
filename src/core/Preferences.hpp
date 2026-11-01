@@ -71,6 +71,7 @@ struct Preferences {
     bool windowMaximized = false;
     bool modelPanel = false;         // the docked panel beside the tool rail...
     int panelPage = 0;               // ...and its page (0 Model, 1 Library, 2 CAM)
+    float panelWidth = 260.0f;       // ...and its width (200 to 640)
     std::string updateUrl;           // where the latest release is described (see UpdateCheck.hpp)
     std::string language = "en";     // the interface's language (see Translate.hpp)
     std::string vault;               // the team's vault folder (VAULT; Pdm.hpp); empty: $SICDM_VAULT, else none

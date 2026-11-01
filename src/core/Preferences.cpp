@@ -143,6 +143,7 @@ Json preferencesToJson(const Preferences& p) {
     }
     j.set("model_panel", p.modelPanel);
     j.set("panel_page", p.panelPage);
+    j.set("panel_width", p.panelWidth);
     j.set("update_url", p.updateUrl);
     j.set("language", p.language);
     j.set("vault", p.vault);
@@ -223,6 +224,7 @@ Preferences preferencesFromJson(const Json& j) {
     }
     p.modelPanel = j["model_panel"].asBool(false);
     p.panelPage = std::clamp(j["panel_page"].asInt(0), 0, 2);
+    p.panelWidth = static_cast<float>(std::clamp(j["panel_width"].asNumber(260.0), 200.0, 640.0));
     take("background", "background");
     take("project_folder", "project-folder");
     p.reopenLast = j["reopen_last"].asBool(true);

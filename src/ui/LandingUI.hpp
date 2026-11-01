@@ -135,6 +135,7 @@ struct UiState {
     bool showRulers = true; // rulers along the canvas's top and left edges (2D and 3D)
     bool showViewSphere = true; // the view sphere in the canvas's corner
     bool spaceMouse = false;    // a 3D mouse is connected
+    float panelWidth = 260.0f;  // the docked side panel's width (kept: the PANEL-WIDTH preference)
     int selectedBody = -1;
     BodySelection bodySelection; // other bodies selected with selectedBody (Selection.hpp)
     BodySelection curveSelection; // other sketch curves selected with selectedCurve
@@ -258,6 +259,7 @@ struct UiState {
 
 // Actions requested by the UI, applied by the application after drawing.
 struct UiCommands {
+    bool resetLayout = false; // View > Reset Window Layout: windows and panels back where they start
     std::optional<StandardView> view;
     std::optional<Vec3> viewDirection;
     std::optional<ViewMode> mode;
@@ -365,6 +367,11 @@ private:
     int m_shownDockTab = -1; // dock page the tab bar currently shows
     float m_toolboxWidth = 0.0f;
     float m_leftDockWidth = 0.0f; // rail + docked Model panel
+public:
+    bool m_layoutReset = false;   // this frame: the panels take their first sizes again
+    bool m_panelDragging = false; // the side panel's edge is being dragged
+    bool panelDragging() const { return m_panelDragging; }
+private:
     float m_menuHeight = 0.0f;
     float m_optionsHeight = 0.0f;
     float m_rightGroupWidth = 560.0f;

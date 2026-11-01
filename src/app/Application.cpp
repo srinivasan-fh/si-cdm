@@ -21,6 +21,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 #include <imgui.h>
+#include <imgui_internal.h> // ClearIniSettings (View > Reset Window Layout)
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
@@ -188,7 +189,16 @@ bool Application::init() {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::GetIO().IniFilename = nullptr; // landing layout is fixed for now
+    // Where floating windows were and how wide the side panel is: kept in the settings
+    // folder (test pictures leave it alone, and start from the same layout every time).
+    if (m_options.screenshotPath.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(configDirectory(), ec);
+        m_layoutFile = (std::filesystem::path(configDirectory()) / "layout.ini").string();
+        ImGui::GetIO().IniFilename = m_layoutFile.c_str();
+    } else {
+        ImGui::GetIO().IniFilename = nullptr;
+    }
     {
         // Sharp text on Retina (framebuffer > window size) and larger UI on HiDPI elsewhere.
         int ww = 0, wh = 0, fw = 0, fh = 0;
@@ -287,6 +297,7 @@ bool Application::init() {
     m_uiState.gizmoAngleStep = m_lastPrefs.angleStep;
     m_uiState.showModelTree = m_lastPrefs.modelPanel;
     m_uiState.dockTab = m_lastPrefs.panelPage;
+    m_uiState.panelWidth = m_lastPrefs.panelWidth;
     syncPreferences(); // the 3D window's look, animations, the view sphere
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
     m_savedSignature = contentSignature(); // the demo part counts as unmodified
@@ -2171,6 +2182,7 @@ void Application::handleCommands(const UiCommands& cmd) {
         }
     }
     if (cmd.toggleMcp) toggleMcp();
+    if (cmd.resetLayout) m_resetLayout = true; // done before the next frame starts
     syncPreferences();
     if (cmd.applyExtrude) applyExtrude();
     if (cmd.cancelExtrude) cancelExtrude();
@@ -2192,6 +2204,16 @@ void Application::frame(float dt) {
         theme::apply(m_contentScale, m_fbScale * m_uiZoom);
         ImGui_ImplOpenGL3_DestroyFontsTexture();
         ImGui_ImplOpenGL3_CreateFontsTexture();
+    }
+    m_ui.m_layoutReset = false;
+    if (m_resetLayout) {
+        // View > Reset Window Layout: windows open where they first did, the panel at its width.
+        m_resetLayout = false;
+        ImGui::ClearIniSettings();
+        std::error_code ec;
+        if (!m_layoutFile.empty()) std::filesystem::remove(m_layoutFile, ec);
+        m_ui.m_layoutReset = true;
+        setStatus(tr("Window layout reset"));
     }
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -3270,6 +3292,7 @@ void Application::syncPreferences() {
     twoWay(p.angleStep, m_uiState.gizmoAngleStep, m_lastPrefs.angleStep);
     twoWay(p.modelPanel, m_uiState.showModelTree, m_lastPrefs.modelPanel);
     twoWay(p.panelPage, m_uiState.dockTab, m_lastPrefs.panelPage);
+    if (!m_ui.panelDragging()) twoWay(p.panelWidth, m_uiState.panelWidth, m_lastPrefs.panelWidth); // kept once the drag ends
     if (save && m_options.screenshotPath.empty()) savePreferences(); // test pictures leave the file alone
     // The 3D window's look: applied at the start and when the preference changes (the view
     // bar still changes it for the moment).

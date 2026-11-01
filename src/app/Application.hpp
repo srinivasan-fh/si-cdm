@@ -357,6 +357,8 @@ private:
     ToolId m_pickTool = ToolId::Count;
     std::vector<int> m_picks;
     std::vector<std::string> m_pickBodies;
+    std::string m_layoutFile;    // layout.ini (ImGui keeps a pointer to it)
+    bool m_resetLayout = false;
     float m_uiZoom = 1.0f;       // the UI-SCALE preference as applied
     float m_fbScale = 1.0f, m_contentScale = 1.0f; // framebuffer / window pixels; the screen's own scale
     Preferences m_lastPrefs;  // the preferences as last applied (syncPreferences)

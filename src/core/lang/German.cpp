@@ -1478,6 +1478,8 @@ const char* const kGerman[][2] = {
     {"Download and Install Update", "Update herunterladen und installieren"},
     {"Later", "Später"},
     {"The installer for the new version is open.", "Das Installationsprogramm der neuen Version ist geöffnet."},
+    {"Reset Window Layout", "Fensteranordnung zurücksetzen"},
+    {"Window layout reset", "Fensteranordnung zurückgesetzt"},
 };
 
 

@@ -240,10 +240,10 @@ TEST_CASE("Preferences: navigation, view, modelling, files, graphics and AI sett
 
     // The window's place and the side panel come back; a silly size isn't kept.
     p.windowX = 120, p.windowY = 80, p.windowWidth = 1400, p.windowHeight = 900, p.windowMaximized = true;
-    p.modelPanel = true, p.panelPage = 2;
+    p.modelPanel = true, p.panelPage = 2, p.panelWidth = 420.0f;
     const Preferences w = preferencesFromJson(preferencesToJson(p));
     CHECK(w.windowX == 120 && w.windowY == 80 && w.windowWidth == 1400 && w.windowHeight == 900 && w.windowMaximized);
-    CHECK(w.modelPanel && w.panelPage == 2);
+    CHECK(w.modelPanel && w.panelPage == 2 && w.panelWidth == 420.0f);
     const auto tiny = Json::parse(R"({"window":{"x":0,"y":0,"width":5,"height":5},"panel_page":9})");
     REQUIRE(tiny.has_value());
     CHECK(preferencesFromJson(*tiny).windowWidth == 0 && preferencesFromJson(*tiny).panelPage == 2);

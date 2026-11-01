@@ -1537,6 +1537,8 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             st.showModelTree = !(st.showModelTree && st.dockTab == 2);
             st.dockTab = 2;
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem(tr("Reset Window Layout"))) cmd.resetLayout = true;
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu(tr("Design"))) {
@@ -3260,17 +3262,34 @@ void LandingUI::drawFeatureHistory(UiCommands& cmd, const UiState& st) {
 }
 
 float LandingUI::drawModelTree(UiCommands& cmd, Scene& scene, UiState& st, float x, float top, float bottom) {
-    // Docked full-height panel; only its right edge can be dragged to resize.
+    // Docked full-height panel; its right edge drags to resize (a splitter of its own: the
+    // windows beside it would take the panel's own resize border). The width is a setting.
     const float height = std::max(bottom - top, 100.0f);
+    if (m_layoutReset) st.panelWidth = 260.0f;
+    st.panelWidth = std::clamp(st.panelWidth, 200.0f, 640.0f);
     ImGui::SetNextWindowPos({x, top}, ImGuiCond_Always);
-    ImGui::SetNextWindowSizeConstraints({200, height}, {440, height});
-    ImGui::SetNextWindowSize({260, height}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({st.panelWidth, height}, ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
-                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+                                       ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
     const bool visible = ImGui::Begin("##leftdock", nullptr, flags);
     ImGui::PopStyleVar();
-    const float width = ImGui::GetWindowWidth();
+    const float width = st.panelWidth;
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        const float edge = x + width;
+        const bool over = io.MousePos.x >= edge - 4 && io.MousePos.x <= edge + 4 && io.MousePos.y >= top && io.MousePos.y <= bottom &&
+                          !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_panelDragging = true;
+        if (m_panelDragging) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) st.panelWidth = std::clamp(io.MousePos.x - x, 200.0f, 640.0f);
+            else m_panelDragging = false;
+        }
+        if (over || m_panelDragging) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            ImGui::GetForegroundDrawList()->AddLine({edge, top}, {edge, bottom}, theme::kAccent, 2.0f);
+        }
+    }
     if (visible) {
         // Page tabs (Model | Library) with a close button, like a docked DCC panel.
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {12, 5});
