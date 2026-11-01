@@ -1,6 +1,7 @@
 #include "core/Preferences.hpp"
 
 #include "core/Keymap.hpp"
+#include "core/MouseScheme.hpp"
 #include "core/Translate.hpp"
 
 #include "core/Cam.hpp"
@@ -101,6 +102,7 @@ Json preferencesToJson(const Preferences& p) {
     j.set("session", session);
     j.set("session_active", p.sessionActive);
     if (p.sessionOpening) j.set("session_opening", true);
+    j.set("mouse", p.mouse);
     j.set("zoom_invert", p.zoomInvert);
     j.set("zoom_speed", p.zoomSpeed);
     j.set("orbit_speed", p.orbitSpeed);
@@ -183,6 +185,7 @@ Preferences preferencesFromJson(const Json& j) {
     number("antialiasing", "antialiasing");
     number("mcp_port", "mcp-port");
     take("display", "display");
+    take("mouse", "mouse");
     if (const Json& w = j["window"]; w.isObject()) {
         const int ww = w["width"].asInt(0), wh = w["height"].asInt(0);
         if (ww >= 400 && wh >= 300 && ww <= 16384 && wh <= 16384) { // a sane size, else not kept
@@ -399,6 +402,14 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         const int n = x ? static_cast<int>(*x) : -1;
         if (!x || *x != n || (n != 0 && (n < 1024 || n > 65535))) return fail("MCP-PORT is a port from 1024 to 65535, or OFF");
         p.mcpPort = n;
+    } else if (k == "mouse") {
+        if (clear) p.mouse = "sicdm";
+        else if (isMouseScheme(v)) p.mouse = v;
+        else {
+            std::string names;
+            for (const MouseSchemeInfo& m : mouseSchemes()) names += (names.empty() ? "" : ", ") + m.key;
+            return fail("MOUSE is one of " + names);
+        }
     } else if (k == "display") {
         const auto& names = displayModeNames();
         if (clear) p.displayMode = "shaded-edges";
@@ -452,6 +463,7 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         std::string("updates: ") + (p.checkUpdates ? "on" : "off"),
         std::string("rulers: ") + (p.rulers ? "on" : "off"),
         std::string("reopen: ") + (p.reopenLast ? "on (the projects open at the last close)" : "off (start with the demo part)"),
+        "mouse: " + p.mouse,
         std::string("zoom-invert: ") + onOff(p.zoomInvert),
         "zoom-speed: " + factor(p.zoomSpeed),
         "orbit-speed: " + factor(p.orbitSpeed),

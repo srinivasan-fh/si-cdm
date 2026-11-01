@@ -6,6 +6,7 @@
 #include "core/Lathe.hpp"
 #include "core/Licence.hpp"
 #include "core/Keymap.hpp"
+#include "core/MouseScheme.hpp"
 #include "core/Preferences.hpp"
 #include "core/Units.hpp"
 #include "ui/LandingUI.hpp"
@@ -232,6 +233,22 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
             toggle(tr("Show rulers along the canvas's top and left edges"), p.rulers, "rulers");
             ImGui::TextDisabled("%s", tr("The view bar still changes these for the moment; these are how the window starts."));
             ImGui::SeparatorText(tr("Navigation"));
+            {
+                const std::vector<MouseSchemeInfo>& schemes = mouseSchemes();
+                std::string shown = p.mouse;
+                for (const MouseSchemeInfo& m : schemes)
+                    if (m.key == p.mouse) shown = m.name;
+                ImGui::SetNextItemWidth(220);
+                if (ImGui::BeginCombo(tr("Mouse buttons like"), shown.c_str())) {
+                    for (const MouseSchemeInfo& m : schemes) {
+                        if (ImGui::Selectable(m.name.c_str(), m.key == p.mouse)) set("mouse", m.key);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(m.description.c_str()));
+                    }
+                    ImGui::EndCombo();
+                }
+                for (const MouseSchemeInfo& m : schemes)
+                    if (m.key == p.mouse) ImGui::TextDisabled("%s", tr(m.description.c_str()));
+            }
             toggle(tr("Zoom about the point under the mouse"), p.zoomToCursor, "zoom-to-cursor");
             toggle(tr("Reverse the mouse wheel's zoom"), p.zoomInvert, "zoom-invert");
             toggle(tr("Glide to standard views and Fit (off: jump)"), p.animateViews, "animate-views");

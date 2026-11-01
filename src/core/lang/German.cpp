@@ -1432,6 +1432,12 @@ const char* const kGerman[][2] = {
     {"Zoom about the point under the mouse", "Um den Punkt unter der Maus zoomen"},
     {"Zoom speed", "Zoomgeschwindigkeit"},
     {"from the next start", "ab dem nächsten Start"},
+    {"Middle drag orbits, Ctrl+middle pans, Shift+middle zooms", "Mittlere Taste ziehen dreht, Strg+Mitte verschiebt, Umschalt+Mitte zoomt"},
+    {"Middle drag orbits, Shift+middle pans, Ctrl+middle zooms", "Mittlere Taste ziehen dreht, Umschalt+Mitte verschiebt, Strg+Mitte zoomt"},
+    {"Middle drag pans, Shift+middle orbits", "Mittlere Taste ziehen verschiebt, Umschalt+Mitte dreht"},
+    {"Middle drag pans, middle with Ctrl orbits, Shift+middle zooms", "Mittlere Taste ziehen verschiebt, mit Strg dreht, Umschalt+Mitte zoomt"},
+    {"Mouse buttons like", "Maustasten wie"},
+    {"Right drag orbits, middle drag pans", "Rechte Taste ziehen dreht, mittlere Taste verschiebt"},
 };
 
 

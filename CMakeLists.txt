@@ -122,6 +122,7 @@ add_library(sicdm_core STATIC
     src/core/Ed25519.cpp
     src/core/Licence.cpp
     src/core/Preferences.cpp
+    src/core/MouseScheme.cpp
     src/core/Rig.cpp
     src/core/RobotExport.cpp
     src/core/Multibody.cpp

@@ -1,6 +1,7 @@
 #include "app/Application.hpp"
 #include "app/PenInput.hpp"
 #include "app/WindowFront.hpp"
+#include "core/MouseScheme.hpp"
 #include "core/Armature.hpp"
 #include "core/Components.hpp"
 #include "core/DirectEdit.hpp"
@@ -1712,13 +1713,25 @@ void Application::handleViewportInput() {
             }
         }
     }
-    if (onCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) m_otherDrag = orbitOrPan;
-    if (onCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) m_otherDrag = DragMode::Pan;
+    // The right and middle buttons navigate as the MOUSE preference says (Shift and Ctrl
+    // as the button goes down).
+    for (const auto& [imguiButton, button] : {std::pair{ImGuiMouseButton_Right, MouseButton::Right}, std::pair{ImGuiMouseButton_Middle, MouseButton::Middle}}) {
+        if (!onCanvas || !ImGui::IsMouseClicked(imguiButton)) continue;
+        switch (mouseViewDrag(preferences().mouse, button, io.KeyShift, commandModifierHeld(), is2D)) {
+        case ViewDrag::Orbit: m_otherDrag = DragMode::Orbit; break;
+        case ViewDrag::Pan: m_otherDrag = DragMode::Pan; break;
+        case ViewDrag::Zoom: m_otherDrag = DragMode::Zoom; break;
+        case ViewDrag::None: break;
+        }
+        m_otherPressX = mx;
+        m_otherPressY = my;
+    }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle))
         m_otherDrag = DragMode::None;
     const float orbitK = preferences().orbitSpeed;
     if (m_otherDrag == DragMode::Orbit) cam.orbit(dx * orbitK, dy * orbitK);
     if (m_otherDrag == DragMode::Pan) cam.pan(dx, dy, wh);
+    if (m_otherDrag == DragMode::Zoom && dy != 0.0f) zoomView(cam, -dy * 0.02f, m_otherPressX, m_otherPressY, io.DisplaySize.x, wh);
 
     // The gizmo on the selected body (Move tool): the handle under the mouse.
     Vec3 gizmoPivot{};

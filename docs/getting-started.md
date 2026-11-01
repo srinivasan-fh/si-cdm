@@ -57,7 +57,9 @@ Every file opens in its own tab above the canvas. *File → Undo* (`Ctrl+Z`) and
 | `W` | Shaded, shaded with edges, wireframe, hidden line |
 | `Tab` | Switch between the 2D drawing and the 3D model |
 
-*Help → Keyboard and Mouse* lists every key.
+*Help → Keyboard and Mouse* lists every key. Used to another program's mouse? *File →
+Preferences → View → Mouse buttons like* sets the buttons as in SolidWorks, Creo / NX,
+Fusion / Inventor, CATIA or Blender.
 
 ## A first part
 

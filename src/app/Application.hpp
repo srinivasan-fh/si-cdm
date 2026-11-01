@@ -233,6 +233,7 @@ private:
     DragMode m_leftDrag = DragMode::None;
     bool m_escapedDrag = false; // Esc cancelled the drag; the button is still held
     DragMode m_otherDrag = DragMode::None; // right / middle button
+    float m_otherPressX = 0, m_otherPressY = 0; // where it went down (a zoom drag zooms about it)
     float m_pressX = 0, m_pressY = 0;
     float m_pendingScroll = 0;
     Vec3 m_movePlanePoint;
