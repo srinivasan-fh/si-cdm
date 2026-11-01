@@ -7,6 +7,7 @@
 #include "core/Scene.hpp"
 #include "core/Sculpt.hpp"
 #include "core/Section.hpp"
+#include "core/Step.hpp"
 #include "core/Wearable.hpp"
 
 #include <algorithm>
@@ -2095,6 +2096,107 @@ std::vector<BSurface> cornerSurfaces(const std::vector<Vec3>& normals, const Vec
 
 } // namespace
 
+namespace {
+
+// A convex solid's triangles clipped by the plane n.x = c (keeping n.x <= c), the cut closed
+// with a cap: chamfers of a convex body's edges are just these cuts, one plane an edge, and
+// meeting at a corner they make no slivers for a mesh boolean to trip on.
+MeshData clipConvex(const MeshData& m, const Vec3& n, float c) {
+    const AABB box = m.bounds();
+    const float eps = 1e-5f * std::max(length(box.max - box.min), 1.0f); // "on the plane", and the weld distance
+    // Welding by grid cell, looking in the neighbouring cells too (a point a hair across a
+    // cell's border is still the same point).
+    std::unordered_map<long long, std::vector<std::uint32_t>> cells;
+    MeshData out;
+    auto cellOf = [&](float v) { return static_cast<long long>(std::floor(v / (eps * 4))); };
+    auto key = [](long long x, long long y, long long z) { return (x * 73856093LL) ^ (y * 19349663LL) ^ (z * 83492791LL); };
+    auto vert = [&](const Vec3& p) {
+        const long long cx = cellOf(p.x), cy = cellOf(p.y), cz = cellOf(p.z);
+        for (long long dx = -1; dx <= 1; ++dx)
+            for (long long dy = -1; dy <= 1; ++dy)
+                for (long long dz = -1; dz <= 1; ++dz) {
+                    const auto it = cells.find(key(cx + dx, cy + dy, cz + dz));
+                    if (it == cells.end()) continue;
+                    for (std::uint32_t i : it->second)
+                        if (length(out.vertices[i].position - p) <= eps) return i;
+                }
+        const std::uint32_t i = static_cast<std::uint32_t>(out.vertices.size());
+        Vertex v;
+        v.position = p;
+        out.vertices.push_back(v);
+        cells[key(cx, cy, cz)].push_back(i);
+        return i;
+    };
+    std::vector<Vec3> cut; // where the triangles meet the plane
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        const Vec3 tri[3] = {m.vertices[m.indices[t]].position, m.vertices[m.indices[t + 1]].position, m.vertices[m.indices[t + 2]].position};
+        float d[3];
+        for (int k = 0; k < 3; ++k) {
+            d[k] = dot(n, tri[k]) - c;
+            if (std::fabs(d[k]) <= eps) d[k] = 0; // on the plane
+        }
+        std::vector<Vec3> poly;
+        for (int k = 0; k < 3; ++k) {
+            const int j = (k + 1) % 3;
+            if (d[k] <= 0) poly.push_back(tri[k]);
+            if (d[k] == 0) cut.push_back(tri[k]);
+            if ((d[k] < 0 && d[j] > 0) || (d[k] > 0 && d[j] < 0)) {
+                const Vec3 x = tri[k] + (tri[j] - tri[k]) * (d[k] / (d[k] - d[j]));
+                poly.push_back(x);
+                cut.push_back(x);
+            }
+        }
+        for (std::size_t k = 1; k + 1 < poly.size(); ++k) {
+            const std::uint32_t i0 = vert(poly[0]), i1 = vert(poly[k]), i2 = vert(poly[k + 1]);
+            if (i0 != i1 && i1 != i2 && i0 != i2) out.indices.insert(out.indices.end(), {i0, i1, i2});
+        }
+    }
+    // The cap: the cut points round their centre, facing out along n (u, w, n right-handed:
+    // counter-clockwise about n faces out). Points along a side of it are kept, so the cap's
+    // edges meet the cut triangles' edges one for one.
+    if (cut.size() >= 3) {
+        std::vector<std::uint32_t> ids;
+        for (const Vec3& p : cut) ids.push_back(vert(p));
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        if (ids.size() >= 3) {
+            Vec3 centre{};
+            for (std::uint32_t i : ids) centre = centre + out.vertices[i].position;
+            centre = centre * (1.0f / static_cast<float>(ids.size()));
+            const Vec3 u = normalize(std::fabs(n.x) < 0.9f ? cross(n, Vec3{1, 0, 0}) : cross(n, Vec3{0, 1, 0}));
+            const Vec3 w = cross(n, u);
+            std::sort(ids.begin(), ids.end(), [&](std::uint32_t a, std::uint32_t b) {
+                const Vec3 pa = out.vertices[a].position - centre, pb = out.vertices[b].position - centre;
+                return std::atan2(dot(pa, w), dot(pa, u)) < std::atan2(dot(pb, w), dot(pb, u));
+            });
+            Vertex mid;
+            mid.position = centre;
+            const std::uint32_t mi = static_cast<std::uint32_t>(out.vertices.size());
+            out.vertices.push_back(mid);
+            for (std::size_t k = 0; k < ids.size(); ++k) out.indices.insert(out.indices.end(), {mi, ids[k], ids[(k + 1) % ids.size()]});
+        }
+    }
+    return out;
+}
+
+// True when every vertex is on the inside of every triangle's plane.
+bool convexMesh(const MeshData& m) {
+    const AABB box = m.bounds();
+    const float tol = 1e-4f * std::max(length(box.max - box.min), 1.0f);
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        const Vec3 a = m.vertices[m.indices[t]].position, b = m.vertices[m.indices[t + 1]].position, c = m.vertices[m.indices[t + 2]].position;
+        const Vec3 nn = cross(b - a, c - a);
+        const float len = length(nn);
+        if (len < 1e-12f) continue;
+        const Vec3 n = nn * (1.0f / len);
+        for (const Vertex& v : m.vertices)
+            if (dot(n, v.position - a) > tol) return false;
+    }
+    return true;
+}
+
+} // namespace
+
 bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::vector<int>& chosen, float size, bool chamfer, std::string* error,
                 float sizeEnd, const std::optional<Vec3>& start) {
     auto fail = [&](const std::string& why) {
@@ -2143,6 +2245,47 @@ bool roundEdges(Body& body, const std::vector<EdgeChain>& chainsIn, const std::v
         body.brepKey = exact ? meshKey(body.mesh) : 0;
     }
     const bool wasClosed = openEdgeCount(body.mesh) == 0;
+    // Chamfers on a convex solid's straight edges: each a plane cut, exact (planar faces).
+    if (chamfer && wasClosed && convexMesh(body.mesh)) {
+        bool straight = true;
+        for (int k : chosen) {
+            if (k < 0 || k >= static_cast<int>(chains.size())) continue;
+            const EdgeChain& c = chains[static_cast<std::size_t>(k)];
+            if (c.closed || !c.convex || c.pts.size() < 2) straight = false;
+            else
+                for (std::size_t i = 1; i + 1 < c.pts.size() && straight; ++i)
+                    straight = length(cross(c.pts[i] - c.pts[0], c.pts.back() - c.pts[0])) < 1e-4f * length(c.pts.back() - c.pts[0]) * length(c.pts.back() - c.pts[0]);
+        }
+        if (straight) {
+            MeshData m = body.mesh;
+            for (int k : chosen) {
+                if (k < 0 || k >= static_cast<int>(chains.size())) continue;
+                const EdgeChain& c = chains[static_cast<std::size_t>(k)];
+                const Vec3 p0 = c.pts.front(), dir = normalize(c.pts.back() - c.pts.front());
+                const Vec3 nL = normalize(c.nL.front()), nR = normalize(c.nR.front());
+                // Into each face, square to the edge, away from the other face.
+                Vec3 u = normalize(cross(dir, nL)), v = normalize(cross(dir, nR));
+                if (dot(u, nR) > 0) u = -u;
+                if (dot(v, nL) > 0) v = -v;
+                const Vec3 a = p0 + u * size, b = p0 + v * size;
+                Vec3 n = normalize(cross(dir, b - a));
+                if (dot(n, nL + nR) < 0) n = -n;
+                m = clipConvex(m, n, dot(n, a));
+            }
+            if (openEdgeCount(m) == 0 && !m.indices.empty()) {
+                if (auto br = meshToBrep(m)) {
+                    MeshData shown = tessellate(*br);
+                    if (openEdgeCount(shown) == 0) {
+                        body.brep = br;
+                        body.mesh = std::move(shown);
+                        body.brepKey = meshKey(body.mesh);
+                        return true;
+                    }
+                }
+            }
+            // Not closed after all: the general way below.
+        }
+    }
     // Where three rounded outside edges meet (a corner a ball will finish).
     auto threeRoundCorner = [&](const Vec3& p) {
         if (chamfer || variable) return false;

@@ -1182,3 +1182,36 @@ TEST_CASE("FEA: natural frequencies, own weight, pressure, bearing loads and hea
     CHECK(last(d).field.find("mode 1") == 0);
     CHECK(!run(d, "FEA \"Block 1\" HEAT FACE 20,0,5 10").ok); // heat in, nowhere held
 }
+
+TEST_CASE("Chamfer every edge of a convex block: plane cuts, exact, closed, the right volume") {
+    // Twelve chamfers of a 20 mm cube by d: 12 * d^2/2 * 20, less the 24 pairs meeting at the
+    // corners (d^3/3 each), plus the 8 corners where three meet (d^3/4 each).
+    for (const float d : {1.0f, 2.0f, 3.5f}) {
+        Document doc;
+        CHECK(executeCommand(doc, "BOX 20 20 20", nullptr).ok);
+        const CommandOutput o = executeCommand(doc, "CHAMFER DISTANCE " + std::to_string(d) + " EDGES ALL", nullptr);
+        CHECK(o.ok);
+        const Body& b = doc.scene.bodies().back();
+        CHECK(b.exact());
+        CHECK(openEdgeCount(b.mesh) == 0);
+        const double want = 8000.0 - (12 * 0.5 * d * d * 20 - 24 * d * d * d / 3.0 + 8 * d * d * d / 4.0);
+        CHECK(std::fabs(meshVolume(b.mesh) - want) < 0.01);
+    }
+    // A convex prism (a hexagon extruded): its 18 edges.
+    Document hex;
+    CHECK(executeCommand(hex, "POLYGON 0,0 20 6", nullptr).ok);
+    CHECK(executeCommand(hex, "EXTRUDE 15", nullptr).ok);
+    {
+        const double before = meshVolume(hex.scene.bodies().back().mesh);
+        CHECK(executeCommand(hex, "CHAMFER DISTANCE 1 EDGES ALL", nullptr).ok);
+        const Body& h = hex.scene.bodies().back();
+        CHECK(h.exact() && openEdgeCount(h.mesh) == 0 && meshVolume(h.mesh) < before);
+    }
+    // Not convex (an L): the cutting tools as before, still closed.
+    Document l;
+    CHECK(executeCommand(l, "PLINE 0,0 40,0 40,10 10,10 10,30 0,30 CLOSE", nullptr).ok);
+    CHECK(executeCommand(l, "EXTRUDE 10", nullptr).ok);
+    const CommandOutput lo = executeCommand(l, "CHAMFER DISTANCE 1 EDGES TOP", nullptr);
+    CHECK(lo.ok);
+    CHECK(openEdgeCount(l.scene.bodies().back().mesh) == 0);
+}
