@@ -30,8 +30,11 @@ class ViewCube {
 public:
     // `anchor` is the bottom-right corner the widget sits against.
     ViewCubeResult draw(const OrbitCamera& camera, ImVec2 anchor, bool drawing2D);
+    // A light 3D background: the buttons around the sphere in dark ink so they show.
+    void setLightCanvas(bool light) { m_lightCanvas = light; }
 
 private:
+    bool m_lightCanvas = false;
     bool m_dragging = false;
     ImVec2 m_pressPos{};
 };

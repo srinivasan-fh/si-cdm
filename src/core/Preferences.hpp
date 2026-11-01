@@ -51,6 +51,7 @@ struct Preferences {
     // Files.
     bool backup = false;             // SAVE keeps the file it replaces as name.sicdm.bak
     std::string projectFolder;       // where Open and Save As start with no project open; empty: the current folder
+    std::string theme = "dark";      // the interface's colours: dark, light, high-contrast
     float uiScale = 1.0f;            // the whole interface larger or smaller (0.75 to 2)
     // Start-up and graphics (antialiasing on the next start).
     bool splash = true;

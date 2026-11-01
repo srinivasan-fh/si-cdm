@@ -197,6 +197,7 @@ bool Application::init() {
         m_fbScale = ww > 0 ? static_cast<float>(fw) / static_cast<float>(ww) : 1.0f;
         m_contentScale = xs / std::max(m_fbScale, 1.0f);
         m_uiZoom = preferences().uiScale;
+        theme::setPalette(preferences().theme);
         theme::apply(m_contentScale, m_fbScale * m_uiZoom);
     }
     // Callbacks are chained manually above; let the backend install the rest.
@@ -3227,6 +3228,10 @@ void Application::syncPreferences() {
         m_framesToRender = std::max(m_framesToRender, 3);
     }
     OrbitCamera::setAnimations(p.animateViews);
+    if (p.theme != theme::paletteName()) { // the THEME preference: the interface's colours at once
+        theme::setPalette(p.theme);
+        theme::applyColors();
+    }
     m_uiState.showViewSphere = p.viewSphere;
     if (p.vsync != m_lastPrefs.vsync) {
         m_lastPrefs.vsync = p.vsync;

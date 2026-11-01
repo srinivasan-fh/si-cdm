@@ -22,8 +22,8 @@ constexpr float kPad = 6.0f;
 constexpr double kLongPress = 0.4; // seconds before a held slot opens its flyout
 
 ImU32 iconColor(ToolId id, bool active) {
-    if (active) return IM_COL32(255, 255, 255, 255);
-    return toolInfo(id).available ? IM_COL32(205, 210, 218, 255) : IM_COL32(130, 135, 145, 255);
+    if (active) return theme::kIconActive;
+    return toolInfo(id).available ? theme::kIcon : theme::kIconOff;
 }
 
 } // namespace
@@ -232,7 +232,7 @@ float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen, in
         ImDrawList* dl = ImGui::GetWindowDrawList();
         if (on) dl->AddRectFilled(lo, hi, theme::kAccent, 4.0f);
         else if (hovered) dl->AddRectFilled(lo, hi, theme::kHover, 4.0f);
-        const ImU32 c = on ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 210, 218, 255);
+        const ImU32 c = on ? theme::kIconActive : theme::kIcon;
         const ImVec2 mid{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f};
         if (tab == 0) { // root node + two indented children
             const ImVec2 o{mid.x - 7.0f, mid.y - 6.0f};
@@ -305,12 +305,12 @@ void Toolbox::drawSlot(int gi, float size) {
     else if (hovered) dl->AddRectFilled(lo, hi, theme::kHover, 4.0f);
     const bool dimmed = m_drawing2D && shown == ToolId::Orbit;
     drawToolIcon(dl, shown, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, size * 0.56f,
-                 dimmed ? IM_COL32(95, 100, 110, 255) : iconColor(shown, isActive));
+                 dimmed ? theme::kIconOff : iconColor(shown, isActive));
 
     const bool hasFlyout = group.tools.size() > 1;
     if (hasFlyout) // corner triangle, as in Photoshop
         dl->AddTriangleFilled({hi.x - 2, hi.y - 7}, {hi.x - 2, hi.y - 2}, {hi.x - 7, hi.y - 2},
-                              IM_COL32(185, 190, 198, 255));
+                              theme::kTextDim);
 
     // Click selects; right-click or a long press opens the flyout.
     bool openFlyout = false;

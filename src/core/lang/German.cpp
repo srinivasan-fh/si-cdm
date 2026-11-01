@@ -1449,6 +1449,9 @@ const char* const kGerman[][2] = {
     {"Radians", "Bogenmaß"},
     {"Interface", "Oberfläche"},
     {"Interface size", "Oberflächengröße"},
+    {"Theme", "Farbschema"},
+    {"Light", "Hell"},
+    {"High contrast", "Hoher Kontrast"},
 };
 
 

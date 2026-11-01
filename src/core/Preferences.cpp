@@ -124,6 +124,7 @@ Json preferencesToJson(const Preferences& p) {
     j.set("backup", p.backup);
     j.set("project_folder", p.projectFolder);
     j.set("ui_scale", p.uiScale);
+    j.set("theme", p.theme);
     j.set("splash", p.splash);
     j.set("antialiasing", p.antialiasing);
     j.set("vsync", p.vsync);
@@ -196,6 +197,7 @@ Preferences preferencesFromJson(const Json& j) {
     number("mcp_port", "mcp-port");
     take("display", "display");
     take("mouse", "mouse");
+    take("theme", "theme");
     if (const Json& w = j["window"]; w.isObject()) {
         const int ww = w["width"].asInt(0), wh = w["height"].asInt(0);
         if (ww >= 400 && wh >= 300 && ww <= 16384 && wh <= 16384) { // a sane size, else not kept
@@ -447,6 +449,11 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (v == "deg" || v == "degrees") p.radians = false;
         else if (v == "rad" || v == "radians") p.radians = true;
         else return fail("ANGLES is DEG or RAD");
+    } else if (k == "theme") {
+        if (clear || v == "dark") p.theme = "dark";
+        else if (v == "light") p.theme = "light";
+        else if (v == "high-contrast" || v == "contrast" || v == "highcontrast") p.theme = "high-contrast";
+        else return fail("THEME is dark, light or high-contrast");
     } else if (k == "mouse") {
         if (clear) p.mouse = "sicdm";
         else if (isMouseScheme(v)) p.mouse = v;
@@ -528,6 +535,7 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         "angle-step: " + factor(p.angleStep) + " deg",
         std::string("backup: ") + (p.backup ? "on (name.sicdm.bak)" : "off"),
         "project-folder: " + orDefault(p.projectFolder, "the current folder"),
+        "theme: " + p.theme,
         "ui-scale: " + factor(p.uiScale * 100.0f) + "%",
         std::string("splash: ") + onOff(p.splash),
         "antialiasing: " + (p.antialiasing > 0 ? std::to_string(p.antialiasing) + " samples" : std::string("off")) + " (from the next start)",

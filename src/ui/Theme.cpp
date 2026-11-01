@@ -79,34 +79,81 @@ void apply(float uiScale, float framebufferScale) {
     s.DisplaySafeAreaPadding = {4, 4};
     s.ScaleAllSizes(uiScale);
 
-    ImVec4* c = s.Colors;
+    applyColors();
+}
+
+namespace {
+
+std::string g_palette = "dark";
+
+struct Palette {
+    ImU32 chrome, panel, raised, hover, field, border, line, text, textDim, textFaint, accent, accentHover, accentText, warning, success,
+        error, icon, iconActive, iconOff, tile, tileHover, rulerBg, rulerCorner, rulerTick, rulerText, errorField;
+};
+
+Palette palette(const std::string& name) {
+    if (name == "light")
+        return {rgb(232, 235, 240), rgb(245, 246, 248), rgb(226, 229, 235), rgb(212, 217, 225), rgb(255, 255, 255), rgb(184, 190, 200),
+                rgb(204, 209, 217), rgb(28, 31, 36),    rgb(88, 95, 106),   rgb(128, 135, 146), rgb(37, 110, 214),  rgb(56, 128, 232),
+                rgb(22, 94, 196),   rgb(170, 104, 0),   rgb(28, 135, 58),   rgb(196, 48, 42),   rgb(58, 64, 75),    rgb(255, 255, 255),
+                rgb(160, 166, 176), rgb(226, 229, 235), rgb(208, 214, 223), rgb(236, 238, 242), rgb(226, 229, 234), rgb(130, 136, 148),
+                rgb(80, 86, 98),    rgb(255, 218, 216)};
+    if (name == "high-contrast")
+        return {rgb(0, 0, 0),       rgb(0, 0, 0),       rgb(24, 24, 24),    rgb(70, 70, 0),     rgb(0, 0, 0),       rgb(255, 255, 255),
+                rgb(220, 220, 220), rgb(255, 255, 255), rgb(240, 240, 240), rgb(210, 210, 210), rgb(0, 84, 255),    rgb(40, 120, 255),
+                rgb(255, 230, 0),   rgb(255, 200, 0),   rgb(0, 255, 120),   rgb(255, 80, 80),   rgb(255, 255, 255), rgb(255, 255, 255),
+                rgb(170, 170, 170), rgb(0, 0, 0),       rgb(70, 70, 0),     rgb(0, 0, 0),       rgb(0, 0, 0),       rgb(255, 255, 255),
+                rgb(255, 255, 255), rgb(120, 0, 0)};
+    return {rgb(28, 30, 34),    rgb(37, 39, 44),    rgb(45, 48, 54),    rgb(56, 60, 68),    rgb(25, 27, 31),    rgb(14, 15, 18),
+            rgb(58, 62, 70),    rgb(220, 223, 228), rgb(142, 148, 158), rgb(104, 110, 120), rgb(47, 123, 224),  rgb(66, 140, 238),
+            rgb(110, 172, 255), rgb(240, 178, 90),  rgb(110, 205, 130), rgb(240, 110, 105), rgb(205, 210, 218), rgb(255, 255, 255),
+            rgb(130, 135, 145), rgb(40, 44, 52),    rgb(58, 64, 76),    rgb(30, 33, 39),    rgb(24, 26, 31),    rgb(120, 126, 138),
+            rgb(170, 175, 186), rgb(92, 38, 40)};
+}
+
+} // namespace
+
+void setPalette(const std::string& name) {
+    g_palette = name == "light" || name == "high-contrast" ? name : "dark";
+    const Palette p = palette(g_palette);
+    kChrome = p.chrome, kPanel = p.panel, kPanelRaised = p.raised, kHover = p.hover, kField = p.field, kBorder = p.border, kLine = p.line;
+    kText = p.text, kTextDim = p.textDim, kTextFaint = p.textFaint, kAccent = p.accent, kAccentHover = p.accentHover, kAccentText = p.accentText;
+    kWarning = p.warning, kSuccess = p.success, kError = p.error, kIcon = p.icon, kIconActive = p.iconActive, kIconOff = p.iconOff;
+    kTile = p.tile, kTileHover = p.tileHover, kRulerBg = p.rulerBg, kRulerCorner = p.rulerCorner, kRulerTick = p.rulerTick, kRulerText = p.rulerText;
+    kErrorField = p.errorField;
+}
+
+const std::string& paletteName() { return g_palette; }
+
+void applyColors() {
+    ImVec4* c = ImGui::GetStyle().Colors;
     c[ImGuiCol_Text] = vec(kText);
     c[ImGuiCol_TextDisabled] = vec(kTextFaint);
     c[ImGuiCol_WindowBg] = vec(kPanel);
     c[ImGuiCol_ChildBg] = {0, 0, 0, 0};
-    c[ImGuiCol_PopupBg] = vec(rgb(43, 46, 52, 252));
-    c[ImGuiCol_Border] = vec(rgb(62, 66, 75, 200));
+    c[ImGuiCol_PopupBg] = vec((kPanelRaised & 0x00FFFFFFu) | (252u << 24));
+    c[ImGuiCol_Border] = vec((kLine & 0x00FFFFFFu) | (200u << 24));
     c[ImGuiCol_BorderShadow] = {0, 0, 0, 0};
     c[ImGuiCol_FrameBg] = vec(kField);
-    c[ImGuiCol_FrameBgHovered] = vec(rgb(31, 34, 39));
-    c[ImGuiCol_FrameBgActive] = vec(rgb(34, 37, 43));
+    c[ImGuiCol_FrameBgHovered] = vec(kHover);
+    c[ImGuiCol_FrameBgActive] = vec(kHover);
     c[ImGuiCol_TitleBg] = vec(kChrome);
-    c[ImGuiCol_TitleBgActive] = vec(rgb(33, 35, 40));
+    c[ImGuiCol_TitleBgActive] = vec(kPanelRaised);
     c[ImGuiCol_TitleBgCollapsed] = vec(kChrome);
     c[ImGuiCol_MenuBarBg] = vec(kChrome);
     c[ImGuiCol_ScrollbarBg] = {0, 0, 0, 0};
-    c[ImGuiCol_ScrollbarGrab] = vec(rgb(70, 75, 84));
-    c[ImGuiCol_ScrollbarGrabHovered] = vec(rgb(88, 94, 104));
-    c[ImGuiCol_ScrollbarGrabActive] = vec(rgb(104, 110, 120));
+    c[ImGuiCol_ScrollbarGrab] = vec(kLine);
+    c[ImGuiCol_ScrollbarGrabHovered] = vec(kTextFaint);
+    c[ImGuiCol_ScrollbarGrabActive] = vec(kTextDim);
     c[ImGuiCol_CheckMark] = vec(kAccentText);
     c[ImGuiCol_SliderGrab] = vec(kAccent);
     c[ImGuiCol_SliderGrabActive] = vec(kAccentHover);
     c[ImGuiCol_Button] = vec(kPanelRaised);
     c[ImGuiCol_ButtonHovered] = vec(kHover);
     c[ImGuiCol_ButtonActive] = vec(kAccent);
-    c[ImGuiCol_Header] = vec(rgb(47, 123, 224, 70));
-    c[ImGuiCol_HeaderHovered] = vec(rgb(255, 255, 255, 18));
-    c[ImGuiCol_HeaderActive] = vec(rgb(47, 123, 224, 110));
+    c[ImGuiCol_Header] = vec((kAccent & 0x00FFFFFFu) | (70u << 24));
+    c[ImGuiCol_HeaderHovered] = vec((kText & 0x00FFFFFFu) | (22u << 24));
+    c[ImGuiCol_HeaderActive] = vec((kAccent & 0x00FFFFFFu) | (110u << 24));
     c[ImGuiCol_Separator] = vec(kLine);
     c[ImGuiCol_SeparatorHovered] = vec(kAccent);
     c[ImGuiCol_SeparatorActive] = vec(kAccentHover);
@@ -122,10 +169,10 @@ void apply(float uiScale, float framebufferScale) {
     c[ImGuiCol_TabDimmedSelectedOverline] = vec(kLine);
     c[ImGuiCol_TableHeaderBg] = vec(kPanelRaised);
     c[ImGuiCol_TableBorderStrong] = vec(kLine);
-    c[ImGuiCol_TableBorderLight] = vec(rgb(52, 56, 63));
+    c[ImGuiCol_TableBorderLight] = vec(kLine);
     c[ImGuiCol_TableRowBg] = {0, 0, 0, 0};
-    c[ImGuiCol_TableRowBgAlt] = vec(rgb(255, 255, 255, 8));
-    c[ImGuiCol_TextSelectedBg] = vec(rgb(47, 123, 224, 110));
+    c[ImGuiCol_TableRowBgAlt] = vec((kText & 0x00FFFFFFu) | (10u << 24));
+    c[ImGuiCol_TextSelectedBg] = vec((kAccent & 0x00FFFFFFu) | (110u << 24));
     c[ImGuiCol_DragDropTarget] = vec(kAccentHover);
     c[ImGuiCol_NavCursor] = vec(kAccent);
     c[ImGuiCol_ModalWindowDimBg] = vec(rgb(0, 0, 0, 110));

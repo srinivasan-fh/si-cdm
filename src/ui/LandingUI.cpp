@@ -61,7 +61,6 @@ std::string keysLabel(const char* id) {
 }
 
 constexpr float kRulerSize = 20.0f;
-constexpr ImU32 kAccent = theme::kAccent;
 
 const char* displayModeLabel(DisplayMode m) {
     switch (m) {
@@ -163,7 +162,7 @@ bool lengthField(const char* id, float* mm, float minMm = -1e7f, float maxMm = 1
         std::snprintf(local.data(), local.size(), "%s", text.c_str());
     }
     const bool error = s_errorId == wid && ImGui::GetTime() < s_errorUntil;
-    if (error) ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(theme::rgb(92, 38, 40)));
+    if (error) ImGui::PushStyleColor(ImGuiCol_FrameBg, theme::vec(theme::kErrorField));
     ImGui::InputText(id, buf, local.size(), ImGuiInputTextFlags_AutoSelectAll);
     if (error) ImGui::PopStyleColor();
     if (ImGui::IsItemActivated()) s_editing[wid] = editing != s_editing.end() ? editing->second : local;
@@ -283,7 +282,7 @@ bool segment(const char* label, bool active, ImDrawFlags corners, void (*icon)(I
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 bg = active ? theme::kAccent : (hovered ? theme::kHover : theme::kPanelRaised);
     dl->AddRectFilled(lo, hi, bg, 4.0f, corners);
-    const ImU32 fg = active ? IM_COL32(255, 255, 255, 255) : theme::kTextDim;
+    const ImU32 fg = active ? theme::kIconActive : theme::kTextDim;
     icon(dl, {lo.x + 20, (lo.y + hi.y) * 0.5f}, fg);
     ImFont* f = active ? theme::font(theme::Font::Strong) : ImGui::GetFont();
     dl->AddText(f, ImGui::GetFontSize(), {lo.x + 36, lo.y + (h - ImGui::GetFontSize()) * 0.5f}, active ? fg : theme::kText,
@@ -365,6 +364,7 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     m_canvasMax = {mv->WorkPos.x + mv->WorkSize.x - rightDock, bottom};
     if (rulers) drawRulers(cam, st);
 
+    m_viewCube.setLightCanvas(0.299f * vp.backgroundTop.x + 0.587f * vp.backgroundTop.y + 0.114f * vp.backgroundTop.z > 0.6f);
     const ViewCubeResult vc = st.showViewSphere ? m_viewCube.draw(cam, {m_canvasMax.x - 10.0f, m_canvasMax.y - 10.0f}, is2D) : ViewCubeResult{};
     if (vc.viewDirection) cmd.viewDirection = vc.viewDirection;
     if (vc.drawingPlane) {
@@ -2110,17 +2110,17 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
         const ImVec2 lo = ImGui::GetItemRectMin();
         const ImVec2 c{lo.x + fh * 0.5f, lo.y + fh * 0.5f + 1};
         if (ImGui::IsItemHovered()) {
-            dl->AddRectFilled(lo, {lo.x + fh, lo.y + fh}, IM_COL32(58, 64, 76, 255), 4.0f);
+            dl->AddRectFilled(lo, {lo.x + fh, lo.y + fh}, theme::kTileHover, 4.0f);
             ImGui::SetTooltip("%s", tr("Home view (3D isometric, fit all)"));
         }
         if (ImGui::IsItemClicked()) {
             cmd.home = true;
             if (st.mode == ViewMode::Drawing2D) cmd.mode = ViewMode::Model3D; // Simulation stays Simulation
         }
-        const ImU32 ic = IM_COL32(210, 214, 222, 255);
+        const ImU32 ic = theme::kIcon;
         dl->AddTriangleFilled({c.x - 8, c.y - 1}, {c.x, c.y - 8}, {c.x + 8, c.y - 1}, ic);
         dl->AddRectFilled({c.x - 6, c.y - 1}, {c.x + 6, c.y + 7}, ic);
-        dl->AddRectFilled({c.x - 2, c.y + 2}, {c.x + 2, c.y + 7}, IM_COL32(28, 30, 36, 255));
+        dl->AddRectFilled({c.x - 2, c.y + 2}, {c.x + 2, c.y + 7}, theme::kChrome);
     }
     auto divider = [&] { barDivider(fh); };
     divider();
@@ -2130,7 +2130,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
     {
         ImGui::Dummy({fh, fh});
         const ImVec2 lo = ImGui::GetItemRectMin();
-        drawToolIcon(dl, tool.id, {lo.x + fh * 0.5f, lo.y + fh * 0.5f}, fh * 0.62f, IM_COL32(230, 232, 238, 255));
+        drawToolIcon(dl, tool.id, {lo.x + fh * 0.5f, lo.y + fh * 0.5f}, fh * 0.62f, theme::kIcon);
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(tr(tool.name));
@@ -2944,7 +2944,7 @@ void LandingUI::drawOptionsBar(UiCommands& cmd, const OrbitCamera& /*cam*/, View
             if (!firstPlane) ImGui::SameLine();
             firstPlane = false;
             const bool on = st.plane == p;
-            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kAccent));
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(theme::kAccent));
             if (ImGui::Button(shortPlaneName(p))) cmd.plane = p;
             if (on) ImGui::PopStyleColor();
         }
@@ -3115,11 +3115,11 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
     auto yOf = [&](float v) { return vp.y * 0.5f - (v - c.y) / wpp; };
 
     const float x0 = m_canvasMin.x - kRulerSize, y0 = m_canvasMin.y - kRulerSize;
-    const ImU32 bg = IM_COL32(30, 33, 39, 255), tick = IM_COL32(120, 126, 138, 255), text = IM_COL32(170, 175, 186, 255);
+    const ImU32 bg = theme::kRulerBg, tick = theme::kRulerTick, text = theme::kRulerText;
     dl->AddRectFilled({x0, y0}, {m_canvasMax.x, m_canvasMin.y}, bg);
     dl->AddRectFilled({x0, y0}, {m_canvasMin.x, m_canvasMax.y}, bg);
-    dl->AddLine({m_canvasMin.x, m_canvasMin.y}, {m_canvasMax.x, m_canvasMin.y}, IM_COL32(60, 64, 74, 255));
-    dl->AddLine({m_canvasMin.x, m_canvasMin.y}, {m_canvasMin.x, m_canvasMax.y}, IM_COL32(60, 64, 74, 255));
+    dl->AddLine({m_canvasMin.x, m_canvasMin.y}, {m_canvasMax.x, m_canvasMin.y}, theme::kLine);
+    dl->AddLine({m_canvasMin.x, m_canvasMin.y}, {m_canvasMin.x, m_canvasMax.y}, theme::kLine);
 
     // Ticks and labels in the document units.
     const UnitSettings& units = activeUnits();
@@ -3176,15 +3176,15 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
         if (cy > m_canvasMin.y && cy < m_canvasMax.y) dl->AddLine({x0, cy}, {m_canvasMin.x, cy}, mk);
     }
     // Corner box with units and plane axes.
-    dl->AddRectFilled({x0, y0}, {m_canvasMin.x, m_canvasMin.y}, IM_COL32(24, 26, 31, 255));
+    dl->AddRectFilled({x0, y0}, {m_canvasMin.x, m_canvasMin.y}, theme::kRulerCorner);
     dl->AddText(font, fs, {x0 + 2, y0 + 3}, text, unitInfo(rulerUnit).symbol);
     // 3D: the world axes the rulers read, at their far ends (none: distances from the centre).
     if (!is2D && nameU && nameV) {
         const ImU32 axisCol = IM_COL32(120, 220, 255, 255);
         const char su[2] = {nameU, 0}, sv[2] = {nameV, 0};
-        dl->AddRectFilled({m_canvasMax.x - 16, y0}, {m_canvasMax.x, m_canvasMin.y}, IM_COL32(24, 26, 31, 255));
+        dl->AddRectFilled({m_canvasMax.x - 16, y0}, {m_canvasMax.x, m_canvasMin.y}, theme::kRulerCorner);
         dl->AddText(font, fs, {m_canvasMax.x - 11, y0 + 3}, axisCol, su);
-        dl->AddRectFilled({x0, m_canvasMax.y - 16}, {m_canvasMin.x, m_canvasMax.y}, IM_COL32(24, 26, 31, 255));
+        dl->AddRectFilled({x0, m_canvasMax.y - 16}, {m_canvasMin.x, m_canvasMax.y}, theme::kRulerCorner);
         dl->AddText(font, fs, {x0 + 6, m_canvasMax.y - 15}, axisCol, sv);
     }
 }
@@ -3608,7 +3608,7 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         const bool hov = ImGui::IsItemHovered();
         if (on) dl->AddRectFilled(lo, hi, theme::kAccent, 4.0f);
         else if (hov) dl->AddRectFilled(lo, hi, theme::kHover, 4.0f);
-        icon({(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, on ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 210, 218, 255));
+        icon({(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, on ? theme::kIconActive : theme::kIcon);
         if (hov) ImGui::SetTooltip("%s", tip);
         ImGui::SameLine();
         return ImGui::IsItemClicked();
@@ -4889,8 +4889,8 @@ void LandingUI::drawSimTransport(UiState& st) {
         ImGui::InvisibleButton(id, {fh + 6, fh});
         const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
         const bool hov = ImGui::IsItemHovered();
-        dl->AddRectFilled(lo, hi, on ? kAccent : hov ? IM_COL32(58, 64, 76, 255) : IM_COL32(40, 44, 52, 255), 4.0f);
-        icon(ImVec2{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, IM_COL32(230, 232, 238, 255));
+        dl->AddRectFilled(lo, hi, on ? theme::kAccent : hov ? theme::kTileHover : theme::kTile, 4.0f);
+        icon(ImVec2{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f}, on ? theme::kIconActive : theme::kIcon);
         if (hov) ImGui::SetTooltip("%s", tip);
         ImGui::SameLine(0, 4);
         return ImGui::IsItemClicked();
@@ -5469,7 +5469,7 @@ float LandingUI::drawMotionPanel(Scene& scene, UiCommands& cmd, UiState& st, flo
             for (int k = 0; k < 3; ++k) {
                 const bool on = std::fabs(m.axis.x - presets[k].x) < 1e-4f && std::fabs(m.axis.y - presets[k].y) < 1e-4f &&
                                 std::fabs(m.axis.z - presets[k].z) < 1e-4f;
-                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(kAccent));
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(theme::kAccent));
                 if (ImGui::SmallButton(names[k])) m.axis = presets[k];
                 if (on) ImGui::PopStyleColor();
                 ImGui::SameLine();

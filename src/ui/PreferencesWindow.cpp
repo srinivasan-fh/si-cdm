@@ -253,6 +253,7 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
         }
         if (ImGui::BeginTabItem(tr("View"))) {
             ImGui::SeparatorText(tr("Interface"));
+            choice(tr("Theme"), p.theme, {{"dark", tr("Dark")}, {"light", tr("Light")}, {"high-contrast", tr("High contrast")}}, "theme");
             {
                 static int pct = 100;
                 if (!ImGui::IsAnyItemActive() || ImGui::IsWindowAppearing()) pct = static_cast<int>(std::lround(p.uiScale * 100.0f));

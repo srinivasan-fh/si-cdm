@@ -211,12 +211,13 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
     }
     {
         const ImVec2 c{homePos.x + bs * 0.5f, homePos.y + bs * 0.5f + 1};
-        const ImU32 ic = IM_COL32(200, 205, 214, 255);
+        const ImU32 ic = m_lightCanvas ? IM_COL32(58, 64, 76, 255) : IM_COL32(200, 205, 214, 255);
         dl->AddTriangleFilled({c.x - 7, c.y - 1}, {c.x, c.y - 7}, {c.x + 7, c.y - 1}, ic);
         dl->AddRectFilled({c.x - 5, c.y - 1}, {c.x + 5, c.y + 6}, ic);
-        dl->AddRectFilled({c.x - 1.5f, c.y + 2}, {c.x + 1.5f, c.y + 6}, IM_COL32(30, 32, 38, 255));
+        dl->AddRectFilled({c.x - 1.5f, c.y + 2}, {c.x + 1.5f, c.y + 6}, m_lightCanvas ? IM_COL32(235, 238, 242, 255) : IM_COL32(30, 32, 38, 255));
     }
-    const ImU32 iconCol = IM_COL32(200, 205, 214, 255);
+    const ImU32 iconCol = m_lightCanvas ? IM_COL32(58, 64, 76, 255) : IM_COL32(200, 205, 214, 255);
+    const ImU32 hotCol = m_lightCanvas ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, 255);
     const bool shift = ImGui::GetIO().KeyShift;
     if (!drawing2D) {
         // Roll arrows (top-right): spin the picture around the viewing direction.
@@ -265,7 +266,7 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
         if (hov)
             ImGui::SetTooltip(rollDeg != 0.0f ? "Toggle perspective / orthographic  [P]\nView rolled; right-click > Level View"
                                               : "Toggle perspective / orthographic  [P]");
-        dl->AddText({p.x + 4, p.y + 1}, hov ? IM_COL32(255, 255, 255, 255) : IM_COL32(150, 156, 166, 255), label);
+        dl->AddText({p.x + 4, p.y + 1}, hov ? hotCol : m_lightCanvas ? IM_COL32(80, 86, 98, 255) : IM_COL32(150, 156, 166, 255), label);
 
         if (!drawing2D) {
             auto turnArrow = [&](const char* id, float x, float dir, const char* tip) {
@@ -277,7 +278,7 @@ ViewCubeResult ViewCube::draw(const OrbitCamera& cam, ImVec2 anchor, bool drawin
                 if (h) ImGui::SetTooltip("%s", tip);
                 const ImVec2 c{bp.x + w * 0.5f, bp.y + (ts.y + 4) * 0.5f};
                 dl->AddTriangleFilled({c.x + 4 * dir, c.y}, {c.x - 3 * dir, c.y - 4}, {c.x - 3 * dir, c.y + 4},
-                                      h ? IM_COL32(255, 255, 255, 255) : iconCol);
+                                      h ? hotCol : iconCol);
                 return ImGui::IsItemClicked();
             };
             if (turnArrow("turnl", p.x - 16.0f, -1.0f, "Turn 90° around Z (left)")) res.rotateZ = -kPi * 0.5f;
