@@ -35,6 +35,13 @@ public:
     void rollView(float radians, bool animate = true) noexcept;
     void resetRoll(bool animate = true) noexcept;
     void fitToBounds(const AABB& bounds, bool animate = true) noexcept;
+    // Straight to a saved pose (a project opened as it was left).
+    void setPose(const Vec3& target, float yaw, float pitch, float distance, float roll) noexcept {
+        const Pose p{target, yaw, pitch, distance, roll};
+        m_from = m_to = p;
+        m_animT = 1.0f;
+        applyPose(p);
+    }
 
     // Off: view changes (standard views, FIT, the view sphere) jump instead of gliding, in
     // every camera (the ANIMATE-VIEWS preference).

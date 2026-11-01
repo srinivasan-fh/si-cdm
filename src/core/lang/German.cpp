@@ -1452,6 +1452,21 @@ const char* const kGerman[][2] = {
     {"Theme", "Farbschema"},
     {"Light", "Hell"},
     {"High contrast", "Hoher Kontrast"},
+    {"Blue", "Blau"},
+    {"Coarse (fastest)", "Grob (am schnellsten)"},
+    {"Curved surfaces", "Gekrümmte Flächen"},
+    {"Curved surfaces: for shapes made or rebuilt from now on, and STL exports.", "Gekrümmte Flächen: für ab jetzt erzeugte oder neu aufgebaute Formen und STL-Exporte."},
+    {"Fine", "Fein"},
+    {"Finest (slowest)", "Am feinsten (am langsamsten)"},
+    {"Green", "Grün"},
+    {"Magenta", "Magenta"},
+    {"Normal", "Normal"},
+    {"Orange", "Orange"},
+    {"Recent projects listed", "Angezeigte zuletzt verwendete Projekte"},
+    {"Red", "Rot"},
+    {"Selection colour", "Auswahlfarbe"},
+    {"Undo steps", "Rückgängig-Schritte"},
+    {"Yellow", "Gelb"},
 };
 
 

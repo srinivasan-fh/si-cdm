@@ -52,7 +52,18 @@ struct PastedBodies {
     std::string project;
 };
 
+// How the 3D window looked when the project was saved: it opens the same way. Kept out of
+// "unsaved changes" (looking around changes nothing).
+struct SavedView {
+    bool set = false;
+    float target[3] = {0, 0, 0};
+    float yaw = 0, pitch = 0, distance = 0, roll = 0;
+    bool orthographic = false;
+    std::string display; // "shaded", "shaded-edges", "wireframe", "hidden-line"
+};
+
 struct ProjectState {
+    SavedView view;
     SketchPlane plane = SketchPlane::Top;
     PlaneFrame customFrame = planeFrame(SketchPlane::Top); // the plane when `plane` is Custom
     std::string customPlane;          // its datum's name ("" for an unnamed one)

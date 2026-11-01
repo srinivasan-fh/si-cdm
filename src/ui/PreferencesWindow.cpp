@@ -273,6 +273,12 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
             toggle(tr("Show the grid"), p.grid, "grid");
             toggle(tr("Show the view sphere"), p.viewSphere, "view-sphere");
             toggle(tr("Show rulers along the canvas's top and left edges"), p.rulers, "rulers");
+            choice(tr("Selection colour"), p.selectionColour,
+                   {{"blue", tr("Blue")}, {"orange", tr("Orange")}, {"green", tr("Green")}, {"magenta", tr("Magenta")}, {"yellow", tr("Yellow")}, {"red", tr("Red")}},
+                   "selection-colour");
+            choice(tr("Curved surfaces"), p.meshQuality,
+                   {{"coarse", tr("Coarse (fastest)")}, {"normal", tr("Normal")}, {"fine", tr("Fine")}, {"finest", tr("Finest (slowest)")}}, "mesh-quality");
+            ImGui::TextDisabled("%s", tr("Curved surfaces: for shapes made or rebuilt from now on, and STL exports."));
             ImGui::TextDisabled("%s", tr("The view bar still changes these for the moment; these are how the window starts."));
             ImGui::SeparatorText(tr("Navigation"));
             {
@@ -348,6 +354,19 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
                 ImGui::EndDisabled();
             }
 
+            ImGui::SeparatorText(tr("History"));
+            {
+                int steps = p.undoSteps;
+                ImGui::SetNextItemWidth(160);
+                ImGui::InputInt(tr("Undo steps"), &steps, 1, 10);
+                if (ImGui::IsItemDeactivatedAfterEdit() || (ImGui::IsItemEdited() && !ImGui::IsItemActive()))
+                    set("undo-steps", std::to_string(std::clamp(steps, 1, 500)));
+                int recent = p.recentCount;
+                ImGui::SetNextItemWidth(160);
+                ImGui::InputInt(tr("Recent projects listed"), &recent, 1, 5);
+                if (ImGui::IsItemDeactivatedAfterEdit() || (ImGui::IsItemEdited() && !ImGui::IsItemActive()))
+                    set("recent-count", std::to_string(std::clamp(recent, 1, 30)));
+            }
             ImGui::SeparatorText(tr("Saving"));
             toggle(tr("Keep the file a save replaces as name.sicdm.bak"), p.backup, "backup");
             ImGui::SeparatorText(tr("Project folder"));

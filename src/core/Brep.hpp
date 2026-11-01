@@ -189,9 +189,16 @@ struct Brep {
     void transform(const Placement& p);
 };
 
+// How finely exact shapes become triangles by default: 0 coarse, 1 normal, 2 fine, 3 finest
+// (the MESH-QUALITY preference). Shapes made or rebuilt afterwards follow it.
+void setTessellationQuality(int quality) noexcept;
+int tessellationQuality() noexcept;
+double defaultChord() noexcept;
+double defaultAngle() noexcept;
+
 struct TessellateOptions {
-    double chord = 0.02;      // mm: largest gap between the mesh and the surface
-    double angle = 0.26;      // radians: largest turn between neighbouring facets (about 15 deg)
+    double chord = defaultChord(); // mm: largest gap between the mesh and the surface (0.02 at normal)
+    double angle = defaultAngle(); // radians: largest turn between neighbouring facets (about 15 deg at normal)
     double maxEdge = 0.0;     // mm: longest triangle edge (0: no limit)
 };
 

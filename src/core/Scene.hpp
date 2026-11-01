@@ -237,6 +237,10 @@ public:
     // made since are kept. An unsealed one (a failed edit) is restored as it is.
     std::string undo(std::string* why = nullptr);
     std::size_t undoDepth() const noexcept { return m_undo.size(); }
+    // How many steps undo keeps, in every scene (the UNDO-STEPS preference; history is also
+    // capped near 2 million vertices of meshes per 16 steps).
+    static void setUndoSteps(int steps) noexcept;
+    static int undoSteps() noexcept;
     // Puts back what the last undo took away; returns its label, or "". Refused (and
     // the redo history dropped) once bodies were added, removed or rebuilt since; a
     // new edit drops it too. Moves, colours and renames since the undo are kept.

@@ -175,7 +175,8 @@ private:
     void refreshFileTabs();
     void rememberSession(); // the open projects, kept in the preferences for the next start
     void syncPreferences(); // applies changed preferences; keeps the bars' own settings in them
-    void rememberWindow();  // the window's place and size, and the side panel, for the next start
+    void rememberWindow();
+    void captureView();     // the 3D window's view into the project (saved with it)  // the window's place and size, and the side panel, for the next start
     void zoomView(OrbitCamera& cam, float steps, float x, float y, float w, float h); // with the zoom preferences
     void saveAll();
     void autosave(); // keeps recovery copies of files with unsaved changes

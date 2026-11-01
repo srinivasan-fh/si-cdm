@@ -317,13 +317,20 @@ void Scene::dropSketchUndo() {
         }
 }
 
+namespace {
+int g_undoSteps = 16;
+} // namespace
+
+void Scene::setUndoSteps(int steps) noexcept { g_undoSteps = std::clamp(steps, 1, 500); }
+int Scene::undoSteps() noexcept { return g_undoSteps; }
+
 void Scene::sealUndo() {
     if (m_undo.empty() || m_undo.back().sealed) return;
     Snapshot& s = m_undo.back();
     s.sealed = true;
     if (s.sketchOnly) {
         s.sketchAfter = m_sketch.revision();
-        if (m_undo.size() > 16) m_undo.erase(m_undo.begin());
+        if (static_cast<int>(m_undo.size()) > undoSteps()) m_undo.erase(m_undo.begin());
         return;
     }
     s.after = m_revision;
@@ -339,7 +346,8 @@ void Scene::sealUndo() {
     for (std::size_t i = m_undo.size(); i-- > 0;) {
         for (const SharedMesh& m : m_undo[i].bodies.meshes)
             if (counted.insert(m.get()).second) vertices += m->vertices.size();
-        if (m_undo.size() - i > 16 || (vertices > 2000000 && i + 1 < m_undo.size())) {
+        const std::size_t cap = 2000000u * static_cast<std::size_t>(std::max(1, (undoSteps() + 15) / 16));
+        if (static_cast<int>(m_undo.size() - i) > undoSteps() || (vertices > cap && i + 1 < m_undo.size())) {
             m_undo.erase(m_undo.begin(), m_undo.begin() + static_cast<std::ptrdiff_t>(i + 1));
             break;
         }

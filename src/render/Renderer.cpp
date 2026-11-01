@@ -90,6 +90,7 @@ uniform vec3 uCamPos;
 uniform vec3 uCamRight;
 uniform vec3 uCamUp;
 uniform float uHighlight;
+uniform vec3 uSel; // the selection colour
 uniform vec3 uCamDir;     // view direction (used for orthographic views)
 uniform float uOrtho;
 uniform float uHiddenLine;
@@ -145,8 +146,8 @@ void main() {
         float ndv = abs(dot(N, V));
         float w = max(fwidth(ndv) * 2.5, 1e-4);
         float rim = 1.0 - smoothstep(0.0, w, ndv);
-        vec3 ink = mix(uInk, vec3(0.35, 0.70, 1.00), uHighlight);
-        vec3 paper = mix(uPaper, vec3(0.16, 0.24, 0.36), uHighlight * 0.6);
+        vec3 ink = mix(uInk, uSel, uHighlight);
+        vec3 paper = mix(uPaper, uSel * 0.4, uHighlight * 0.6);
         fragColor = vec4(mix(paper, ink, rim), 1.0);
         return;
     }
@@ -176,9 +177,9 @@ void main() {
         uint h = g * 2654435761u;
         own = vec3(float((h >> 8) & 255u), float((h >> 16) & 255u), float((h >> 24) & 255u)) / 255.0 * 0.65 + 0.3;
     }
-    vec3 base = mix(own, vec3(0.30, 0.65, 1.00), uHighlight * 0.55);
+    vec3 base = mix(own, uSel, uHighlight * 0.55);
     if (uField > 2.5) { // an analysis painted per face (draft): its colours, lit, no material
-        vec3 painted = mix(vColor.rgb, vec3(0.30, 0.65, 1.00), uHighlight * 0.3);
+        vec3 painted = mix(vColor.rgb, uSel, uHighlight * 0.3);
         fragColor = vec4(pow(painted * (ambient + diff) + vec3(spec) * 0.5, vec3(1.0 / 1.1)), 1.0);
         return;
     }
@@ -190,7 +191,7 @@ void main() {
         fragColor = vec4(mix(vec3(0.04), vec3(0.96), stripe), 1.0);
         return;
     }
-    if (uField > 0.5) base = mix(fieldColour(vMask), vec3(0.30, 0.65, 1.00), uHighlight * 0.3);
+    if (uField > 0.5) base = mix(fieldColour(vMask), uSel, uHighlight * 0.3);
     else base *= 1.0 - 0.6 * clamp(vMask, 0.0, 1.0); // masked: darker
     vec3 c = base * (ambient + diff) + vec3(spec);
     // Light rim to separate silhouettes from the background.
@@ -212,7 +213,7 @@ void main() {
         float fd = (0.04 + 0.96 * pow(1.0 - ndv, 5.0)) * (1.0 - rough);
         vec3 dielectric = c + env * fd * 0.6;
         c = mix(dielectric, metal, clamp(uMetallic, 0.0, 1.0));
-        c = mix(c, vec3(0.30, 0.65, 1.00), uHighlight * 0.4);
+        c = mix(c, uSel, uHighlight * 0.4);
     }
     fragColor = vec4(pow(c, vec3(1.0 / 1.1)), 1.0);
 }
@@ -260,6 +261,7 @@ uniform float uHiddenLine;
 uniform vec3 uPaper;
 uniform vec3 uInk;
 uniform float uHighlight;
+uniform vec3 uSel; // the selection colour
 out vec4 fragColor;
 void main() {
     vec3 V = uOrtho > 0.5 ? -uCamDir : normalize(uCamPos - vWorldPos);
@@ -275,7 +277,7 @@ void main() {
         fragColor = vec4(mix(uPaper, ink, line * 0.85), 1.0);
         return;
     }
-    vec3 base = mix(uColor * 0.85, vec3(0.30, 0.65, 1.00), uHighlight * 0.5);
+    vec3 base = mix(uColor * 0.85, uSel, uHighlight * 0.5);
     vec3 c = base * (0.55 + 0.45 * max(dot(N, V), 0.0));
     c = mix(c, c * 0.30, line);
     fragColor = vec4(pow(c, vec3(1.0 / 1.1)), 1.0);
@@ -326,10 +328,11 @@ in vec2 vUV;
 uniform sampler2D uTex;
 uniform float uOpacity;
 uniform float uHighlight;
+uniform vec3 uSel; // the selection colour
 out vec4 fragColor;
 void main() {
     vec4 c = texture(uTex, vUV);
-    c.rgb = mix(c.rgb, vec3(0.35, 0.65, 1.0), uHighlight * 0.18);
+    c.rgb = mix(c.rgb, uSel, uHighlight * 0.18);
     fragColor = vec4(c.rgb, c.a * uOpacity);
 }
 )";
@@ -727,6 +730,7 @@ void Renderer::drawImages(const Scene& scene, const OrbitCamera& cam, const View
         glUniform3fv(loc, 4, &c[0].x);
         m_imageShader.set("uOpacity", img.opacity);
         m_imageShader.set("uHighlight", static_cast<int>(i) == selected ? 1.0f : 0.0f);
+        m_imageShader.set("uSel", m_selection);
         glBindTexture(GL_TEXTURE_2D, m_imageTextures[i]);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
@@ -1133,6 +1137,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_capShader.set("uPaper", s.backgroundBottom);
             m_capShader.set("uInk", s.edgeColor);
             m_capShader.set("uHighlight", isSelected(i) ? 1.0f : 0.0f);
+            m_capShader.set("uSel", m_selection);
             glBindVertexArray(m_emptyVao);
             glDrawArrays(GL_TRIANGLES, 0, 6);
             glEnable(GL_CLIP_DISTANCE0);
@@ -1185,6 +1190,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_mesh.set("uModel", model(i));
             m_mesh.set("uClip", cutBody(i) ? cutClip : noClip);
             m_mesh.set("uHighlight", isSelected(i) ? 1.0f : 0.0f);
+            m_mesh.set("uSel", m_selection);
             const bool groups = s.showPolygroups && gpu(i).groupTex;
             m_mesh.set("uPolygroups", groups ? 1.0f : 0.0f);
             if (groups) {
@@ -1245,14 +1251,14 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             m_lines.set("uModel", model(i));
             m_lines.set("uClip", cutBody(i) ? cutClip : noClip);
             if (wire) {
-                const Vec3 c = sel ? Vec3{0.35f, 0.70f, 1.0f} : bodies[i].color;
+                const Vec3 c = sel ? m_selection : bodies[i].color;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
                 glBindVertexArray(gpu(i).vao);
                 glDrawElements(GL_TRIANGLES, gpu(i).indexCount, GL_UNSIGNED_INT, nullptr);
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             } else if (const GpuMesh& em = m_streamed[i].vao ? m_streamed[i] : m_entries[i]->full; em.edgeVao) { // a coarser copy keeps the full edges
-                const Vec3 c = sel ? (hidden ? Vec3{0.35f, 0.70f, 1.0f} : Vec3{0.10f, 0.45f, 0.95f}) : s.edgeColor;
+                const Vec3 c = sel ? (hidden ? m_selection : m_selection * 0.75f) : s.edgeColor;
                 m_lines.set("uColor", Vec4{c.x, c.y, c.z, 1.0f});
                 glBindVertexArray(em.edgeVao);
                 glDrawArrays(GL_LINES, 0, em.edgeVertexCount);

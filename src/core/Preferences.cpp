@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <cmath>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <sstream>
 
@@ -122,6 +123,10 @@ Json preferencesToJson(const Preferences& p) {
     j.set("move_step", p.moveStep);
     j.set("angle_step", p.angleStep);
     j.set("backup", p.backup);
+    j.set("recent_count", p.recentCount);
+    j.set("undo_steps", p.undoSteps);
+    j.set("selection_colour", p.selectionColour);
+    j.set("mesh_quality", p.meshQuality);
     j.set("project_folder", p.projectFolder);
     j.set("ui_scale", p.uiScale);
     j.set("theme", p.theme);
@@ -150,7 +155,8 @@ Json preferencesToJson(const Preferences& p) {
 Preferences preferencesFromJson(const Json& j) {
     Preferences p;
     const Json& recent = j["recent"];
-    for (std::size_t i = 0; i < recent.size() && p.recent.size() < Preferences::kMaxRecent; ++i)
+    if (j["recent_count"].isNumber()) p.recentCount = std::clamp(j["recent_count"].asInt(10), 1, static_cast<int>(Preferences::kMaxRecent));
+    for (std::size_t i = 0; i < recent.size() && p.recent.size() < static_cast<std::size_t>(p.recentCount); ++i)
         if (recent[i].isString() && !recent[i].asString().empty()) p.recent.push_back(recent[i].asString());
     std::string err;
     // Each value goes through the same checks as PREFERENCES SET, so a hand-edited file
@@ -189,6 +195,9 @@ Preferences preferencesFromJson(const Json& j) {
     take("angles", "angles");
     number("angle_decimals", "angle-decimals");
     number("ui_scale", "ui-scale");
+    number("undo_steps", "undo-steps");
+    take("selection_colour", "selection-colour");
+    take("mesh_quality", "mesh-quality");
     number("zoom_speed", "zoom-speed");
     number("orbit_speed", "orbit-speed");
     number("move_step", "move-step");
@@ -287,6 +296,33 @@ bool savePreferences(std::string* error) {
     return true;
 }
 
+std::optional<std::array<float, 3>> selectionRgb(const std::string& value) {
+    static const std::map<std::string, std::array<float, 3>> named{
+        {"blue", {0.30f, 0.65f, 1.00f}},   {"orange", {1.00f, 0.55f, 0.10f}}, {"green", {0.25f, 0.85f, 0.35f}},
+        {"magenta", {0.95f, 0.30f, 0.85f}}, {"yellow", {1.00f, 0.88f, 0.15f}}, {"red", {1.00f, 0.30f, 0.25f}},
+    };
+    if (const auto it = named.find(lower(value)); it != named.end()) return it->second;
+    if (value.size() == 7 && value[0] == '#') {
+        std::array<float, 3> c{};
+        for (int k = 0; k < 3; ++k) {
+            const std::string h = value.substr(1 + 2 * static_cast<std::size_t>(k), 2);
+            if (!std::isxdigit(static_cast<unsigned char>(h[0])) || !std::isxdigit(static_cast<unsigned char>(h[1]))) return std::nullopt;
+            c[static_cast<std::size_t>(k)] = static_cast<float>(std::strtol(h.c_str(), nullptr, 16)) / 255.0f;
+        }
+        return c;
+    }
+    return std::nullopt;
+}
+
+int meshQualityLevel(const std::string& value) {
+    const std::string v = lower(value);
+    if (v == "coarse") return 0;
+    if (v == "normal") return 1;
+    if (v == "fine") return 2;
+    if (v == "finest") return 3;
+    return -1;
+}
+
 const std::vector<std::string>& backgroundNames() {
     static const std::vector<std::string> names{"dark", "grey", "light", "white", "black"};
     return names;
@@ -344,7 +380,7 @@ void noteRecentFile(const std::string& path) {
     std::vector<std::string>& r = preferences().recent;
     r.erase(std::remove_if(r.begin(), r.end(), [&](const std::string& q) { return samePath(q, abs); }), r.end());
     r.insert(r.begin(), abs);
-    if (r.size() > Preferences::kMaxRecent) r.resize(Preferences::kMaxRecent);
+    if (r.size() > static_cast<std::size_t>(preferences().recentCount)) r.resize(static_cast<std::size_t>(preferences().recentCount));
     savePreferences();
 }
 
@@ -449,6 +485,23 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (v == "deg" || v == "degrees") p.radians = false;
         else if (v == "rad" || v == "radians") p.radians = true;
         else return fail("ANGLES is DEG or RAD");
+    } else if (k == "recent-count" || k == "recent") {
+        const auto x = number(v);
+        if (!x || *x < 1 || *x > static_cast<double>(Preferences::kMaxRecent) || *x != std::floor(*x)) return fail("RECENT-COUNT is 1 to 30");
+        p.recentCount = static_cast<int>(*x);
+        if (p.recent.size() > static_cast<std::size_t>(p.recentCount)) p.recent.resize(static_cast<std::size_t>(p.recentCount));
+    } else if (k == "undo-steps" || k == "undo") {
+        const auto x = number(v);
+        if (!x || *x < 1 || *x > 500 || *x != std::floor(*x)) return fail("UNDO-STEPS is 1 to 500");
+        p.undoSteps = static_cast<int>(*x);
+    } else if (k == "selection-colour" || k == "selection-color" || k == "selection") {
+        if (clear) p.selectionColour = "blue";
+        else if (selectionRgb(v)) p.selectionColour = v;
+        else return fail("SELECTION-COLOUR is blue, orange, green, magenta, yellow, red, or #rrggbb");
+    } else if (k == "mesh-quality" || k == "tessellation") {
+        if (clear) p.meshQuality = "normal";
+        else if (meshQualityLevel(v) >= 0) p.meshQuality = v;
+        else return fail("MESH-QUALITY is coarse, normal, fine or finest");
     } else if (k == "theme") {
         if (clear || v == "dark") p.theme = "dark";
         else if (v == "light") p.theme = "light";
@@ -533,6 +586,10 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         std::string("snap-points: ") + onOff(p.snapPoints),
         "move-step: " + factor(p.moveStep) + " mm",
         "angle-step: " + factor(p.angleStep) + " deg",
+        "recent-count: " + std::to_string(p.recentCount),
+        "undo-steps: " + std::to_string(p.undoSteps),
+        "selection-colour: " + p.selectionColour,
+        "mesh-quality: " + p.meshQuality,
         std::string("backup: ") + (p.backup ? "on (name.sicdm.bak)" : "off"),
         "project-folder: " + orDefault(p.projectFolder, "the current folder"),
         "theme: " + p.theme,

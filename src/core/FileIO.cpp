@@ -835,6 +835,18 @@ std::string projectText(const Scene& scene, const ProjectState& state, const std
     if (!state.lathe.empty()) doc.set("lathe", latheToJson(state.lathe));
     if (!state.assembly.empty()) doc.set("assembly", assemblyToJson(state.assembly));
     if (!(state.section == SectionView{})) doc.set("section", sectionToJson(state.section));
+    if (state.view.set) {
+        const SavedView& v = state.view;
+        Json jv = Json::object();
+        jv.set("target", Json::array().push(v.target[0]).push(v.target[1]).push(v.target[2]))
+            .set("yaw", v.yaw)
+            .set("pitch", v.pitch)
+            .set("distance", v.distance)
+            .set("roll", v.roll)
+            .set("orthographic", v.orthographic)
+            .set("display", v.display);
+        doc.set("view", jv);
+    }
     {
         const RenderSettings& r = state.render;
         doc.set("render", Json::object()
@@ -1381,6 +1393,18 @@ bool projectFromText(const std::string& text, const std::string& path, Scene& sc
     if (const Json& lj = (*doc)["lathe"]; lj.isObject()) latheFromJson(lj, st.lathe);
     if (const Json& aj = (*doc)["assembly"]; aj.isObject()) assemblyFromJson(aj, st.assembly);
     if (const Json& sj = (*doc)["section"]; sj.isObject()) st.section = sectionFromJson(sj);
+    if (const Json& jv = (*doc)["view"]; jv.isObject() && jv["distance"].asNumber(0) > 0 && jv["target"].size() == 3) {
+        SavedView& v = st.view;
+        for (std::size_t k = 0; k < 3; ++k) v.target[k] = static_cast<float>(jv["target"][k].asNumber(0));
+        v.yaw = static_cast<float>(jv["yaw"].asNumber(0));
+        v.pitch = static_cast<float>(std::clamp(jv["pitch"].asNumber(0), -1.57, 1.57));
+        v.distance = static_cast<float>(jv["distance"].asNumber(100));
+        v.roll = static_cast<float>(jv["roll"].asNumber(0));
+        v.orthographic = jv["orthographic"].asBool(false);
+        v.display = jv["display"].asString("");
+        v.set = std::isfinite(v.yaw) && std::isfinite(v.pitch) && std::isfinite(v.distance) && std::isfinite(v.target[0]) &&
+                std::isfinite(v.target[1]) && std::isfinite(v.target[2]);
+    }
     if (const Json& rj = (*doc)["render"]; rj.isObject()) {
         RenderSettings& r = st.render;
         const std::string env = rj["environment"].asString(r.environment);

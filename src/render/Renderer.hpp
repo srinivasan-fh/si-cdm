@@ -67,6 +67,8 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     bool valid() const noexcept;
+    // Selected bodies are tinted with this (the SELECTION-COLOUR preference).
+    void setSelectionColour(const Vec3& c) noexcept { m_selection = c; }
 
     // Uploads all scene bodies. Call again if geometry changes.
     void upload(const Scene& scene);
@@ -98,6 +100,7 @@ private:
     void drawImages(const Scene& scene, const OrbitCamera& cam, const ViewportSettings& s, int selected);
     GLuint m_imageShaderProgram() const noexcept { return m_imageShader.program(); }
 
+    Vec3 m_selection{0.30f, 0.65f, 1.00f};
     Shader m_background;
     Shader m_mesh;
     Shader m_lines;

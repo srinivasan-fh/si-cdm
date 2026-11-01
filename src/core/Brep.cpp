@@ -16,6 +16,21 @@
 namespace sicdm {
 
 namespace {
+int g_tessQuality = 1;
+} // namespace
+
+void setTessellationQuality(int quality) noexcept { g_tessQuality = quality < 0 ? 0 : quality > 3 ? 3 : quality; }
+int tessellationQuality() noexcept { return g_tessQuality; }
+double defaultChord() noexcept {
+    static const double chords[] = {0.1, 0.02, 0.005, 0.002};
+    return chords[g_tessQuality];
+}
+double defaultAngle() noexcept {
+    static const double angles[] = {0.45, 0.26, 0.15, 0.09};
+    return angles[g_tessQuality];
+}
+
+namespace {
 constexpr double kPi2 = 6.283185307179586476925286766559;
 constexpr double kHalfPi = 1.5707963267948966192313216916398;
 } // namespace

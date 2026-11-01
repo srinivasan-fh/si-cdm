@@ -5,7 +5,9 @@
 
 #include "core/Units.hpp"
 
+#include <array>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,6 +51,10 @@ struct Preferences {
     float moveStep = 1.0f;           // the Move gizmo's snap steps (mm, degrees)
     float angleStep = 15.0f;
     // Files.
+    int recentCount = 10;            // how many recent projects File > Open Recent lists (1 to 30)
+    int undoSteps = 16;              // how many steps undo keeps (1 to 500)
+    std::string selectionColour = "blue"; // blue, orange, green, magenta, yellow, red, or #rrggbb
+    std::string meshQuality = "normal";   // coarse, normal, fine, finest: exact shapes to triangles
     bool backup = false;             // SAVE keeps the file it replaces as name.sicdm.bak
     std::string projectFolder;       // where Open and Save As start with no project open; empty: the current folder
     std::string theme = "dark";      // the interface's colours: dark, light, high-contrast
@@ -68,7 +74,7 @@ struct Preferences {
     std::string vault;               // the team's vault folder (VAULT; Pdm.hpp); empty: $SICDM_VAULT, else none
     std::map<std::string, std::string> keys; // keyboard shortcuts changed from their defaults: action -> keys (Keymap.hpp)
 
-    static constexpr std::size_t kMaxRecent = 10;
+    static constexpr std::size_t kMaxRecent = 30; // the most RECENT-COUNT allows
     static constexpr std::size_t kMaxSession = 32;
 };
 
@@ -92,6 +98,10 @@ struct BackgroundColours {
 BackgroundColours backgroundColours(const std::string& name);
 const std::vector<std::string>& backgroundNames();
 const std::vector<std::string>& displayModeNames();
+// The selection colour's red, green, blue (0..1) for a SELECTION-COLOUR value; nullopt if not one.
+std::optional<std::array<float, 3>> selectionRgb(const std::string& value);
+// 0 coarse ... 3 finest, for a MESH-QUALITY value (-1: not one).
+int meshQualityLevel(const std::string& value);
 
 Json preferencesToJson(const Preferences& p);
 Preferences preferencesFromJson(const Json& j); // unknown or bad fields keep their defaults

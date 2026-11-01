@@ -22,12 +22,15 @@ takes effect at once (antialiasing from the next start), and is kept for the nex
 | Glide | Standard views, Fit and the view sphere glide to the new view; off, they jump. |
 | Snap | Sketch points snap to the grid and to other curves' points (the snap buttons on the options bar change these too, and are remembered). |
 | Gizmo steps | The Move gizmo's snap steps while Ctrl is held: a distance and an angle (also set, and remembered, from its options bar). |
+| Selection colour | What selected bodies are tinted: blue (the default), orange, green, magenta, yellow, red, or any `#rrggbb`. |
+| Curved surfaces | How finely exact shapes turn into triangles: coarse (fastest), normal, fine, finest (smoothest, slowest). Shapes made or rebuilt from then on follow it, and so do STL exports. |
+| Undo steps, recent projects | How many steps *Undo* keeps (1 to 500; with many big meshes it also stops near 2 million vertices for each 16 steps), and how many projects *File → Open Recent* lists (1 to 30). |
 | Backup | A save keeps the file it replaces as `name.sicdm.bak` beside it: one step back, whatever else happens. |
 | Project folder | Where *Open* and *Save As* start when no project is open (else the open project's folder). |
 | Splash | The splash screen while SI CDM loads (`--no-splash` turns it off for one start). |
 | Antialiasing, V-sync | Smooth edges with 2, 4 (the default) or 8 samples, or off for slow graphics; drawing in step with the screen (off: as fast as it can). |
 | MCP server | Start the server AI agents connect to with SI CDM, on this port (see *AI agents (MCP)* in the README). |
-| Window and panel | Kept, not set: the main window opens where it was left, at the same size (maximised if it was), with the side panel (Model, Library or CAM) as it was. A place no longer on a screen is left to the system; `--size W H` overrides it for one start. |
+| Window and panel | Kept, not set (and each project keeps its own 3D view: it opens looking the way it was saved, the same camera, projection and display): the main window opens where it was left, at the same size (maximised if it was), with the side panel (Model, Library or CAM) as it was. A place no longer on a screen is left to the system; `--size W H` overrides it for one start. |
 | Updates | Look for a newer release when SI CDM starts, from the release feed your administrator gives you. |
 | Language | The language of menus, buttons and tooltips: English or Deutsch built in, or one installed as a [language file](#languages). |
 
@@ -56,6 +59,10 @@ PREFERENCES SET zoom-invert on       ON or OFF; likewise zoom-to-cursor, animate
 PREFERENCES SET zoom-speed 1.5       0.25 to 4; likewise orbit-speed
 PREFERENCES SET snap-grid off        ON or OFF; likewise snap-points
 PREFERENCES SET move-step 0.5        mm; angle-step in degrees
+PREFERENCES SET selection-colour orange   or #rrggbb
+PREFERENCES SET mesh-quality fine    coarse, normal, fine, finest
+PREFERENCES SET undo-steps 50        1 to 500
+PREFERENCES SET recent-count 20      1 to 30
 PREFERENCES SET backup on            ON or OFF: keep name.sicdm.bak on each save
 PREFERENCES SET project-folder "D:\Work\Parts"   or NONE
 PREFERENCES SET splash off           ON or OFF; likewise vsync

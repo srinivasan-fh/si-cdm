@@ -2,6 +2,7 @@
 #include "app/PenInput.hpp"
 #include "app/WindowFront.hpp"
 #include "core/MouseScheme.hpp"
+#include "core/Brep.hpp"
 #include "core/Armature.hpp"
 #include "core/Components.hpp"
 #include "core/DirectEdit.hpp"
@@ -2211,6 +2212,7 @@ void Application::frame(float dt) {
 
     advanceSimulation(dt);
     advanceExplode(dt);
+    captureView();
     penInputPoll();
     handleViewportInput();
     updatePrompt();
@@ -2538,7 +2540,17 @@ void Application::afterDocumentReplaced() {
     cancelInteraction(false);
     m_cam3D.resetRoll(false);
     m_cam3D.setStandardView(StandardView::Isometric, false);
-    if (m_doc.scene.bounds().valid()) m_cam3D.fitToBounds(m_doc.scene.bounds(), false);
+    if (const SavedView& v = m_doc.state.view; v.set) {
+        // The project opens looking the way it was saved.
+        m_cam3D.setPose({v.target[0], v.target[1], v.target[2]}, v.yaw, v.pitch, v.distance, v.roll);
+        m_cam3D.setProjection(v.orthographic ? Projection::Orthographic : Projection::Perspective);
+        if (v.display == "shaded") m_vp3D.displayMode = DisplayMode::Shaded;
+        else if (v.display == "shaded-edges") m_vp3D.displayMode = DisplayMode::ShadedWithEdges;
+        else if (v.display == "wireframe") m_vp3D.displayMode = DisplayMode::Wireframe;
+        else if (v.display == "hidden-line") m_vp3D.displayMode = DisplayMode::HiddenLine;
+    } else if (m_doc.scene.bounds().valid()) {
+        m_cam3D.fitToBounds(m_doc.scene.bounds(), false);
+    }
     m_2DReady = false;
     m_vp2D.gridPlane = m_doc.state.plane;
     m_vp2D.gridFrame = m_doc.state.customFrame;
@@ -2549,7 +2561,24 @@ void Application::afterDocumentReplaced() {
     }
 }
 
+void Application::captureView() {
+    // The 3D window as it is now, saved with the project (not an unsaved change).
+    SavedView& v = m_doc.state.view;
+    const Vec3 t = m_cam3D.target();
+    v.set = true;
+    v.target[0] = t.x, v.target[1] = t.y, v.target[2] = t.z;
+    v.yaw = m_cam3D.yaw(), v.pitch = m_cam3D.pitch(), v.distance = m_cam3D.distance(), v.roll = m_cam3D.roll();
+    v.orthographic = m_cam3D.projection() == Projection::Orthographic;
+    switch (m_vp3D.displayMode) {
+    case DisplayMode::Shaded: v.display = "shaded"; break;
+    case DisplayMode::ShadedWithEdges: v.display = "shaded-edges"; break;
+    case DisplayMode::Wireframe: v.display = "wireframe"; break;
+    case DisplayMode::HiddenLine: v.display = "hidden-line"; break;
+    }
+}
+
 void Application::runCommandLine(const std::string& raw) {
+    captureView(); // SAVE writes the view as it is
     std::string text = raw;
     while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.pop_back();
     const ToolId tool = m_ui.toolbox().active();
@@ -2656,7 +2685,7 @@ std::uint64_t Application::signatureOf(const Document& doc) {
     const std::uint64_t revision = s.revision();
     mix(&revision, sizeof(revision));
     const UnitSettings& u = doc.state.units;
-    const int units[4] = {static_cast<int>(u.unit), u.precision, static_cast<int>(u.style), u.denominator};
+    const int units[6] = {static_cast<int>(u.unit), u.precision, static_cast<int>(u.style), u.denominator, u.radians ? 1 : 0, u.angleDecimals};
     mix(units, sizeof(units));
     for (const Body& b : s.bodies()) {
         mixStr(b.name);
@@ -3228,6 +3257,9 @@ void Application::syncPreferences() {
         m_framesToRender = std::max(m_framesToRender, 3);
     }
     OrbitCamera::setAnimations(p.animateViews);
+    Scene::setUndoSteps(p.undoSteps);
+    setTessellationQuality(meshQualityLevel(p.meshQuality) < 0 ? 1 : meshQualityLevel(p.meshQuality));
+    if (const auto c = selectionRgb(p.selectionColour); c && m_renderer) m_renderer->setSelectionColour({(*c)[0], (*c)[1], (*c)[2]});
     if (p.theme != theme::paletteName()) { // the THEME preference: the interface's colours at once
         theme::setPalette(p.theme);
         theme::applyColors();

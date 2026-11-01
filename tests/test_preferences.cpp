@@ -1,5 +1,6 @@
 #include "TestFramework.hpp"
 
+#include "core/Brep.hpp"
 #include "core/Camera.hpp"
 #include "core/Command.hpp"
 #include "core/Document.hpp"
@@ -11,6 +12,7 @@
 #include "core/UpdateCheck.hpp"
 #include "core/Units.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -108,7 +110,7 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     reloadPreferences();
     CHECK(preferences().units == "mm" && preferences().autosaveSeconds == 30);
     const CommandOutput shown = run(d, "PREFS");
-    CHECK(shown.ok && shown.lines.size() == 38);
+    CHECK(shown.ok && shown.lines.size() == 42);
     // The language: checked, shown at once, kept, and back to English on RESET.
     CHECK(!run(d, "PREFERENCES SET language klingon").ok);
     CHECK(run(d, "PREFERENCES SET language Deutsch").ok);
@@ -146,7 +148,7 @@ TEST_CASE("Preferences: projects opened and saved go to the top of the recent li
     REQUIRE(run(d, "BOX 10 10 10").ok);
     for (int i = 0; i < 12; ++i) REQUIRE(run(d, "SAVE \"" + (dir / ("p" + std::to_string(i) + ".sicdm")).string() + "\"").ok);
     std::vector<std::string> r = preferences().recent;
-    REQUIRE(r.size() == Preferences::kMaxRecent);
+    REQUIRE(r.size() == 10); // RECENT-COUNT's default
     CHECK(fs::path(r[0]).filename() == "p11.sicdm");
     CHECK(fs::path(r[9]).filename() == "p2.sicdm");
 
@@ -216,6 +218,18 @@ TEST_CASE("Preferences: navigation, view, modelling, files, graphics and AI sett
     CHECK(setPreference(p, "theme", "contrast", &err) && p.theme == "high-contrast");
     CHECK(!setPreference(p, "theme", "pink", &err));
     CHECK(preferencesFromJson(preferencesToJson(p)).theme == "high-contrast");
+    CHECK(p.recentCount == 10 && p.undoSteps == 16 && p.selectionColour == "blue" && p.meshQuality == "normal");
+    CHECK(setPreference(p, "recent-count", "20", &err) && p.recentCount == 20);
+    CHECK(!setPreference(p, "recent-count", "40", &err));
+    CHECK(setPreference(p, "undo-steps", "100", &err) && p.undoSteps == 100);
+    CHECK(!setPreference(p, "undo-steps", "0", &err));
+    CHECK(setPreference(p, "selection-colour", "orange", &err));
+    CHECK(setPreference(p, "selection-colour", "#FF8000", &err) && (*selectionRgb(p.selectionColour))[1] > 0.49f);
+    CHECK(!setPreference(p, "selection-colour", "#12345", &err) && !setPreference(p, "selection-colour", "plaid", &err));
+    CHECK(setPreference(p, "mesh-quality", "fine", &err) && meshQualityLevel(p.meshQuality) == 2);
+    CHECK(!setPreference(p, "mesh-quality", "ultra", &err));
+    const Preferences m = preferencesFromJson(preferencesToJson(p));
+    CHECK(m.recentCount == 20 && m.undoSteps == 100 && m.selectionColour == "#ff8000" && m.meshQuality == "fine");
 
     const Preferences q = preferencesFromJson(preferencesToJson(p));
     CHECK(q.zoomInvert && q.zoomSpeed == 2.5f && q.orbitSpeed == 0.5f && !q.zoomToCursor && !q.animateViews);
@@ -418,4 +432,48 @@ TEST_CASE("Preferences: programs run without a shell, and the licence sits in th
 #endif
     const char* had = std::getenv("SICDM_LICENCE");
     if (!had) CHECK(fs::path(licencePath()).parent_path() == fs::path(configDirectory()));
+}
+
+TEST_CASE("Preferences: undo keeps UNDO-STEPS steps; MESH-QUALITY sets how finely curves become triangles; the view is saved") {
+    // Undo depth.
+    Document d;
+    Scene::setUndoSteps(3);
+    for (int i = 0; i < 6; ++i) REQUIRE(run(d, "BOX 5 5 5").ok);
+    CHECK(d.scene.undoDepth() <= 3);
+    Scene::setUndoSteps(40);
+    Document e;
+    for (int i = 0; i < 20; ++i) REQUIRE(run(e, "BOX 5 5 5").ok);
+    CHECK(e.scene.undoDepth() >= 20);
+    Scene::setUndoSteps(16);
+
+    // Mesh quality: a sphere's triangles go up with it, and normal is as before.
+    REQUIRE(run(d, "SPHERE 20").ok);
+    const Body& s = d.scene.bodies().back();
+    REQUIRE(s.brep != nullptr);
+    std::size_t tris[4] = {};
+    for (int q = 0; q < 4; ++q) {
+        setTessellationQuality(q);
+        tris[q] = tessellate(*s.brep).indices.size() / 3;
+    }
+    setTessellationQuality(1);
+    CHECK(tris[0] < tris[1] && tris[1] < tris[2] && tris[2] < tris[3]);
+    CHECK(TessellateOptions{}.chord == 0.02);
+
+    // The 3D view saved with the project comes back; a project without one has none.
+    const fs::path dir = freshDir("view");
+    d.state.view.set = true;
+    d.state.view.yaw = 1.0f, d.state.view.pitch = 0.5f, d.state.view.distance = 321.0f, d.state.view.orthographic = true;
+    d.state.view.target[0] = 7.0f;
+    d.state.view.display = "wireframe";
+    REQUIRE(run(d, "SAVE \"" + (dir / "v.sicdm").string() + "\"").ok);
+    Document f;
+    REQUIRE(run(f, "OPEN \"" + (dir / "v.sicdm").string() + "\"").ok);
+    CHECK(f.state.view.set && f.state.view.distance == 321.0f && f.state.view.orthographic && f.state.view.display == "wireframe");
+    CHECK(f.state.view.target[0] == 7.0f && std::fabs(f.state.view.yaw - 1.0f) < 1e-6f);
+    Document g;
+    REQUIRE(run(g, "BOX 1 1 1").ok);
+    REQUIRE(run(g, "SAVE \"" + (dir / "w.sicdm").string() + "\"").ok);
+    Document h;
+    REQUIRE(run(h, "OPEN \"" + (dir / "w.sicdm").string() + "\"").ok);
+    CHECK(!h.state.view.set);
 }
