@@ -19,6 +19,7 @@ struct Preferences {
     std::string camPost;
     std::string camMachine;          // a machine preset's name
     bool checkUpdates = false;       // look for a newer release when the app starts
+    bool rulers = true;              // rulers along the canvas's top and left edges
     std::string updateUrl;           // where the latest release is described (see UpdateCheck.hpp)
     std::string language = "en";     // the interface's language (see Translate.hpp)
     std::string vault;               // the team's vault folder (VAULT; Pdm.hpp); empty: $SICDM_VAULT, else none
@@ -48,7 +49,7 @@ void reloadPreferences();
 void noteRecentFile(const std::string& path);
 
 // Sets one preference by its name in PREFERENCES SET: units, autosave, material, post,
-// machine, updates, update-url. False (and why) for an unknown name or a bad value.
+// machine, updates, update-url, rulers. False (and why) for an unknown name or a bad value.
 bool setPreference(Preferences& p, const std::string& key, const std::string& value, std::string* error);
 // One "name: value" line per preference.
 std::vector<std::string> describePreferences(const Preferences& p);

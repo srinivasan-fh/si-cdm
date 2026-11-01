@@ -349,6 +349,7 @@ private:
     ToolId m_pickTool = ToolId::Count;
     std::vector<int> m_picks;
     std::vector<std::string> m_pickBodies;
+    bool m_rulersPref = true; // the rulers preference as last applied
     // Topology tool: the body and the fixed face's point picked so far.
     int m_topoBody = -1;
     Vec3 m_topoFix{};

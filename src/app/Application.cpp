@@ -253,6 +253,7 @@ bool Application::init() {
 
     if (const auto u = parseUnitName(preferences().units)) m_doc.state.units.unit = *u; // Preferences: units for new projects
     if (!setLanguage(m_options.language.empty() ? preferences().language : m_options.language)) setLanguage(preferences().language);
+    m_rulersPref = m_uiState.showRulers = preferences().rulers;
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
     m_savedSignature = contentSignature(); // the demo part counts as unmodified
     if (!m_options.openPath.empty()) {
@@ -2095,6 +2096,14 @@ void Application::handleCommands(const UiCommands& cmd) {
         }
     }
     if (cmd.toggleMcp) toggleMcp();
+    // Rulers: the view bar's button and the preference follow each other (and it is saved).
+    if (preferences().rulers != m_rulersPref) { // changed in Preferences (or PREFERENCES SET)
+        m_rulersPref = preferences().rulers;
+        m_uiState.showRulers = m_rulersPref;
+    } else if (m_uiState.showRulers != m_rulersPref) { // the button
+        m_rulersPref = preferences().rulers = m_uiState.showRulers;
+        savePreferences();
+    }
     if (cmd.applyExtrude) applyExtrude();
     if (cmd.cancelExtrude) cancelExtrude();
     if (cmd.applyPick) applyPickFeature();

@@ -1387,6 +1387,7 @@ const char* const kGerman[][2] = {
     {"Keep %", "Behalten %"},
     {"The stiffest shape from a share of a body's material: click the face to fix, then where the load goes (force and share in the options bar). The result is a new body; check it with FEA.", "Die steifste Form aus einem Anteil des Materials eines Körpers: die festzuhaltende Fläche anklicken, dann den Lastangriffspunkt (Kraft und Anteil in der Optionsleiste). Das Ergebnis ist ein neuer Körper; mit FEM prüfen."},
     {"Rulers along the top and left edges", "Lineale am oberen und linken Rand"},
+    {"Show rulers along the canvas's top and left edges", "Lineale am oberen und linken Rand der Zeichenfläche zeigen"},
 };
 
 

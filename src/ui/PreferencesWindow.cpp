@@ -201,6 +201,12 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
         ImGui::TextColored(theme::vec(theme::kTextDim), "%s", tr("A lathe set-up takes the material, and the post when the lathe has it."));
     }
 
+    ImGui::SeparatorText(tr("View"));
+    {
+        bool on = p.rulers;
+        if (ImGui::Checkbox(tr("Show rulers along the canvas's top and left edges"), &on)) set("rulers", on ? "on" : "off");
+    }
+
     ImGui::SeparatorText(tr("Updates"));
     {
         bool on = p.checkUpdates;

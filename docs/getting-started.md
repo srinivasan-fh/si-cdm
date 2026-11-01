@@ -28,7 +28,7 @@ page takes you through the window and a first part, from a sketch to G-code.
   are named on it), or drag it to orbit. The little cubes right under it, at the end of the
   view bar, give the standard views (Top, Front, Right, Back, Left, Bottom, Isometric) in one click.
 - **Rulers** run along the canvas's top and left edges in both windows (the ruler button on
-  the view bar shows or hides them). In 2D they measure the drawing plane. In 3D they measure
+  the view bar shows or hides them, and the choice is kept for the next session). In 2D they measure the drawing plane. In 3D they measure
   the view plane through the centre of the view: in a standard view (Front, Top, Right...) they
   read world coordinates and name the axis at their ends, at other angles the distance from
   the centre. A mark on each follows the mouse.

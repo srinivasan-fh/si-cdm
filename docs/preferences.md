@@ -10,6 +10,7 @@ is saved at once and is kept for the next session.
 | Units | The units new projects start in. *As the last project* keeps the units of the project before. |
 | Autosave | How old unsaved changes get (in seconds) before a recovery copy is written; off writes none. See [autosave and recovery](#autosave-and-recovery). |
 | Material, post processor, machine | What *Set Up the Selected Part* on the CAM panel starts a job with. A lathe job takes the material, and the post when the lathe has it. |
+| Rulers | Show the rulers along the canvas's top and left edges. The ruler button on the view bar changes this too, and is remembered. |
 | Updates | Look for a newer release when SI CDM starts, from the release feed your administrator gives you. |
 | Language | The language of menus, buttons and tooltips: English or Deutsch built in, or one installed as a [language file](#languages). |
 
@@ -23,6 +24,7 @@ PREFERENCES SET material steel       a CAM material, or DEFAULT
 PREFERENCES SET post haas            fanuc, haas, grbl, linuxcnc, or DEFAULT
 PREFERENCES SET machine vmc          a machine preset, or DEFAULT
 PREFERENCES SET updates on           ON or OFF
+PREFERENCES SET rulers off           ON or OFF
 PREFERENCES SET update-url https://example.com/sicdm/latest.json
 PREFERENCES SET language de          en, de, or an installed language's code; shown at once
 PREFERENCES LANGUAGES                the languages there are

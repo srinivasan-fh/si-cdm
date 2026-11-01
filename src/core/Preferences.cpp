@@ -63,6 +63,7 @@ Json preferencesToJson(const Preferences& p) {
     j.set("cam_post", p.camPost);
     j.set("cam_machine", p.camMachine);
     j.set("check_updates", p.checkUpdates);
+    j.set("rulers", p.rulers);
     j.set("update_url", p.updateUrl);
     j.set("language", p.language);
     j.set("vault", p.vault);
@@ -95,6 +96,7 @@ Preferences preferencesFromJson(const Json& j) {
     take("vault", "vault");
     if (j["autosave_seconds"].isNumber()) p.autosaveSeconds = std::clamp(j["autosave_seconds"].asInt(), 0, 3600);
     p.checkUpdates = j["check_updates"].asBool(false);
+    p.rulers = j["rulers"].asBool(true);
     // Changed shortcuts: only keys this version can read (a hand-edited file can't break them).
     if (j["keys"].isObject())
         for (const auto& [id, v] : j["keys"].members())
@@ -214,6 +216,10 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (v == "on" || v == "yes" || v == "true" || v == "1") p.checkUpdates = true;
         else if (v == "off" || v == "no" || v == "false" || v == "0") p.checkUpdates = false;
         else return fail("UPDATES is ON or OFF");
+    } else if (k == "rulers" || k == "ruler") {
+        if (v == "on" || v == "yes" || v == "true" || v == "1" || v == "show") p.rulers = true;
+        else if (v == "off" || v == "no" || v == "false" || v == "0" || v == "hide") p.rulers = false;
+        else return fail("RULERS is ON or OFF");
     } else if (k == "update-url" || k == "updateurl" || k == "update_url") {
         if (clear) p.updateUrl.clear();
         else if (value.rfind("https://", 0) == 0 || value.rfind("http://", 0) == 0 || value.rfind("file://", 0) == 0) p.updateUrl = value;
@@ -232,7 +238,7 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         if (clear) p.vault.clear();
         else p.vault = value; // it may not be reachable yet (a network drive); VAULT says so
     } else {
-        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, update-url, language, vault)");
+        return fail("Unknown preference '" + key + "' (units, autosave, material, post, machine, updates, rulers, update-url, language, vault)");
     }
     return true;
 }
@@ -246,6 +252,7 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         "post: " + orDefault(p.camPost, "default (fanuc)"),
         "machine: " + orDefault(p.camMachine, "default (generic)"),
         std::string("updates: ") + (p.checkUpdates ? "on" : "off"),
+        std::string("rulers: ") + (p.rulers ? "on" : "off"),
         "update-url: " + orDefault(p.updateUrl, "none"),
         "language: " + p.language,
         "vault: " + orDefault(p.vault, "none"),

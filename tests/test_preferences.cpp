@@ -73,12 +73,16 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     CHECK(setPreference(p, "update-url", "https://example.com/sicdm/latest.json", &err));
     CHECK(setPreference(p, "updates", "on", &err));
     CHECK(!setPreference(p, "colour", "blue", &err));
+    CHECK(p.rulers); // on unless turned off
+    CHECK(setPreference(p, "rulers", "off", &err) && !p.rulers);
+    CHECK(!setPreference(p, "rulers", "maybe", &err));
     p.recent = {"/a/one.sicdm", "/b/two.sicdm"};
 
     const Preferences q = preferencesFromJson(preferencesToJson(p));
     CHECK(q.recent == p.recent);
     CHECK(q.units == "in" && q.autosaveSeconds == 0 && q.camMaterial == p.camMaterial && q.camPost == "haas");
     CHECK(q.camMachine == "vmc" && q.checkUpdates && q.updateUrl == p.updateUrl);
+    CHECK(!q.rulers); // saved off, read back off
 
     // A hand-edited file with values the app would refuse: those keep their defaults.
     const auto j = Json::parse(R"({"units":"furlongs","autosave_seconds":"soon","cam_post":"rm -rf","update_url":"javascript:x","recent":[1,"/ok.sicdm"]})");
@@ -96,7 +100,7 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     reloadPreferences();
     CHECK(preferences().units == "mm" && preferences().autosaveSeconds == 30);
     const CommandOutput shown = run(d, "PREFS");
-    CHECK(shown.ok && shown.lines.size() == 10);
+    CHECK(shown.ok && shown.lines.size() == 11);
     // The language: checked, shown at once, kept, and back to English on RESET.
     CHECK(!run(d, "PREFERENCES SET language klingon").ok);
     CHECK(run(d, "PREFERENCES SET language Deutsch").ok);
