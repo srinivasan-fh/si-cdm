@@ -49,6 +49,11 @@ struct Preferences {
     int antialiasing = 4;            // multisamples: 0 (off), 2, 4 or 8
     bool vsync = true;               // draw in step with the screen (off: as fast as it can)
     int mcpPort = 0;                 // > 0: the AI agents' MCP server starts on this port
+    // The main window and its side panel as they were left (kept on close, not settings).
+    int windowX = 0, windowY = 0, windowWidth = 0, windowHeight = 0; // 0 size: not kept yet
+    bool windowMaximized = false;
+    bool modelPanel = false;         // the docked panel beside the tool rail...
+    int panelPage = 0;               // ...and its page (0 Model, 1 Library, 2 CAM)
     std::string updateUrl;           // where the latest release is described (see UpdateCheck.hpp)
     std::string language = "en";     // the interface's language (see Translate.hpp)
     std::string vault;               // the team's vault folder (VAULT; Pdm.hpp); empty: $SICDM_VAULT, else none

@@ -212,6 +212,16 @@ TEST_CASE("Preferences: navigation, view, modelling, files, graphics and AI sett
     CHECK(!q.snapGrid && !q.snapPoints && q.moveStep == 0.5f && q.angleStep == 5.0f);
     CHECK(!q.backup && q.projectFolder == "/work/parts" && !q.splash && q.antialiasing == 0 && !q.vsync && q.mcpPort == 8765);
 
+    // The window's place and the side panel come back; a silly size isn't kept.
+    p.windowX = 120, p.windowY = 80, p.windowWidth = 1400, p.windowHeight = 900, p.windowMaximized = true;
+    p.modelPanel = true, p.panelPage = 2;
+    const Preferences w = preferencesFromJson(preferencesToJson(p));
+    CHECK(w.windowX == 120 && w.windowY == 80 && w.windowWidth == 1400 && w.windowHeight == 900 && w.windowMaximized);
+    CHECK(w.modelPanel && w.panelPage == 2);
+    const auto tiny = Json::parse(R"({"window":{"x":0,"y":0,"width":5,"height":5},"panel_page":9})");
+    REQUIRE(tiny.has_value());
+    CHECK(preferencesFromJson(*tiny).windowWidth == 0 && preferencesFromJson(*tiny).panelPage == 2);
+
     // A hand-edited file can't hold what PREFERENCES SET would refuse.
     const auto j = Json::parse(R"({"zoom_speed":99,"antialiasing":5,"mcp_port":22,"display":"x-ray","background":"plaid","move_step":-1})");
     REQUIRE(j.has_value());

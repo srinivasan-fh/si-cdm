@@ -2042,6 +2042,9 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             fresh.recent = preferences().recent; // the recent list isn't a setting, nor the open projects
             fresh.session = preferences().session;
             fresh.sessionActive = preferences().sessionActive;
+            const Preferences& was = preferences(); // nor where the window was
+            fresh.windowX = was.windowX, fresh.windowY = was.windowY, fresh.windowWidth = was.windowWidth, fresh.windowHeight = was.windowHeight;
+            fresh.windowMaximized = was.windowMaximized;
             preferences() = fresh;
             if (!savePreferences(&err)) return out.fail(err);
             setLanguage(preferences().language);

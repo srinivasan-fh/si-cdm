@@ -121,6 +121,13 @@ Json preferencesToJson(const Preferences& p) {
     j.set("antialiasing", p.antialiasing);
     j.set("vsync", p.vsync);
     j.set("mcp_port", p.mcpPort);
+    if (p.windowWidth > 0 && p.windowHeight > 0) {
+        Json w = Json::object();
+        w.set("x", p.windowX).set("y", p.windowY).set("width", p.windowWidth).set("height", p.windowHeight).set("maximized", p.windowMaximized);
+        j.set("window", w);
+    }
+    j.set("model_panel", p.modelPanel);
+    j.set("panel_page", p.panelPage);
     j.set("update_url", p.updateUrl);
     j.set("language", p.language);
     j.set("vault", p.vault);
@@ -176,6 +183,18 @@ Preferences preferencesFromJson(const Json& j) {
     number("antialiasing", "antialiasing");
     number("mcp_port", "mcp-port");
     take("display", "display");
+    if (const Json& w = j["window"]; w.isObject()) {
+        const int ww = w["width"].asInt(0), wh = w["height"].asInt(0);
+        if (ww >= 400 && wh >= 300 && ww <= 16384 && wh <= 16384) { // a sane size, else not kept
+            p.windowWidth = ww;
+            p.windowHeight = wh;
+            p.windowX = w["x"].asInt(0);
+            p.windowY = w["y"].asInt(0);
+            p.windowMaximized = w["maximized"].asBool(false);
+        }
+    }
+    p.modelPanel = j["model_panel"].asBool(false);
+    p.panelPage = std::clamp(j["panel_page"].asInt(0), 0, 2);
     take("background", "background");
     take("project_folder", "project-folder");
     p.reopenLast = j["reopen_last"].asBool(true);

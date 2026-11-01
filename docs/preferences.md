@@ -24,6 +24,7 @@ takes effect at once (antialiasing from the next start), and is kept for the nex
 | Splash | The splash screen while SI CDM loads (`--no-splash` turns it off for one start). |
 | Antialiasing, V-sync | Smooth edges with 2, 4 (the default) or 8 samples, or off for slow graphics; drawing in step with the screen (off: as fast as it can). |
 | MCP server | Start the server AI agents connect to with SI CDM, on this port (see *AI agents (MCP)* in the README). |
+| Window and panel | Kept, not set: the main window opens where it was left, at the same size (maximised if it was), with the side panel (Model, Library or CAM) as it was. A place no longer on a screen is left to the system; `--size W H` overrides it for one start. |
 | Updates | Look for a newer release when SI CDM starts, from the release feed your administrator gives you. |
 | Language | The language of menus, buttons and tooltips: English or Deutsch built in, or one installed as a [language file](#languages). |
 

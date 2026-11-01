@@ -43,6 +43,7 @@ struct AppOptions {
     bool splash = true;         // cinematic launch splash with loading progress
     float splashSeconds = 3.2f; // shortest time the splash stays up
     std::string language;       // the interface's language for this run ("": the preference)
+    bool restoreGeometry = false; // put the window where it was left (the preferences) and keep it on close
 };
 
 class Application final : public ViewHost {
@@ -174,6 +175,7 @@ private:
     void refreshFileTabs();
     void rememberSession(); // the open projects, kept in the preferences for the next start
     void syncPreferences(); // applies changed preferences; keeps the bars' own settings in them
+    void rememberWindow();  // the window's place and size, and the side panel, for the next start
     void zoomView(OrbitCamera& cam, float steps, float x, float y, float w, float h); // with the zoom preferences
     void saveAll();
     void autosave(); // keeps recovery copies of files with unsaved changes

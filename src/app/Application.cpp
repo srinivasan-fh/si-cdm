@@ -137,6 +137,20 @@ bool Application::init() {
         return false;
     }
     startupLog("main window made (hidden until the splash closes)");
+    if (m_options.restoreGeometry) {
+        // Back where it was, if that place is still on a screen (a monitor may have gone).
+        const Preferences& p = preferences();
+        int count = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&count);
+        for (int i = 0; i < count; ++i) {
+            int mx = 0, my = 0, mw = 0, mh = 0;
+            glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
+            if (p.windowX + 40 >= mx && p.windowX + 120 <= mx + mw && p.windowY >= my && p.windowY + 40 <= my + mh) {
+                glfwSetWindowPos(m_window, p.windowX, p.windowY);
+                break;
+            }
+        }
+    }
     applyWindowIcon(m_window);
     glfwMakeContextCurrent(m_window);
     glfwSwapInterval(preferences().vsync ? 1 : 0);
@@ -262,6 +276,8 @@ bool Application::init() {
     m_uiState.snapPoints = m_lastPrefs.snapPoints;
     m_uiState.gizmoMoveStep = m_lastPrefs.moveStep;
     m_uiState.gizmoAngleStep = m_lastPrefs.angleStep;
+    m_uiState.showModelTree = m_lastPrefs.modelPanel;
+    m_uiState.dockTab = m_lastPrefs.panelPage;
     syncPreferences(); // the 3D window's look, animations, the view sphere
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
     m_savedSignature = contentSignature(); // the demo part counts as unmodified
@@ -318,6 +334,7 @@ bool Application::init() {
 }
 
 void Application::shutdown() {
+    rememberWindow();
     m_autosaver.clear(); // a clean exit: the recovery copies aren't needed
     m_splash.reset();
     m_mcpHttp.stop();
@@ -3114,6 +3131,18 @@ void Application::zoomView(OrbitCamera& cam, float steps, float x, float y, floa
     else cam.zoom(steps);
 }
 
+void Application::rememberWindow() {
+    if (!m_window || !m_options.screenshotPath.empty() || !m_sessionTracking) return; // test pictures leave it alone
+    Preferences& p = preferences();
+    p.windowMaximized = glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED) != 0;
+    if (!p.windowMaximized && !glfwGetWindowAttrib(m_window, GLFW_ICONIFIED)) { // its normal place (a maximised one keeps the place it came from)
+        glfwGetWindowPos(m_window, &p.windowX, &p.windowY);
+        glfwGetWindowSize(m_window, &p.windowWidth, &p.windowHeight);
+    }
+    if (p.windowWidth <= 0) glfwGetWindowSize(m_window, &p.windowWidth, &p.windowHeight);
+    savePreferences();
+}
+
 void Application::syncPreferences() {
     Preferences& p = preferences();
     bool save = false;
@@ -3134,7 +3163,9 @@ void Application::syncPreferences() {
     twoWay(p.snapPoints, m_uiState.snapPoints, m_lastPrefs.snapPoints);
     twoWay(p.moveStep, m_uiState.gizmoMoveStep, m_lastPrefs.moveStep);
     twoWay(p.angleStep, m_uiState.gizmoAngleStep, m_lastPrefs.angleStep);
-    if (save) savePreferences();
+    twoWay(p.modelPanel, m_uiState.showModelTree, m_lastPrefs.modelPanel);
+    twoWay(p.panelPage, m_uiState.dockTab, m_lastPrefs.panelPage);
+    if (save && m_options.screenshotPath.empty()) savePreferences(); // test pictures leave the file alone
     // The 3D window's look: applied at the start and when the preference changes (the view
     // bar still changes it for the moment).
     const std::string look = p.displayMode + "|" + p.background + "|" + (p.perspective ? "p" : "o") + (p.grid ? "g" : "-");
@@ -4622,6 +4653,7 @@ int Application::run() {
     // on (once the splash is gone it goes to another program and the taskbar button flashes).
     if (m_splash) m_splash->finish();
     glfwShowWindow(m_window);
+    if (m_options.restoreGeometry && preferences().windowMaximized) glfwMaximizeWindow(m_window);
     bringWindowToFront(m_window);
     if (m_splash) {
         m_splash.reset();
