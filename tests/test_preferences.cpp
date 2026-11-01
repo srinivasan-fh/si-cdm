@@ -9,6 +9,7 @@
 #include "core/Preferences.hpp"
 #include "core/Translate.hpp"
 #include "core/UpdateCheck.hpp"
+#include "core/Units.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -107,7 +108,7 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     reloadPreferences();
     CHECK(preferences().units == "mm" && preferences().autosaveSeconds == 30);
     const CommandOutput shown = run(d, "PREFS");
-    CHECK(shown.ok && shown.lines.size() == 33);
+    CHECK(shown.ok && shown.lines.size() == 36);
     // The language: checked, shown at once, kept, and back to English on RESET.
     CHECK(!run(d, "PREFERENCES SET language klingon").ok);
     CHECK(run(d, "PREFERENCES SET language Deutsch").ok);
@@ -258,6 +259,47 @@ TEST_CASE("Preferences: BACKUP keeps the file a save replaces; views jump with A
     OrbitCamera::setAnimations(true);
     cam.setStandardView(StandardView::Front);
     CHECK(cam.update(0.001f)); // gliding
+    freshPreferences();
+}
+
+TEST_CASE("Units: angles shown in degrees or radians, to set decimals; new projects take the preferences") {
+    UnitSettings u;
+    CHECK(formatAngle(30.0, u) == "30 deg");
+    CHECK(formatAngle(33.3333, u) == "33.33 deg");
+    u.angleDecimals = 0;
+    CHECK(formatAngle(33.6, u) == "34 deg");
+    u.radians = true;
+    u.angleDecimals = -1;
+    CHECK(formatAngle(180.0, u) == "3.1416 rad");
+    CHECK(describeUnits(u).find("radians, 4 decimals") != std::string::npos);
+
+    // UNITS sets them on the project; they are saved with it.
+    freshPreferences();
+    const fs::path dir = freshDir("angles");
+    Document d;
+    CHECK(run(d, "UNITS ANGLES RAD ANGLE-DECIMALS 3").ok);
+    CHECK(d.state.units.radians && d.state.units.angleDecimals == 3);
+    CHECK(!run(d, "UNITS ANGLES GRADS").ok);
+    REQUIRE(run(d, "BOX 10 10 10").ok);
+    const CommandOutput rolled = run(d, "ROTATE \"" + d.scene.bodies().back().name + "\" 0,0,90");
+    CHECK(rolled.ok && lastLine(rolled).find("1.571) rad") != std::string::npos);
+    REQUIRE(run(d, "SAVE \"" + (dir / "a.sicdm").string() + "\"").ok);
+    Document e;
+    REQUIRE(run(e, "OPEN \"" + (dir / "a.sicdm").string() + "\"").ok);
+    CHECK(e.state.units.radians && e.state.units.angleDecimals == 3);
+
+    // The preferences give a new project its decimals, fractions and angles.
+    CHECK(run(d, "PREFERENCES SET units in").ok);
+    CHECK(run(d, "PREFERENCES SET decimals 4").ok);
+    CHECK(run(d, "PREFERENCES SET fraction 1/32").ok);
+    CHECK(run(d, "PREFERENCES SET angles rad").ok);
+    CHECK(!run(d, "PREFERENCES SET fraction 1/3").ok);
+    CHECK(!run(d, "PREFERENCES SET decimals 11").ok);
+    CHECK(run(d, "NEW").ok);
+    CHECK(d.state.units.unit == LengthUnit::Inch && d.state.units.precision == 4 && d.state.units.fractional() && d.state.units.denominator == 32);
+    CHECK(d.state.units.radians);
+    const Preferences q = preferencesFromJson(preferencesToJson(preferences()));
+    CHECK(q.decimals == 4 && q.fraction == 32 && q.radians && q.angleDecimals == -1);
     freshPreferences();
 }
 

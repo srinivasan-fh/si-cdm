@@ -1,3 +1,4 @@
+#include "core/Units.hpp"
 #include "core/Assembly.hpp"
 
 #include "core/Json.hpp"
@@ -526,7 +527,7 @@ bool mateRefAt(const Body& body, const DVec3& world, MateRef& out, std::string* 
 std::string describeMate(const Mate& m) {
     char buf[64] = "";
     if (m.type == MateType::Distance) std::snprintf(buf, sizeof buf, " %.3g mm", m.value);
-    if (m.type == MateType::Angle) std::snprintf(buf, sizeof buf, " %.3g deg", m.value);
+    if (m.type == MateType::Angle) std::snprintf(buf, sizeof buf, " %s", angleText(m.value).c_str());
     std::string s = m.name + ": " + (m.type == MateType::Coincident && m.aligned ? "flush" : mateTypeName(m.type)) + buf + " ";
     if (m.type == MateType::Fix) return s + m.a.body + (m.suppressed ? " (suppressed)" : "");
     s += m.a.body + " " + mateGeomName(m.a.geom) + " to " + m.b.body + " " + mateGeomName(m.b.geom);

@@ -158,13 +158,13 @@ CommandOutput runMoldCommand(Document& doc, const std::vector<std::string>& a, c
             if (bodies[k].field.rfind("draft", 0) == 0 && bodies[k].attachedTo == src.name) bodies.erase(bodies.begin() + static_cast<std::ptrdiff_t>(k));
         const int si = bodyIndex(doc, src.name);
         Body res = meshBody(freeBodyName(doc, src.name + " draft"), draftColoured(world, classes), src.color);
-        res.field = "draft along " + pullText(pull) + ", at least " + num(minDeg) + " deg";
+        res.field = "draft along " + pullText(pull) + ", at least " + angleText(minDeg);
         res.attachedTo = src.name;
         if (si >= 0) bodies[static_cast<std::size_t>(si)].visible = false;
-        out.say("Draft of " + src.name + " along " + pullText(pull) + " (at least " + num(minDeg) + " deg), shown on " + res.name + " (MOLD OFF puts " + src.name + " back):");
-        out.say("  green, comes away with the cavity: " + share(DraftClass::Positive) + (rep.minPositive < 90 ? ", least draft " + num(rep.minPositive, 3) + " deg" : ""));
-        out.say("  red, comes away with the core: " + share(DraftClass::Negative) + (rep.minNegative < 90 ? ", least draft " + num(rep.minNegative, 3) + " deg" : ""));
-        out.say("  yellow, less draft than " + num(minDeg) + " deg: " + share(DraftClass::Shallow) + " (" + num(rep.area[static_cast<int>(DraftClass::Shallow)], 4) + " mm2)");
+        out.say("Draft of " + src.name + " along " + pullText(pull) + " (at least " + angleText(minDeg) + "), shown on " + res.name + " (MOLD OFF puts " + src.name + " back):");
+        out.say("  green, comes away with the cavity: " + share(DraftClass::Positive) + (rep.minPositive < 90 ? ", least draft " + angleText(rep.minPositive) : ""));
+        out.say("  red, comes away with the core: " + share(DraftClass::Negative) + (rep.minNegative < 90 ? ", least draft " + angleText(rep.minNegative) : ""));
+        out.say("  yellow, less draft than " + angleText(minDeg) + ": " + share(DraftClass::Shallow) + " (" + num(rep.area[static_cast<int>(DraftClass::Shallow)], 4) + " mm2)");
         out.say("  purple, undercut (can't come away): " + share(DraftClass::Undercut) + " (" + num(rep.area[static_cast<int>(DraftClass::Undercut)], 4) + " mm2)");
         doc.scene.add(std::move(res));
         doc.selectedBody = static_cast<int>(bodies.size()) - 1;

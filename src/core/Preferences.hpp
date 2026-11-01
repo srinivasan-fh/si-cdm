@@ -3,6 +3,8 @@
 // Preferences: what a user sets once for every project, kept in preferences.json in the
 // per-user configuration folder. The recent files list lives here too.
 
+#include "core/Units.hpp"
+
 #include <map>
 #include <string>
 #include <vector>
@@ -14,6 +16,10 @@ class Json;
 struct Preferences {
     std::vector<std::string> recent; // project files, newest first (at most kMaxRecent)
     std::string units;               // for new projects ("mm", "in", ...); empty: as the last project
+    int decimals = -1;               // ...their decimals (-1: the unit's own)
+    int fraction = 0;                // ...inches as fractions to 1/fraction (0: decimal)
+    bool radians = false;            // ...angles shown in radians
+    int angleDecimals = -1;          // ...and to these decimals (-1: 2 for degrees, 4 for radians)
     int autosaveSeconds = 60;        // how old unsaved changes get before a recovery copy; 0: off
     std::string camMaterial;         // CAM and lathe set-ups start with these; empty: the built-in default
     std::string camPost;
@@ -73,6 +79,9 @@ struct StartupSession {
     bool crashedLastTime = false;
 };
 StartupSession startupSession(const Preferences& p);
+
+// A new project's display units from the preferences (units, decimals, fractions, angles).
+void applyNewProjectUnits(const Preferences& p, UnitSettings& units);
 
 // The background colours (top, bottom of the gradient) of a BACKGROUND preference.
 struct BackgroundColours {

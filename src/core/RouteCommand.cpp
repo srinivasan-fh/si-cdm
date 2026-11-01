@@ -109,7 +109,7 @@ void describePath(const SketchCurve& c, CommandOutput& out) {
         if (corner && c.kind == CurveKind::Polyline) {
             const Vec3 a = normalize(p[k] - p[(k + p.size() - 1) % p.size()]), b = normalize(p[(k + 1) % p.size()] - p[k]);
             const double turnDeg = std::acos(std::clamp(static_cast<double>(dot(a, b)), -1.0, 1.0)) * kDeg;
-            if (turnDeg > 0.01) line += "  turns " + num(turnDeg) + " deg";
+            if (turnDeg > 0.01) line += "  turns " + angleText(turnDeg);
         }
         out.say(line);
     }

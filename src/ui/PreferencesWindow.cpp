@@ -189,6 +189,36 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
                         if (ImGui::Selectable(u.name, p.units == u.symbol)) set("units", u.symbol);
                     ImGui::EndCombo();
                 }
+                // Decimals: "the unit's own" or 0..6.
+                auto decimalsCombo = [&](const char* label, int value, const char* key) {
+                    const std::string text = value < 0 ? std::string(tr("Automatic")) : std::to_string(value);
+                    ImGui::SetNextItemWidth(260);
+                    if (ImGui::BeginCombo(label, text.c_str())) {
+                        if (ImGui::Selectable(tr("Automatic"), value < 0)) set(key, "auto");
+                        for (int n = 0; n <= 6; ++n)
+                            if (ImGui::Selectable(std::to_string(n).c_str(), value == n)) set(key, std::to_string(n));
+                        ImGui::EndCombo();
+                    }
+                };
+                decimalsCombo(tr("Decimal places"), p.decimals, "decimals");
+                {
+                    const std::string text = p.fraction > 0 ? "1/" + std::to_string(p.fraction) + " in" : std::string(tr("Off (decimal)"));
+                    ImGui::SetNextItemWidth(260);
+                    if (ImGui::BeginCombo(tr("Inch fractions"), text.c_str())) {
+                        if (ImGui::Selectable(tr("Off (decimal)"), p.fraction == 0)) set("fraction", "off");
+                        for (int d = 2; d <= 256; d *= 2)
+                            if (ImGui::Selectable(("1/" + std::to_string(d)).c_str(), p.fraction == d)) set("fraction", "1/" + std::to_string(d));
+                        ImGui::EndCombo();
+                    }
+                }
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::BeginCombo(tr("Angles"), p.radians ? tr("Radians") : tr("Degrees"))) {
+                    if (ImGui::Selectable(tr("Degrees"), !p.radians)) set("angles", "deg");
+                    if (ImGui::Selectable(tr("Radians"), p.radians)) set("angles", "rad");
+                    ImGui::EndCombo();
+                }
+                decimalsCombo(tr("Angle decimal places"), p.angleDecimals, "angle-decimals");
+                ImGui::TextDisabled("%s", tr("An open project keeps its own: UNITS changes them (angles are typed in degrees)."));
             }
 
             ImGui::SeparatorText(tr("Start-up"));

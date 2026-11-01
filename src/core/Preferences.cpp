@@ -90,6 +90,10 @@ Json preferencesToJson(const Preferences& p) {
     for (const std::string& r : p.recent) recent.push(r);
     j.set("recent", recent);
     j.set("units", p.units);
+    j.set("decimals", p.decimals);
+    j.set("fraction", p.fraction);
+    j.set("angles", p.radians ? "rad" : "deg");
+    j.set("angle_decimals", p.angleDecimals);
     j.set("autosave_seconds", p.autosaveSeconds);
     j.set("cam_material", p.camMaterial);
     j.set("cam_post", p.camPost);
@@ -178,6 +182,10 @@ Preferences preferencesFromJson(const Json& j) {
     auto number = [&](const char* key, const char* name) {
         if (j[key].isNumber()) setPreference(p, name, std::to_string(j[key].asNumber()), &err);
     };
+    number("decimals", "decimals");
+    number("fraction", "fraction");
+    take("angles", "angles");
+    number("angle_decimals", "angle-decimals");
     number("zoom_speed", "zoom-speed");
     number("orbit_speed", "orbit-speed");
     number("move_step", "move-step");
@@ -293,6 +301,17 @@ BackgroundColours backgroundColours(const std::string& name) {
     return {{0.20f, 0.23f, 0.29f}, {0.06f, 0.07f, 0.09f}}; // dark, the default
 }
 
+void applyNewProjectUnits(const Preferences& p, UnitSettings& units) {
+    if (const auto u = parseUnitName(p.units)) units.unit = *u;
+    if (p.decimals >= 0) units.precision = p.decimals;
+    if (p.fraction > 0) {
+        units.style = LengthStyle::Fractional;
+        units.denominator = p.fraction;
+    }
+    units.radians = p.radians;
+    units.angleDecimals = p.angleDecimals;
+}
+
 StartupSession startupSession(const Preferences& p) {
     StartupSession out;
     if (p.sessionOpening) {
@@ -402,6 +421,26 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         const int n = x ? static_cast<int>(*x) : -1;
         if (!x || *x != n || (n != 0 && (n < 1024 || n > 65535))) return fail("MCP-PORT is a port from 1024 to 65535, or OFF");
         p.mcpPort = n;
+    } else if (k == "decimals" || k == "precision" || k == "angle-decimals") {
+        int& slot = k == "angle-decimals" ? p.angleDecimals : p.decimals;
+        if (clear) {
+            slot = -1;
+        } else {
+            const auto x = number(v);
+            if (!x || *x < 0 || *x > 10 || *x != std::floor(*x)) return fail(upper(key) + " is 0 to 10, or AUTO");
+            slot = static_cast<int>(*x);
+        }
+    } else if (k == "fraction" || k == "fractions") {
+        std::string d = v.rfind("1/", 0) == 0 ? v.substr(2) : v;
+        if (v == "off" || v == "decimal" || clear) d = "0";
+        const auto x = number(d);
+        const int n = x ? static_cast<int>(*x) : -1;
+        if (!x || *x != n || (n != 0 && (n < 2 || n > 256 || (n & (n - 1)) != 0))) return fail("FRACTION is 1/2, 1/4 ... 1/256, or OFF");
+        p.fraction = n;
+    } else if (k == "angles" || k == "angle-units") {
+        if (v == "deg" || v == "degrees") p.radians = false;
+        else if (v == "rad" || v == "radians") p.radians = true;
+        else return fail("ANGLES is DEG or RAD");
     } else if (k == "mouse") {
         if (clear) p.mouse = "sicdm";
         else if (isMouseScheme(v)) p.mouse = v;
@@ -456,6 +495,9 @@ std::vector<std::string> describePreferences(const Preferences& p) {
     };
     return {
         "units: " + orDefault(p.units, "as the last project"),
+        "decimals: " + (p.decimals >= 0 ? std::to_string(p.decimals) : std::string("the unit's own")),
+        "fraction: " + (p.fraction > 0 ? "1/" + std::to_string(p.fraction) + " in" : std::string("off")),
+        std::string("angles: ") + (p.radians ? "rad" : "deg") + (p.angleDecimals >= 0 ? ", " + std::to_string(p.angleDecimals) + " decimals" : std::string()),
         "autosave: " + (p.autosaveSeconds > 0 ? std::to_string(p.autosaveSeconds) + " s" : std::string("off")),
         "material: " + orDefault(p.camMaterial, "default (aluminium)"),
         "post: " + orDefault(p.camPost, "default (fanuc)"),

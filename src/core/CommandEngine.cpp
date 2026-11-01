@@ -757,7 +757,7 @@ std::vector<std::string> describeDocument(const Document& doc) {
                            (b.visible ? "" : "  (hidden)");
         if (b.scale != 1.0f) line += fmt("  scale %g", b.scale);
         if (b.rotation.x != 0.0f || b.rotation.y != 0.0f || b.rotation.z != 0.0f)
-            line += fmt("  rotated (%g, %g, %g) deg", b.rotation.x, b.rotation.y, b.rotation.z);
+            line += "  rotated " + anglesText({b.rotation.x, b.rotation.y, b.rotation.z});
         if (!b.component.empty() && b.component != b.name) line += "  {" + b.component + "}";
         l.push_back(line);
     }
@@ -1878,7 +1878,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         doc.state.render = RenderSettings{};
         doc.state.section = SectionView{};
         if (doc.state.plane == SketchPlane::Custom) doc.state.plane = SketchPlane::Top;
-        if (const auto u = parseUnitName(preferences().units)) doc.state.units.unit = *u; // Preferences: units for new projects
+        applyNewProjectUnits(preferences(), doc.state.units); // Preferences: units for new projects
         out.documentReplaced = true;
         out.say("New empty project");
         return out;
@@ -5035,7 +5035,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         b.setRotation(*deg);
         doc.scene.touchBodies();
         markChanged(doc);
-        out.say("Rotated " + b.name + " to " + fmt("(%g, ", deg->x) + fmt("%g, ", deg->y) + fmt("%g) deg", deg->z));
+        out.say("Rotated " + b.name + " to " + anglesText({deg->x, deg->y, deg->z}));
         return out;
     }
     if (cmd == "SCALE") {
@@ -6124,7 +6124,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (!deg) return usage();
         if (auto o = needView(view, "ROLL"); !o.ok) return o;
         view->roll(*deg, *deg == 0.0f);
-        out.say(*deg == 0.0f ? std::string("View levelled") : fmt("Rolled %.1f deg", *deg));
+        out.say(*deg == 0.0f ? std::string("View levelled") : "Rolled " + angleText(*deg));
         return out;
     }
     if (cmd == "ORTHO" || cmd == "PERSP") {
@@ -6222,13 +6222,26 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
                 }
             } else if (k == "decimal") {
                 u.style = LengthStyle::Decimal;
+            } else if (k == "angles" || k == "angle") {
+                const std::string v = hasNext ? lower(a[++i]) : "";
+                if (v == "deg" || v == "degrees" || v == "degree") u.radians = false;
+                else if (v == "rad" || v == "radians" || v == "radian") u.radians = true;
+                else return out.fail("ANGLES is DEG or RAD");
+            } else if (k == "angle-decimals" || k == "angledecimals" || k == "angle-precision") {
+                if (!hasNext) return out.fail("ANGLE-DECIMALS needs 0-10 or AUTO");
+                const std::string v = lower(a[++i]);
+                const auto n = parseNumber(v);
+                if (v == "auto" || v == "default") u.angleDecimals = -1;
+                else if (n && *n >= 0 && *n <= 10 && *n == std::floor(*n)) u.angleDecimals = static_cast<int>(*n);
+                else return out.fail("ANGLE-DECIMALS needs 0-10 or AUTO");
             } else {
                 return usage();
             }
             changed = true;
         }
         const UnitSettings& was = doc.state.units;
-        const bool same = u.unit == was.unit && u.precision == was.precision && u.style == was.style && u.denominator == was.denominator;
+        const bool same = u.unit == was.unit && u.precision == was.precision && u.style == was.style && u.denominator == was.denominator &&
+                          u.radians == was.radians && u.angleDecimals == was.angleDecimals;
         if (changed && !same) { // re-choosing the current units leaves the file unmodified
             doc.state.units = u;
             setActiveUnits(u);
@@ -6236,7 +6249,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         }
         out.say("Units: " + describeUnits(u) + "   resolution " +
                 formatLength(u.resolutionMm(), UnitSettings{LengthUnit::Millimeter, 6}));
-        if (!changed) out.say("  UNITS MM|CM|M|IN|FT|PT   PRECISION n|AUTO   FRACTION 1/n|OFF   (geometry is stored in mm)");
+        if (!changed) out.say("  UNITS MM|CM|M|IN|FT|PT   PRECISION n|AUTO   FRACTION 1/n|OFF   ANGLES DEG|RAD   ANGLE-DECIMALS n|AUTO   (geometry is stored in mm, angles typed in degrees)");
         return out;
     }
     if (cmd == "CONVERT") {

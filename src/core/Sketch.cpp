@@ -471,9 +471,7 @@ std::string SketchCurve::measure() const {
         if (pts.size() >= 3) {
             float a0, a1;
             arcAngles(a0, a1);
-            char b[32];
-            std::snprintf(b, sizeof b, " %.1f deg", static_cast<double>((a1 - a0) * 180.0f / kPi));
-            return "R " + lengthText(len(pts[0], pts[1])) + b;
+            return "R " + lengthText(len(pts[0], pts[1])) + " " + angleText(static_cast<double>((a1 - a0) * 180.0f / kPi));
         }
         break;
     case CurveKind::Spline: {

@@ -269,7 +269,7 @@ bool Application::init() {
         }
     });
 
-    if (const auto u = parseUnitName(preferences().units)) m_doc.state.units.unit = *u; // Preferences: units for new projects
+    applyNewProjectUnits(preferences(), m_doc.state.units); // Preferences: units for new projects
     if (!setLanguage(m_options.language.empty() ? preferences().language : m_options.language)) setLanguage(preferences().language);
     m_lastPrefs = preferences();
     m_uiState.showRulers = m_lastPrefs.rulers;
@@ -3564,7 +3564,7 @@ void Application::drawGizmo() {
         std::snprintf(label, sizeof label, "%+.2f, %+.2f, %+.2f mm", static_cast<double>(m_gizmoDelta.move.x), static_cast<double>(m_gizmoDelta.move.y),
                       static_cast<double>(m_gizmoDelta.move.z));
     else if (mode == GizmoMode::Rotate)
-        std::snprintf(label, sizeof label, "%+.1f deg", static_cast<double>(m_gizmoDelta.angle));
+        std::snprintf(label, sizeof label, "%s%s", m_gizmoDelta.angle >= 0.0f ? "+" : "", angleText(m_gizmoDelta.angle).c_str());
     else if (m_gizmoDelta.uniform)
         std::snprintf(label, sizeof label, "x%.3f", static_cast<double>(m_gizmoDelta.scale.x));
     else

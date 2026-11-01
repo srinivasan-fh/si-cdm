@@ -419,7 +419,7 @@ constexpr CommandSpec kCommands[] = {
     {"SNAP", "", "SNAP [ON|OFF]", "Grid and point snapping for sketches"},
     {"PANEL", "", "PANEL [ON|OFF] | PANEL MODEL|LIBRARY|CAM|TOOLS|MACHINE|GUIDE|PREFERENCES|LICENCE|PRODUCT|APPEARANCE|SECTION|PATH3D|STUDY|STACK|ARMATURE", "Show or hide the docked panel, open it on a page (CAM: milling and lathe jobs), or open the CAM tools, machine, user guide, preferences, licence, product data, appearance, section, 3D path and route, motion study, tolerance stack-up or armature window"},
     // Session
-    {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF]",
+    {"UNITS", "UN UNIT", "UNITS [MM|CM|M|IN|FT|PT] [PRECISION n|AUTO] [FRACTION 1/n|OFF] [ANGLES DEG|RAD] [ANGLE-DECIMALS n|AUTO]",
      "Units for typing and showing lengths (the model stays exact in mm)"},
     {"CONVERT", "CONV", "CONVERT length [TO unit]", "Convert a length, e.g. CONVERT 5'6-1/2\" TO mm"},
     {"HELP", "? COMMANDS", "HELP [command]", "List commands or show one command's usage"},

@@ -1438,6 +1438,15 @@ const char* const kGerman[][2] = {
     {"Middle drag pans, middle with Ctrl orbits, Shift+middle zooms", "Mittlere Taste ziehen verschiebt, mit Strg dreht, Umschalt+Mitte zoomt"},
     {"Mouse buttons like", "Maustasten wie"},
     {"Right drag orbits, middle drag pans", "Rechte Taste ziehen dreht, mittlere Taste verschiebt"},
+    {"An open project keeps its own: UNITS changes them (angles are typed in degrees).", "Ein geöffnetes Projekt behält seine eigenen: UNITS ändert sie (Winkel werden in Grad eingegeben)."},
+    {"Angle decimal places", "Nachkommastellen für Winkel"},
+    {"Angles", "Winkel"},
+    {"Automatic", "Automatisch"},
+    {"Decimal places", "Nachkommastellen"},
+    {"Degrees", "Grad"},
+    {"Inch fractions", "Zollbrüche"},
+    {"Off (decimal)", "Aus (dezimal)"},
+    {"Radians", "Bogenmaß"},
 };
 
 

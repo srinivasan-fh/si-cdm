@@ -421,7 +421,9 @@ std::string projectText(const Scene& scene, const ProjectState& state, const std
     du.set("unit", unitInfo(state.units.unit).symbol)
         .set("precision", state.units.precision)
         .set("style", state.units.style == LengthStyle::Fractional ? "fractional" : "decimal")
-        .set("denominator", state.units.denominator);
+        .set("denominator", state.units.denominator)
+        .set("angles", state.units.radians ? "rad" : "deg")
+        .set("angle_decimals", state.units.angleDecimals);
     doc.set("display_units", du);
     doc.set("plane", planeKey(state.plane));
     if (state.plane == SketchPlane::Custom) {
@@ -1433,6 +1435,8 @@ bool projectFromText(const std::string& text, const std::string& path, Scene& sc
     st.units.precision = std::clamp(static_cast<int>(du["precision"].asNumber(-1)), -1, 10);
     st.units.style = du["style"].asString("decimal") == "fractional" ? LengthStyle::Fractional : LengthStyle::Decimal;
     st.units.denominator = std::clamp(static_cast<int>(du["denominator"].asNumber(64)), 2, 256);
+    st.units.radians = du["angles"].asString("deg") == "rad";
+    st.units.angleDecimals = std::clamp(static_cast<int>(du["angle_decimals"].asNumber(-1)), -1, 10);
     for (const Json& jp : (*doc)["pastes"].items())
         if (jp["id"].isString() && jp["project"].isObject()) st.pastes.push_back({jp["id"].asString(), jp["project"].dump()});
 

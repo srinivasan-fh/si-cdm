@@ -47,6 +47,8 @@ struct UnitSettings {
     int precision = -1;          // decimals; < 0: the unit's default
     LengthStyle style = LengthStyle::Decimal;
     int denominator = 64;        // finest fraction for Fractional (2..256, a power of two)
+    bool radians = false;        // angles shown in radians (typed angles stay in degrees)
+    int angleDecimals = -1;      // < 0: 2 for degrees, 4 for radians
 
     int decimals() const;        // effective decimals
     bool fractional() const;     // Fractional style on a unit that has it (in, ft)
@@ -97,6 +99,13 @@ public:
 private:
     UnitSettings m_previous;
 };
+
+// An angle (given in degrees) as the settings show angles: "30 deg", "0.5236 rad".
+std::string formatAngle(double degrees, const UnitSettings& settings);
+// formatAngle(degrees, activeUnits()).
+std::string angleText(double degrees);
+// Several: "(10, 0, 90) deg".
+std::string anglesText(std::initializer_list<double> degrees);
 
 // "mm", "cm", "m", "in", "ft", "pt" with the style: "in (fractional 1/64)".
 std::string describeUnits(const UnitSettings& units);

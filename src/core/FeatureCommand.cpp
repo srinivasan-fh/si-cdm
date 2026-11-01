@@ -415,7 +415,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                     b.brepKey = meshKey(b.mesh);
                 }
             }
-            if (sh.draftDeg != 0.0f) how += ", draft " + fmt3("%g", sh.draftDeg) + " deg";
+            if (sh.draftDeg != 0.0f) how += ", draft " + angleText(sh.draftDeg);
             if (sh.thin > 0.0f) how += ", wall " + lengthText(sh.thin);
         }
         auto hideProfile = [&] {
@@ -2434,7 +2434,7 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
                     }
                     rows.push_back(full && k == steps ? rows.front() : row);
                 }
-                what = "revolved " + fmt3("%g", angle) + " deg";
+                what = "revolved " + angleText(angle);
             }
             BSplineSurface s;
             if (!interpolateSurface(rows, s, &why)) return out.fail("Cannot make the surface: " + why);

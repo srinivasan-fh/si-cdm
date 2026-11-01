@@ -1,3 +1,4 @@
+#include "core/Units.hpp"
 #include "core/Constraints.hpp"
 #include "core/SketchEdit.hpp"
 
@@ -556,9 +557,13 @@ std::string SketchConstraint::describe() const {
     std::string s = name + "  " + constraintKey(kind);
     for (const SketchRef& r : refs) s += "  " + r.describe();
     if (constraintHasValue(kind)) {
-        char b[48];
-        std::snprintf(b, sizeof(b), kind == ConstraintKind::Angle ? "  = %g deg" : "  = %g mm", value);
-        s += b;
+        if (kind == ConstraintKind::Angle) {
+            s += "  = " + angleText(value);
+        } else {
+            char b[48];
+            std::snprintf(b, sizeof(b), "  = %g mm", value);
+            s += b;
+        }
     }
     return s;
 }

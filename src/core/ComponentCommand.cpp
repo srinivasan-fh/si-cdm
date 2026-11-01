@@ -1,5 +1,6 @@
 // COMPONENT: assemblies made of part files (Components.hpp).
 
+#include "core/Units.hpp"
 #include "core/ComponentCommand.hpp"
 
 #include "core/Command.hpp"
@@ -167,7 +168,7 @@ CommandOutput runComponentCommand(Document& doc, const std::vector<std::string>&
         }
         if (!rotateComponent(doc.scene, args[1], *r, about ? &*about : nullptr, &why)) return out.fail(why);
         doc.dirty = true;
-        out.say("Turned " + args[1] + " by " + vecText(*r) + " deg");
+        out.say("Turned " + args[1] + " by " + anglesText({r->x, r->y, r->z}));
         return out;
     }
     if (sub == "pack") {

@@ -458,6 +458,26 @@ std::string lengthsText(std::initializer_list<double> mm, const char* separator,
 ScopedUnits::ScopedUnits(const UnitSettings& units) : m_previous(t_units) { t_units = units; }
 ScopedUnits::~ScopedUnits() { t_units = m_previous; }
 
+std::string formatAngle(double degrees, const UnitSettings& settings) {
+    const int d = settings.angleDecimals >= 0 ? std::min(settings.angleDecimals, 10) : settings.radians ? 4 : 2;
+    if (settings.radians) return formatDecimal(degrees * 3.14159265358979323846 / 180.0, d, true) + " rad";
+    return formatDecimal(degrees, d, true) + " deg";
+}
+
+std::string angleText(double degrees) { return formatAngle(degrees, t_units); }
+
+std::string anglesText(std::initializer_list<double> degrees) {
+    std::string s = "(";
+    bool first = true;
+    for (double v : degrees) {
+        if (!first) s += ", ";
+        first = false;
+        const std::string t = formatAngle(v, t_units);
+        s += t.substr(0, t.rfind(' '));
+    }
+    return s + (t_units.radians ? ") rad" : ") deg");
+}
+
 std::string describeUnits(const UnitSettings& units) {
     const LengthUnitInfo& i = unitInfo(units.unit);
     std::string s = std::string(i.symbol) + " (" + i.name + ")";
@@ -468,6 +488,10 @@ std::string describeUnits(const UnitSettings& units) {
         s += std::to_string(den) + " in";
     } else {
         s += ", " + std::to_string(units.decimals()) + " decimals";
+    }
+    if (units.radians || units.angleDecimals >= 0) { // angles told only when not the usual degrees
+        const int ad = units.angleDecimals >= 0 ? units.angleDecimals : units.radians ? 4 : 2;
+        s += std::string("; angles in ") + (units.radians ? "radians" : "degrees") + ", " + std::to_string(ad) + " decimals";
     }
     return s;
 }

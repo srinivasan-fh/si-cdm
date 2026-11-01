@@ -825,10 +825,13 @@ The model itself is always stored in millimetres, so changing units never change
   UNITS IN | MM | CM | M | FT | PT
   UNITS PRECISION 4 | AUTO       decimals
   UNITS FT FRACTION 1/16         feet-inches to 1/16 in      (FRACTION OFF: decimal)
+  UNITS ANGLES RAD               angles shown in radians (DEG: degrees); typed angles stay degrees
+  UNITS ANGLE-DECIMALS 1 | AUTO  angle decimals (AUTO: 2 for degrees, 4 for radians)
   CONVERT 5'6-1/2" TO mm         1689.1 mm   (without TO: every unit)
   ```
 
-The units are saved with each project (each file tab has its own), and the status bar, rulers,
+New projects take theirs from *File ▸ Preferences ▸ General ▸ New projects* (units, decimal
+places, inch fractions, angles). The units are saved with each project (each file tab has its own), and the status bar, rulers,
 Properties, Motion Study, live sketch dimensions and command messages all follow them. The MCP tools
 for AI agents keep taking and returning millimetres; `run_command` reads bare numbers in the
 document's units, and `get_scene` reports them under `project.display_units`.

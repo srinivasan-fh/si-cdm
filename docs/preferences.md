@@ -8,7 +8,7 @@ takes effect at once (antialiasing from the next start), and is kept for the nex
 
 | Setting | What it does |
 | --- | --- |
-| Units | The units new projects start in. *As the last project* keeps the units of the project before. |
+| Units, decimals, fractions, angles | How new projects show lengths and angles: the unit (*As the last project* keeps the one before), decimal places (*Automatic*: the unit's own), inches as fractions down to 1/256, and angles in degrees or radians with their decimals. An open project keeps its own; `UNITS` changes them. Angles are always typed in degrees. |
 | Autosave | How old unsaved changes get (in seconds) before a recovery copy is written; off writes none. See [autosave and recovery](#autosave-and-recovery). |
 | Material, post processor, machine | What *Set Up the Selected Part* on the CAM panel starts a job with. A lathe job takes the material, and the post when the lathe has it. |
 | Rulers | Show the rulers along the canvas's top and left edges. The ruler button on the view bar changes this too, and is remembered. |
@@ -34,6 +34,9 @@ The same settings can be typed:
 ```text
 PREFERENCES                          list them, and the file they are kept in
 PREFERENCES SET units in             mm, cm, m, in, ft, pt, or LAST
+PREFERENCES SET decimals 3           0 to 10, or AUTO; likewise angle-decimals
+PREFERENCES SET fraction 1/32        inch fractions to 1/2 ... 1/256, or OFF
+PREFERENCES SET angles rad           DEG or RAD
 PREFERENCES SET autosave 120         seconds (5 to 3600), or OFF
 PREFERENCES SET material steel       a CAM material, or DEFAULT
 PREFERENCES SET post haas            fanuc, haas, grbl, linuxcnc, or DEFAULT
