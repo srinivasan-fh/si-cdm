@@ -360,9 +360,10 @@ UiCommands LandingUI::draw(Scene& scene, const OrbitCamera& cam, ViewportSetting
     const float rightDock = (st.mode == ViewMode::Simulation ? drawMotionPanel(scene, cmd, st, m_tabsBottom, bottom) : 0.0f) + m_rightRailWidth;
 
     const bool is2D = st.mode == ViewMode::Drawing2D;
-    m_canvasMin = {mv->WorkPos.x + m_leftDockWidth + (is2D ? kRulerSize : 0.0f), m_tabsBottom + (is2D ? kRulerSize : 0.0f)};
+    const bool rulers = st.showRulers && st.mode != ViewMode::Simulation;
+    m_canvasMin = {mv->WorkPos.x + m_leftDockWidth + (rulers ? kRulerSize : 0.0f), m_tabsBottom + (rulers ? kRulerSize : 0.0f)};
     m_canvasMax = {mv->WorkPos.x + mv->WorkSize.x - rightDock, bottom};
-    if (is2D) drawRulers(cam, st);
+    if (rulers) drawRulers(cam, st);
 
     const ViewCubeResult vc = m_viewCube.draw(cam, {m_canvasMax.x - 10.0f, m_canvasMax.y - 10.0f}, is2D);
     if (vc.viewDirection) cmd.viewDirection = vc.viewDirection;
@@ -3075,14 +3076,39 @@ void LandingUI::requestClose(UiCommands& cmd, const UiState& st, int index) {
 }
 
 void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
-    // Rulers in mm along the drawing plane's u (top) and v (left) axes.
+    // Rulers along the top (u) and left (v) edges. 2D: the drawing plane's axes. 3D: the view
+    // plane through the target (its scale there); looking straight along a world axis they read
+    // world coordinates (Front: X and Z), otherwise the distance from the view's centre.
     const ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     const ImVec2 vp = io.DisplaySize;
     const float wpp = cam.worldPerPixel(vp.y);
     if (wpp <= 0.0f) return;
-    const PlaneFrame f = st.activeFrame;
-    const Vec2 c = f.toPlane(cam.target());
+    const bool is2D = st.mode == ViewMode::Drawing2D;
+    Vec3 origin, axisU, axisV;
+    float signU = 1, signV = 1;
+    char nameU = 0, nameV = 0;
+    if (is2D) {
+        origin = st.activeFrame.origin, axisU = st.activeFrame.u, axisV = st.activeFrame.v;
+    } else {
+        axisU = cam.right(), axisV = cam.up(), origin = cam.target();
+        auto snap = [](Vec3& a, float& sign, char& name) {
+            const float* c3 = &a.x;
+            for (int k = 0; k < 3; ++k)
+                if (std::fabs(c3[k]) > 0.9998f) {
+                    sign = c3[k] > 0 ? 1.0f : -1.0f;
+                    name = "XYZ"[k];
+                    a = Vec3{k == 0 ? sign : 0.0f, k == 1 ? sign : 0.0f, k == 2 ? sign : 0.0f};
+                    return true;
+                }
+            return false;
+        };
+        Vec3 u = axisU, v = axisV;
+        float su = 1, sv = 1;
+        char nu = 0, nv = 0;
+        if (snap(u, su, nu) && snap(v, sv, nv)) axisU = u, axisV = v, signU = su, signV = sv, nameU = nu, nameV = nv, origin = {0, 0, 0};
+    }
+    const Vec2 c{dot(cam.target() - origin, axisU), dot(cam.target() - origin, axisV)};
     auto uAt = [&](float x) { return c.x + (x - vp.x * 0.5f) * wpp; };
     auto vAt = [&](float y) { return c.y - (y - vp.y * 0.5f) * wpp; };
     auto xOf = [&](float u) { return vp.x * 0.5f + (u - c.x) / wpp; };
@@ -3118,7 +3144,7 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
         const long k = std::lround(u / minor);
         const float len = k % 10 == 0 ? kRulerSize : (k % 5 == 0 ? 8.0f : 4.0f);
         dl->AddLine({x, m_canvasMin.y - len}, {x, m_canvasMin.y}, tick);
-        if (k % 10 == 0) dl->AddText(font, fs, {x + 3, y0 + 2}, text, fmt(u));
+        if (k % 10 == 0) dl->AddText(font, fs, {x + 3, y0 + 2}, text, fmt(u * signU));
     }
     dl->PopClipRect();
 
@@ -3130,7 +3156,7 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
         const float len = k % 10 == 0 ? kRulerSize : (k % 5 == 0 ? 8.0f : 4.0f);
         dl->AddLine({m_canvasMin.x - len, y}, {m_canvasMin.x, y}, tick);
         if (k % 10 == 0) {
-            const char* s = fmt(v);
+            const char* s = fmt(v * signV);
             float yy = y + 2;
             for (const char* ch = s; *ch; ++ch) {
                 const char one[2] = {*ch, 0};
@@ -3141,16 +3167,26 @@ void LandingUI::drawRulers(const OrbitCamera& cam, const UiState& st) {
     }
     dl->PopClipRect();
 
-    // Cursor markers.
-    if (st.cursorPlane) {
+    // Cursor markers (3D: where the mouse is).
+    const bool overCanvas = io.MousePos.x > m_canvasMin.x && io.MousePos.x < m_canvasMax.x && io.MousePos.y > m_canvasMin.y && io.MousePos.y < m_canvasMax.y;
+    if (is2D ? st.cursorPlane.has_value() : overCanvas) {
         const ImU32 mk = IM_COL32(120, 220, 255, 255);
-        const float cx = xOf(st.cursorPlane->x), cy = yOf(st.cursorPlane->y);
+        const float cx = is2D ? xOf(st.cursorPlane->x) : io.MousePos.x, cy = is2D ? yOf(st.cursorPlane->y) : io.MousePos.y;
         if (cx > m_canvasMin.x && cx < m_canvasMax.x) dl->AddLine({cx, y0}, {cx, m_canvasMin.y}, mk);
         if (cy > m_canvasMin.y && cy < m_canvasMax.y) dl->AddLine({x0, cy}, {m_canvasMin.x, cy}, mk);
     }
     // Corner box with units and plane axes.
     dl->AddRectFilled({x0, y0}, {m_canvasMin.x, m_canvasMin.y}, IM_COL32(24, 26, 31, 255));
     dl->AddText(font, fs, {x0 + 2, y0 + 3}, text, unitInfo(rulerUnit).symbol);
+    // 3D: the world axes the rulers read, at their far ends (none: distances from the centre).
+    if (!is2D && nameU && nameV) {
+        const ImU32 axisCol = IM_COL32(120, 220, 255, 255);
+        const char su[2] = {nameU, 0}, sv[2] = {nameV, 0};
+        dl->AddRectFilled({m_canvasMax.x - 16, y0}, {m_canvasMax.x, m_canvasMin.y}, IM_COL32(24, 26, 31, 255));
+        dl->AddText(font, fs, {m_canvasMax.x - 11, y0 + 3}, axisCol, su);
+        dl->AddRectFilled({x0, m_canvasMax.y - 16}, {m_canvasMin.x, m_canvasMax.y}, IM_COL32(24, 26, 31, 255));
+        dl->AddText(font, fs, {x0 + 6, m_canvasMax.y - 15}, axisCol, sv);
+    }
 }
 
 // The feature history as a tree: each step with its suppress switch, a menu to edit, move,
@@ -3671,6 +3707,11 @@ void LandingUI::drawViewBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
             dl->AddLine({c.x + 6, c.y - 1}, {c.x + 6, c.y - 7}, col, 2.2f);
         }))
         st.snapGrid = !st.snapGrid;
+    if (button("##vrulers", st.showRulers, tr("Rulers along the top and left edges"), [&](ImVec2 c, ImU32 col) {
+            dl->AddRect({c.x - 9, c.y - 4}, {c.x + 9, c.y + 4}, col, 1.0f, 0, 1.3f);
+            for (int k = -2; k <= 2; ++k) dl->AddLine({c.x + 3.5f * static_cast<float>(k), c.y - 4}, {c.x + 3.5f * static_cast<float>(k), c.y - (k % 2 ? 1.5f : 0.0f)}, col, 1.0f);
+        }))
+        st.showRulers = !st.showRulers;
     if (button("##vsnapp", st.snapPoints, tr("Snap to end points, middles and centres"), [&](ImVec2 c, ImU32 col) {
             dl->AddRect({c.x - 5, c.y - 5}, {c.x + 5, c.y + 5}, col, 0, 0, 1.4f);
             dl->AddCircleFilled(c, 1.8f, col);

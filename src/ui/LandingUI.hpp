@@ -132,6 +132,7 @@ struct UiState {
     Vec3 mateFirstPoint{};
     bool snapGrid = true;
     bool snapPoints = true;
+    bool showRulers = true; // rulers along the canvas's top and left edges (2D and 3D)
     int selectedBody = -1;
     BodySelection bodySelection; // other bodies selected with selectedBody (Selection.hpp)
     BodySelection curveSelection; // other sketch curves selected with selectedCurve
