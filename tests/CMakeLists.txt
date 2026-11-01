@@ -43,6 +43,7 @@ add_executable(sicdm_tests
     test_plugin.cpp
     test_preferences.cpp
     test_mousescheme.cpp
+    test_spacemouse.cpp
     test_robotics.cpp
     test_undo.cpp
     test_translate.cpp

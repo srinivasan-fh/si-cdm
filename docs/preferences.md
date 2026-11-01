@@ -18,6 +18,7 @@ takes effect at once (antialiasing from the next start), and is kept for the nex
 | Display, background | How the 3D window draws: shaded with edges, shaded, wireframe or hidden lines, on a dark, grey, light, white or black background. The view bar still changes the display for the moment. |
 | Perspective, grid, view sphere | Whether the 3D window starts in perspective (off: orthographic), with the grid, and with the view sphere in its corner. |
 | Mouse buttons | Which buttons orbit, pan and zoom, as in the program you know: *SI CDM* (right drag orbits, middle pans), *SolidWorks* (middle orbits, Ctrl+middle pans, Shift+middle zooms), *Creo / NX* and *Blender* (middle orbits, Shift+middle pans, Ctrl+middle zooms), *Fusion / Inventor* (middle pans, Shift+middle orbits), *CATIA* (middle pans, Ctrl+middle orbits, Shift+middle zooms). The left button is always the tool's, the wheel always zooms; in the 2D window an orbit pans. |
+| 3D mouse | A 3Dconnexion SpaceMouse (or another 6-axis controller) moves the view: push the cap to pan, pull or push it to zoom, twist and tilt it to turn the model. *Object mode* (the default) moves the model the way the cap goes; *Camera mode* flies the camera instead (every move the other way); *Off* ignores it. Its left button gives the home view, its right one fits the model. On Windows and macOS it is read directly (no driver needed by SI CDM); on Linux through spacenavd. The window says whether one is connected. |
 | Zoom about the mouse, reverse zoom, speeds | Zoom about the point under the mouse (off: the view's centre); turn the wheel's direction round; zoom and orbit speed from 0.25x to 4x. |
 | Glide | Standard views, Fit and the view sphere glide to the new view; off, they jump. |
 | Snap | Sketch points snap to the grid and to other curves' points (the snap buttons on the options bar change these too, and are remembered). |
@@ -55,6 +56,7 @@ PREFERENCES SET display wireframe    shaded, shaded-edges, wireframe, hidden-lin
 PREFERENCES SET background light     dark, grey, light, white, black
 PREFERENCES SET perspective off      ON or OFF (off: orthographic); likewise grid, view-sphere
 PREFERENCES SET mouse solidworks     sicdm, solidworks, creo, fusion, catia, blender
+PREFERENCES SET spacemouse camera    OBJECT, CAMERA or OFF; spacemouse-speed 0.25 to 4
 PREFERENCES SET zoom-invert on       ON or OFF; likewise zoom-to-cursor, animate-views
 PREFERENCES SET zoom-speed 1.5       0.25 to 4; likewise orbit-speed
 PREFERENCES SET snap-grid off        ON or OFF; likewise snap-points

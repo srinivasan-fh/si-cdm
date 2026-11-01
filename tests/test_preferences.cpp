@@ -110,7 +110,7 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     reloadPreferences();
     CHECK(preferences().units == "mm" && preferences().autosaveSeconds == 30);
     const CommandOutput shown = run(d, "PREFS");
-    CHECK(shown.ok && shown.lines.size() == 42);
+    CHECK(shown.ok && shown.lines.size() == 43);
     // The language: checked, shown at once, kept, and back to English on RESET.
     CHECK(!run(d, "PREFERENCES SET language klingon").ok);
     CHECK(run(d, "PREFERENCES SET language Deutsch").ok);

@@ -33,7 +33,9 @@ struct Preferences {
     int sessionActive = 0;           // the tab that was in front, an index into `session`
     bool sessionOpening = false;     // set while they are being reopened: a crash then skips it next time
     // Navigation.
-    std::string mouse = "sicdm";     // which buttons orbit, pan and zoom (MouseScheme.hpp)
+    std::string mouse = "sicdm";
+    std::string spaceMouse = "object"; // a 3D mouse: "object" (the model follows the cap), "camera", or "off"
+    float spaceMouseSpeed = 1.0f;      // its speed (0.25 to 4)     // which buttons orbit, pan and zoom (MouseScheme.hpp)
     bool zoomInvert = false;         // the mouse wheel zooms the other way
     float zoomSpeed = 1.0f;          // wheel and zoom-drag speed (0.25 to 4)
     float orbitSpeed = 1.0f;         // orbit drag speed (0.25 to 4)

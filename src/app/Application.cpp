@@ -1,6 +1,7 @@
 #include "app/Application.hpp"
 #include "app/PenInput.hpp"
 #include "app/WindowFront.hpp"
+#include "app/SpaceMouse.hpp"
 #include "core/MouseScheme.hpp"
 #include "core/Brep.hpp"
 #include "core/Armature.hpp"
@@ -204,6 +205,7 @@ bool Application::init() {
     // Callbacks are chained manually above; let the backend install the rest.
     ImGui_ImplGlfw_InitForOpenGL(m_window, false);
     penInputAttach(m_window); // a tablet pen's pressure for the brushes
+    spaceMouseAttach(m_window); // a 3D mouse, where the system has one
     glfwSetCharCallback(m_window, ImGui_ImplGlfw_CharCallback);
     glfwSetWindowFocusCallback(m_window, ImGui_ImplGlfw_WindowFocusCallback);
     glfwSetCursorEnterCallback(m_window, ImGui_ImplGlfw_CursorEnterCallback);
@@ -353,6 +355,7 @@ void Application::shutdown() {
     m_renderer.reset();
     if (m_imguiReady) {
         ImGui_ImplOpenGL3_Shutdown();
+        spaceMouseDetach();
         penInputDetach();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
@@ -2214,6 +2217,24 @@ void Application::frame(float dt) {
     advanceExplode(dt);
     captureView();
     penInputPoll();
+    {
+        // A 3D mouse moves the view while its cap is pushed (frames keep coming meanwhile).
+        const SpaceMouseInput sm = spaceMousePoll();
+        m_uiState.spaceMouse = sm.connected;
+        const Preferences& p = preferences();
+        if (p.spaceMouse != "off") {
+            const bool flat = m_uiState.mode == ViewMode::Drawing2D;
+            if (sm.motion.any()) {
+                navigateSixDof(camera(), sm.motion, dt, p.spaceMouseSpeed, ImGui::GetIO().DisplaySize.y, flat, p.spaceMouse == "camera");
+                m_framesToRender = std::max(m_framesToRender, 2);
+            }
+            for (int b : sm.pressed) {
+                // Its two buttons: the left one the home view, the right one fits the model.
+                if (b == 0) standardView(StandardView::Isometric);
+                else fit();
+            }
+        }
+    }
     handleViewportInput();
     updatePrompt();
     refreshFileTabs();

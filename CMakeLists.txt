@@ -123,6 +123,7 @@ add_library(sicdm_core STATIC
     src/core/Licence.cpp
     src/core/Preferences.cpp
     src/core/MouseScheme.cpp
+    src/core/SpaceMouse.cpp
     src/core/Rig.cpp
     src/core/RobotExport.cpp
     src/core/Multibody.cpp
@@ -218,6 +219,7 @@ if(SICDM_BUILD_APP)
         src/app/PenInput.cpp
         src/app/Splash.cpp
         src/app/WindowFront.cpp
+        src/app/SpaceMouse.cpp
         src/render/GL.cpp
         src/render/Renderer.cpp
         src/render/Shader.cpp
@@ -275,6 +277,9 @@ if(SICDM_BUILD_APP)
 
     find_package(Threads REQUIRED)
     target_link_libraries(sicdm PRIVATE sicdm_core sicdm_imgui glfw OpenGL::GL Threads::Threads)
+    if(APPLE)
+        target_link_libraries(sicdm PRIVATE "-framework IOKit" "-framework CoreFoundation") # the 3D mouse (SpaceMouse.cpp)
+    endif()
     if(UNIX AND NOT APPLE)
         target_link_libraries(sicdm PRIVATE ${CMAKE_DL_LIBS}) # PenInput opens libXi at run time
     endif()

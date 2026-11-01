@@ -1467,6 +1467,12 @@ const char* const kGerman[][2] = {
     {"Selection colour", "Auswahlfarbe"},
     {"Undo steps", "Rückgängig-Schritte"},
     {"Yellow", "Gelb"},
+    {"3D mouse", "3D-Maus"},
+    {"3D mouse speed", "Geschwindigkeit der 3D-Maus"},
+    {"Camera mode (fly the camera)", "Kameramodus (Kamera fliegen)"},
+    {"Object mode (the model follows the cap)", "Objektmodus (das Modell folgt der Kappe)"},
+    {"connected", "verbunden"},
+    {"none found", "keine gefunden"},
 };
 
 

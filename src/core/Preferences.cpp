@@ -108,6 +108,8 @@ Json preferencesToJson(const Preferences& p) {
     j.set("session_active", p.sessionActive);
     if (p.sessionOpening) j.set("session_opening", true);
     j.set("mouse", p.mouse);
+    j.set("spacemouse", p.spaceMouse);
+    j.set("spacemouse_speed", p.spaceMouseSpeed);
     j.set("zoom_invert", p.zoomInvert);
     j.set("zoom_speed", p.zoomSpeed);
     j.set("orbit_speed", p.orbitSpeed);
@@ -206,6 +208,8 @@ Preferences preferencesFromJson(const Json& j) {
     number("mcp_port", "mcp-port");
     take("display", "display");
     take("mouse", "mouse");
+    take("spacemouse", "spacemouse");
+    number("spacemouse_speed", "spacemouse-speed");
     take("theme", "theme");
     if (const Json& w = j["window"]; w.isObject()) {
         const int ww = w["width"].asInt(0), wh = w["height"].asInt(0);
@@ -507,6 +511,15 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         else if (v == "light") p.theme = "light";
         else if (v == "high-contrast" || v == "contrast" || v == "highcontrast") p.theme = "high-contrast";
         else return fail("THEME is dark, light or high-contrast");
+    } else if (k == "spacemouse" || k == "3d-mouse") {
+        if (v == "object" || v == "on" || clear) p.spaceMouse = "object";
+        else if (v == "camera" || v == "fly") p.spaceMouse = "camera";
+        else if (v == "off" || v == "no") p.spaceMouse = "off";
+        else return fail("SPACEMOUSE is OBJECT, CAMERA or OFF");
+    } else if (k == "spacemouse-speed") {
+        const auto x = number(v);
+        if (!x || *x < 0.25 || *x > 4.0) return fail("SPACEMOUSE-SPEED is 0.25 to 4");
+        p.spaceMouseSpeed = static_cast<float>(*x);
     } else if (k == "mouse") {
         if (clear) p.mouse = "sicdm";
         else if (isMouseScheme(v)) p.mouse = v;
@@ -572,6 +585,7 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         std::string("rulers: ") + (p.rulers ? "on" : "off"),
         std::string("reopen: ") + (p.reopenLast ? "on (the projects open at the last close)" : "off (start with the demo part)"),
         "mouse: " + p.mouse,
+        "spacemouse: " + p.spaceMouse + ", speed " + factor(p.spaceMouseSpeed),
         std::string("zoom-invert: ") + onOff(p.zoomInvert),
         "zoom-speed: " + factor(p.zoomSpeed),
         "orbit-speed: " + factor(p.orbitSpeed),

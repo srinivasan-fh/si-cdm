@@ -297,6 +297,11 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
                 for (const MouseSchemeInfo& m : schemes)
                     if (m.key == p.mouse) ImGui::TextDisabled("%s", tr(m.description.c_str()));
             }
+            choice(tr("3D mouse"), p.spaceMouse,
+                   {{"object", tr("Object mode (the model follows the cap)")}, {"camera", tr("Camera mode (fly the camera)")}, {"off", tr("Off")}}, "spacemouse");
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", st.spaceMouse ? tr("connected") : tr("none found"));
+            if (p.spaceMouse != "off") numberField(tr("3D mouse speed"), p.spaceMouseSpeed, 0.25f, 4.0f, "%.2fx", "spacemouse-speed");
             toggle(tr("Zoom about the point under the mouse"), p.zoomToCursor, "zoom-to-cursor");
             toggle(tr("Reverse the mouse wheel's zoom"), p.zoomInvert, "zoom-invert");
             toggle(tr("Glide to standard views and Fit (off: jump)"), p.animateViews, "animate-views");
