@@ -119,9 +119,33 @@ its assembly group.
 
 The FBX has not been opened in Autodesk's own software. Over MCP, `export_file` writes all three.
 
+## Vector drawings: PDF and SVG
+
+`IMPORT drawing.pdf` or `IMPORT drawing.svg` (or *File → Import...*) brings a drawing's line work
+onto the active sketch plane as curves you can extrude, constrain or trace over: lines,
+polylines, and Bézier curves and arcs flattened to within 0.02 mm. SVG circles stay circles.
+
+```text
+IMPORT plan.pdf                  page 1, at the size it is printed
+IMPORT plan.pdf PAGE 3 SCALE 1:50   page 3 of a drawing made at 1:50, at full size
+IMPORT logo.svg SCALE 2          twice the document's size
+```
+
+- **PDF:** stroked and filled paths of the page, through every transform, in compressed
+  (Flate, ASCIIHex, ASCII85) content streams, object streams and form XObjects. Clipping
+  paths and text are left out. A scanned page has no line work; import it as an image and trace
+  it. Encrypted PDFs and streams in other filters are skipped with a warning.
+- **SVG:** `path` (all commands, arcs too), `line`, `polyline`, `polygon`, `rect`, `circle`, `ellipse`;
+  nested group transforms; the size from `width`/`height` (mm, cm, in, pt, or px at 96 per inch)
+  and the `viewBox`. Hidden things (`defs`, clip paths, `display="none"`) are left out. SVG's
+  y axis points down; the drawing comes in the right way up.
+
+The page's lower-left corner lands on the sketch plane's origin.
+
 ## Native CAD formats
 
 The native files of other CAD systems are not read. These are Parasolid (`.x_t`), ACIS
-(`.sat`), JT, CATIA, NX, Creo, SolidWorks and Inventor. Each needs the vendor's own kernel or a
+(`.sat`), JT, CATIA, NX, Creo, SolidWorks, Inventor and AutoCAD's DWG. Each needs the vendor's own kernel or a
 licensed toolkit. Export STEP (AP203, AP214 or AP242) or IGES from those systems instead: the
-exact geometry, assembly structure and units come through. See [STEP and IGES](step.md).
+exact geometry, assembly structure and units come through. See [STEP and IGES](step.md). For
+AutoCAD drawings, save them as DXF (any version), or print them to PDF, and import that.

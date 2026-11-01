@@ -11,6 +11,7 @@
 #include "core/CrashReport.hpp"
 #include "core/Licence.hpp"
 #include "core/Preferences.hpp"
+#include "core/VectorImport.hpp"
 #include "core/RobotCommand.hpp"
 #include "core/RobotExport.hpp"
 #include "core/UpdateCheck.hpp"
@@ -5389,9 +5390,25 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         std::optional<Vec2> at;
         std::optional<float> width;
         std::optional<double> fileUnit; // mesh models: one file unit in mm (UNIT inch...)
+        int pdfPage = 1;                // PDF: the page
+        double drawingScale = 1.0;      // PDF and SVG: the drawing's scale (1:50 -> SCALE 50)
         for (std::size_t i = 0; i < rest.size();) {
             if (iequal(rest[i], "unit") && i + 1 < rest.size() && (parseUnitName(rest[i + 1]) || iequal(rest[i + 1], "micron"))) {
                 fileUnit = iequal(rest[i + 1], "micron") ? 0.001 : toMillimeters(1.0, *parseUnitName(rest[i + 1]));
+                rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i), rest.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+            } else if (iequal(rest[i], "page") && i + 1 < rest.size() && parseNumber(rest[i + 1]) && *parseNumber(rest[i + 1]) >= 1) {
+                pdfPage = static_cast<int>(*parseNumber(rest[i + 1]));
+                rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i), rest.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+            } else if (iequal(rest[i], "scale") && i + 1 < rest.size()) {
+                // SCALE 50, or 1:50 as a drawing states it.
+                std::string v = rest[i + 1];
+                if (const std::size_t colon = v.find(':'); colon != std::string::npos) {
+                    const auto a1 = parseNumber(v.substr(0, colon)), b1 = parseNumber(v.substr(colon + 1));
+                    if (a1 && b1 && *a1 > 0) v = std::to_string(*b1 / *a1);
+                }
+                const auto s = parseNumber(v);
+                if (!s || *s <= 0 || *s > 1e6) return out.fail("SCALE needs a number above 0 (SCALE 50 or SCALE 1:50)");
+                drawingScale = *s;
                 rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i), rest.begin() + static_cast<std::ptrdiff_t>(i) + 2);
             } else if (iequal(rest[i], "width") && i + 1 < rest.size() && parseLength(rest[i + 1])) {
                 width = static_cast<float>(*parseLength(rest[i + 1]));
@@ -5417,6 +5434,21 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
             doc.selectedCurve = doc.selectedImage = -1;
             markChanged(doc);
             out.say("Imported " + doc.scene.bodies().back().name + " (" + std::to_string(tris) + " triangles)");
+            return out;
+        }
+        case FileKind::Pdf:
+        case FileKind::Svg: {
+            VectorImportReport rep;
+            const bool pdf = fileKindOf(path) == FileKind::Pdf;
+            const std::vector<VectorPath> paths = pdf ? readPdfPaths(path, pdfPage, drawingScale, &rep, &err) : readSvgPaths(path, drawingScale, &rep, &err);
+            if (paths.empty()) return out.fail(err.empty() ? "Nothing imported" : err);
+            const int n = addVectorPaths(doc.scene, doc.state.plane, doc.state.customFrame, paths);
+            markChanged(doc);
+            out.say("Imported " + std::to_string(n) + " curves from " + fs::path(path).filename().string() + " (" + rep.format +
+                    (pdf ? ", page " + std::to_string(rep.page) + " of " + std::to_string(rep.pages) : std::string()) +
+                    (rep.size.x > 0 ? ", " + lengthsText({rep.size.x, rep.size.y}, " x ") : std::string()) +
+                    (drawingScale != 1.0 ? fmt(", at scale x%g", drawingScale) : std::string()) + ") onto " + activePlaneName(doc.state));
+            for (std::size_t k = 0; k < rep.warnings.size() && k < 5; ++k) out.say("  warning: " + rep.warnings[k]);
             return out;
         }
         case FileKind::Dxf: {
@@ -5523,7 +5555,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         }
         case FileKind::Project: return out.fail("Use OPEN for project files");
         default:
-            return out.fail("Import supports .step .stp .igs .iges, .stl .obj .3mf .amf .ply .off .gltf .glb .wrl, .dxf and images (.png .jpg .bmp .tga .gif ...)");
+            return out.fail("Import supports .step .stp .igs .iges, .stl .obj .3mf .amf .ply .off .gltf .glb .wrl, .dxf .svg .pdf and images (.png .jpg .bmp .tga .gif ...)");
         }
     }
 

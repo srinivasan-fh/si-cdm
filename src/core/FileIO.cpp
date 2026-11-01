@@ -295,6 +295,7 @@ FileKind fileKindOf(const std::string& path) {
     if (e == ".sicdm") return FileKind::Project;
     if (e == ".stl") return FileKind::Stl;
     if (e == ".obj") return FileKind::Obj;
+    if (e == ".pdf") return FileKind::Pdf;
     if (e == ".dxf") return FileKind::Dxf;
     if (e == ".svg") return FileKind::Svg;
     if (e == ".step" || e == ".stp" || e == ".p21") return FileKind::Step;
@@ -313,6 +314,7 @@ const char* fileKindName(FileKind k) {
     case FileKind::Obj: return "OBJ mesh";
     case FileKind::Dxf: return "DXF drawing";
     case FileKind::Svg: return "SVG drawing";
+    case FileKind::Pdf: return "PDF drawing";
     case FileKind::Step: return "STEP model";
     case FileKind::Iges: return "IGES model";
     case FileKind::Image: return "image";

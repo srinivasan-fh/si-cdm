@@ -174,7 +174,7 @@ constexpr CommandSpec kCommands[] = {
     {"SAVEAS", "", "SAVEAS path.sicdm", "Save the project under a new name"},
     {"FILES", "FILE TABS", "FILES [number | name]", "List the open file tabs, or switch to one"},
     {"CLOSE", "", "CLOSE [DISCARD]", "Close the active file tab (DISCARD drops unsaved changes)"},
-    {"IMPORT", "IMP", "IMPORT path [@x,y] [WIDTH mm] [UNIT mm|cm|m|inch|foot|micron]",
+    {"IMPORT", "IMP", "IMPORT path [@x,y] [WIDTH mm] [UNIT mm|cm|m|inch|foot|micron] [PAGE n] [SCALE s|1:s]",
      "STEP or IGES solids and surfaces (exact; STEP assemblies placed); STL, OBJ, 3MF, AMF, PLY, OFF, glTF/GLB or VRML meshes as bodies (parts, "
      "assemblies, colours; UNIT: one file unit, for files that don't say or say wrong); DXF onto the sketch plane; PNG/JPG/... as a reference image"},
     {"EXPORT", "EXP", "EXPORT path.step|.igs|.stl|.obj|.3mf|.gltf|.glb|.fbx|.dxf|.svg|.urdf|.sdf|.xml",

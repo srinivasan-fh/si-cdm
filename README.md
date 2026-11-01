@@ -863,7 +863,7 @@ With a sketch tool active, typed coordinates place points exactly: `x,y`, `@dx,d
 | Menu (shortcut) | Formats |
 | --- | --- |
 | **New / Open / Save / Save As** (Ctrl/⌘ N, O, S, Shift+S) | `.sicdm` project (JSON): parametric solids, meshes, sketches, reference images |
-| **Import** (Ctrl/⌘ I) | `.step` `.stp` → exact solids (assemblies placed in their sub-assembly tree, units converted) · `.igs` `.iges` → exact solids (trimmed surfaces sewn) or surfaces · `.stl` `.obj` → body · `.3mf` `.amf` `.ply` `.off` `.gltf` `.glb` `.wrl` → bodies (parts, assembly tree, colours, units) · `.dxf` → sketch curves on the active plane · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
+| **Import** (Ctrl/⌘ I) | `.step` `.stp` → exact solids (assemblies placed in their sub-assembly tree, units converted) · `.igs` `.iges` → exact solids (trimmed surfaces sewn) or surfaces · `.stl` `.obj` → body · `.3mf` `.amf` `.ply` `.off` `.gltf` `.glb` `.wrl` → bodies (parts, assembly tree, colours, units) · `.dxf` → sketch curves on the active plane · `.pdf` `.svg` → their line work as sketch curves (`PAGE n`, `SCALE 1:50`) · `.png .jpg .bmp .tga .gif .psd .hdr .pnm` → reference image |
 | **Export** (Ctrl/⌘ E) | `.step` (AP214: exact B-reps, other meshes as planar faces, the sub-assembly tree) · `.igs` (IGES 5.3 trimmed surfaces) · `.stl` `.obj` `.3mf` (visible bodies) · `.glb` `.gltf` `.fbx` (visible bodies with materials, maps, UVs, vertex colours; glTF also armature skins) · `.dxf` `.svg` (sketch curves of the active plane) |
 | **Drawing → Export...** | `.pdf` `.svg` `.dxf` (the drawing sheet: views, sections, dimensions, title block) |
 
