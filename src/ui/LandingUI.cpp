@@ -2064,6 +2064,7 @@ void LandingUI::drawMenuBar(UiCommands& cmd, const OrbitCamera& cam, ViewportSet
         ImGui::Separator();
         ImGui::MenuItem(tr("Licence..."), nullptr, &st.showLicence);
         if (ImGui::MenuItem(tr("Check for Updates"), nullptr, false, !preferences().updateUrl.empty())) cmd.commands.push_back("UPDATES CHECK");
+        if (ImGui::MenuItem(tr("Download and Install Update"), nullptr, false, !preferences().updateUrl.empty())) cmd.commands.push_back("UPDATES INSTALL");
         ImGui::MenuItem(tr("About SI CDM"), nullptr, &st.showAbout);
         ImGui::EndMenu();
     }

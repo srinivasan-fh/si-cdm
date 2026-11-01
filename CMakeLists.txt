@@ -124,6 +124,7 @@ add_library(sicdm_core STATIC
     src/core/Preferences.cpp
     src/core/MouseScheme.cpp
     src/core/SpaceMouse.cpp
+    src/core/Sha256.cpp
     src/core/Rig.cpp
     src/core/RobotExport.cpp
     src/core/Multibody.cpp

@@ -11,7 +11,13 @@
 //     "notes": "Lathe threading cycles; faster STEP import",
 //     "url": "https://example.com/sicdm/1.3.0/",          the download page
 //     "downloads": {"windows": "...", "macos": "...", "linux": "..."}   optional, per platform
+//     "sha256": {"windows": "...", "macos": "...", "linux": "..."}      optional: the files' digests
 //   }
+//
+// UPDATES INSTALL downloads this platform's file (an installer: .exe/.msi, .dmg/.pkg,
+// .deb/.rpm/.AppImage or an archive), checks it against the digest when the feed gives
+// one (a mismatch is refused and the file deleted), and opens it with the system: the
+// Windows installer, the macOS disk image, the Linux package installer.
 //
 // file:// addresses are read directly; http:// and https:// ones are fetched with the
 // system's curl program (part of Windows 10 and later, macOS and Linux), so SI CDM itself
@@ -25,6 +31,7 @@ namespace sicdm {
 struct ReleaseInfo {
     std::string version, date, notes;
     std::string download; // for this platform when the feed has one, else its url
+    std::string sha256;   // its digest when the feed gives one (lower-case hex)
 };
 
 // Compares dotted versions part by part as numbers ("1.10" > "1.9", "1.2" == "1.2.0"); a
@@ -45,5 +52,16 @@ struct UpdateResult {
 };
 
 UpdateResult checkForUpdate(const std::string& url, const std::string& current);
+
+// Downloads `release`'s file into `dir` (the system's downloads folder when empty) and
+// checks its digest. `path` is where it went; `checked` whether a digest was compared.
+bool downloadRelease(const ReleaseInfo& release, const std::string& dir, std::string& path, bool& checked, std::string* error = nullptr);
+// The folder downloads go to: ~/Downloads (Windows: %USERPROFILE%\Downloads), else the temp folder.
+std::string downloadsFolder();
+// Opens a file with the program the system gives it (an installer runs), without waiting.
+bool openWithSystem(const std::string& path, std::string* error = nullptr);
+// Set when UPDATES INSTALL has opened an installer (the app then offers to close); cleared by reading.
+bool takeInstallerStarted();
+void noteInstallerStarted();
 
 } // namespace sicdm

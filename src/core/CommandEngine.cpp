@@ -1969,8 +1969,29 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         return out;
     }
     if (cmd == "UPDATES") {
-        // UPDATES [CHECK] [url]
-        std::size_t i = !a.empty() && lower(a[0]) == "check" ? 1 : 0;
+        // UPDATES [CHECK] [url] | DOWNLOAD [url] | INSTALL [url]
+        const std::string sub = a.empty() ? "" : lower(a[0]);
+        if (sub == "download" || sub == "install") {
+            const std::string url = a.size() > 1 ? a[1] : preferences().updateUrl;
+            const UpdateResult r = checkForUpdate(url, SICDM_VERSION);
+            if (!r.ok) return out.fail(r.describe(SICDM_VERSION));
+            if (!r.newer) {
+                out.say(r.describe(SICDM_VERSION));
+                return out;
+            }
+            std::string path, err;
+            bool checked = false;
+            if (!downloadRelease(r.latest, "", path, checked, &err)) return out.fail(err);
+            out.say("Downloaded SI CDM " + r.latest.version + " to " + path +
+                    (checked ? " (its SHA-256 matches the release feed)" : " (the release feed gives no SHA-256 to check it against)"));
+            if (sub == "install") {
+                if (!openWithSystem(path, &err)) return out.fail(err + "; open " + path + " yourself");
+                noteInstallerStarted();
+                out.say("The installer is open: close SI CDM so it can replace this version");
+            }
+            return out;
+        }
+        std::size_t i = sub == "check" ? 1 : 0;
         const std::string url = i < a.size() ? a[i] : preferences().updateUrl;
         const UpdateResult r = checkForUpdate(url, SICDM_VERSION);
         if (!r.ok) return out.fail(r.describe(SICDM_VERSION));

@@ -199,7 +199,8 @@ preference:
   "url": "https://example.com/sicdm/1.3.0/",
   "downloads": {"windows": "https://example.com/sicdm/1.3.0/SI-CDM-1.3.0-win64.exe",
                 "macos": "https://example.com/sicdm/1.3.0/SI-CDM-1.3.0.dmg",
-                "linux": "https://example.com/sicdm/1.3.0/SI-CDM-1.3.0-Linux.tar.gz"}
+                "linux": "https://example.com/sicdm/1.3.0/SI-CDM-1.3.0-Linux.tar.gz"},
+  "sha256": {"windows": "9f86d0...", "macos": "...", "linux": "..."}
 }
 ```
 
@@ -212,3 +213,11 @@ shown in the status bar.
 Windows 10 and later, macOS and Linux); `file://` addresses (`file:///S:/software/sicdm/latest.json`)
 are read directly. Nothing about the computer or its user is sent. SI CDM never downloads or
 installs an update by itself.
+
+*Help → Download and Install Update* (`UPDATES INSTALL`) does it when you ask: it downloads
+this computer's file from the feed into your Downloads folder, checks it against the feed's
+`sha256` (a file that doesn't match is deleted and nothing is opened), and opens it with the
+system: the Windows installer, the macOS disk image, the Linux package or archive. SI CDM then
+offers to close so the installer can replace it (unsaved work is asked about first).
+`UPDATES DOWNLOAD` only downloads and checks. Give the `sha256` in your feed: without it the
+file is downloaded unchecked, and the message says so.

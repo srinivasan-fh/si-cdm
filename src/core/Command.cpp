@@ -164,7 +164,7 @@ constexpr CommandSpec kCommands[] = {
      "a key another action has is refused unless FORCE. Kept with the preferences"},
     {"PREFERENCES", "PREFS SETTINGS LANGUAGE", "PREFERENCES [SHOW] | SET units|autosave|material|post|machine|updates|rulers|reopen|update-url|language value | LANGUAGES | UNTRANSLATED [file.json] | RESET",
      "Settings for every project: units for new projects, autosave interval, CAM set-up defaults, update check, the interface's language"},
-    {"UPDATES", "UPDATE", "UPDATES [CHECK] [url]", "Is there a newer release? Reads the release feed (the update-url preference, or the address given)"},
+    {"UPDATES", "UPDATE", "UPDATES [CHECK] [url] | DOWNLOAD [url] | INSTALL [url]", "Is there a newer release? Reads the release feed (the update-url preference, or the address given); DOWNLOAD fetches and checks it, INSTALL opens its installer"},
     {"LICENCE", "LICENSE", "LICENCE [SHOW] | INSTALL licence.json | REMOVE", "This copy's licence: who it is licensed to, or the Community edition; install or remove a licence file"},
     {"CRASHES", "", "CRASHES [LIST] | SHOW n | CLEAR | FOLDER", "Crash reports kept on this computer (nothing is sent): list, print or delete them"},
     {"PLUGINS", "PLUGIN", "PLUGINS [LIST] | RELOAD | FOLDER", "The plugins found and the commands they add; RELOAD reads them again"},

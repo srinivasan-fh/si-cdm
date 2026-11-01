@@ -2274,6 +2274,25 @@ void Application::frame(float dt) {
         m_framesToRender = std::max(m_framesToRender, 3);
     }
 
+    // UPDATES INSTALL opened an installer: offer to close so it can replace this version.
+    if (takeInstallerStarted()) ImGui::OpenPopup("Install Update");
+    if (ImGui::BeginPopupModal("Install Update", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(tr("The installer for the new version is open."));
+        ImGui::TextUnformatted(tr("Close SI CDM now so it can replace this version?"));
+        ImGui::Spacing();
+        if (ImGui::Button(tr("Close SI CDM"))) {
+            glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+            if (anyFileDirty()) { // unsaved work is asked about first
+                glfwSetWindowShouldClose(m_window, GLFW_FALSE);
+                m_closeRequested = true;
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(tr("Later"))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
     if (m_offerRecovery) {
         ImGui::OpenPopup("Recover Unsaved Work");
         m_offerRecovery = false;

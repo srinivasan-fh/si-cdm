@@ -1473,6 +1473,11 @@ const char* const kGerman[][2] = {
     {"Object mode (the model follows the cap)", "Objektmodus (das Modell folgt der Kappe)"},
     {"connected", "verbunden"},
     {"none found", "keine gefunden"},
+    {"Close SI CDM", "SI CDM schließen"},
+    {"Close SI CDM now so it can replace this version?", "SI CDM jetzt schließen, damit diese Version ersetzt werden kann?"},
+    {"Download and Install Update", "Update herunterladen und installieren"},
+    {"Later", "Später"},
+    {"The installer for the new version is open.", "Das Installationsprogramm der neuen Version ist geöffnet."},
 };
 
 

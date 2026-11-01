@@ -8,6 +8,7 @@
 #include "core/Licence.hpp"
 #include "core/Plugin.hpp"
 #include "core/Preferences.hpp"
+#include "core/Sha256.hpp"
 #include "core/Translate.hpp"
 #include "core/UpdateCheck.hpp"
 #include "core/Units.hpp"
@@ -476,4 +477,42 @@ TEST_CASE("Preferences: undo keeps UNDO-STEPS steps; MESH-QUALITY sets how finel
     Document h;
     REQUIRE(run(h, "OPEN \"" + (dir / "w.sicdm").string() + "\"").ok);
     CHECK(!h.state.view.set);
+}
+
+TEST_CASE("Updates: SHA-256 is right; DOWNLOAD fetches the platform's file and refuses one that doesn't match") {
+    CHECK(sha256Hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    CHECK(sha256Hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    CHECK(sha256Hex(std::string(1000000, 'a')) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+
+    const fs::path dir = freshDir("install");
+    const std::string payload = "pretend installer";
+    { std::ofstream(dir / "sicdm-9.9.9-setup.exe", std::ios::binary) << payload; }
+    const std::string fileUrlOf = fileUrl(dir / "sicdm-9.9.9-setup.exe");
+    auto feed = [&](const std::string& sha) {
+        std::ofstream f(dir / "feed.json");
+        f << R"({"version":"9.9.9","downloads":{"windows":")" << fileUrlOf << R"(","macos":")" << fileUrlOf << R"(","linux":")" << fileUrlOf
+          << R"("},"sha256":")" << sha << R"("})";
+    };
+    feed(sha256Hex(payload));
+    UpdateResult r = checkForUpdate(fileUrl(dir / "feed.json"), SICDM_VERSION);
+    REQUIRE(r.ok && r.newer);
+    CHECK(r.latest.sha256 == sha256Hex(payload));
+    const fs::path out = dir / "out";
+    std::string path, err;
+    bool checked = false;
+    CHECK(downloadRelease(r.latest, out.string(), path, checked, &err));
+    CHECK(checked && fs::path(path).filename() == "sicdm-9.9.9-setup.exe" && fs::file_size(path) == payload.size());
+
+    feed(std::string(64, '0')); // the wrong digest
+    r = checkForUpdate(fileUrl(dir / "feed.json"), SICDM_VERSION);
+    fs::remove_all(out);
+    CHECK(!downloadRelease(r.latest, out.string(), path, checked, &err));
+    CHECK(err.find("SHA-256") != std::string::npos && !fs::exists(out / "sicdm-9.9.9-setup.exe"));
+
+    // A feed that names a web page, not a file: nothing to download.
+    ReleaseInfo page;
+    page.version = "9.9.9";
+    page.download = "https://example.com/sicdm/";
+    CHECK(!downloadRelease(page, out.string(), path, checked, &err));
+    CHECK(!takeInstallerStarted());
 }
