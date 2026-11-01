@@ -13,6 +13,7 @@ takes effect at once (antialiasing from the next start), and is kept for the nex
 | Material, post processor, machine | What *Set Up the Selected Part* on the CAM panel starts a job with. A lathe job takes the material, and the post when the lathe has it. |
 | Rulers | Show the rulers along the canvas's top and left edges. The ruler button on the view bar changes this too, and is remembered. |
 | Reopen | Start with the projects that were open when SI CDM last closed, in the same tabs, with the same one in front; with none open, the most recent project. A project moved or deleted since is left out. Off starts with the demo part. A project given on the command line (or double-clicked) opens on its own instead. If SI CDM closed while reopening them (a damaged file), the next start doesn't try again and says so; open them from *File → Recent*. |
+| Interface size | The whole interface (menus, bars, panels, text) from 75% to 200%, at once; the 3D view stays at full sharpness. On a high-resolution screen the system's own scale comes first and this multiplies it. |
 | Display, background | How the 3D window draws: shaded with edges, shaded, wireframe or hidden lines, on a dark, grey, light, white or black background. The view bar still changes the display for the moment. |
 | Perspective, grid, view sphere | Whether the 3D window starts in perspective (off: orthographic), with the grid, and with the view sphere in its corner. |
 | Mouse buttons | Which buttons orbit, pan and zoom, as in the program you know: *SI CDM* (right drag orbits, middle pans), *SolidWorks* (middle orbits, Ctrl+middle pans, Shift+middle zooms), *Creo / NX* and *Blender* (middle orbits, Shift+middle pans, Ctrl+middle zooms), *Fusion / Inventor* (middle pans, Shift+middle orbits), *CATIA* (middle pans, Ctrl+middle orbits, Shift+middle zooms). The left button is always the tool's, the wheel always zooms; in the 2D window an orbit pans. |
@@ -44,6 +45,7 @@ PREFERENCES SET machine vmc          a machine preset, or DEFAULT
 PREFERENCES SET updates on           ON or OFF
 PREFERENCES SET rulers off           ON or OFF
 PREFERENCES SET reopen off           ON or OFF: reopen the last work space at start-up
+PREFERENCES SET ui-scale 125%        75% to 200% (or 0.75 to 2)
 PREFERENCES SET display wireframe    shaded, shaded-edges, wireframe, hidden-line
 PREFERENCES SET background light     dark, grey, light, white, black
 PREFERENCES SET perspective off      ON or OFF (off: orthographic); likewise grid, view-sphere

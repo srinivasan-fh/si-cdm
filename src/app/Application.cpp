@@ -168,7 +168,9 @@ bool Application::init() {
     glfwSetScrollCallback(m_window, onScroll);
     // Any input or resize schedules redraws (on-demand rendering).
     glfwSetCursorPosCallback(m_window, [](GLFWwindow* w, double x, double y) {
-        ImGui_ImplGlfw_CursorPosCallback(w, x, y);
+        // The interface scale: ImGui works in window pixels divided by it.
+        const double z = static_cast<Application*>(glfwGetWindowUserPointer(w))->m_uiZoom;
+        ImGui_ImplGlfw_CursorPosCallback(w, x / z, y / z);
         onEvent(w);
     });
     glfwSetMouseButtonCallback(m_window, [](GLFWwindow* w, int b, int a, int m) {
@@ -192,8 +194,10 @@ bool Application::init() {
         glfwGetWindowSize(m_window, &ww, &wh);
         glfwGetFramebufferSize(m_window, &fw, &fh);
         glfwGetWindowContentScale(m_window, &xs, &ys);
-        const float fbScale = ww > 0 ? static_cast<float>(fw) / static_cast<float>(ww) : 1.0f;
-        theme::apply(xs / std::max(fbScale, 1.0f), fbScale);
+        m_fbScale = ww > 0 ? static_cast<float>(fw) / static_cast<float>(ww) : 1.0f;
+        m_contentScale = xs / std::max(m_fbScale, 1.0f);
+        m_uiZoom = preferences().uiScale;
+        theme::apply(m_contentScale, m_fbScale * m_uiZoom);
     }
     // Callbacks are chained manually above; let the backend install the rest.
     ImGui_ImplGlfw_InitForOpenGL(m_window, false);
@@ -2178,8 +2182,26 @@ void Application::handleCommands(const UiCommands& cmd) {
 void Application::frame(float dt) {
     // Typed lengths and every readout follow the active file's units.
     setActiveUnits(m_doc.state.units);
+    if (preferences().uiScale != m_uiZoom) { // the UI-SCALE preference changed: fonts again, at the new size
+        m_uiZoom = preferences().uiScale;
+        theme::apply(m_contentScale, m_fbScale * m_uiZoom);
+        ImGui_ImplOpenGL3_DestroyFontsTexture();
+        ImGui_ImplOpenGL3_CreateFontsTexture();
+    }
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
+    if (m_uiZoom != 1.0f) {
+        // The whole interface scaled: a smaller logical screen drawn on more pixels each.
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = {io.DisplaySize.x / m_uiZoom, io.DisplaySize.y / m_uiZoom};
+        io.DisplayFramebufferScale = {io.DisplayFramebufferScale.x * m_uiZoom, io.DisplayFramebufferScale.y * m_uiZoom};
+        // The backend reads the cursor itself while it is outside the window: scaled too.
+        if (glfwGetWindowAttrib(m_window, GLFW_FOCUSED) && !glfwGetWindowAttrib(m_window, GLFW_HOVERED)) {
+            double cx = 0, cy = 0;
+            glfwGetCursorPos(m_window, &cx, &cy);
+            io.AddMousePosEvent(static_cast<float>(cx) / m_uiZoom, static_cast<float>(cy) / m_uiZoom);
+        }
+    }
     ImGui::NewFrame();
 
     // AI agents (MCP over HTTP) run on the main thread, between frames.

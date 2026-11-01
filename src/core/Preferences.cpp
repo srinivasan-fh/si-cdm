@@ -123,6 +123,7 @@ Json preferencesToJson(const Preferences& p) {
     j.set("angle_step", p.angleStep);
     j.set("backup", p.backup);
     j.set("project_folder", p.projectFolder);
+    j.set("ui_scale", p.uiScale);
     j.set("splash", p.splash);
     j.set("antialiasing", p.antialiasing);
     j.set("vsync", p.vsync);
@@ -186,6 +187,7 @@ Preferences preferencesFromJson(const Json& j) {
     number("fraction", "fraction");
     take("angles", "angles");
     number("angle_decimals", "angle-decimals");
+    number("ui_scale", "ui-scale");
     number("zoom_speed", "zoom-speed");
     number("orbit_speed", "orbit-speed");
     number("move_step", "move-step");
@@ -403,6 +405,10 @@ bool setPreference(Preferences& p, const std::string& key, const std::string& va
         const auto x = number(v);
         if (!x || *x < 0.25 || *x > 4.0) return fail(upper(key) + " is a factor from 0.25 to 4 (1: normal)");
         (k == "zoom-speed" ? p.zoomSpeed : p.orbitSpeed) = static_cast<float>(*x);
+    } else if (k == "ui-scale" || k == "scale") {
+        const auto x = number(v.size() > 1 && v.back() == '%' ? std::to_string(std::atof(v.c_str()) / 100.0) : v);
+        if (!x || *x < 0.75 || *x > 2.0) return fail("UI-SCALE is 0.75 to 2 (or 75% to 200%)");
+        p.uiScale = static_cast<float>(std::round(*x * 100.0) / 100.0);
     } else if (k == "move-step") {
         const auto x = number(v);
         if (!x || *x <= 0.0 || *x > 1000.0) return fail("MOVE-STEP is a distance in mm, above 0 and up to 1000");
@@ -522,6 +528,7 @@ std::vector<std::string> describePreferences(const Preferences& p) {
         "angle-step: " + factor(p.angleStep) + " deg",
         std::string("backup: ") + (p.backup ? "on (name.sicdm.bak)" : "off"),
         "project-folder: " + orDefault(p.projectFolder, "the current folder"),
+        "ui-scale: " + factor(p.uiScale * 100.0f) + "%",
         std::string("splash: ") + onOff(p.splash),
         "antialiasing: " + (p.antialiasing > 0 ? std::to_string(p.antialiasing) + " samples" : std::string("off")) + " (from the next start)",
         std::string("vsync: ") + onOff(p.vsync),

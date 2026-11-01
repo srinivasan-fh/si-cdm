@@ -17,6 +17,7 @@
 #include <imgui.h>
 
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -251,6 +252,16 @@ void LandingUI::drawPreferencesWindow(UiCommands& cmd, UiState& st) {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(tr("View"))) {
+            ImGui::SeparatorText(tr("Interface"));
+            {
+                static int pct = 100;
+                if (!ImGui::IsAnyItemActive() || ImGui::IsWindowAppearing()) pct = static_cast<int>(std::lround(p.uiScale * 100.0f));
+                ImGui::SetNextItemWidth(220);
+                ImGui::SliderInt(tr("Interface size"), &pct, 75, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+                if (ImGui::IsItemDeactivatedAfterEdit()) set("ui-scale", std::to_string(pct) + "%");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("100%")) set("ui-scale", "1");
+            }
             ImGui::SeparatorText(tr("The 3D window"));
             choice(tr("Display"), p.displayMode,
                    {{"shaded-edges", tr("Shaded with edges")}, {"shaded", tr("Shaded")}, {"wireframe", tr("Wireframe")}, {"hidden-line", tr("Hidden lines")}},

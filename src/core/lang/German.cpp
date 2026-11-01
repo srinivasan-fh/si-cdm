@@ -1447,6 +1447,8 @@ const char* const kGerman[][2] = {
     {"Inch fractions", "Zollbrüche"},
     {"Off (decimal)", "Aus (dezimal)"},
     {"Radians", "Bogenmaß"},
+    {"Interface", "Oberfläche"},
+    {"Interface size", "Oberflächengröße"},
 };
 
 

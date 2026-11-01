@@ -108,7 +108,7 @@ TEST_CASE("Preferences: values are checked, saved and read back; a bad file keep
     reloadPreferences();
     CHECK(preferences().units == "mm" && preferences().autosaveSeconds == 30);
     const CommandOutput shown = run(d, "PREFS");
-    CHECK(shown.ok && shown.lines.size() == 36);
+    CHECK(shown.ok && shown.lines.size() == 37);
     // The language: checked, shown at once, kept, and back to English on RESET.
     CHECK(!run(d, "PREFERENCES SET language klingon").ok);
     CHECK(run(d, "PREFERENCES SET language Deutsch").ok);
@@ -206,6 +206,11 @@ TEST_CASE("Preferences: navigation, view, modelling, files, graphics and AI sett
     CHECK(setPreference(p, "mcp-port", "8765", &err) && p.mcpPort == 8765);
     CHECK(!setPreference(p, "mcp-port", "80", &err) && !setPreference(p, "mcp-port", "70000", &err) && !setPreference(p, "mcp-port", "8765.5", &err));
     CHECK(setPreference(p, "project-folder", "/work/parts", &err) && p.projectFolder == "/work/parts");
+    CHECK(p.uiScale == 1.0f);
+    CHECK(setPreference(p, "ui-scale", "150%", &err) && p.uiScale == 1.5f);
+    CHECK(setPreference(p, "ui-scale", "1.25", &err) && p.uiScale == 1.25f);
+    CHECK(!setPreference(p, "ui-scale", "3", &err) && !setPreference(p, "ui-scale", "50%", &err));
+    CHECK(preferencesFromJson(preferencesToJson(p)).uiScale == 1.25f);
 
     const Preferences q = preferencesFromJson(preferencesToJson(p));
     CHECK(q.zoomInvert && q.zoomSpeed == 2.5f && q.orbitSpeed == 0.5f && !q.zoomToCursor && !q.animateViews);

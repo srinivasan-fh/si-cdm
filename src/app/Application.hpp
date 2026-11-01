@@ -356,6 +356,8 @@ private:
     ToolId m_pickTool = ToolId::Count;
     std::vector<int> m_picks;
     std::vector<std::string> m_pickBodies;
+    float m_uiZoom = 1.0f;       // the UI-SCALE preference as applied
+    float m_fbScale = 1.0f, m_contentScale = 1.0f; // framebuffer / window pixels; the screen's own scale
     Preferences m_lastPrefs;  // the preferences as last applied (syncPreferences)
     std::string m_viewLook;   // the 3D window's look preferences as last applied
     bool m_sessionTracking = false;         // after start-up: open projects are remembered
