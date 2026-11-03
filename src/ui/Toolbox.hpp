@@ -11,6 +11,9 @@ namespace sicdm {
 // triangle and opens a flyout on right-click or long press.
 class Toolbox {
 public:
+    // The left rail: one column of tools (the default) or two (its chevron button).
+    bool twoColumns() const noexcept { return m_twoColumns; }
+    void setTwoColumns(bool on) noexcept { m_twoColumns = on; }
     Toolbox();
 
     // The tools are spread over three rails round the canvas (the fourth side, below it, is
@@ -44,7 +47,7 @@ private:
 
     ToolId m_active = ToolId::Orbit;
     std::vector<int> m_current; // per group: index of the tool shown in the slot
-    bool m_twoColumns = true;
+    bool m_twoColumns = false;
     bool m_drawing2D = false;
     Rail m_rail = Rail::Left; // the rail being drawn (where its flyouts open)
     int m_pressedGroup = -1;

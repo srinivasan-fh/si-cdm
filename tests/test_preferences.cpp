@@ -244,6 +244,9 @@ TEST_CASE("Preferences: navigation, view, modelling, files, graphics and AI sett
     const Preferences w = preferencesFromJson(preferencesToJson(p));
     CHECK(w.windowX == 120 && w.windowY == 80 && w.windowWidth == 1400 && w.windowHeight == 900 && w.windowMaximized);
     CHECK(w.modelPanel && w.panelPage == 2 && w.panelWidth == 420.0f);
+    CHECK(!Preferences{}.toolColumns2); // the left tool rail starts in one column
+    p.toolColumns2 = true;
+    CHECK(preferencesFromJson(preferencesToJson(p)).toolColumns2);
     const auto tiny = Json::parse(R"({"window":{"x":0,"y":0,"width":5,"height":5},"panel_page":9})");
     REQUIRE(tiny.has_value());
     CHECK(preferencesFromJson(*tiny).windowWidth == 0 && preferencesFromJson(*tiny).panelPage == 2);

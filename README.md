@@ -707,7 +707,7 @@ PART HUMANOID DEMO STILL    POSE squat    POSE stand IN 2    POSE right elbow 90
 
 ## Tools (left rail)
 
-Photoshop-style tool rail. `<<` / `>>` switches between two columns and one.
+Photoshop-style tool rail, one column by default; `>>` / `<<` at its top switches to two columns and back (remembered).
 The tree button at the top of the rail (or `M`) shows the **Model panel**, docked beside the rail (its
 *Library* page holds motors and gears, see above):
 bodies, sketches and properties of the selection. It is hidden by default; drag its right edge to resize.

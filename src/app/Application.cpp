@@ -297,6 +297,7 @@ bool Application::init() {
     m_uiState.gizmoAngleStep = m_lastPrefs.angleStep;
     m_uiState.showModelTree = m_lastPrefs.modelPanel;
     m_uiState.dockTab = m_lastPrefs.panelPage;
+    m_ui.toolbox().setTwoColumns(m_lastPrefs.toolColumns2);
     m_uiState.panelWidth = m_lastPrefs.panelWidth;
     syncPreferences(); // the 3D window's look, animations, the view sphere
     log("SI CDM ready. Type HELP for commands, or pick a tool on the left.", UiState::LogLine::Output);
@@ -3292,6 +3293,12 @@ void Application::syncPreferences() {
     twoWay(p.angleStep, m_uiState.gizmoAngleStep, m_lastPrefs.angleStep);
     twoWay(p.modelPanel, m_uiState.showModelTree, m_lastPrefs.modelPanel);
     twoWay(p.panelPage, m_uiState.dockTab, m_lastPrefs.panelPage);
+    {
+        // The left rail's columns: its chevron button and the preference follow each other.
+        bool cols = m_ui.toolbox().twoColumns();
+        twoWay(p.toolColumns2, cols, m_lastPrefs.toolColumns2);
+        m_ui.toolbox().setTwoColumns(cols);
+    }
     if (!m_ui.panelDragging()) twoWay(p.panelWidth, m_uiState.panelWidth, m_lastPrefs.panelWidth); // kept once the drag ends
     if (save && m_options.screenshotPath.empty()) savePreferences(); // test pictures leave the file alone
     // The 3D window's look: applied at the start and when the preference changes (the view

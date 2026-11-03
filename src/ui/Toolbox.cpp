@@ -285,6 +285,26 @@ float Toolbox::draw(float top, float bottom, bool drawing2D, bool& panelOpen, in
         col = (col + 1) % cols;
     }
 
+    // One column taller than the window (a short screen): the wheel scrolls the rail, and a
+    // shaded arrow at the top or bottom says there are more tools that way.
+    {
+        const float sy = ImGui::GetScrollY(), maxY = ImGui::GetScrollMaxY();
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->PushClipRect(wp, {wp.x + ws.x, wp.y + ws.y}, false);
+        auto arrow = [&](float y, float dir) {
+            const float y0 = dir < 0 ? y : y - 18.0f, y1 = dir < 0 ? y + 18.0f : y;
+            const ImU32 solid = theme::kPanel, clear = solid & 0x00FFFFFFu;
+            dl->AddRectFilledMultiColor({wp.x, y0}, {wp.x + ws.x - 1, y1}, dir < 0 ? solid : clear, dir < 0 ? solid : clear, dir < 0 ? clear : solid,
+                                        dir < 0 ? clear : solid);
+            const float cx = wp.x + ws.x * 0.5f, cy = dir < 0 ? y + 6.0f : y - 6.0f;
+            dl->AddTriangleFilled({cx - 5, cy - 2.5f * dir}, {cx + 5, cy - 2.5f * dir}, {cx, cy + 2.5f * dir}, theme::kTextDim);
+        };
+        if (sy > 0.5f) arrow(wp.y, -1.0f);
+        if (sy < maxY - 0.5f) arrow(wp.y + ws.y, 1.0f);
+        dl->PopClipRect();
+    }
+
     ImGui::End();
     ImGui::PopStyleVar(4);
     return width;
