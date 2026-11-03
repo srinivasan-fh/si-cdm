@@ -112,7 +112,9 @@ TEST_CASE("Every primitive is a closed solid (sphere poles, torus seams and disk
                              "ELLIPSOID 10 8 6", "CAPSULE 5 20", "HEMISPHERE 10", "FRUSTUM 10 5 20", "WEDGE 20 10 10", "PYRAMID 20 20 15",
                              "PRISM 6 10 20", "SPRING 10 2 5 4"}) {
         Document d;
-        CHECK(executeCommand(d, line, nullptr).ok);
+        const bool made = executeCommand(d, line, nullptr).ok;
+        CHECK(made);
+        if (!made || d.scene.bodies().empty()) continue;
         const Body& b = d.scene.bodies().back();
         CHECK(openEdgeCount(b.mesh) == 0);
         CHECK(meshVolume(b.mesh) > 0);

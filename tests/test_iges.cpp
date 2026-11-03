@@ -175,3 +175,26 @@ TEST_CASE("IGES reader refuses what isn't IGES, or is cut short, without crashin
     Document d;
     CHECK(!run(d, "IMPORT /no/such/file.igs").ok);
 }
+
+TEST_CASE("IGES round trip of a block with a through hole: the hole's wall is a band between its two circles") {
+    // The hole wall is a cylinder bounded by two whole circles. Read back before the shell is
+    // oriented, the loops can run the way that would close the face at the cylinder's
+    // infinite ends: that once crashed (and then hung) the import.
+    Document d;
+    REQUIRE(run(d, "BOX 40 40 10").ok);
+    REQUIRE(run(d, "HOLE 0,0 DIAMETER 6 THROUGH").ok);
+    const double want = meshVolume(d.scene.bodies().back().mesh);
+    for (const char* name : {"sicdm_hole.igs", "sicdm_hole.step"}) {
+        const std::string path = tempPath(name);
+        REQUIRE(run(d, "EXPORT " + path).ok);
+        Document e;
+        const auto r = run(e, "IMPORT " + path);
+        CHECK(r.ok);
+        if (r.ok && !e.scene.bodies().empty()) {
+            const Body& b = e.scene.bodies().back();
+            CHECK(openEdgeCount(b.mesh) == 0);
+            CHECK_NEAR(meshVolume(b.mesh), want, 0.01 * want);
+        }
+        std::filesystem::remove(path);
+    }
+}

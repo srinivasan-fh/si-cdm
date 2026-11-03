@@ -646,6 +646,7 @@ private:
                 }
         // Walk towards p.
         for (int steps = 0; steps < 4 * static_cast<int>(tris.size()) + 10; ++steps) {
+            if (t < 0) return -1; // no live triangle left (all of them outside the face)
             const Tri& tr = T(t);
             int next = -1;
             for (int k = 0; k < 3; ++k) {
@@ -1464,14 +1465,28 @@ bool tessellateFace(TessContext& tc, const BFace& face, FaceMesh& out, std::stri
         } else {
             // Bands between consecutive wrapping loops (in level order): which pairs bound the
             // face follows from the lowest loop's side.
+            // A domain end that is unbounded (a cylinder's axis) can't close a band: there the
+            // loops pair up whatever their direction says (a file whose faces aren't oriented
+            // yet, e.g. IGES before its shells are, gives loops running the wrong way).
             double side = ws[0].dir * (alongU ? sDu : -sDv);
+            const bool lowOpen = std::fabs(lim0) > 1e11, highOpen = std::fabs(lim1) > 1e11;
             std::size_t k = 0;
-            if (side < 0) { // the face is below the lowest loop: closed off at the domain's low end
+            if (side < 0 && !(lowOpen && ws.size() % 2 == 0)) { // the face is below the lowest loop: closed off at the domain's low end
+                if (lowOpen) {
+                    err = "an open face round a periodic surface";
+                    return false;
+                }
                 addBand(ws[0], nullptr, lim0);
                 k = 1;
             }
             for (; k + 1 < ws.size(); k += 2) addBand(ws[k], &ws[k + 1], 0);
-            if (k < ws.size()) addBand(ws[k], nullptr, lim1);
+            if (k < ws.size()) {
+                if (highOpen) {
+                    err = "an open face round a periodic surface";
+                    return false;
+                }
+                addBand(ws[k], nullptr, lim1);
+            }
         }
         // Holes (plain loops) shift into the band's range.
         for (int i : plain) {
@@ -1544,6 +1559,10 @@ bool tessellateFace(TessContext& tc, const BFace& face, FaceMesh& out, std::stri
     double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
     for (const auto& r : rings)
         for (const P2& q : r) x0 = std::min(x0, q.x), x1 = std::max(x1, q.x), y0 = std::min(y0, q.y), y1 = std::max(y1, q.y);
+    if (!(x1 - x0 < 1e11) || !(y1 - y0 < 1e11)) { // also catches NaN
+        err = "an unbounded face";
+        return false;
+    }
     const P2 c{0.5 * (x0 + x1), 0.5 * (y0 + y1)};
     double su = 1, sv = 1;
     {
