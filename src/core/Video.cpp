@@ -294,9 +294,17 @@ bool videoFormatOf(const std::string& path, std::string& format, std::string* wh
         if (why) *why = "Give the video's file: .avi, .png (animated), .gif, or a folder for the frames";
         return false;
     }
-    if (slash == path.size() - 1 || dot == std::string::npos || (slash != std::string::npos && dot < slash)) {
+    const bool noExtension = dot == std::string::npos || (slash != std::string::npos && dot < slash);
+    std::error_code ec;
+    // Frames go to a folder written with a trailing slash, or one that is already there; a
+    // bare word ("VIDEO abc", a slip) would otherwise start a long render into a new folder.
+    if (slash == path.size() - 1 || (noExtension && std::filesystem::is_directory(path, ec))) {
         format = "frames";
         return true;
+    }
+    if (noExtension) {
+        if (why) *why = "'" + path + "' has no file type: give .avi, .png (animated), .gif, or a folder for the frames ending in / (" + path + "/)";
+        return false;
     }
     const std::string ext = lowerOf(path.substr(dot));
     if (ext == ".avi") format = "avi";

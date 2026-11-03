@@ -224,7 +224,66 @@ bool isPrimitiveKind(const std::string& k) {
            k == "torus" || k == "pyramid" || k == "prism" || k == "ellipsoid" || k == "capsule" || k == "hemisphere" || k == "spring" || k == "blade" || k == "extrude" || k == "sheet" || k == "armature" || isLibraryKind(k);
 }
 
+namespace {
+
+MeshData buildPrimitiveRaw(const std::string& k, const std::vector<float>& p);
+
+// Watertight by construction: corners a rounding error apart (the poles of a sphere, the
+// seam where a torus or a lathed shape closes) become one point, and the zero-area
+// triangles a disk drawn as a ring leaves at its centre go. The shape and its shading
+// (normals) are unchanged; mesh operations that need a closed solid can then use it.
+void seal(MeshData& m) {
+    if (m.vertices.empty()) return;
+    const AABB box = m.bounds();
+    const float eps = 1e-6f * std::max(length(box.max - box.min), 1e-3f);
+    const float cell = eps * 4.0f;
+    auto cellOf = [&](float v) { return static_cast<long long>(std::floor(v / cell)); };
+    auto key = [](long long x, long long y, long long z) { return (x * 73856093LL) ^ (y * 19349663LL) ^ (z * 83492791LL); };
+    std::unordered_map<long long, std::vector<std::uint32_t>> cells;
+    for (std::uint32_t i = 0; i < m.vertices.size(); ++i) {
+        Vec3& p = m.vertices[i].position;
+        const long long cx = cellOf(p.x), cy = cellOf(p.y), cz = cellOf(p.z);
+        bool snapped = false;
+        for (long long dx = -1; dx <= 1 && !snapped; ++dx)
+            for (long long dy = -1; dy <= 1 && !snapped; ++dy)
+                for (long long dz = -1; dz <= 1 && !snapped; ++dz) {
+                    const auto it = cells.find(key(cx + dx, cy + dy, cz + dz));
+                    if (it == cells.end()) continue;
+                    for (std::uint32_t j : it->second)
+                        if (length(m.vertices[j].position - p) <= eps) {
+                            p = m.vertices[j].position; // the same point exactly
+                            snapped = true;
+                            break;
+                        }
+                }
+        if (!snapped) cells[key(cx, cy, cz)].push_back(i);
+    }
+    // Triangles with two corners at one point have no area.
+    std::vector<std::uint32_t> kept;
+    kept.reserve(m.indices.size());
+    for (std::size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+        const Vec3 a = m.vertices[m.indices[t]].position, b = m.vertices[m.indices[t + 1]].position, c = m.vertices[m.indices[t + 2]].position;
+        auto same = [](const Vec3& u, const Vec3& v) { return u.x == v.x && u.y == v.y && u.z == v.z; };
+        if (same(a, b) || same(b, c) || same(a, c)) continue;
+        kept.insert(kept.end(), {m.indices[t], m.indices[t + 1], m.indices[t + 2]});
+    }
+    if (kept.size() != m.indices.size()) {
+        m.indices = std::move(kept);
+        m.groups.clear(), m.uvs.clear(), m.quads.clear(); // per-triangle data no longer lines up
+    }
+}
+
+} // namespace
+
 MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
+    MeshData m = buildPrimitiveRaw(k, p);
+    seal(m);
+    return m;
+}
+
+namespace {
+
+MeshData buildPrimitiveRaw(const std::string& k, const std::vector<float>& p) {
     using namespace primitives;
     if (k == "extrude") return buildExtrusion(p);
     if (k == "sheet") return buildSheetParams(p);
@@ -266,6 +325,8 @@ MeshData buildPrimitive(const std::string& k, const std::vector<float>& p) {
     }
     return {};
 }
+
+} // namespace
 
 namespace primitives {
 

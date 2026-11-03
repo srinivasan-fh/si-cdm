@@ -106,3 +106,19 @@ TEST_CASE("Shapes: sizes edited with PARAM") {
     REQUIRE(run(d, "TUBE 20 14 40").ok);
     CHECK(!run(d, "PARAM \"" + d.scene.bodies().back().name + "\" INNER_RADIUS 25").ok);
 }
+
+TEST_CASE("Every primitive is a closed solid (sphere poles, torus seams and disk centres join), so fillets and booleans take it") {
+    for (const char* line : {"BOX 20 20 20", "CYLINDER 10 30", "SPHERE 10", "CONE 10 20", "CONE 10 20 4", "TORUS 20 5", "TUBE 10 6 20",
+                             "ELLIPSOID 10 8 6", "CAPSULE 5 20", "HEMISPHERE 10", "FRUSTUM 10 5 20", "WEDGE 20 10 10", "PYRAMID 20 20 15",
+                             "PRISM 6 10 20", "SPRING 10 2 5 4"}) {
+        Document d;
+        CHECK(executeCommand(d, line, nullptr).ok);
+        const Body& b = d.scene.bodies().back();
+        CHECK(openEdgeCount(b.mesh) == 0);
+        CHECK(meshVolume(b.mesh) > 0);
+    }
+    Document c;
+    CHECK(executeCommand(c, "CYLINDER 10 20", nullptr).ok);
+    CHECK(executeCommand(c, "FILLET RADIUS 1", nullptr).ok); // refused before: "isn't closed"
+    CHECK(openEdgeCount(c.scene.bodies().back().mesh) == 0);
+}

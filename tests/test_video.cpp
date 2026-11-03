@@ -262,6 +262,9 @@ TEST_CASE("VIDEO: stopping early, refusals, and over MCP") {
     CHECK(run(d, "VIDEO " + tempPath("x.mp4")).lines[0].find("ffmpeg") != std::string::npos);
     CHECK(!run(d, "VIDEO").ok);
     CHECK(!run(d, "VIDEO x.avi SECONDS 0").ok);
+    // A bare word is not taken as a new folder of frames (a slip would start a long render).
+    CHECK(!run(d, "VIDEO abc").ok);
+    CHECK(run(d, "VIDEO abc").lines[0].find("abc/") != std::string::npos);
     CHECK(!run(d, "VIDEO x.avi FPS 500").ok);
     CHECK(!run(d, "VIDEO x.avi SIZE 8 8").ok);
     CHECK(!run(d, "VIDEO x.avi FROM 2 TO 1").ok);
