@@ -428,7 +428,9 @@ The *Design* menu (or the command line) adds part features to sketches and solid
 - **Class-A CV curves:** B-splines by their control vertices (degree 1-7), knots inserted,
   rebuilt or fitted, and their ends matched to other curves with G0, G1, G2 or G3 continuity
   (`CVCURVE MATCH Tail START TO Shoulder END G2`). They are the first step of the
-  [car design plan](docs/car-design.md), from the package to the clay mill.
+  [car design plan](docs/car-design.md), from the package to the clay mill; the wider
+  [product roadmap](docs/design-roadmap.md) joins concept, Class-A, mechanical engineering,
+  simulation, manufacturing and documentation into one product.
 - **Section view:** cut the model open in the 3D window with a plane, the cuts filled and
   hatched, and drag the plane through it (`SECTION Y AT 0`, or *View → Section View...*). It
   also gives each part's section area.

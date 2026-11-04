@@ -4,7 +4,8 @@ The plan for designing a whole car in SI-CDM, from the package to the clay mill,
 kind automotive studios use for concept and Class-A surfacing. Each step is a feature of its own,
 built, tested and documented in turn. This page says what is there now and what comes next.
 
-Status: **done** works and is documented; **planned** is not built yet.
+Status: **done** works and is documented; **planned** is not built yet. The wider plan for
+industrial, Class-A and robot product design is the [design roadmap](design-roadmap.md).
 
 ## A. Class-A curves and surfaces
 
