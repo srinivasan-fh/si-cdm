@@ -12,7 +12,7 @@ industrial, Class-A and robot product design is the [design roadmap](design-road
 | # | Step | Status | Where |
 | --- | --- | --- | --- |
 | A1 | CV curves: control vertices, degree 1-7, spans, knot insertion, rebuild, fit; ends matched at G0/G1/G2/G3 and measured | **done** | `CVCURVE`, [CAD: CV curves](cad.md#cv-curves-class-a) |
-| A2 | Blend curve between two curves (G2/G3 at each end); curves drawn and projected on a surface | planned | |
+| A2 | Blend curve between two curves (G0-G3 at each end, tension); curves projected onto surfaces and solids (along a direction or to the nearest points, within a tolerance) | **done** | `CVCURVE BLEND`, `CVCURVE PROJECT` |
 | A3 | Surface align: a surface's edge matched to another surface or curve at G0-G3 | planned | |
 | A4 | Rail surfaces (profiles along one or two rails), square (four sides, G1/G2 to neighbours), skin | planned | |
 | A5 | Surface fillet (rolling ball, curvature-continuous option), freeform blend, flange | planned | |

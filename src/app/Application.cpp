@@ -2437,7 +2437,9 @@ void Application::frame(float dt) {
                 if (!sp) continue;
                 fg->AddCircleFilled({sp->x, sp->y}, 4.0f, IM_COL32(20, 24, 32, 230));
                 fg->AddCircle({sp->x, sp->y}, 4.0f, IM_COL32(120, 200, 255, 255));
-                fg->AddText({sp->x + 6, sp->y - 16}, IM_COL32(200, 230, 255, 230), std::to_string(k + 1).c_str());
+                // Many CVs: the first, the last and every fifth numbered, so the labels stay readable.
+                if (pts.size() <= 20 || k == 0 || k + 1 == pts.size() || (k + 1) % 5 == 0)
+                    fg->AddText({sp->x + 6, sp->y - 16}, IM_COL32(200, 230, 255, 230), std::to_string(k + 1).c_str());
             }
         } else if (sel >= 0 && sel < static_cast<int>(curves.size()))
             for (const auto& [k, q] : gripPoints(curves[static_cast<std::size_t>(sel)])) mark(curves[static_cast<std::size_t>(sel)], q, false);

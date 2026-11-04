@@ -278,10 +278,12 @@ constexpr CommandSpec kCommands[] = {
      "POINT moves a point (@dx,dy,dz: by that much), INSERT adds one before point n, DELETE takes one out, INFO lists them"},
     {"CVCURVE", "CV CVC NURBS", "CVCURVE x,y,z x,y,z|@dx,dy,dz ... [DEGREE d] [NAME n] | FIT x,y,z ... [DEGREE d] [SPANS n] | FROM curve [DEGREE d] [SPANS n] | "
                                "SET curve n x,y,z | MOVE curve n dx,dy,dz | INSERT curve t | REBUILD curve [DEGREE d] [SPANS n] | "
-                               "MATCH curve START|END TO other START|END [G0|G1|G2|G3] | CONTINUITY curve START|END other START|END | INFO [curve]",
+                               "MATCH curve START|END TO other START|END [G0|G1|G2|G3] | CONTINUITY curve START|END other START|END | "
+                               "BLEND curve START|END TO other START|END [Gk [Gk]] [TENSION t] | PROJECT curve ONTO body [DIR x,y,z | NORMAL] [TOLERANCE t] | INFO [curve]",
      "Class-A curves by control vertices (degree 1-7): SET or MOVE a CV, INSERT a knot (same shape, one more CV), REBUILD to a degree and span count, "
      "FIT through points, FROM any sketch curve; MATCH an end to another curve with position (G0), tangent (G1), curvature (G2) or curvature-rate (G3) "
-     "continuity, CONTINUITY measures it"},
+     "continuity, CONTINUITY measures it; BLEND bridges two curve ends with a new curve, G0-G3 at each; PROJECT lays a curve onto a body "
+     "along a direction or to its nearest points, fitted within a tolerance"},
     {"ROUTE", "ROUTING PIPING", "ROUTE [path] PIPE DN20 | PIPE NPS 3/4 [SCH 40|80] | PIPE od x wall | TUBE od x wall | ROD d | CABLE d | HOSE od x wall [BEND r] [MATERIAL m] [NAME n] | "
                                 "LIST | BENDS [route] [EXPORT file.csv] | UPDATE [route | ALL] | EDIT route [size] [BEND r] [MATERIAL m] | SIZES [PIPE|TUBE|ROD|CABLE|HOSE]",
      "Routes: pipes, tubes, bars, cables and hoses along a path (a 3D sketch, or a line, polyline, rectangle or spline), exact, bent at the "

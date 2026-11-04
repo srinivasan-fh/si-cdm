@@ -41,7 +41,7 @@ documentation, German text and an MCP tool where it makes sense, as every featur
 | Trim, extend, offset, duplicate | **Have** on sketch planes; in 3D planned (D2) |
 | Join, split, transform, align curves | Planned (D2) (alignment by `CVCURVE MATCH` **have**) |
 | Curvature analysis (combs) | Planned (D3) |
-| Curve on surface, projecting curves onto surfaces | Planned (A2, D4) |
+| Projecting curves onto surfaces and solids, blend curves | **Have**: `CVCURVE PROJECT`, `CVCURVE BLEND`; curves kept in a surface's own parameters planned (D4) |
 | Intersection curves, isoparametric curves | Planned (D4) |
 
 ## 3. Surfaces

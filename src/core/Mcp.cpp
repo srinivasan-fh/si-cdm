@@ -915,7 +915,7 @@ Json McpServer::toolDefinitions() {
                         "another curve with G0 (position), G1 (tangent), G2 (curvature) or G3 (curvature rate) continuity, or measure it.",
                         [&] {
                             Json c = Json::object();
-                            c.set("operation", prop("string", "create | fit | from | set | move | insert | rebuild | match | continuity | info"));
+                            c.set("operation", prop("string", "create | fit | from | set | move | insert | rebuild | match | continuity | blend | project | info"));
                             c.set("points", prop("array", "create: the CVs [[x,y,z], ...]; fit: points to fit"));
                             c.set("degree", prop("number", "create / fit / from / rebuild: 1 to 7 (default 3)"));
                             c.set("spans", prop("number", "fit / from / rebuild: the number of spans"));
@@ -927,7 +927,12 @@ Json McpServer::toolDefinitions() {
                             c.set("end", prop("string", "match / continuity: START or END of the curve"));
                             c.set("other", prop("string", "match / continuity: the other curve"));
                             c.set("other_end", prop("string", "match / continuity: START or END of the other curve"));
-                            c.set("continuity", prop("string", "match: G0, G1, G2 (default) or G3"));
+                            c.set("continuity", prop("string", "match: G0, G1, G2 (default) or G3; blend: at the curve's end"));
+                            c.set("other_continuity", prop("string", "blend: at the other curve's end (default: as continuity)"));
+                            c.set("tension", prop("number", "blend: how far each end's direction carries (default 1)"));
+                            c.set("body", prop("string", "project: the body (surface or solid) to lay the curve on"));
+                            c.set("direction", prop("array", "project: [x, y, z] to project along (omitted: to the nearest points)"));
+                            c.set("tolerance", prop("number", "project: how close the fitted curve keeps to the surface, mm (default 0.01)"));
                             return c;
                         }(),
                         {"operation"}));
@@ -1829,8 +1834,23 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             if (op == "match" && a["continuity"].isString()) line += " " + a["continuity"].asString();
             return runLine(line);
         }
+        if (op == "blend") {
+            if (curve.empty() || !a["other"].isString()) return textResult("blend needs 'curve', 'end', 'other' and 'other_end'", true);
+            std::string line = "CVCURVE BLEND" + curve + " " + a["end"].asString("END") + " TO " + quote(a["other"].asString()) + " " + a["other_end"].asString("START");
+            if (a["continuity"].isString()) line += " " + a["continuity"].asString();
+            if (a["other_continuity"].isString()) line += " " + a["other_continuity"].asString();
+            if (a["tension"].isNumber()) line += " TENSION " + num(a["tension"].asNumber());
+            return runLine(line + named);
+        }
+        if (op == "project") {
+            if (curve.empty() || !a["body"].isString()) return textResult("project needs 'curve' and 'body'", true);
+            std::string line = "CVCURVE PROJECT" + curve + " ONTO " + quote(a["body"].asString());
+            line += a["direction"].isArray() ? " DIR " + vec(a["direction"]) : std::string(" NORMAL");
+            if (a["tolerance"].isNumber()) line += " TOLERANCE " + num(a["tolerance"].asNumber());
+            return runLine(line + named);
+        }
         if (op == "info") return runLine("CVCURVE INFO" + curve);
-        return textResult("cv_curve operations: create, fit, from, set, move, insert, rebuild, match, continuity, info", true);
+        return textResult("cv_curve operations: create, fit, from, set, move, insert, rebuild, match, continuity, blend, project, info", true);
     }
     if (name == "route") {
         const std::string op = a["operation"].asString();

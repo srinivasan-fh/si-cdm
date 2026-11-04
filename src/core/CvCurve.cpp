@@ -311,13 +311,12 @@ double curveLength(const BSplineCurve& b) {
     return L;
 }
 
-double curveDeviation(const BSplineCurve& a, const BSplineCurve& b) {
+double pointsDeviation(const std::vector<DVec3>& pts, const BSplineCurve& b) {
     const int nb = 400;
     std::vector<DVec3> sb;
     for (int i = 0; i <= nb; ++i) sb.push_back(b.eval(b.t0() + (b.t1() - b.t0()) * i / nb));
     double worst = 0;
-    for (int i = 0; i <= 200; ++i) {
-        const DVec3 q = a.eval(a.t0() + (a.t1() - a.t0()) * i / 200);
+    for (const DVec3& q : pts) {
         int best = 0;
         double bd = 1e300;
         for (int j = 0; j <= nb; ++j)
@@ -336,6 +335,12 @@ double curveDeviation(const BSplineCurve& a, const BSplineCurve& b) {
         worst = std::max(worst, bd);
     }
     return worst;
+}
+
+double curveDeviation(const BSplineCurve& a, const BSplineCurve& b) {
+    std::vector<DVec3> pa;
+    for (int i = 0; i <= 200; ++i) pa.push_back(a.eval(a.t0() + (a.t1() - a.t0()) * i / 200));
+    return pointsDeviation(pa, b);
 }
 
 bool rebuildCurve(const BSplineCurve& in, int degree, int spans, BSplineCurve& out, double* maxDeviation, std::string* why) {
@@ -371,7 +376,7 @@ std::string continuityText(const Continuity& c) {
     return buf;
 }
 
-bool matchStart(BSplineCurve& a, const CurveLocal& to, int level, std::string* why) {
+bool matchStart(BSplineCurve& a, const CurveLocal& to, int level, std::string* why, double speed) {
     auto fail = [&](const std::string& s) {
         if (why) *why = s;
         return false;
@@ -398,7 +403,7 @@ bool matchStart(BSplineCurve& a, const CurveLocal& to, int level, std::string* w
     };
     a.cp[0] = to.p;
     if (level < 1) return true;
-    double s = dlength(deriv(1));
+    double s = speed > 0 ? speed : dlength(deriv(1));
     if (s < 1e-9) s = std::fabs(ders[1][1]) * std::max(curveLength(a) / static_cast<double>(a.cp.size()), 1e-3);
     setCv(1, to.T * s);
     if (level < 2) return true;
@@ -408,6 +413,30 @@ bool matchStart(BSplineCurve& a, const CurveLocal& to, int level, std::string* w
     const double k2 = ddot(to.K, to.K);
     const double s2 = ddot(deriv(3), to.T) + s * s * s * k2;
     setCv(3, to.T * s2 + to.K * (3.0 * s * s1) + to.dK * (s * s * s));
+    return true;
+}
+
+bool blendCurves(const CurveLocal& into, const CurveLocal& outOf, int levelA, int levelB, double tension, BSplineCurve& out, std::string* why) {
+    levelA = std::clamp(levelA, 0, 3), levelB = std::clamp(levelB, 0, 3);
+    const double gap = dlength(outOf.p - into.p);
+    if (gap < 1e-6) {
+        if (why) *why = "the two ends are in the same place: there is nothing to bridge";
+        return false;
+    }
+    if (!(tension > 0) || tension > 10) {
+        if (why) *why = "TENSION must be above 0 and at most 10";
+        return false;
+    }
+    const int degree = std::max(3, levelA + levelB + 1);
+    BSplineCurve b;
+    b.degree = degree;
+    for (int i = 0; i <= degree; ++i) b.cp.push_back(into.p + (outOf.p - into.p) * (static_cast<double>(i) / degree));
+    b.knots = clampedKnots(b.cp.size(), degree);
+    const double speed = tension * gap;
+    if (!matchStart(b, into, levelA, why, speed)) return false;
+    BSplineCurve r = reverseCurve(b);
+    if (!matchStart(r, outOf, levelB, why, speed)) return false;
+    out = reverseCurve(r);
     return true;
 }
 

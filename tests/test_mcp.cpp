@@ -453,5 +453,7 @@ TEST_CASE("MCP cv_curve tool makes, edits and matches CV curves") {
     CHECK(r["content"][0]["text"].asString().find("G2") != std::string::npos);
     CHECK(!tool(s, "cv_curve", R"({"operation":"insert","curve":"A","t":0.5})")["isError"].asBool());
     CHECK(tool(s, "cv_curve", R"({"operation":"insert","curve":"A"})")["isError"].asBool()); // no t
+    CHECK(!tool(s, "cv_curve", R"({"operation":"blend","curve":"A","end":"START","other":"B","other_end":"END","continuity":"G1","name":"Br"})")["isError"].asBool());
+    CHECK(tool(s, "cv_curve", R"({"operation":"project","curve":"A"})")["isError"].asBool()); // no body
     CHECK(tool(s, "cv_curve", R"({"operation":"bogus"})")["isError"].asBool());
 }

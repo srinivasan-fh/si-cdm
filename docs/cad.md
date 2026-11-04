@@ -904,6 +904,8 @@ CVCURVE INSERT Shoulder 0.5                                         a knot: the 
 CVCURVE REBUILD Shoulder DEGREE 5 SPANS 2                           refitted (it says how far it moved)
 CVCURVE MATCH Tail START TO Shoulder END G2                         join smoothly
 CVCURVE CONTINUITY Tail START Shoulder END                          measure a join
+CVCURVE BLEND Shoulder END TO Tail START G2 G3 [TENSION 1.5]        a new curve bridging two ends
+CVCURVE PROJECT Line ONTO "Surface 1" DIR 0,0,-1 [TOLERANCE 0.01]   a curve laid onto a body
 CVCURVE INFO Shoulder                                               degree, spans, length, tightest radius, CVs
 ```
 
@@ -920,6 +922,22 @@ keeps its shape:
 The curve keeps its own speed at the join, so a match never kinks the far side. The other curve
 can be any sketch curve: a CV curve is used exactly, anything else through a fine fitted copy
 (its tangent and curvature come out within a fraction of a percent).
+
+`BLEND` makes a new curve from one curve's end to another's, with its own continuity at each
+(one level for both, or two; G2 by default). It is a single Bézier span of degree one more than
+the two levels together (at least 3), so each end's CVs are set without disturbing the other.
+`TENSION` (default 1) says how far each end's direction carries into the blend: below 1 it turns
+sooner, above 1 it runs on and bulges more.
+
+`PROJECT` lays a curve onto a surface or solid: along a direction (`DIR 0,0,-1` carries a line
+drawn in the top view straight down onto the body, as a character line is projected from a view),
+or with `NORMAL` to the surface's nearest points. On a surface body the points land on its exact
+B-spline (Newton steps from the triangles), on a solid on its triangles. The result is a CV curve
+fitted through them with as many spans as it takes to stay within `TOLERANCE` (0.01 mm by default)
+of the surface and of the projected points; it says how close it came, and where the curve runs
+off the body if part of it misses.
+
+![A line projected down onto a lofted surface, its CVs numbered](cv-project.png)
 
 CV curves are 3D sketch curves: surfaces loft, fill and network through them (`SURFACE LOFT
 Shoulder Tail`), they are saved with the project (degree and knots too) and undo takes edits back.

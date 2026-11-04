@@ -1,12 +1,17 @@
 #include "TestFramework.hpp"
 
 #include "core/Command.hpp"
+#include "core/CurveOnSurface.hpp"
 #include "core/CvCurve.hpp"
+#include "core/Sculpt.hpp"
+#include "core/Surfacing.hpp"
 #include "core/Document.hpp"
 #include "core/Sketch.hpp"
 
 #include <cmath>
+#include <algorithm>
 #include <filesystem>
+#include <utility>
 #include <string>
 
 using namespace sicdm;
@@ -158,4 +163,84 @@ TEST_CASE("CV curves: a surface lofted through two of them") {
     const auto r = run(d, "SURFACE LOFT C1 C2");
     CHECK(r.ok);
     CHECK(d.scene.bodies().size() == bodies + 1);
+}
+
+TEST_CASE("CV curves: BLEND bridges two ends with the continuity asked at each") {
+    Document d;
+    CHECK(run(d, "CVCURVE 0,0,0 40,0,0 80,10,0 120,30,0 NAME A").ok);
+    CHECK(run(d, "CVCURVE 200,80,20 230,120,20 250,170,10 260,220,0 NAME B").ok);
+    for (const auto& [ga, gb] : {std::pair{2, 2}, std::pair{3, 1}, std::pair{0, 3}, std::pair{3, 3}}) {
+        const std::string name = "Br" + std::to_string(ga) + std::to_string(gb);
+        const auto r = run(d, "CVCURVE BLEND A END TO B START G" + std::to_string(ga) + " G" + std::to_string(gb) + " NAME " + name);
+        CHECK(r.ok);
+        if (!r.ok) continue;
+        CHECK(joint(d, "A", true, name, false).level >= ga);  // A's end into the blend's start
+        CHECK(joint(d, name, true, "B", false).level >= gb);  // the blend's end into B's start
+        CHECK(cvCurveSpline(*curveNamed(d, name)).degree == std::max(3, ga + gb + 1));
+    }
+    // More tension carries the ends' directions further: the blend bulges more.
+    CHECK(run(d, "CVCURVE BLEND A END TO B START G2 TENSION 0.5 NAME Soft").ok);
+    CHECK(run(d, "CVCURVE BLEND A END TO B START G2 TENSION 2 NAME Firm").ok);
+    const BSplineCurve soft = cvCurveSpline(*curveNamed(d, "Soft")), firm = cvCurveSpline(*curveNamed(d, "Firm"));
+    CHECK(curveLength(firm) > curveLength(soft));
+    // Refused: one end to itself, an unknown curve, a third continuity.
+    CHECK(!run(d, "CVCURVE BLEND A END TO A END").ok);
+    CHECK(!run(d, "CVCURVE BLEND A END TO Nothing START").ok);
+    CHECK(!run(d, "CVCURVE BLEND A END TO B START G1 G2 G3").ok);
+}
+
+TEST_CASE("CV curves: PROJECT lays a curve onto a surface along a direction or to its nearest points") {
+    Document d;
+    // A curved surface: lofted through two arched CV curves.
+    CHECK(run(d, "CVCURVE 0,0,0 30,0,25 70,0,25 100,0,0 NAME S1").ok);
+    CHECK(run(d, "CVCURVE 0,100,0 30,100,35 70,100,35 100,100,0 NAME S2").ok);
+    CHECK(run(d, "SURFACE LOFT S1 S2").ok);
+    const std::string surf = d.scene.bodies().back().name;
+    BSplineSurface exact;
+    CHECK(bodySurface(d.scene.bodies().back(), exact));
+    const SurfaceTarget onto(worldMesh(d.scene.bodies().back()), &exact);
+    // A line above it, carried straight down.
+    CHECK(run(d, "CVCURVE 10,20,80 50,50,80 90,80,80 DEGREE 2 NAME Above").ok);
+    auto r = run(d, "CVCURVE PROJECT Above ONTO \"" + surf + "\" DIR 0,0,-1 NAME Down");
+    CHECK(r.ok);
+    if (r.ok) {
+        const BSplineCurve c = cvCurveSpline(*curveNamed(d, "Down"));
+        double worst = 0, xyWorst = 0;
+        for (int k = 0; k <= 50; ++k) {
+            const DVec3 q = c.eval(c.t0() + (c.t1() - c.t0()) * k / 50);
+            worst = std::max(worst, onto.distance(q));
+            // Straight down: seen from above it is still the line from (10, 20) along (0.8, 0.6).
+            xyWorst = std::max(xyWorst, std::fabs((q.x - 10.0) * 0.6 - (q.y - 20.0) * 0.8));
+        }
+        CHECK(worst < 0.02);
+        CHECK(xyWorst < 0.05);
+    }
+    // To the nearest points: on the surface too.
+    CHECK(run(d, "CVCURVE PROJECT Above ONTO \"" + surf + "\" NORMAL NAME Near").ok);
+    {
+        const BSplineCurve c = cvCurveSpline(*curveNamed(d, "Near"));
+        double worst = 0;
+        for (int k = 0; k <= 50; ++k) worst = std::max(worst, onto.distance(c.eval(c.t0() + (c.t1() - c.t0()) * k / 50)));
+        CHECK(worst < 0.02);
+    }
+    // A line that runs past the surface's edge is refused, saying where.
+    CHECK(run(d, "CVCURVE 50,50,80 50,300,80 NAME Long DEGREE 1").ok);
+    r = run(d, "CVCURVE PROJECT Long ONTO \"" + surf + "\" DIR 0,0,-1");
+    CHECK(!r.ok);
+    CHECK(r.lines.back().find("runs off") != std::string::npos);
+    // Onto a solid (its triangles): a ring above a sphere ends up on the sphere.
+    CHECK(run(d, "SPHERE 20 @300,0,0").ok);
+    const std::string ball = d.scene.bodies().back().name;
+    CHECK(run(d, "PLANE TOP").ok);
+    CHECK(run(d, "CIRCLE 300,0 8").ok); // under the ball (it rests on z = 0)
+    const std::string ring = d.scene.sketch().curves().back().name;
+    r = run(d, "CVCURVE PROJECT \"" + ring + "\" ONTO \"" + ball + "\" DIR 0,0,1 NAME OnBall");
+    CHECK(r.ok);
+    if (r.ok) {
+        const BSplineCurve c = cvCurveSpline(*curveNamed(d, "OnBall"));
+        AABB box;
+        for (const Vertex& v : worldMesh(d.scene.bodies().back()).vertices) box.expand(v.position);
+        const DVec3 centre(0.5f * (box.min + box.max));
+        for (int k = 0; k <= 20; ++k) CHECK_NEAR(dlength(c.eval(c.t0() + (c.t1() - c.t0()) * k / 20) - centre), 20.0, 0.15);
+    }
 }

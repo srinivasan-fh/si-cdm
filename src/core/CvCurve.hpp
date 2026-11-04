@@ -57,6 +57,8 @@ bool fitCurve(const std::vector<DVec3>& pts, int degree, int spans, BSplineCurve
 bool rebuildCurve(const BSplineCurve& in, int degree, int spans, BSplineCurve& out, double* maxDeviation = nullptr, std::string* why = nullptr);
 // The largest distance from samples of a to b (closest points, sampled).
 double curveDeviation(const BSplineCurve& a, const BSplineCurve& b);
+// The largest distance from the points to b (closest points).
+double pointsDeviation(const std::vector<DVec3>& pts, const BSplineCurve& b);
 double curveLength(const BSplineCurve& b);
 
 // Continuity where a's end meets b's start.
@@ -72,7 +74,14 @@ Continuity continuityBetween(const CurveLocal& endOfA, const CurveLocal& startOf
 std::string continuityText(const Continuity& c);
 
 // Moves CVs at a's start so it continues from `to` (`to` running into the join) with
-// continuity G0..G3 (level 0..3). Fails when a has too few CVs or too low a degree.
-bool matchStart(BSplineCurve& a, const CurveLocal& to, int level, std::string* why = nullptr);
+// continuity G0..G3 (level 0..3). Fails when a has too few CVs or too low a degree. `speed`
+// (> 0) sets how fast a leaves the join (|dC/dt|) instead of keeping its own.
+bool matchStart(BSplineCurve& a, const CurveLocal& to, int level, std::string* why = nullptr, double speed = 0.0);
+
+// A curve from the end of one curve to the start of another: `into` runs into the first join
+// (its end is the blend's start), `outOf` runs into the second when run backwards (its end is
+// the blend's end). Continuity levels at each join (0..3); `tension` scales how far the blend
+// carries each end's direction (1: about the gap). Degree levelA + levelB + 1, at least 3.
+bool blendCurves(const CurveLocal& into, const CurveLocal& outOf, int levelA, int levelB, double tension, BSplineCurve& out, std::string* why = nullptr);
 
 } // namespace sicdm

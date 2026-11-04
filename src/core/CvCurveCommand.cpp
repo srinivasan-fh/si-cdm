@@ -1,8 +1,11 @@
 #include "core/CvCurveCommand.hpp"
 
 #include "core/Command.hpp"
+#include "core/CurveOnSurface.hpp"
 #include "core/CvCurve.hpp"
 #include "core/Document.hpp"
+#include "core/Sculpt.hpp"
+#include "core/Surfacing.hpp"
 #include "core/Sketch.hpp"
 #include "core/Units.hpp"
 
@@ -31,6 +34,11 @@ int curveIndexOf(const Document& d, const std::string& n) {
 }
 
 std::string pointText(const DVec3& p) { return lengthsText({p.x, p.y, p.z}, ", "); }
+std::string dirText(const DVec3& d) {
+    char b[96];
+    std::snprintf(b, sizeof b, "%g,%g,%g", d.x, d.y, d.z);
+    return b;
+}
 
 // A curve's name starting at a[i]: quoted, or the longest run of words naming a curve
 // (stopping at a word `stop` accepts). Moves i past it; -1 when none.
@@ -183,7 +191,7 @@ CommandOutput runCvCurveCommand(Document& doc, const std::vector<std::string>& a
     };
 
     if (sub.empty() || (sub != "fit" && sub != "from" && sub != "set" && sub != "move" && sub != "insert" && sub != "rebuild" && sub != "match" &&
-                        sub != "continuity" && sub != "info")) {
+                        sub != "continuity" && sub != "info" && sub != "blend" && sub != "project")) {
         // CVCURVE x,y,z x,y,z ... [DEGREE d]
         std::vector<DVec3> cvs;
         Options o;
@@ -264,6 +272,153 @@ CommandOutput runCvCurveCommand(Document& doc, const std::vector<std::string>& a
 
     std::string err;
     std::size_t i = 1;
+
+    // A sketch curve as a B-spline at one of its ends, run into that end.
+    auto endOf = [&](std::size_t& at, const std::string& usage, int& ci, bool& atEnd, CurveLocal& into) -> bool {
+        ci = curveAt(doc, a, quoted, at, [&](const std::string& w) { return endWord(w); });
+        if (ci < 0) {
+            err = at < a.size() ? "No sketch curve named " + a[at] : usage;
+            return false;
+        }
+        if (at >= a.size() || (lowerOf(a[at]) != "start" && lowerOf(a[at]) != "end")) {
+            err = usage;
+            return false;
+        }
+        atEnd = lowerOf(a[at++]) == "end";
+        BSplineCurve s;
+        if (!asSpline(sketch.curves()[static_cast<std::size_t>(ci)], s, err)) return false;
+        const BSplineCurve r = atEnd ? s : reverseCurve(s);
+        into = curveLocal(r, r.t1());
+        return true;
+    };
+
+    if (sub == "blend") {
+        // CVCURVE BLEND A START|END TO B START|END [Gk [Gk]] [TENSION t] [NAME n]
+        const std::string usage = "CVCURVE BLEND curve START|END TO other START|END [G0|G1|G2|G3 [G0|G1|G2|G3]] [TENSION t] [NAME n]";
+        int ca = -1, cb = -1;
+        bool ea = false, eb = false;
+        CurveLocal ia, ib;
+        if (!endOf(i, usage, ca, ea, ia)) return out.fail(err);
+        if (i < a.size() && lowerOf(a[i]) == "to") ++i;
+        if (!endOf(i, usage, cb, eb, ib)) return out.fail(err);
+        if (ca == cb && ea == eb) return out.fail("A blend joins two different ends");
+        std::vector<int> levels;
+        double tension = 1.0;
+        Options o;
+        for (; i < a.size(); ++i) {
+            const std::string w = lowerOf(a[i]);
+            if (w.size() == 2 && w[0] == 'g' && w[1] >= '0' && w[1] <= '3') {
+                if (levels.size() == 2) return out.fail("Two continuities at most: one for each end (" + usage + ")");
+                levels.push_back(w[1] - '0');
+            } else if (w == "tension") {
+                const auto t = i + 1 < a.size() ? parseNumber(a[i + 1]) : std::nullopt;
+                if (!t) return out.fail("TENSION needs a number (1: the usual; more carries the ends' directions further)");
+                tension = *t;
+                ++i;
+            } else if (!readOption(a, i, o, err)) {
+                return out.fail("Not understood: " + a[i] + "  (" + usage + ")");
+            } else if (!err.empty()) {
+                return out.fail(err);
+            }
+        }
+        const int la = levels.empty() ? 2 : levels[0], lb = levels.size() < 2 ? la : levels[1];
+        BSplineCurve b;
+        if (!blendCurves(ia, ib, la, lb, tension, b, &err)) return out.fail("Can't blend: " + err);
+        const Continuity k0 = continuityBetween(ia, curveLocal(b, b.t0()));
+        const BSplineCurve rb = reverseCurve(b);
+        const Continuity k1 = continuityBetween(ib, curveLocal(rb, rb.t0()));
+        const std::string na = sketch.curves()[static_cast<std::size_t>(ca)].name, nb = sketch.curves()[static_cast<std::size_t>(cb)].name;
+        return finishNew(b, o, "Blended " + na + (ea ? " end" : " start") + " (" + continuityText(k0) + ") to " + nb + (eb ? " end" : " start") + " (" +
+                                   continuityText(k1) + "):");
+    }
+
+    if (sub == "project") {
+        // CVCURVE PROJECT curve ONTO body [DIR x,y,z | NORMAL] [TOLERANCE t] [NAME n]
+        const std::string usage = "CVCURVE PROJECT curve ONTO body [DIR x,y,z | NORMAL] [TOLERANCE t] [NAME n]";
+        const int ci = curveAt(doc, a, quoted, i, [&](const std::string& w) { return w == "onto" || w == "on"; });
+        if (ci < 0) return out.fail(i < a.size() && lowerOf(a[i]) != "onto" ? "No sketch curve named " + a[i] : usage);
+        if (i >= a.size() || (lowerOf(a[i]) != "onto" && lowerOf(a[i]) != "on")) return out.fail(usage);
+        ++i;
+        const auto& bodies = doc.scene.bodies();
+        auto bodyNamed = [&](const std::string& n) {
+            for (std::size_t k = 0; k < bodies.size(); ++k)
+                if (lowerOf(bodies[k].name) == lowerOf(n)) return static_cast<int>(k);
+            return -1;
+        };
+        int bi = -1;
+        {
+            std::string name;
+            std::size_t end = i;
+            if (i < a.size() && i < quoted.size() && quoted[i]) {
+                bi = bodyNamed(a[i]);
+                end = i + 1;
+            } else
+                for (std::size_t j = i; j < a.size(); ++j) {
+                    const std::string w = lowerOf(a[j]);
+                    if (w == "dir" || w == "normal" || w == "tolerance" || w == "tol" || isOptionWord(w)) break;
+                    name += (name.empty() ? "" : " ") + a[j];
+                    if (const int k = bodyNamed(name); k >= 0) bi = k, end = j + 1;
+                }
+            if (bi < 0) return out.fail(i < a.size() ? "No body named " + a[i] : usage);
+            i = end;
+        }
+        std::optional<DVec3> dir;
+        double tol = 0.01;
+        Options o;
+        for (; i < a.size(); ++i) {
+            const std::string w = lowerOf(a[i]);
+            if (w == "dir" || w == "direction") {
+                const auto v = i + 1 < a.size() ? parseVec3(a[i + 1]) : std::nullopt;
+                if (!v || length(*v) < 1e-9f) return out.fail("DIR needs a direction x,y,z");
+                dir = DVec3(*v);
+                ++i;
+            } else if (w == "normal") {
+                dir.reset();
+            } else if (w == "tolerance" || w == "tol") {
+                const auto t = i + 1 < a.size() ? parseLength(a[i + 1]) : std::nullopt;
+                if (!t || *t <= 0) return out.fail("TOLERANCE needs a length above 0");
+                tol = *t;
+                ++i;
+            } else if (!readOption(a, i, o, err)) {
+                return out.fail("Not understood: " + a[i] + "  (" + usage + ")");
+            } else if (!err.empty()) {
+                return out.fail(err);
+            }
+        }
+        const SketchCurve& src = sketch.curves()[static_cast<std::size_t>(ci)];
+        const Body& body = bodies[static_cast<std::size_t>(bi)];
+        BSplineSurface exact;
+        const bool hasExact = bodySurface(body, exact);
+        const SurfaceTarget onto(worldMesh(body), hasExact ? &exact : nullptr);
+        std::vector<DVec3> line;
+        for (const Vec3& q : src.worldStrip(256)) line.push_back(DVec3(q));
+        if (line.size() < 2) return out.fail(src.name + " has no length");
+        const std::vector<DVec3> samples = resample(line, 120, false);
+        std::vector<DVec3> on;
+        for (const DVec3& p : samples) {
+            if (dir) {
+                const auto hit = onto.alongDirection(p, *dir);
+                if (!hit) return out.fail(src.name + " runs off " + body.name + " near " + pointText(p) + " (along that direction nothing is there)");
+                on.push_back(*hit);
+            } else {
+                on.push_back(onto.nearest(p));
+            }
+        }
+        // Fitted with more spans until it stays on the surface and through the points.
+        BSplineCurve fit;
+        double devSurface = 0, devPoints = 0;
+        for (int spans = 4;; spans *= 2) {
+            if (!fitCurve(on, o.degree.value_or(3), std::min(spans, static_cast<int>(on.size()) - o.degree.value_or(3)), fit, &err)) return out.fail("Can't fit the projected curve: " + err);
+            devSurface = 0;
+            for (int k = 0; k <= 100; ++k) devSurface = std::max(devSurface, onto.distance(fit.eval(fit.t0() + (fit.t1() - fit.t0()) * k / 100)));
+            devPoints = pointsDeviation(on, fit);
+            if ((devSurface <= tol && devPoints <= tol) || spans >= 64) break;
+        }
+        std::string said = "Projected " + src.name + " onto " + body.name + (dir ? " along " + dirText(*dir) : std::string(" (nearest points)")) +
+                           ": within " + lengthText(std::max(devSurface, devPoints)) + " of the " + (hasExact ? "exact surface" : "body's triangles") + ".";
+        if (std::max(devSurface, devPoints) > tol) said += " That is more than the tolerance " + lengthText(tol) + ": the surface turns too sharply for 64 spans.";
+        return finishNew(fit, o, said);
+    }
 
     if (sub == "info") {
         if (a.size() == 1 && doc.selectedCurve < 0) {
