@@ -4,6 +4,7 @@
 #include "core/Armature.hpp"
 
 #include "core/Brep.hpp"
+#include "core/CvCurve.hpp"
 #include "core/Step.hpp"
 
 #include "core/Json.hpp"
@@ -105,6 +106,7 @@ const char* curveKey(CurveKind k) {
     case CurveKind::Spline: return "spline";
     case CurveKind::Ellipse: return "ellipse";
     case CurveKind::Slot: return "slot";
+    case CurveKind::Nurbs: return "nurbs";
     }
     return "line";
 }
@@ -119,6 +121,7 @@ std::optional<CurveKind> curveFromKey(const std::string& k) {
     if (k == "spline") return CurveKind::Spline;
     if (k == "ellipse") return CurveKind::Ellipse;
     if (k == "slot") return CurveKind::Slot;
+    if (k == "nurbs") return CurveKind::Nurbs;
     return std::nullopt;
 }
 
@@ -768,6 +771,14 @@ std::string projectText(const Scene& scene, const ProjectState& state, const std
             for (float h : c.rise) rise.push(Json(h));
             jc.set("rise", rise);
         }
+        if (c.kind == CurveKind::Nurbs) {
+            jc.set("degree", c.degree);
+            if (!c.knots.empty()) {
+                Json k = Json::array();
+                for (double t : c.knots) k.push(Json(t));
+                jc.set("knots", k);
+            }
+        }
         curves.push(jc);
     }
     doc.set("sketch", curves);
@@ -1309,7 +1320,15 @@ bool projectFromText(const std::string& text, const std::string& path, Scene& sc
         c.closed = jc["closed"].asBool(false);
         c.construction = jc["construction"].asBool(false);
         for (const Json& h : jc["rise"].items()) c.rise.push_back(h.asFloat());
-        if (!c.rise.empty() && (c.rise.size() != c.pts.size() || (c.kind != CurveKind::Polyline && c.kind != CurveKind::Spline))) continue; // not a 3D curve this reads
+        if (!c.rise.empty() && (c.rise.size() != c.pts.size() || (c.kind != CurveKind::Polyline && c.kind != CurveKind::Spline && c.kind != CurveKind::Nurbs))) continue; // not a 3D curve this reads
+        if (c.kind == CurveKind::Nurbs) {
+            if (c.rise.size() != c.pts.size()) continue; // a CV curve is always in space
+            c.degree = std::clamp(jc["degree"].asInt(3), 1, 7);
+            for (const Json& t : jc["knots"].items()) c.knots.push_back(t.asNumber());
+            if (static_cast<int>(c.pts.size()) <= c.degree) continue;
+            BSplineCurve b = cvCurveSpline(c);
+            if (!c.knots.empty() && (b.knots != c.knots || !validCvCurve(b))) c.knots.clear(); // damaged: uniform
+        }
         const std::size_t need = c.kind == CurveKind::Arc ? 3 : (c.kind == CurveKind::Ellipse || c.kind == CurveKind::Slot || c.kind == CurveKind::Spline) ? 2 : 1;
         if (c.pts.size() < need) continue;
         loaded.sketch().add(std::move(c));
@@ -1715,6 +1734,7 @@ int exportDxf(const Scene& scene, SketchPlane plane, const std::string& path, st
         if (!onPlane(c, plane, custom) || !c.visible || c.pts.empty()) continue;
         const std::string curveLayer = c.construction ? layer + "_CONSTRUCTION" : layer;
         switch (c.kind) {
+        case CurveKind::Nurbs: break; // in space: never on a plane
         case CurveKind::Point:
             dxfPair(out, 0, "POINT");
             dxfPair(out, 8, curveLayer);
@@ -1823,6 +1843,7 @@ int exportSvg(const Scene& scene, SketchPlane plane, const std::string& path, st
     for (const SketchCurve& c : scene.sketch().curves()) {
         if (!onPlane(c, plane, custom) || !c.visible || c.pts.empty()) continue;
         switch (c.kind) {
+        case CurveKind::Nurbs: break; // in space: never on a plane
         case CurveKind::Point:
             std::snprintf(buf, sizeof(buf), "<circle cx=\"%.4f\" cy=\"%.4f\" r=\"0.5\" fill=\"#000\"/>\n",
                           static_cast<double>(c.pts[0].x), static_cast<double>(c.pts[0].y));

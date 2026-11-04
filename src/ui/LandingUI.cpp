@@ -1147,17 +1147,35 @@ void LandingUI::drawPath3dWindow(UiCommands& cmd, UiState& st, const Scene& scen
     if (ImGui::Button(tr("Add Point"))) st.pathPoints.push_back(st.pathPoints.empty() ? Vec3{} : st.pathPoints.back() + Vec3{100, 0, 0});
     ImGui::SameLine();
     if (ImGui::Button(tr("Clear"))) st.pathPoints.clear();
-    ImGui::Checkbox(tr("Smooth (spline)"), &st.pathSpline);
-    ImGui::SameLine();
-    ImGui::Checkbox(tr("Closed"), &st.pathClosed);
-    if (!st.pathSpline) {
+    ImGui::Checkbox(tr("Control vertices (CV curve)"), &st.pathCv);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("The points pull the curve like magnets: it passes through the first and last only"));
+    if (st.pathCv) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90);
+        ImGui::InputInt(tr("Degree"), &st.pathDegree);
+        st.pathDegree = std::clamp(st.pathDegree, 1, 7);
+    } else {
+        ImGui::Checkbox(tr("Smooth (spline)"), &st.pathSpline);
+        ImGui::SameLine();
+        ImGui::Checkbox(tr("Closed"), &st.pathClosed);
+    }
+    if (!st.pathCv && !st.pathSpline) {
         ImGui::SetNextItemWidth(120);
         ImGui::InputFloat(tr("Bend radius (mm, 0: sharp)"), &st.pathBend, 0, 0, "%.2f");
         st.pathBend = std::max(st.pathBend, 0.0f);
     }
-    const bool enough = st.pathPoints.size() >= (st.pathClosed ? 3u : 2u);
+    const bool enough = st.pathCv ? st.pathPoints.size() > static_cast<std::size_t>(st.pathDegree) : st.pathPoints.size() >= (st.pathClosed ? 3u : 2u);
     ImGui::BeginDisabled(!enough);
-    if (ImGui::Button(tr("Make the Path"))) {
+    if (st.pathCv && ImGui::Button(tr("Make the CV Curve"))) {
+        std::string line = "CVCURVE";
+        for (const Vec3& p : st.pathPoints) line += " " + mm(p.x) + "," + mm(p.y) + "," + mm(p.z);
+        line += " DEGREE " + std::to_string(st.pathDegree);
+        cmd.commands.push_back(line);
+        st.pathPoints.clear();
+        st.pathPick = false;
+    }
+    if (st.pathCv && !enough && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tr("A curve of this degree needs one more point than its degree"));
+    if (!st.pathCv && ImGui::Button(tr("Make the Path"))) {
         std::string line = "PATH3D";
         for (const Vec3& p : st.pathPoints) line += " " + mm(p.x) + "," + mm(p.y) + "," + mm(p.z);
         if (st.pathSpline) line += " SPLINE";
@@ -1168,6 +1186,31 @@ void LandingUI::drawPath3dWindow(UiCommands& cmd, UiState& st, const Scene& scen
         st.pathPick = false;
     }
     ImGui::EndDisabled();
+
+    // The selected CV curve: rebuilt, a knot added, listed.
+    {
+        const auto& cs = scene.sketch().curves();
+        if (st.selectedCurve >= 0 && st.selectedCurve < static_cast<int>(cs.size()) && cs[static_cast<std::size_t>(st.selectedCurve)].kind == CurveKind::Nurbs) {
+            const std::string q = "\"" + cs[static_cast<std::size_t>(st.selectedCurve)].name + "\"";
+            ImGui::Separator();
+            theme::caption(tr("Selected CV curve"));
+            ImGui::PushID("cvrebuild");
+            ImGui::SetNextItemWidth(90);
+            ImGui::InputInt(tr("Degree"), &st.cvRebuildDegree);
+            st.cvRebuildDegree = std::clamp(st.cvRebuildDegree, 1, 7);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90);
+            ImGui::InputInt(tr("Spans"), &st.cvRebuildSpans);
+            st.cvRebuildSpans = std::clamp(st.cvRebuildSpans, 1, 100);
+            ImGui::SameLine();
+            if (ImGui::Button(tr("Rebuild"))) cmd.commands.push_back("CVCURVE REBUILD " + q + " DEGREE " + std::to_string(st.cvRebuildDegree) + " SPANS " + std::to_string(st.cvRebuildSpans));
+            ImGui::PopID();
+            if (ImGui::Button(tr("Insert Knot at Middle"))) cmd.commands.push_back("CVCURVE INSERT " + q + " 0.5");
+            ImGui::SameLine();
+            if (ImGui::Button(tr("List CVs"))) cmd.commands.push_back("CVCURVE INFO " + q);
+            ImGui::TextDisabled("%s", tr("CVCURVE MATCH curve START|END TO other START|END G2 joins it smoothly"));
+        }
+    }
 
     ImGui::Separator();
     theme::caption(tr("Route along the selected path"));

@@ -206,6 +206,7 @@ CommandOutput runPath3dCommand(Document& doc, const std::vector<std::string>& a,
         if (ci < 0 || ci >= static_cast<int>(sketch.curves().size())) return out.fail("Which 3D curve? Name it, or select it");
         SketchCurve& c = sketch.curves()[static_cast<std::size_t>(ci)];
         if (!c.spatial()) return out.fail(c.name + " is a flat curve: PATH3D edits 3D curves (PATH3D x,y,z x,y,z ... makes one)");
+        if (c.kind == CurveKind::Nurbs) return out.fail(c.name + " is a CV curve: CVCURVE edits it (CVCURVE SET, MOVE, INSERT, REBUILD, INFO)");
         if (sub == "info") {
             describePath(c, out);
             return out;

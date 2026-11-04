@@ -54,7 +54,7 @@ struct DatumPoint {
     Vec3 at;
 };
 
-enum class CurveKind { Point, Line, Polyline, Rectangle, Circle, Arc, Spline, Ellipse, Slot };
+enum class CurveKind { Point, Line, Polyline, Rectangle, Circle, Arc, Spline, Ellipse, Slot, Nurbs };
 
 // One sketch entity, stored in its plane's 2D coordinates (mm).
 //   Point:     pts[0]
@@ -70,6 +70,9 @@ enum class CurveKind { Point, Line, Polyline, Rectangle, Circle, Arc, Spline, El
 //              an elliptical arc has its start pts[2] and end pts[3] on it too (counter-
 //              clockwise from start to end; see ellipseParam)
 //   Slot:      the centres of its round ends pts[0], pts[1], radius (half its width)
+//   Nurbs:     a B-spline by its control vertices (CVCURVE), always in space: CV i is
+//              point3(i). The curve passes through the first and last CV only; `degree`
+//              and `knots` (clamped, cv count + degree + 1; empty: uniform) shape it.
 struct SketchCurve {
     CurveKind kind = CurveKind::Line;
     SketchPlane plane = SketchPlane::Top;
@@ -87,6 +90,9 @@ struct SketchCurve {
     // constraints.
     std::vector<float> rise;
     bool spatial() const noexcept { return !rise.empty(); }
+    // Nurbs: the degree and the knot vector (see above).
+    int degree = 3;
+    std::vector<double> knots;
     // Point i in space (on the plane for a flat curve).
     Vec3 point3(std::size_t i) const;
 

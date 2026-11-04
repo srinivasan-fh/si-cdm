@@ -441,3 +441,17 @@ TEST_CASE("MCP sculpt records into layers and dials them") {
     CHECK(!tool(s, "sculpt", R"({"operation":"layer_bake","body":"Head"})")["isError"].asBool());
     CHECK(d.scene.bodies()[0].mesh.layers.empty());
 }
+
+TEST_CASE("MCP cv_curve tool makes, edits and matches CV curves") {
+    Document d;
+    McpServer s(d, nullptr);
+    CHECK(!tool(s, "cv_curve", R"({"operation":"create","points":[[0,0,0],[30,20,0],[60,20,0],[90,0,0]],"name":"A"})")["isError"].asBool());
+    CHECK(!tool(s, "cv_curve", R"({"operation":"create","points":[[95,5,0],[120,-10,0],[150,-10,0],[180,0,0]],"name":"B"})")["isError"].asBool());
+    CHECK(!tool(s, "cv_curve", R"({"operation":"match","curve":"B","end":"START","other":"A","other_end":"END","continuity":"G2"})")["isError"].asBool());
+    const Json r = tool(s, "cv_curve", R"({"operation":"continuity","curve":"B","end":"START","other":"A","other_end":"END"})");
+    CHECK(!r["isError"].asBool());
+    CHECK(r["content"][0]["text"].asString().find("G2") != std::string::npos);
+    CHECK(!tool(s, "cv_curve", R"({"operation":"insert","curve":"A","t":0.5})")["isError"].asBool());
+    CHECK(tool(s, "cv_curve", R"({"operation":"insert","curve":"A"})")["isError"].asBool()); // no t
+    CHECK(tool(s, "cv_curve", R"({"operation":"bogus"})")["isError"].asBool());
+}

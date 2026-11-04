@@ -2427,6 +2427,11 @@ void Application::frame(float dt) {
             const SketchCurve& c = curves[static_cast<std::size_t>(sel)];
             bool closed = false;
             const std::vector<Vec3> pts = spacePoints(c, &closed);
+            if (c.kind == CurveKind::Nurbs) // a CV curve: its hull, CV to CV, dashed-looking thin line
+                for (std::size_t k = 1; k < pts.size(); ++k) {
+                    const auto a = projectToScreen(camera(), pts[k - 1], io.DisplaySize), b = projectToScreen(camera(), pts[k], io.DisplaySize);
+                    if (a && b) fg->AddLine({a->x, a->y}, {b->x, b->y}, IM_COL32(120, 200, 255, 140), 1.0f);
+                }
             for (std::size_t k = 0; k < pts.size(); ++k) {
                 const auto sp = projectToScreen(camera(), pts[k], io.DisplaySize);
                 if (!sp) continue;

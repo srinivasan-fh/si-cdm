@@ -87,7 +87,8 @@ std::vector<Seg> segmentsOf(const SketchCurve& c, bool* closed) {
             if (std::hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) > 1e-9f) out.push_back(lineSeg(toP(pts[i - 1]), toP(pts[i])));
     };
     switch (c.kind) {
-    case CurveKind::Point: break;
+    case CurveKind::Point:
+    case CurveKind::Nurbs: break; // in space: not trimmed on a sketch plane
     case CurveKind::Line:
     case CurveKind::Polyline:
         poly(c.pts);
@@ -403,6 +404,7 @@ bool offsetCurve(const SketchCurve& c, float distanceF, Vec2 sideV, SketchCurve&
     auto shrinkOrGrow = [&](double r, bool inside) -> double { return inside ? r - d : r + d; };
     switch (c.kind) {
     case CurveKind::Point: return fail(why, "A point has no offset");
+    case CurveKind::Nurbs: return fail(why, "A CV curve is in space: it has no offset on a sketch plane");
     case CurveKind::Circle:
     case CurveKind::Arc: {
         const P centre = toP(c.pts[0]);

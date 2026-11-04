@@ -425,6 +425,10 @@ The *Design* menu (or the command line) adds part features to sketches and solid
 - **3D sketches and routes:** paths through points in space, bent at a radius or smooth, and
   pipes (EN 10255, ASME B36.10M), tubes, bars, cables and hoses along them as exact solids,
   with the bend table and the length to cut (`PATH3D ... BEND 60`, `ROUTE "3D Polyline 1" PIPE DN25`).
+- **Class-A CV curves:** B-splines by their control vertices (degree 1-7), knots inserted,
+  rebuilt or fitted, and their ends matched to other curves with G0, G1, G2 or G3 continuity
+  (`CVCURVE MATCH Tail START TO Shoulder END G2`). They are the first step of the
+  [car design plan](docs/car-design.md), from the package to the clay mill.
 - **Section view:** cut the model open in the 3D window with a plane, the cuts filled and
   hatched, and drag the plane through it (`SECTION Y AT 0`, or *View → Section View...*). It
   also gives each part's section area.

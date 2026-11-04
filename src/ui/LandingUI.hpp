@@ -109,6 +109,8 @@ struct UiState {
     // The 3D Path window: points for a new 3D path (clicks on the model add them while
     // pathPick is on), and a route along the selected path.
     bool showPath3d = false, pathPick = false, pathSpline = false, pathClosed = false;
+    bool pathCv = false; // the points are a CV curve's control vertices (CVCURVE)
+    int pathDegree = 3, cvRebuildDegree = 3, cvRebuildSpans = 4;
     std::vector<Vec3> pathPoints;
     float pathBend = 0.0f;
     bool renderStart = false, renderCancel = false, renderRunning = false;

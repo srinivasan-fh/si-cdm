@@ -73,6 +73,8 @@ add_library(sicdm_core STATIC
     src/core/Weldment.cpp
     src/core/Route.cpp
     src/core/RouteCommand.cpp
+    src/core/CvCurve.cpp
+    src/core/CvCurveCommand.cpp
     src/core/Mold.cpp
     src/core/Fastener.cpp
     src/core/FastenerCommand.cpp

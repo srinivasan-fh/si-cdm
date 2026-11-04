@@ -25,6 +25,7 @@ add_executable(sicdm_tests
     test_recovery.cpp
     test_camverify.cpp
     test_iges.cpp
+    test_cvcurve.cpp
     test_drawing.cpp
     test_assembly.cpp
     test_performance.cpp

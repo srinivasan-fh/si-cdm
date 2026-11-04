@@ -29,6 +29,7 @@
 #include "core/SectionView.hpp"
 #include "core/WeldmentCommand.hpp"
 #include "core/RouteCommand.hpp"
+#include "core/CvCurveCommand.hpp"
 #include "core/FastenerCommand.hpp"
 #include "core/ArmatureCommand.hpp"
 #include "core/Gizmo.hpp"
@@ -787,7 +788,7 @@ bool sketchCommand(const std::string& cmd) {
     static const char* const kSketch[] = {"LINE",     "PLINE",        "RECT",   "CIRCLE", "POINT",     "ARC",        "SPLINE",   "CONIC", "SKETCHTEXT", "AIRFOIL",
                                           "ELLIPSE",  "SKETCHSLOT",   "POLYGON", "TRIM",  "EXTEND",    "OFFSET",     "CONSTRUCTION",
                                           "CONSTRAIN", "DIM",         "CONSTRAINT", "DRAG",  "ERASE",     "SKETCHFILLET", "SKETCHCHAMFER",
-                                          "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT", "PATH3D", "DUPLICATE", "PASTE", "CUT"};
+                                          "SKETCHMIRROR", "SKETCHPATTERN", "PROJECT", "PATH3D", "CVCURVE", "DUPLICATE", "PASTE", "CUT"};
     for (const char* k : kSketch)
         if (cmd == k) return true;
     return false;
@@ -894,7 +895,7 @@ bool historyCommand(const std::string& cmd) {
                                          "CONSTRAINT", "MATE",  "ASSEMBLY", "ARC",     "SPLINE",   "ELLIPSE",   "SKETCHSLOT", "POLYGON",
                                          "CONSTRUCTION", "EXTEND", "OFFSET", "DRAG", "SKETCHFILLET", "SKETCHCHAMFER", "SKETCHMIRROR",
                                          "SKETCHPATTERN", "PROJECT", "DRAFT", "THREAD", "REFAXIS", "REFPOINT", "SPLIT", "SHEETMETAL", "FEA", "DOME", "RIB", "EMBOSS", "ENGRAVE", "SURFACE", "THICKEN", "KNIT", "ANALYZE",
-                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "PASTE", "CUT", "RENAME", "HIDE", "SHOW", "ISOLATE"};
+                                         "PAINT", "POLYGROUP", "LAYER", "MULTIRES", "RETOPO", "UV", "MATERIAL", "PROPERTY", "COMPONENT", "FACE", "WELDMENT", "PATH3D", "CVCURVE", "ROUTE", "MOLD", "FASTENER", "ARMATURE", "INSERTMESH", "CURVE", "DUPLICATE", "PASTE", "CUT", "RENAME", "HIDE", "SHOW", "ISOLATE"};
     for (const char* k : kModel)
         if (cmd == k) return true;
     return false;
@@ -974,6 +975,7 @@ void recordHistory(Document& doc, std::string_view line, const CommandOutput& ou
     if (cmd == "SHEETMETAL" && !pc.args.empty() && (iequal(pc.args[0], "edges") || iequal(pc.args[0], "info"))) return;
     if (cmd == "WELDMENT" && !pc.args.empty() && (iequal(pc.args[0], "list") || iequal(pc.args[0], "cutlist") || iequal(pc.args[0], "profiles"))) return; // only looks
     if (cmd == "PATH3D" && !pc.args.empty() && iequal(pc.args[0], "info")) return;
+    if (cmd == "CVCURVE" && !pc.args.empty() && (iequal(pc.args[0], "info") || iequal(pc.args[0], "continuity"))) return; // only looks
     if (cmd == "ROUTE" && !pc.args.empty() && (iequal(pc.args[0], "list") || iequal(pc.args[0], "bends") || iequal(pc.args[0], "sizes"))) return;
     if (cmd == "FASTENER" && (pc.args.empty() || iequal(pc.args[0], "list") || iequal(pc.args[0], "sizes"))) return; // only looks
     if (cmd == "ARMATURE" && (pc.args.empty() || iequal(pc.args[0], "list") || (pc.args.size() == 1 && !iequal(pc.args[0], "new")) ||
@@ -3132,6 +3134,7 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     if (cmd == "SECTION") return runSectionCommand(doc, a, pc.quoted);
     if (cmd == "WELDMENT") return runWeldmentCommand(doc, a, pc.quoted);
     if (cmd == "PATH3D") return runPath3dCommand(doc, a, pc.quoted);
+    if (cmd == "CVCURVE") return runCvCurveCommand(doc, a, pc.quoted);
     if (cmd == "ROUTE") return runRouteCommand(doc, a, pc.quoted);
     if (cmd == "MOLD") return runMoldCommand(doc, a, pc.quoted);
     if (cmd == "FASTENER") return runFastenerCommand(doc, a, pc.quoted);

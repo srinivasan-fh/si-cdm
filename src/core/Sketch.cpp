@@ -1,4 +1,6 @@
 #include "core/Sketch.hpp"
+
+#include "core/CvCurve.hpp"
 #include "core/Units.hpp"
 
 #include <algorithm>
@@ -63,6 +65,7 @@ const char* curveKindName(CurveKind k) noexcept {
     case CurveKind::Spline: return "Spline";
     case CurveKind::Ellipse: return "Ellipse";
     case CurveKind::Slot: return "Slot";
+    case CurveKind::Nurbs: return "CV curve";
     }
     return "";
 }
@@ -161,6 +164,7 @@ std::vector<Vec3> spacePoints(const SketchCurve& c, bool* closed) {
     for (std::size_t i = 0; i < c.pts.size(); ++i) p.push_back(c.point3(i));
     bool cl = false;
     if (c.kind == CurveKind::Spline) cl = c.closed && p.size() >= 3;
+    else if (c.kind == CurveKind::Nurbs) cl = false; // its CVs, open
     else if (p.size() > 3 && length(p.front() - p.back()) < 1e-6f) cl = true, p.pop_back();
     if (closed) *closed = cl;
     return p;
@@ -172,6 +176,19 @@ std::vector<Vec3> spaceStrip(const SketchCurve& c, float chord) {
     std::vector<Vec3> out;
     const std::size_t n = p.size();
     if (n < 2) return p;
+    if (c.kind == CurveKind::Nurbs) { // the B-spline, each span cut finely enough for the chord
+        const BSplineCurve b = cvCurveSpline(c);
+        out.push_back(p.front());
+        for (std::size_t k = static_cast<std::size_t>(b.degree); k + static_cast<std::size_t>(b.degree) + 1 < b.knots.size(); ++k) {
+            const double t0 = b.knots[k], t1 = b.knots[k + 1];
+            if (t1 <= t0) continue;
+            const float len = length(b.eval(t1).f() - b.eval(t0).f()) + length(b.eval(0.5 * (t0 + t1)).f() - b.eval(t0).f());
+            const int steps = std::clamp(static_cast<int>(std::ceil(len / std::max(std::sqrt(8.0f * std::max(chord, 1e-3f) * std::max(len, 1e-3f)), 1e-3f) * 2.0f)), 8, 128);
+            for (int i = 1; i <= steps; ++i) out.push_back(b.eval(t0 + (t1 - t0) * i / steps).f());
+        }
+        out.back() = p.back();
+        return out;
+    }
     if (c.kind == CurveKind::Spline) {
         const std::size_t spans = closed ? n : n - 1;
         out.push_back(p[0]);
@@ -359,6 +376,11 @@ std::vector<Vec2> SketchCurve::planeStrip(float chord) const {
             out.push_back(out.front());
         }
         break;
+    case CurveKind::Nurbs: { // seen on its plane
+        const PlaneFrame f = curveFrame(*this);
+        for (const Vec3& q : spaceStrip(*this, chord)) out.push_back(f.toPlane(q));
+        break;
+    }
     }
     return out;
 }
@@ -370,7 +392,7 @@ std::vector<Vec3> SketchCurve::worldStrip(int circleSegments) const {
         AABB box;
         for (std::size_t i = 0; i < pts.size(); ++i) box.expand(point3(i));
         const float size = std::max({radius, box.valid() ? 0.5f * length(box.max - box.min) : 0.0f, 1e-3f});
-        return spaceStrip(*this, (kind == CurveKind::Spline ? size : std::max(radius, 1e-3f)) * (1.0f - std::cos(kPi / static_cast<float>(std::max(circleSegments, 3)))));
+        return spaceStrip(*this, (kind == CurveKind::Spline || kind == CurveKind::Nurbs ? size : std::max(radius, 1e-3f)) * (1.0f - std::cos(kPi / static_cast<float>(std::max(circleSegments, 3)))));
     }
     switch (kind) {
     case CurveKind::Point:
@@ -492,6 +514,11 @@ std::string SketchCurve::measure() const {
     case CurveKind::Slot:
         if (pts.size() >= 2) return lengthsText({len(pts[0], pts[1]) + 2.0 * radius, 2.0 * radius}, " x ");
         break;
+    case CurveKind::Nurbs: {
+        const BSplineCurve b = cvCurveSpline(*this);
+        return "L " + lengthText(curveLength(b)) + " (" + std::to_string(pts.size()) + " CVs, degree " + std::to_string(b.degree) + ", " +
+               std::to_string(static_cast<int>(pts.size()) - b.degree) + " spans)";
+    }
     }
     return "";
 }

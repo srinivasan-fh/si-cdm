@@ -21,7 +21,7 @@ namespace {
 
 // The corners a member line runs through: a 3D polyline's own points (not its bends).
 std::vector<Vec3> straightPath(const SketchCurve& c) {
-    if (!c.spatial()) return c.worldStrip();
+    if (!c.spatial() || c.kind == CurveKind::Nurbs) return c.worldStrip(); // a CV curve: along it, not its CVs
     bool closed = false;
     std::vector<Vec3> p = spacePoints(c, &closed);
     if (closed && !p.empty()) p.push_back(p.front());

@@ -127,6 +127,7 @@ const char* curveKindKey(CurveKind k) {
     case CurveKind::Spline: return "spline";
     case CurveKind::Ellipse: return "ellipse";
     case CurveKind::Slot: return "slot";
+    case CurveKind::Nurbs: return "cv curve";
     }
     return "line";
 }
@@ -905,6 +906,28 @@ Json McpServer::toolDefinitions() {
                             c.set("material", prop("string", "route / edit: steel (default for pipe, tube, rod), plastic (cable, hose), copper, stainless..."));
                             c.set("name", prop("string", "route: the new body's name; bends / update / edit: the route"));
                             c.set("path", prop("string", "bends: also write the table to this .csv file"));
+                            return c;
+                        }(),
+                        {"operation"}));
+        tools.push(tool("cv_curve",
+                        "Class-A curves by control vertices (degree 1-7, clamped B-splines): make one from CVs or fit one through points or "
+                        "another sketch curve, move a CV, insert a knot (same shape), rebuild to a degree and span count, and match an end to "
+                        "another curve with G0 (position), G1 (tangent), G2 (curvature) or G3 (curvature rate) continuity, or measure it.",
+                        [&] {
+                            Json c = Json::object();
+                            c.set("operation", prop("string", "create | fit | from | set | move | insert | rebuild | match | continuity | info"));
+                            c.set("points", prop("array", "create: the CVs [[x,y,z], ...]; fit: points to fit"));
+                            c.set("degree", prop("number", "create / fit / from / rebuild: 1 to 7 (default 3)"));
+                            c.set("spans", prop("number", "fit / from / rebuild: the number of spans"));
+                            c.set("name", prop("string", "create / fit / from: the new curve's name"));
+                            c.set("curve", prop("string", "the CV curve (from: any sketch curve)"));
+                            c.set("index", prop("number", "set / move: the CV's number (1-based)"));
+                            c.set("point", prop("array", "set: [x, y, z]; move: the offset"));
+                            c.set("t", prop("number", "insert: where, 0..1 along the parameter"));
+                            c.set("end", prop("string", "match / continuity: START or END of the curve"));
+                            c.set("other", prop("string", "match / continuity: the other curve"));
+                            c.set("other_end", prop("string", "match / continuity: START or END of the other curve"));
+                            c.set("continuity", prop("string", "match: G0, G1, G2 (default) or G3"));
                             return c;
                         }(),
                         {"operation"}));
@@ -1764,6 +1787,50 @@ Json McpServer::callTool(const std::string& name, const Json& a) {
             return runLine(line);
         }
         return textResult("fastener operations: list, sizes, place, into", true);
+    }
+    if (name == "cv_curve") {
+        const std::string op = a["operation"].asString();
+        const auto vec = [&](const Json& v) {
+            std::string t;
+            for (std::size_t i = 0; i < 3; ++i) t += (i ? "," : "") + num(v.isArray() && i < v.size() ? v[i].asNumber() : 0.0);
+            return t;
+        };
+        const std::string curve = a["curve"].isString() ? " " + quote(a["curve"].asString()) : std::string();
+        std::string opts;
+        if (a["degree"].isNumber()) opts += " DEGREE " + num(a["degree"].asNumber());
+        if (a["spans"].isNumber()) opts += " SPANS " + num(a["spans"].asNumber());
+        const std::string named = a["name"].isString() ? " NAME " + quote(a["name"].asString()) : std::string();
+        if (op == "create" || op == "fit") {
+            if (!a["points"].isArray() || a["points"].size() < 2) return textResult(op + " needs 'points' (two or more [x,y,z])", true);
+            std::string line = op == "fit" ? "CVCURVE FIT" : "CVCURVE";
+            for (std::size_t i = 0; i < a["points"].size(); ++i) line += " " + vec(a["points"][i]);
+            return runLine(line + opts + named);
+        }
+        if (op == "from") {
+            if (curve.empty()) return textResult("from needs 'curve'", true);
+            return runLine("CVCURVE FROM" + curve + opts + named);
+        }
+        if (op == "set" || op == "move") {
+            if (curve.empty() || !a["index"].isNumber() || !a["point"].isArray()) return textResult(op + " needs 'curve', 'index' and 'point'", true);
+            return runLine(std::string("CVCURVE ") + (op == "set" ? "SET" : "MOVE") + curve + " " + num(a["index"].asNumber()) + " " + vec(a["point"]));
+        }
+        if (op == "insert") {
+            if (curve.empty() || !a["t"].isNumber()) return textResult("insert needs 'curve' and 't'", true);
+            return runLine("CVCURVE INSERT" + curve + " " + num(a["t"].asNumber()));
+        }
+        if (op == "rebuild") {
+            if (curve.empty()) return textResult("rebuild needs 'curve'", true);
+            return runLine("CVCURVE REBUILD" + curve + opts);
+        }
+        if (op == "match" || op == "continuity") {
+            if (curve.empty() || !a["other"].isString()) return textResult(op + " needs 'curve', 'other', 'end' and 'other_end'", true);
+            const std::string e = a["end"].asString("START"), oe = a["other_end"].asString("END");
+            std::string line = std::string("CVCURVE ") + (op == "match" ? "MATCH" : "CONTINUITY") + curve + " " + e + (op == "match" ? " TO " : " ") + quote(a["other"].asString()) + " " + oe;
+            if (op == "match" && a["continuity"].isString()) line += " " + a["continuity"].asString();
+            return runLine(line);
+        }
+        if (op == "info") return runLine("CVCURVE INFO" + curve);
+        return textResult("cv_curve operations: create, fit, from, set, move, insert, rebuild, match, continuity, info", true);
     }
     if (name == "route") {
         const std::string op = a["operation"].asString();

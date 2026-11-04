@@ -889,6 +889,47 @@ LINE -25,25 15,5
 RIB THICKNESS 4                                            a 40 x 20 gusset in the corner
 ```
 
+## CV curves (Class-A)
+
+A CV curve is a B-spline shaped by its control vertices, the way a stylist draws a car's
+character lines: the curve starts at the first CV and ends at the last, and each CV in between
+pulls it like a magnet. Degree 1 to 7; a curve has as many spans as CVs minus its degree.
+
+```text
+CVCURVE 0,0,0 60,80,0 160,90,30 260,40,0 320,0,0 NAME Shoulder    by its CVs (degree 3)
+CVCURVE FIT x,y,z x,y,z ... [DEGREE d] [SPANS n]                    least squares through points
+CVCURVE FROM "Spline 1" [DEGREE d] [SPANS n]                        any sketch curve as a CV curve
+CVCURVE SET Shoulder 3 150,100,30      MOVE Shoulder 3 0,0,10       a CV to a point, or by an offset
+CVCURVE INSERT Shoulder 0.5                                         a knot: the same shape, one more CV
+CVCURVE REBUILD Shoulder DEGREE 5 SPANS 2                           refitted (it says how far it moved)
+CVCURVE MATCH Tail START TO Shoulder END G2                         join smoothly
+CVCURVE CONTINUITY Tail START Shoulder END                          measure a join
+CVCURVE INFO Shoulder                                               degree, spans, length, tightest radius, CVs
+```
+
+`MATCH` moves only the CVs next to the end, one more for each level, so the rest of the curve
+keeps its shape:
+
+| Level | Meets the other curve with | Moves | Needs |
+| --- | --- | --- | --- |
+| G0 | the same point (gap under 0.001 mm) | the end CV | 2 CVs |
+| G1 | the same tangent (within 0.05 degrees) | and the next | degree 1, 3 CVs |
+| G2 | the same curvature (within 0.5 %) | and one more | degree 2, 4 CVs |
+| G3 | the same rate of change of curvature (within 2 %) | and one more | degree 3, 5 CVs |
+
+The curve keeps its own speed at the join, so a match never kinks the far side. The other curve
+can be any sketch curve: a CV curve is used exactly, anything else through a fine fitted copy
+(its tangent and curvature come out within a fraction of a percent).
+
+CV curves are 3D sketch curves: surfaces loft, fill and network through them (`SURFACE LOFT
+Shoulder Tail`), they are saved with the project (degree and knots too) and undo takes edits back.
+Selected, the 3D view draws the hull from CV to CV with the CVs numbered. In *Design → 3D Path
+and Route...* tick *Control vertices (CV curve)* to make one from the points in the list; with a
+CV curve selected the same window rebuilds it, inserts a knot or lists its CVs. Over MCP the
+`cv_curve` tool does the same.
+
+![A CV curve with its hull and numbered CVs, and a second one matched to its end at G2](cv-curves.png)
+
 ## Surfaces
 
 Surfaces are open bodies with no thickness. Each one lies on an exact B-spline surface,

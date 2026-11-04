@@ -66,6 +66,7 @@ int paramCount(const SketchCurve& c) {
     case CurveKind::Arc: return 5;
     case CurveKind::Ellipse: return 5;
     case CurveKind::Slot: return 5;
+    case CurveKind::Nurbs: return 0; // in space: takes no constraints
     }
     return 0;
 }
@@ -180,6 +181,7 @@ public:
             if (k != 0 && k != 1) return false;
             *out = {v(r, 2 * k), v(r, 2 * k + 1)};
             return true;
+        case CurveKind::Nurbs: return false;
         }
         return false;
     }
