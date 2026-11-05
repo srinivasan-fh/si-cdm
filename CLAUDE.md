@@ -9,7 +9,7 @@
 - Claude is credited as co-author with this trailer, the last lines of every commit message:
 
   ```
-  Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+  Co-Authored-By: Claude <noreply@anthropic.com>
   Claude-Session: <the session link>
   ```
 - Push the work branch, then fast-forward `main` when it is an ancestor
