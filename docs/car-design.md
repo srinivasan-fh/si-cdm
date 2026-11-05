@@ -33,6 +33,23 @@ their edges, there is no interior, and the lamps are simple forms. Those come wi
 (surface matching A3, rail surfaces A4, surface fillets A5, evaluation A6, panels B5, lamps B6,
 car paint B9).
 
+## A sample: a full-size luxury SUV
+
+`RUN docs/examples/suv.txt` (written by `tools/suv.py`) builds a full-size luxury SUV to its
+overall sizes: 5052 mm long, 2047 wide, 1870 high, a 2997 wheelbase, 230 ground clearance and
+285/45 R22 tyres. It shows the same tools giving a very different form:
+
+- An upright body with near-vertical sides, a tall blunt nose and a long flat clamshell bonnet
+  whose shut lines run along the fender tops; door shut lines and sills.
+- A dark glasshouse set in from the shoulders with a flat roof, so the roof seems to float.
+- A dark grille between slim headlamps, tail lamps with a dark band across the tailgate, side
+  vents, mirrors on arms, and ten-spoke wheels that fill the arches.
+
+A test builds it and checks those sizes, that the parts are closed solids, that the tyres stand on
+the ground and that the nose points +X.
+
+![The SUV sample: a path-traced three-quarter view and side view](suv.png)
+
 ## A. Class-A curves and surfaces
 
 | # | Step | Status | Where |
