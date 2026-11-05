@@ -262,6 +262,13 @@ TEST_CASE("RENAME: the body and everything that refers to it, undone, replayed, 
     // The same name again (or with spaces round it) is fine and changes nothing.
     CHECK(run(d, "RENAME \"Side plate\" TO \" Side plate \"").ok);
     CHECK(d.scene.bodies()[1].name == "Side plate");
+    // A quoted existing name, then the new one (no TO): that body, not the selected one.
+    REQUIRE(run(d, "RENAME \"Block 4\" Lid plate").ok);
+    CHECK(bodyNamed(d, "Lid plate") == 3);
+    CHECK(d.scene.bodies()[1].name == "Side plate");
+    REQUIRE(run(d, "RENAME \"Lid plate\" TO \"Block 4\"").ok);
+    CHECK(!run(d, "RENAME \"Nope\" Lid plate").ok); // a quoted name that isn't there: refused, nothing renamed
+    CHECK(d.scene.bodies()[1].name == "Side plate");
 }
 
 TEST_CASE("MCP modify rename: references follow, a taken name is an error") {
@@ -612,4 +619,27 @@ TEST_CASE("Sketch curves: several selected, deleted, copied, cut, pasted and dup
     CHECK(std::fabs(curves[static_cast<std::size_t>(curveNamed(d, circle + " copy"))].pts[0].x - x) < 1e-4f);
     // Bodies and curves are not mixed.
     CHECK(!run(e, "ERASE \"Block 1\" \"" + line + "\"").ok);
+}
+
+TEST_CASE("Several body names unquoted one after another are each a body (HIDE A B, MATERIAL A B rubber)") {
+    Document d;
+    REQUIRE(run(d, "BOX 10 10 10 @0,0,0").ok);
+    REQUIRE(run(d, "RENAME TyreFL").ok);
+    REQUIRE(run(d, "BOX 10 10 10 @20,0,0").ok);
+    REQUIRE(run(d, "RENAME TyreFR").ok);
+    REQUIRE(run(d, "BOX 10 10 10 @40,0,0").ok);
+    REQUIRE(run(d, "RENAME Rear tyre").ok); // a name with a space
+    REQUIRE(run(d, "HIDE TyreFL Rear tyre").ok);
+    CHECK(!d.scene.bodies()[0].visible);
+    CHECK(d.scene.bodies()[1].visible);
+    CHECK(!d.scene.bodies()[2].visible);
+    REQUIRE(run(d, "SHOW ALL").ok);
+    REQUIRE(run(d, "MATERIAL TyreFL TyreFR rubber").ok);
+    CHECK(d.scene.bodies()[0].material.preset == "rubber");
+    CHECK(d.scene.bodies()[1].material.preset == "rubber");
+    CHECK(d.scene.bodies()[2].material.preset != "rubber");
+    // A word that names nothing still fails, naming the whole run.
+    const auto r = run(d, "HIDE TyreFL Nothing");
+    CHECK(!r.ok);
+    CHECK(r.lines.back().find("TyreFL Nothing") != std::string::npos);
 }

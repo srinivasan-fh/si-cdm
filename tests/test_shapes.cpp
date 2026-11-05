@@ -124,3 +124,32 @@ TEST_CASE("Every primitive is a closed solid (sphere poles, torus seams and disk
     CHECK(executeCommand(c, "FILLET RADIUS 1", nullptr).ok); // refused before: "isn't closed"
     CHECK(openEdgeCount(c.scene.bodies().back().mesh) == 0);
 }
+
+TEST_CASE("The EV sedan sample builds to its sizes: closed body, glasshouse, wheels on the ground") {
+    Document d;
+    const auto r = executeCommand(d, std::string("RUN ") + SICDM_SOURCE_DIR + "/docs/examples/ev-sedan.txt", nullptr);
+    CHECK(r.ok);
+    auto box = [&](const std::string& name, AABB& b) {
+        for (const Body& body : d.scene.bodies())
+            if (body.name == name) {
+                const MeshData m = worldMesh(body);
+                for (const Vertex& v : m.vertices) b.expand(v.position);
+                CHECK(openEdgeCount(m) == 0);
+                CHECK(meshVolume(m) > 0);
+                return true;
+            }
+        return false;
+    };
+    AABB body, glass, front, rear;
+    if (!box("Body", body) || !box("Glasshouse", glass) || !box("TyreFL", front) || !box("TyreRL", rear)) {
+        CHECK(false); // a part is missing
+        return;
+    }
+    CHECK_NEAR(body.max.x - body.min.x, 4720.0f, 1.0f);   // length
+    CHECK_NEAR(body.max.y - body.min.y, 1850.0f, 5.0f);   // width
+    CHECK_NEAR(glass.max.z, 1440.0f, 3.0f);               // height (the roof)
+    CHECK_NEAR(body.min.z, 140.0f, 3.0f);                 // ground clearance
+    CHECK_NEAR(front.min.z, 0.0f, 0.5f);                  // tyres on the ground
+    CHECK_NEAR(front.max.z - front.min.z, 670.0f, 1.0f);  // 235/45 R18
+    CHECK_NEAR(0.5f * (rear.min.x + rear.max.x) - 0.5f * (front.min.x + front.max.x), 2875.0f, 1.0f); // wheelbase
+}

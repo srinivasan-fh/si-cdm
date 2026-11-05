@@ -1288,16 +1288,39 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
     // Names in the arguments a[from, to): each quoted one a name, unquoted words run together into one.
     auto namesFrom = [&](std::size_t from, std::size_t to = static_cast<std::size_t>(-1)) {
         std::vector<std::string> names;
-        std::string run;
+        std::vector<std::string> words; // an unquoted run of words
+        // A run that names no body as a whole may be several names one after another
+        // (HIDE TyreFL TyreFR): split it into the longest body names from the left. When it
+        // can't be split that way it stays one name (and the caller says there is no such body).
+        auto flush = [&] {
+            if (words.empty()) return;
+            std::string whole;
+            for (const std::string& w : words) whole += (whole.empty() ? "" : " ") + w;
+            std::vector<std::string> parts;
+            bool split = findBody(doc, whole) < 0;
+            for (std::size_t i = 0; split && i < words.size();) {
+                std::size_t end = 0;
+                std::string name, best;
+                for (std::size_t j = i; j < words.size(); ++j) {
+                    name += (name.empty() ? "" : " ") + words[j];
+                    if (findBody(doc, name) >= 0) best = name, end = j + 1;
+                }
+                if (best.empty()) split = false;
+                else parts.push_back(best), i = end;
+            }
+            if (split && parts.size() > 1) names.insert(names.end(), parts.begin(), parts.end());
+            else names.push_back(whole);
+            words.clear();
+        };
         for (std::size_t i = from; i < std::min(to, a.size()); ++i) {
             if (quotedArg(i)) {
-                if (!run.empty()) names.push_back(run), run.clear();
+                flush();
                 names.push_back(a[i]);
             } else {
-                run += (run.empty() ? "" : " ") + a[i];
+                words.push_back(a[i]);
             }
         }
-        if (!run.empty()) names.push_back(run);
+        flush();
         return names;
     };
     auto quotedList = [&](const std::vector<int>& list) {
@@ -5725,6 +5748,11 @@ CommandOutput runCommand(Document& doc, std::string_view input, ViewHost* view) 
         if (to < a.size()) {
             from = joinArgs({a.begin(), a.begin() + static_cast<std::ptrdiff_t>(to)});
             now = joinArgs({a.begin() + static_cast<std::ptrdiff_t>(to) + 1, a.end()});
+        } else if (a.size() > 1 && quotedArg(0)) {
+            // RENAME "old" new: a quoted body's name first, then the new name.
+            if (findBody(doc, a[0]) < 0) return out.fail("No body named " + a[0] + "  (RENAME \"old\" new, or RENAME old TO new)");
+            from = a[0];
+            now = joinArgs({a.begin() + 1, a.end()});
         } else {
             now = joinArgs(a);
         }

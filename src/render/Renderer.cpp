@@ -99,6 +99,7 @@ uniform vec3 uInk;        // hidden-line silhouette colour
 uniform float uField;     // 1: the mask is a result (0..1), drawn blue - green - red
 uniform float uMetallic;  // the body's material: 1 a metal (its colour tints what it reflects)
 uniform float uRoughness; // 0 a mirror, 1 matte
+uniform float uTransmission; // 1: clear like glass (drawn last, blended over what is behind)
 out vec4 fragColor;
 // A photo studio around the viewer (it turns with the view, so parts always catch it): a
 // dark floor, a bright ceiling, a big soft box above to the left and a tall strip to the
@@ -213,7 +214,19 @@ void main() {
         float fd = (0.04 + 0.96 * pow(1.0 - ndv, 5.0)) * (1.0 - rough);
         vec3 dielectric = c + env * fd * 0.6;
         c = mix(dielectric, metal, clamp(uMetallic, 0.0, 1.0));
+        float alpha = 1.0;
+        if (uTransmission > 0.01) {
+            // Glass: mostly what it reflects (Fresnel: little face-on, much at grazing angles),
+            // a faint tint of its colour, and what is behind it showing through.
+            float fg = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
+            vec3 glass = mix(own * 0.12, env, clamp(fg * 1.6 + 0.10, 0.0, 1.0)) + vec3(gloss * 2.0);
+            float t = clamp(uTransmission, 0.0, 1.0);
+            c = mix(c, glass, t);
+            alpha = mix(1.0, clamp(0.30 + 0.70 * fg + gloss, 0.0, 1.0), t);
+        }
         c = mix(c, uSel, uHighlight * 0.4);
+        fragColor = vec4(pow(c, vec3(1.0 / 1.1)), alpha);
+        return;
     }
     fragColor = vec4(pow(c, vec3(1.0 / 1.1)), 1.0);
 }
@@ -1005,7 +1018,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
     // polygroups or texture maps) are drawn together: one instanced draw a shape, each copy's
     // placement and colour from a buffer. Large assemblies are mostly such copies.
     auto plain = [&](std::size_t i) {
-        if (!shown[i] || isSelected(i) || !bodies[i].field.empty() || m_streamed[i].vao) return false;
+        if (!shown[i] || isSelected(i) || !bodies[i].field.empty() || m_streamed[i].vao || bodies[i].material.transmission > 0.01f) return false;
         if (s.showPolygroups && gpu(i).groupTex) return false;
         if (gpu(i).mapped)
             for (const auto& t : s.textures)
@@ -1160,6 +1173,7 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
         m_mesh.set("uCamPos", cam.position());
         m_mesh.set("uCamRight", cam.right());
         m_mesh.set("uCamUp", cam.up());
+        m_mesh.set("uTransmission", 0.0f);
         glUniform1i(glGetUniformLocation(m_mesh.program(), "uGroups"), 1); // polygroups on texture unit 1
         glUniform1i(glGetUniformLocation(m_mesh.program(), "uColorTex"), 2); // texture maps on units 2 and 3
         glUniform1i(glGetUniformLocation(m_mesh.program(), "uNormalTex"), 3);
@@ -1178,8 +1192,24 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             }
             m_mesh.set("uInstanced", 0.0f);
         }
+        m_mesh.set("uTransmission", 0.0f);
+        // Glass (transmission) is drawn after everything else, blended, not hiding what is behind it.
+        auto glassy = [&](std::size_t i) { return bodies[i].material.transmission > 0.01f && bodies[i].field.empty() && !hidden; };
+        bool anyGlass = false;
+        for (int pass = 0; pass < 2; ++pass) {
+        if (pass == 1) {
+            if (!anyGlass) break;
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+        }
         for (std::size_t i = 0; i < count; ++i) {
             if (!shown[i] || instanced[i]) continue;
+            if (glassy(i) != (pass == 1)) {
+                anyGlass = anyGlass || glassy(i);
+                continue;
+            }
+            m_mesh.set("uTransmission", pass == 1 ? bodies[i].material.transmission : 0.0f);
             m_mesh.set("uColor", bodies[i].color);
             m_mesh.set("uMetallic", bodies[i].material.metallic);
             m_mesh.set("uRoughness", bodies[i].material.roughness);
@@ -1223,6 +1253,12 @@ void Renderer::render(const Scene& scene, const OrbitCamera& cam, const Viewport
             glBindVertexArray(gpu(i).vao);
             glDrawElements(GL_TRIANGLES, gpu(i).indexCount, GL_UNSIGNED_INT, nullptr);
         }
+        if (pass == 1) {
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+        }
+        }
+        m_mesh.set("uTransmission", 0.0f);
         glDisable(GL_POLYGON_OFFSET_FILL);
         if (sec.on && sec.cap) drawSectionCaps();
     }

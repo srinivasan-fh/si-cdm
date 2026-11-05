@@ -390,7 +390,7 @@ constexpr CommandSpec kCommands[] = {
     {"SELECT", "SEL", "SELECT [name... | ADD name... | REMOVE name... | ALL | ALL CURVES | INVERT | NONE]",
      "Select bodies or sketch curves by name (several: the first is the active one), add to or take from the selection, all visible bodies or curves, the others, or none; alone: what is selected"},
     {"ERASE", "E DEL DELETE", "ERASE [name...]", "Delete the selection (every selected body or sketch curve), or the named items"},
-    {"RENAME", "REN", "RENAME [old] TO new | RENAME new",
+    {"RENAME", "REN", "RENAME [old] TO new | RENAME \"old\" new | RENAME new",
      "Rename a body (the selected one when no old name is given); mates, drawings, CAM, robots, stacks and motions that name it follow"},
     {"HIDE", "", "HIDE [name...]", "Hide the selected bodies (or the named ones); features and exports leave hidden bodies out"},
     {"SHOW", "UNHIDE", "SHOW [name... | ALL]", "Show the named or selected bodies again, or every body"},

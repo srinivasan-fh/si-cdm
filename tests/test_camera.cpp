@@ -153,3 +153,22 @@ TEST_CASE("rolled orbit follows the cursor") {
     CHECK(std::fabs(cam.yaw() - yaw) > 0.1f);
     CHECK_NEAR(cam.pitch(), pitch, 1e-5);
 }
+
+TEST_CASE("levelling or turning the view while a view change glides keeps that change") {
+    // VIEW FRONT then ROLL 0 (as a script does in one frame): the view still ends up Front.
+    OrbitCamera cam;
+    cam.setStandardView(StandardView::Isometric, false);
+    cam.setStandardView(StandardView::Front); // animated: still at Iso
+    cam.resetRoll();
+    int steps = 0;
+    while (cam.update(1.0f / 60.0f) && steps < 1000) ++steps;
+    CHECK_NEAR(cam.forward().y, 1, 1e-4);
+    CHECK_NEAR(cam.up().z, 1, 1e-4);
+    // Turning about Z mid-glide turns from where it is going.
+    cam.setStandardView(StandardView::Isometric, false);
+    cam.setStandardView(StandardView::Front);
+    cam.rotateAroundZ(kPi * 0.5f);
+    steps = 0;
+    while (cam.update(1.0f / 60.0f) && steps < 1000) ++steps;
+    CHECK_NEAR(cam.forward().x, -1, 1e-4);
+}

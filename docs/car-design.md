@@ -7,6 +7,21 @@ built, tested and documented in turn. This page says what is there now and what 
 Status: **done** works and is documented; **planned** is not built yet. The wider plan for
 industrial, Class-A and robot product design is the [design roadmap](design-roadmap.md).
 
+## A sample: a fastback electric sedan
+
+`RUN docs/examples/ev-sedan.txt` builds a fastback EV sedan exterior to its overall sizes:
+4720 mm long, 1850 wide, 1440 high, a 2875 wheelbase, 140 ground clearance and 235/45 R18
+tyres. The body is a solid lofted through closed cross-sections on the side plane, drawn in
+small at the nose and tail so the ends come out round; the glasshouse is a second loft in
+tinted glass; the wheel arches are cut by cylinders; tyres and rims stand on the axles. A test
+builds it and checks every one of those sizes, that the parts are closed solids and that the
+tyres stand on the ground.
+
+![The EV sedan sample from the side and in a path-traced render](ev-sedan.png)
+
+It is a starting form, not a finished design: panel gaps, lamps, mirrors, the interior and
+Class-A surfacing come with the steps below.
+
 ## A. Class-A curves and surfaces
 
 | # | Step | Status | Where |

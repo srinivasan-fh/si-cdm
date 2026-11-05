@@ -173,7 +173,10 @@ void OrbitCamera::setViewFrame(const Vec3& d, const Vec3& rightDir, bool animate
 }
 
 void OrbitCamera::rotateAroundZ(float rad, bool animate) noexcept {
-    Pose to{m_target, m_yaw + rad, m_pitch, m_distance, m_roll};
+    // From where a view change still in flight is going, not from where it has got to.
+    const bool animating = m_animT < 1.0f;
+    const Pose at = animating ? m_to : Pose{m_target, m_yaw, m_pitch, m_distance, m_roll};
+    Pose to{at.target, at.yaw + rad, at.pitch, at.distance, at.roll};
     startTransition(to, animate);
 }
 
@@ -187,7 +190,9 @@ void OrbitCamera::rollView(float rad, bool animate) noexcept {
 }
 
 void OrbitCamera::resetRoll(bool animate) noexcept {
-    Pose to{m_target, m_yaw, m_pitch, m_distance, 0.0f};
+    // Keep a view change still in flight (VIEW FRONT, then ROLL 0): level where it is going.
+    const bool animating = m_animT < 1.0f;
+    Pose to{animating ? m_to.target : m_target, animating ? m_to.yaw : m_yaw, animating ? m_to.pitch : m_pitch, animating ? m_to.distance : m_distance, 0.0f};
     startTransition(to, animate);
 }
 
