@@ -141,7 +141,8 @@ TEST_CASE("The EV sedan sample builds to its sizes: closed body, glasshouse, whe
         return false;
     };
     AABB body, glass, front, rear;
-    if (!box("Body", body) || !box("Glasshouse", glass) || !box("TyreFL", front) || !box("TyreRL", rear)) {
+    AABB rim;
+    if (!box("Body", body) || !box("Glasshouse", glass) || !box("TyreFL", front) || !box("TyreRL", rear) || !box("RimFL", rim)) {
         CHECK(false); // a part is missing
         return;
     }
@@ -151,5 +152,5 @@ TEST_CASE("The EV sedan sample builds to its sizes: closed body, glasshouse, whe
     CHECK_NEAR(body.min.z, 140.0f, 3.0f);                 // ground clearance
     CHECK_NEAR(front.min.z, 0.0f, 0.5f);                  // tyres on the ground
     CHECK_NEAR(front.max.z - front.min.z, 670.0f, 1.0f);  // 235/45 R18
-    CHECK_NEAR(0.5f * (rear.min.x + rear.max.x) - 0.5f * (front.min.x + front.max.x), 2875.0f, 1.0f); // wheelbase
+    CHECK_NEAR(std::fabs(0.5f * (rear.min.x + rear.max.x) - 0.5f * (front.min.x + front.max.x)), 2875.0f, 1.0f); // wheelbase
 }

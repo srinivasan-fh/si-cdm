@@ -1013,10 +1013,17 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
         doc.scene.pushUndo(cmd + " " + src.name);
         if (moveOriginal) { // the body itself flips over
             Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
+            const Body was = b; // what it is besides its shape: material, data, where it belongs
             const std::string keepName = b.name;
-            const Vec3 keepColor = b.color;
-            b = featureBody(keepName, std::move(copies[0]), keepColor);
+            b = featureBody(keepName, std::move(copies[0]), was.color);
             if (!exactWorld.empty()) keepExactGeometry(b, movedSurfaces(copyMoves[0]));
+            b.visible = was.visible;
+            b.component = was.component;
+            b.assembly = was.assembly;
+            b.attachedTo = was.attachedTo;
+            b.physics = was.physics;
+            b.material = was.material;
+            b.properties = was.properties;
             doc.scene.touchBodies();
             doc.dirty = true;
             out.say("Mirrored " + keepName + ": " + closedText(b.mesh));

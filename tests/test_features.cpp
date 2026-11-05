@@ -540,3 +540,21 @@ TEST_CASE("FILLET: edges not rounded stay exact; parts thinner than the ball are
         CHECK(std::fabs(corner - 2 * (std::sqrt(2.0) - 1)) < 0.06);
     }
 }
+
+TEST_CASE("MIRROR MOVE flips a body over and keeps its material, properties and visibility") {
+    Document d;
+    REQUIRE(run(d, "BOX 100 60 40 @0,0,0").ok);
+    const std::string name = d.scene.bodies().back().name;
+    REQUIRE(run(d, "MATERIAL \"" + name + "\" FINISH polished").ok);
+    REQUIRE(run(d, "MATERIAL \"" + name + "\" COLOR #a50d1b").ok);
+    REQUIRE(run(d, "PROPERTY \"" + name + "\" NUMBER P-100").ok);
+    const float rough = d.scene.bodies().back().material.roughness;
+    REQUIRE(run(d, "MIRROR \"" + name + "\" PLANE YZ AT 500,0,0 MOVE").ok);
+    const Body& b = d.scene.bodies().back();
+    CHECK(b.name == name);
+    CHECK_NEAR(b.material.roughness, rough, 1e-6);
+    CHECK(b.properties.count("NUMBER") == 1);
+    AABB box;
+    for (const Vertex& v : worldMesh(b).vertices) box.expand(v.position);
+    CHECK_NEAR(0.5f * (box.min.x + box.max.x), 1000.0f, 0.01f); // flipped across x = 500
+}

@@ -11,16 +11,27 @@ industrial, Class-A and robot product design is the [design roadmap](design-road
 
 `RUN docs/examples/ev-sedan.txt` builds a fastback EV sedan exterior to its overall sizes:
 4720 mm long, 1850 wide, 1440 high, a 2875 wheelbase, 140 ground clearance and 235/45 R18
-tyres. The body is a solid lofted through closed cross-sections on the side plane, drawn in
-small at the nose and tail so the ends come out round; the glasshouse is a second loft in
-tinted glass; the wheel arches are cut by cylinders; tyres and rims stand on the axles. A test
-builds it and checks every one of those sizes, that the parts are closed solids and that the
-tyres stand on the ground.
+tyres. `tools/ev_sedan.py` writes it from tables of the car's lines, so the form is tuned there.
 
-![The EV sedan sample from the side and in a path-traced render](ev-sedan.png)
+- The body is a solid lofted through closed cross-sections: front fender crowns standing above
+  the bonnet, a waist between the axles and haunches over the rear wheels, a shoulder crease,
+  and the nose and tail drawn in small so the ends come out round.
+- The arches, a lower air intake and the door shut lines are cut into it; the glasshouse is a
+  second loft in tinted glass; headlamps (dark glass over a chrome reflector), glowing tail
+  lamps and mirrors on arms sit on it.
+- Each wheel is a revolved tyre with rounded shoulders and a revolved rim with five spoke
+  windows cut in a circular pattern, a brake disc and a caliper behind.
 
-It is a starting form, not a finished design: panel gaps, lamps, mirrors, the interior and
-Class-A surfacing come with the steps below.
+A test builds it and checks every one of those sizes, that the parts are closed solids and that
+the tyres stand on the ground.
+
+![The EV sedan sample: a path-traced three-quarter view and side view](ev-sedan.png)
+
+It is a concept-stage model, well short of a production Class-A surface model of the kind a
+studio builds in Alias: the body is one loft rather than separate panels matched G2 across
+their edges, there is no interior, and the lamps are simple forms. Those come with the steps below
+(surface matching A3, rail surfaces A4, surface fillets A5, evaluation A6, panels B5, lamps B6,
+car paint B9).
 
 ## A. Class-A curves and surfaces
 
