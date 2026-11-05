@@ -184,3 +184,52 @@ TEST_CASE("The SUV sample builds to its sizes: closed body, glasshouse, 22-inch 
     CHECK_NEAR(std::fabs(0.5f * (rear.min.x + rear.max.x) - 0.5f * (front.min.x + front.max.x)), 2997.0f, 1.0f); // wheelbase
     CHECK(body.max.x > front.max.x); // the nose points +X
 }
+
+TEST_CASE("The sports coupe sample builds to its sizes: staggered wheels, the bonnet whole between the fenders") {
+    Document d;
+    const auto r = executeCommand(d, std::string("RUN ") + SICDM_SOURCE_DIR + "/docs/examples/sportscar.txt", nullptr);
+    CHECK(r.ok);
+    auto box = [&](const std::string& name, AABB& b) {
+        for (const Body& body : d.scene.bodies())
+            if (body.name == name) {
+                const MeshData m = worldMesh(body);
+                for (const Vertex& v : m.vertices) b.expand(v.position);
+                CHECK(openEdgeCount(m) == 0);
+                CHECK(meshVolume(m) > 0);
+                return true;
+            }
+        return false;
+    };
+    AABB body, glass, front, rear;
+    if (!box("Body", body) || !box("Glasshouse", glass) || !box("TyreFL", front) || !box("TyreRL", rear)) {
+        CHECK(false); // a part is missing
+        return;
+    }
+    CHECK_NEAR(body.max.x - body.min.x, 4519.0f, 1.0f);   // length
+    CHECK_NEAR(body.max.y - body.min.y, 1852.0f, 5.0f);   // width
+    CHECK_NEAR(glass.max.z, 1298.0f, 3.0f);               // height (the roof)
+    CHECK_NEAR(body.min.z, 110.0f, 3.0f);                 // ground clearance
+    CHECK_NEAR(front.max.z - front.min.z, 696.0f, 1.0f);  // 235/40 R20
+    CHECK_NEAR(rear.max.z - rear.min.z, 716.0f, 1.0f);    // 305/30 R21
+    CHECK(rear.max.y - rear.min.y > front.max.y - front.min.y + 60.0f); // the rears are wider
+    CHECK_NEAR(std::fabs(0.5f * (rear.min.x + rear.max.x) - 0.5f * (front.min.x + front.max.x)), 2450.0f, 1.0f); // wheelbase
+    // The bonnet between the fenders is whole: a ray straight down at the car's centre line,
+    // over the front axle, meets the body above the wheels' tops (the arches didn't cut it).
+    for (const Body& b : d.scene.bodies())
+        if (b.name == "Body") {
+            const MeshData m = worldMesh(b);
+            const float xa = 0.5f * (front.min.x + front.max.x);
+            float best = -1e9f;
+            for (std::size_t i = 0; i + 2 < m.indices.size(); i += 3) {
+                const Vec3 &p0 = m.vertices[m.indices[i]].position, &p1 = m.vertices[m.indices[i + 1]].position, &p2 = m.vertices[m.indices[i + 2]].position;
+                // Barycentric test of the point (xa, 0) in the triangle seen from above.
+                const float den = (p1.y - p2.y) * (p0.x - p2.x) + (p2.x - p1.x) * (p0.y - p2.y);
+                if (std::fabs(den) < 1e-9f) continue;
+                const float u = ((p1.y - p2.y) * (xa - p2.x) + (p2.x - p1.x) * (0 - p2.y)) / den;
+                const float v = ((p2.y - p0.y) * (xa - p2.x) + (p0.x - p2.x) * (0 - p2.y)) / den;
+                if (u < 0 || v < 0 || u + v > 1) continue;
+                best = std::max(best, u * p0.z + v * p1.z + (1 - u - v) * p2.z);
+            }
+            CHECK(best > front.max.z); // the bonnet's top is above the front tyres
+        }
+}

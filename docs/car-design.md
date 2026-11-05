@@ -50,6 +50,25 @@ the ground and that the nose points +X.
 
 ![The SUV sample: a path-traced three-quarter view and side view](suv.png)
 
+## A sample: a rear-engined sports coupe
+
+`RUN docs/examples/sportscar.txt` (written by `tools/sportscar.py`) builds a rear-engined sports
+coupe to its overall sizes: 4519 mm long, 1852 wide, 1298 high, a 2450 wheelbase, 110 ground
+clearance, and staggered wheels: 235/40 R20 at the front, 305/30 R21 at the rear.
+
+- Raised front fenders carry upright oval headlamps, the bonnet low between them.
+- A teardrop glasshouse set well in from the shoulders; its roof runs in one slope down to the
+  engine lid with its grille; wide haunches over the rear wheels; a full-width rear light bar
+  and a diffuser.
+- Five-spoke silver wheels, wider at the rear, with yellow calipers.
+
+The arches are cut from each side only: one cylinder right across the car would cut through the
+bonnet, which sits between the fenders lower than the arches' tops (the first try did exactly
+that). A test builds it and checks the sizes, both tyre sizes, that the rears are wider, and that
+the bonnet over the front axle is whole.
+
+![The sports coupe sample: a path-traced three-quarter view and side view](sportscar.png)
+
 ## A. Class-A curves and surfaces
 
 | # | Step | Status | Where |
