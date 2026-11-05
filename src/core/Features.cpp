@@ -649,7 +649,7 @@ std::optional<MeshData> draftMesh(const MeshData& world, Vec3 pullIn, Vec3 neutr
     return out;
 }
 
-std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& sectionsIn, bool smooth, std::string* error) {
+std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& sectionsIn, bool smooth, std::string* error, bool* cornered) {
     auto fail = [&](const char* why) -> std::optional<MeshData> {
         if (error) *error = why;
         return std::nullopt;
@@ -662,7 +662,57 @@ std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& secti
     }
     std::vector<std::vector<Vec3>> sec;
     Vec3 n0{};
-    for (std::size_t k = 0; k < sectionsIn.size(); ++k) {
+    // Polygons with the same few corners loft corner to corner: each keeps its corners and
+    // every edge gets the same number of samples in each section, so creases run straight
+    // along the loft instead of being cut off and drifting where the arc-length samples fall.
+    const std::size_t m = sectionsIn[0].size();
+    bool corners = m < 64;
+    for (const auto& s : sectionsIn) corners = corners && s.size() == m;
+    if (cornered) *cornered = corners;
+    std::vector<int> count(m); // samples per edge (corner lofts)
+    if (corners) {
+        std::vector<std::vector<Vec3>> poly;
+        for (std::size_t k = 0; k < sectionsIn.size(); ++k) {
+            std::vector<Vec3> s = sectionsIn[k];
+            Vec3 nk{};
+            for (std::size_t i = 0; i < m; ++i) nk += cross(s[i], s[(i + 1) % m]);
+            if (k == 0) n0 = nk;
+            else if (dot(nk, n0) < 0) std::reverse(s.begin(), s.end());
+            if (k > 0) { // the corner that lines up best with the section before comes first
+                const std::vector<Vec3>& prev = poly.back();
+                const Vec3 cp = centroidOf(prev), cs = centroidOf(s);
+                std::size_t best = 0;
+                double bd = 1e300;
+                for (std::size_t sh = 0; sh < m; ++sh) {
+                    double d = 0;
+                    for (std::size_t i = 0; i < m; ++i) {
+                        const Vec3 e = (s[(i + sh) % m] - cs) - (prev[i] - cp);
+                        d += dot(e, e);
+                    }
+                    if (d < bd) bd = d, best = sh;
+                }
+                std::rotate(s.begin(), s.begin() + static_cast<std::ptrdiff_t>(best), s.end());
+            }
+            poly.push_back(std::move(s));
+        }
+        // Samples per edge from its mean share of the perimeter.
+        std::vector<double> share(m, 0.0);
+        for (const auto& s : poly) {
+            double per = 0;
+            for (std::size_t i = 0; i < m; ++i) per += length(s[(i + 1) % m] - s[i]);
+            if (per <= 0) return fail("A section has no length");
+            for (std::size_t i = 0; i < m; ++i) share[i] += length(s[(i + 1) % m] - s[i]) / per / static_cast<double>(poly.size());
+        }
+        for (std::size_t i = 0; i < m; ++i) count[i] = std::max(1, static_cast<int>(std::lround(share[i] * static_cast<double>(n))));
+        for (const auto& s : poly) {
+            std::vector<Vec3> r;
+            for (std::size_t i = 0; i < m; ++i)
+                for (int j = 0; j < count[i]; ++j) r.push_back(s[i] + (s[(i + 1) % m] - s[i]) * (static_cast<float>(j) / static_cast<float>(count[i])));
+            sec.push_back(std::move(r));
+        }
+        n = sec[0].size();
+    }
+    for (std::size_t k = 0; !corners && k < sectionsIn.size(); ++k) {
         std::vector<Vec3> s = resampleLoop(sectionsIn[k], n);
         Vec3 nk{};
         for (std::size_t i = 0; i < s.size(); ++i) nk += cross(s[i], s[(i + 1) % s.size()]);
@@ -716,6 +766,39 @@ std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& secti
             mesh.tri(at(r, j), at(r, j + 1), at(r + 1, j + 1));
             mesh.tri(at(r, j), at(r + 1, j + 1), at(r + 1, j));
         }
+    if (corners) {
+        // Each end is capped from its few corners, and every cap triangle that runs along
+        // the section's edge takes the samples on it in a fan from the triangle's middle:
+        // ear-clipping all the samples would trip over the runs of points in a straight line.
+        std::vector<std::size_t> cornerAt(m);
+        for (std::size_t i = 0, acc = 0; i < m; ++i) cornerAt[i] = acc, acc += static_cast<std::size_t>(count[i]);
+        auto cap = [&](std::size_t r, bool flip) {
+            std::vector<Vec3> cp(m);
+            for (std::size_t i = 0; i < m; ++i) cp[i] = rings[r][cornerAt[i]];
+            const std::vector<std::uint32_t> ct = capTriangles(cp);
+            if (ct.empty()) return false;
+            for (std::size_t q = 0; q + 2 < ct.size(); q += 3) {
+                std::vector<std::uint32_t> loop;
+                for (int e = 0; e < 3; ++e) {
+                    const std::uint32_t x = ct[q + e], y = ct[q + (e + 1) % 3];
+                    loop.push_back(at(r, cornerAt[x]));
+                    if (y == (x + 1) % m)
+                        for (int j = 1; j < count[x]; ++j) loop.push_back(at(r, cornerAt[x] + static_cast<std::size_t>(j)));
+                }
+                auto tri = [&](std::uint32_t a, std::uint32_t b, std::uint32_t c) { flip ? mesh.tri(a, c, b) : mesh.tri(a, b, c); };
+                if (loop.size() == 3) {
+                    tri(loop[0], loop[1], loop[2]);
+                    continue;
+                }
+                const auto mid = static_cast<std::uint32_t>(mesh.p.size());
+                mesh.p.push_back((cp[ct[q]] + cp[ct[q + 1]] + cp[ct[q + 2]]) * (1.0f / 3.0f));
+                for (std::size_t k = 0; k < loop.size(); ++k) tri(mid, loop[k], loop[(k + 1) % loop.size()]);
+            }
+            return true;
+        };
+        if (!cap(0, true) || !cap(rings.size() - 1, false)) return fail("An end section can't be capped (it isn't flat, or it crosses itself)");
+        return mesh.data();
+    }
     const std::vector<std::uint32_t> c0 = capTriangles(rings.front()), c1 = capTriangles(rings.back());
     if (c0.empty() || c1.empty()) return fail("An end section can't be capped (it isn't flat, or it crosses itself)");
     for (std::size_t q = 0; q + 2 < c0.size(); q += 3) mesh.tri(at(0, c0[q]), at(0, c0[q + 2]), at(0, c0[q + 1]));

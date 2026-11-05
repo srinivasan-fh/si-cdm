@@ -131,6 +131,46 @@ TEST_CASE("LOFT joins sections at their offsets, ruled or smooth") {
     CHECK(!run(d, "LOFT \"Circle 1\"").ok);
 }
 
+TEST_CASE("LOFT through polygons with the same corners runs corner to corner: creases kept sharp, ends capped, MIRROR MOVE keeps them") {
+    Document d;
+    REQUIRE(run(d, "PLANE RIGHT").ok);
+    REQUIRE(run(d, "PLINE 0,0 400,0 500,200 300,400 -300,400 -500,200 -400,0 CLOSE").ok);
+    REQUIRE(run(d, "PLINE 0,0 600,0 700,300 400,600 -400,600 -700,300 -600,0 CLOSE").ok);
+    REQUIRE(run(d, "PLINE 0,0 400,0 500,200 300,400 -300,400 -500,200 -400,0 CLOSE").ok);
+    REQUIRE(run(d, "LOFT \"Polyline 1\" AT 0 \"Polyline 2\" AT 1000 \"Polyline 3\" AT 2000 SMOOTH").ok);
+    const Body* l = named(d, "Loft 1");
+    REQUIRE(l != nullptr);
+    CHECK(closed(*l));
+    // The corners stay where they were drawn (arc-length samples would have cut across them).
+    AABB b = l->bounds();
+    CHECK_NEAR(b.max.y, 700.0, 0.01);
+    CHECK_NEAR(b.min.y, -700.0, 0.01);
+    CHECK_NEAR(b.max.z, 600.0, 0.01);
+    // A corner is a crease: the faces either side of it shade apart (two normals at one point).
+    auto creaseAt = [](const Body& body, Vec3 p) {
+        std::vector<Vec3> ns;
+        for (const Vertex& v : worldMesh(body).vertices)
+            if (length(v.position - p) < 0.01f) ns.push_back(v.normal);
+        for (std::size_t i = 0; i < ns.size(); ++i)
+            for (std::size_t j = i + 1; j < ns.size(); ++j)
+                if (dot(ns[i], ns[j]) < 0.95f) return true;
+        return false;
+    };
+    CHECK(creaseAt(*l, {1000, 700, 300}));
+    REQUIRE(run(d, "MIRROR \"Loft 1\" PLANE YZ AT 3000,0,0 MOVE").ok);
+    l = named(d, "Loft 1");
+    REQUIRE(l != nullptr);
+    CHECK(closed(*l));
+    CHECK(creaseAt(*l, {5000, 700, 300})); // reflected, not smoothed again
+    // A long flat-bottomed section (most of its points in near-straight runs) still caps.
+    REQUIRE(run(d, "PLINE 0,-2 700,0 665,10 504,32 315,39 0,40 -315,39 -504,32 -665,10 -700,0 CLOSE").ok);
+    REQUIRE(run(d, "PLINE 0,-2 720,0 684,12 518,36 324,44 0,45 -324,44 -518,36 -684,12 -720,0 CLOSE").ok);
+    REQUIRE(run(d, "LOFT \"Polyline 4\" AT 0 \"Polyline 5\" AT 300 SMOOTH").ok);
+    const Body* g = named(d, "Loft 2");
+    REQUIRE(g != nullptr);
+    CHECK(closed(*g));
+}
+
 TEST_CASE("PATTERN copies a body in rows or round an axis, or joins / cuts the copies") {
     Document d;
     REQUIRE(run(d, "CYLINDER 3 10 @0,0,0").ok);

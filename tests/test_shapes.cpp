@@ -233,3 +233,64 @@ TEST_CASE("The sports coupe sample builds to its sizes: staggered wheels, the bo
             CHECK(best > front.max.z); // the bonnet's top is above the front tyres
         }
 }
+
+TEST_CASE("The body-type samples (tools/cars.py) build to their sizes: closed parts, tyres to size on the ground, nose +X") {
+    struct Car {
+        const char* file;
+        float L, W, H, clearance, wheelbase;
+        int tyreW, aspect, rim, rearW, rearAspect, rearRim; // tyre codes front and rear
+        bool open;  // no roof: H is the height with the hood up, above the windscreen
+    };
+    const Car cars[] = {
+        {"supercar", 4520, 1933, 1165, 115, 2620, 245, 30, 20, 305, 30, 20, false},
+        {"sedan", 4580, 1750, 1490, 165, 2600, 185, 55, 16, 185, 55, 16, false},
+        {"hatchback", 3860, 1735, 1520, 163, 2450, 185, 65, 15, 185, 65, 15, false},
+        {"suv-rugged", 4662, 1917, 1857, 200, 2750, 255, 60, 18, 255, 60, 18, false},
+        {"crossover", 4330, 1790, 1635, 190, 2610, 215, 60, 17, 215, 60, 17, false},
+        {"coupe", 4811, 1916, 1394, 130, 2720, 255, 40, 19, 255, 40, 19, false},
+        {"convertible", 3915, 1735, 1235, 136, 2310, 205, 45, 17, 205, 45, 17, true},
+        {"mpv", 4735, 1830, 1795, 178, 2750, 215, 55, 17, 215, 55, 17, false},
+        {"ev-crossover", 3994, 1811, 1616, 190, 2498, 215, 60, 16, 215, 60, 16, false},
+    };
+    for (const Car& car : cars) {
+        Document d;
+        const auto r = executeCommand(d, std::string("RUN ") + SICDM_SOURCE_DIR + "/docs/examples/" + car.file + ".txt", nullptr);
+        CHECK(r.ok);
+        AABB all, body, front, rear;
+        bool haveBody = false, haveFront = false, haveRear = false;
+        int open = 0;
+        for (const Body& b : d.scene.bodies()) {
+            const MeshData m = worldMesh(b);
+            AABB box;
+            for (const Vertex& v : m.vertices) box.expand(v.position);
+            all.expand(box.min), all.expand(box.max);
+            if (openEdgeCount(m) != 0 || !(meshVolume(m) > 0)) {
+                ++open;
+                std::printf("  %s: %s is not a closed solid\n", car.file, b.name.c_str());
+            }
+            if (b.name == "Body") body = box, haveBody = true;
+            if (b.name == "TyreFL") front = box, haveFront = true;
+            if (b.name == "TyreRL") rear = box, haveRear = true;
+        }
+        if (!haveBody || !haveFront || !haveRear) {
+            std::printf("  %s: a part is missing\n", car.file);
+            CHECK(false);
+            continue;
+        }
+        CHECK(open == 0);
+        CHECK_NEAR(body.max.x - body.min.x, car.L, 1.0f);
+        CHECK_NEAR(body.max.y - body.min.y, car.W, 1.0f);
+        CHECK_NEAR(body.min.z, car.clearance, 1.0f);
+        if (car.open) CHECK(all.max.z < car.H); // the windscreen, below the hood's height
+        else CHECK_NEAR(all.max.z, car.H, 1.0f); // the roof (or its rails)
+        const float df = car.rim * 25.4f + 2.0f * car.tyreW * car.aspect / 100.0f;
+        const float dr = car.rearRim * 25.4f + 2.0f * car.rearW * car.rearAspect / 100.0f;
+        CHECK_NEAR(front.max.z - front.min.z, df, 1.0f);
+        CHECK_NEAR(rear.max.z - rear.min.z, dr, 1.0f);
+        CHECK_NEAR(front.min.z, 0.0f, 0.5f); // on the ground
+        CHECK_NEAR(rear.min.z, 0.0f, 0.5f);
+        CHECK_NEAR(std::fabs(0.5f * (rear.min.x + rear.max.x) - 0.5f * (front.min.x + front.max.x)), car.wheelbase, 1.0f);
+        CHECK(0.5f * (front.min.x + front.max.x) > 0.5f * (rear.min.x + rear.max.x)); // the nose points +X
+        CHECK(all.max.x - all.min.x < car.L + 30.0f); // nothing sticks out far past the body
+    }
+}

@@ -690,10 +690,12 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             names += (names.empty() ? "" : ", ") + c.name;
         }
         std::string why;
-        auto mesh = loftSections(loops, smooth, &why);
+        bool cornered = false;
+        auto mesh = loftSections(loops, smooth, &why, &cornered);
         if (!mesh) return out.fail("Cannot loft: " + why);
         const int serial = ++doc.primitiveSerial;
         Body b = featureBody("Loft " + std::to_string(serial), std::move(*mesh), bodyColor(serial));
+        if (cornered) SculptMesh(b).writeTo(b, true, 12.0f); // polygon corners stay creases
         if (!keep)
             for (const auto& s : sections) hideCurve(doc, s.first);
         doc.scene.pushUndo("LOFT");
@@ -1015,7 +1017,10 @@ CommandOutput runFeatureCommand(Document& doc, const std::string& cmd, const std
             Body& b = doc.scene.bodies()[static_cast<std::size_t>(bi)];
             const Body was = b; // what it is besides its shape: material, data, where it belongs
             const std::string keepName = b.name;
-            b = featureBody(keepName, std::move(copies[0]), was.color);
+            // A reflection changes nothing but which way the mesh faces (mirrorMesh turns its
+            // triangles and normals over): it is taken as it is, not welded and smoothed again,
+            // which could close up a sliver edge or soften a sharp crease.
+            b = meshBody(keepName, std::move(copies[0]), was.color);
             if (!exactWorld.empty()) keepExactGeometry(b, movedSurfaces(copyMoves[0]));
             b.visible = was.visible;
             b.component = was.component;

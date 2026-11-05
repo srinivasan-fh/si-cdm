@@ -85,7 +85,9 @@ std::optional<MeshData> threadGroove(float major, float pitch, float length, boo
 std::optional<MeshData> draftMesh(const MeshData& world, Vec3 pull, Vec3 neutral, float deg, std::string* why = nullptr, int* sides = nullptr);
 
 // A solid through closed planar sections (world points) in order, ruled or smooth.
-std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& sections, bool smooth, std::string* error = nullptr);
+// `cornered` (if given) says the sections were polygons lofted corner to corner: their corners
+// are creases, sharper than the usual 40-degree smoothing keeps.
+std::optional<MeshData> loftSections(const std::vector<std::vector<Vec3>>& sections, bool smooth, std::string* error = nullptr, bool* cornered = nullptr);
 
 // A world mesh mirrored across the plane through `point` with `normal` (winding flipped).
 MeshData mirrorMesh(const MeshData& m, const Vec3& point, const Vec3& normal);

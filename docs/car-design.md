@@ -69,6 +69,62 @@ the bonnet over the front axle is whole.
 
 ![The sports coupe sample: a path-traced three-quarter view and side view](sportscar.png)
 
+## A sample: a mid-engined wedge supercar
+
+`RUN docs/examples/supercar.txt` builds a mid-engined wedge supercar to its overall sizes: 4520 mm
+long, 1933 wide, 1165 high, a 2620 wheelbase, 115 ground clearance, and 245/30 R20 tyres at the
+front, 305/30 R20 at the rear.
+
+- The body's sections are polylines rather than splines. Lofted corner to corner, their corners run
+  the length of the car as sharp creases: a shoulder line, a crease along the sill and a
+  faceted bonnet.
+- A cab-forward glasshouse, itself creased, runs back over the engine.
+- Six-sided wheel arches with a flat top, corner intakes in the nose with slim slanted lamps
+  above them, and big intakes in the sides behind the doors.
+- Louvres over the engine, a wing on two struts, thin tail lamps at the rear corners, a
+  diffuser and two exhausts.
+
+![The supercar sample: a path-traced three-quarter view and side view](supercar.png)
+
+## Every body type from one generator
+
+`tools/cars.py` writes a sample of each common body type from shared machinery in
+`tools/carkit.py`. Each car is generic: drawn to the overall sizes of a typical car of its type,
+with no maker's styling, names or badges. `tools/cars.py all` rewrites every file.
+
+| Sample | Type | Length × width × height, wheelbase, clearance (mm) | Tyres | What marks it out |
+| --- | --- | --- | --- | --- |
+| `supercar.txt` | mid-engined supercar | 4520 × 1933 × 1165, 2620, 115 | 245/30 R20, 305/30 R20 | creased wedge, six-sided arches, wing |
+| `sedan.txt` | sedan (three-box) | 4580 × 1750 × 1490, 2600, 165 | 185/55 R16 | four doors, a separate boot with its lid cut in |
+| `hatchback.txt` | hatchback | 3860 × 1735 × 1520, 2450, 163 | 185/65 R15 | short overhangs, a tall roof to the tail, a tailgate |
+| `suv-rugged.txt` | SUV | 4662 × 1917 × 1857, 2750, 200 | 255/60 R18 | boxy and upright, big grille, arch cladding, rails, steps, skid plate |
+| `crossover.txt` | crossover | 4330 × 1790 × 1635, 2610, 190 | 215/60 R17 | car-like body raised, cladding, rails, split lamps |
+| `coupe.txt` | coupe | 4811 × 1916 × 1394, 2720, 130 | 255/40 R19 | long bonnet, fastback roof, triple tail lamps, twin exhausts |
+| `convertible.txt` | convertible (roadster) | 3915 × 1735 × 1235 (hood up), 2310, 136 | 205/45 R17 | open cockpit: seats, steering wheel, roll hoops, framed windscreen |
+| `mpv.txt` | MPV | 4735 × 1830 × 1795, 2750, 178 | 215/55 R17 | short bonnet, long tall roof, three windows a side, rails |
+| `ev-crossover.txt` | electric crossover | 3994 × 1811 × 1616, 2498, 190 | 215/60 R16 | closed nose with a light bar, tail light bar, charging flap, no exhausts |
+
+![The nine body types, path-traced: supercar, sedan, hatchback, SUV, crossover, coupe, convertible, MPV, electric crossover](body-types.png)
+
+The heights include roof rails where a car has them. A test builds every sample and checks its
+length, width, height, ground clearance, wheelbase and both tyre sizes, each to within 1 mm. It
+also checks that every part is a closed solid, that the tyres stand on the ground and that the
+nose points +X.
+
+How a car is drawn (see `tools/carkit.py`):
+
+- **Its lines.** Tables along the car give the body's top, the bonnet's dip between the fenders,
+  the underbody, the half width and the roof.
+- **Sections.** Closed sections through those lines are lofted into the body and the
+  glasshouse. The section's shape (rounded, upright, sporty or creased) is the car's character
+  across. The stations are spaced evenly, because a smooth loft overshoots and folds its surface
+  where a short span sits between long ones. A small per-car tune (width factor, roof lift,
+  underbody lift) makes up for the splines bulging past their points, so the sizes come out
+  exactly.
+- **Details.** Arches, grilles and shut lines are cut in. Lamps, cladding, rails and mirrors are
+  added. Wheels are revolved from the tyre size code. Everything is mirrored at the end so the
+  nose points +X.
+
 ## A. Class-A curves and surfaces
 
 | # | Step | Status | Where |

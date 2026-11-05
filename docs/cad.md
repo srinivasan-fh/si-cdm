@@ -614,8 +614,14 @@ LOFT makes a solid through two or more closed sections in order.
   different planes.
 - **Matching:** each section is resampled evenly and wound the same way. It starts where it
   best matches the section before it, so the solid doesn't twist.
+- **Corners:** polygons with the same number of corners (fewer than 64) loft corner to
+  corner. Each keeps its corners, and the corners run along the solid as sharp creases. A
+  car's character lines are drawn this way: see the supercar sample in
+  [car design](car-design.md). Points in a straight line count as no corner, so keep the same
+  corners in every section.
 - **Shape:** `RULED` joins the sections with straight lines. `SMOOTH` (the default) runs a
-  Catmull-Rom curve through them.
+  Catmull-Rom curve through them. Space the sections about evenly: next to much longer spans,
+  a short one makes the curve overshoot and fold the surface over.
 - **Ends:** both ends are capped.
 
 ## Pattern
