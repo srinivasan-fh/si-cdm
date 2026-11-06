@@ -86,6 +86,21 @@ front, 305/30 R20 at the rear.
 
 ![The supercar sample: a path-traced three-quarter view and side view](supercar.png)
 
+## A sample: a mid-engined berlinetta
+
+`RUN docs/examples/berlinetta.txt` builds a mid-engined berlinetta to its overall sizes: 4565 mm
+long, 1958 wide, 1187 high, a 2600 wheelbase, 110 ground clearance, and 245/35 R20 tyres at the
+front, 305/35 R20 at the rear. The supercar above is creased; this one is all flowing splines.
+
+- High front fender crowns with the bonnet low between them, and slim headlamps swept back
+  along them.
+- A narrow cabin set well forward and well in from the sides. Behind it the rear haunches
+  stand up either side of a lower engine cover.
+- The waist pinches in ahead of the rear wheels, where big scoops feed the engine.
+- A short cut-off tail with a red lamp bar, a diffuser and two exhausts.
+
+![The berlinetta sample: a path-traced three-quarter view and side view](berlinetta.png)
+
 ## Every body type from one generator
 
 `tools/cars.py` writes a sample of each common body type from shared machinery in
@@ -103,6 +118,7 @@ with no maker's styling, names or badges. `tools/cars.py all` rewrites every fil
 | `convertible.txt` | convertible (roadster) | 3915 × 1735 × 1235 (hood up), 2310, 136 | 205/45 R17 | open cockpit: seats, steering wheel, roll hoops, framed windscreen |
 | `mpv.txt` | MPV | 4735 × 1830 × 1795, 2750, 178 | 215/55 R17 | short bonnet, long tall roof, three windows a side, rails |
 | `ev-crossover.txt` | electric crossover | 3994 × 1811 × 1616, 2498, 190 | 215/60 R16 | closed nose with a light bar, tail light bar, charging flap, no exhausts |
+| `berlinetta.txt` | mid-engined berlinetta | 4565 × 1958 × 1187, 2600, 110 | 245/35 R20, 305/35 R20 | flowing body, forward cabin, rear haunches, side scoops |
 
 ![The nine body types, path-traced: supercar, sedan, hatchback, SUV, crossover, coupe, convertible, MPV, electric crossover](body-types.png)
 

@@ -251,6 +251,7 @@ TEST_CASE("The body-type samples (tools/cars.py) build to their sizes: closed pa
         {"convertible", 3915, 1735, 1235, 136, 2310, 205, 45, 17, 205, 45, 17, true},
         {"mpv", 4735, 1830, 1795, 178, 2750, 215, 55, 17, 215, 55, 17, false},
         {"ev-crossover", 3994, 1811, 1616, 190, 2498, 215, 60, 16, 215, 60, 16, false},
+        {"berlinetta", 4565, 1958, 1187, 110, 2600, 245, 35, 20, 305, 35, 20, false},
     };
     for (const Car& car : cars) {
         Document d;

@@ -17,7 +17,7 @@ from carkit import Car  # noqa: E402
 
 
 # Width factor, roof lift and underbody lift for each car (see Car): measured on the built car.
-TUNE = {"supercar": (1.00041, -0.3, -0.3), "sedan": (0.99818, -6.2, 7.8), "hatchback": (0.99759, -11.6, 7.5), "suv-rugged": (0.99874, -49.0, -4.8), "crossover": (0.99777, -42.9, 8.4), "coupe": (1.00503, -2.8, 11.3), "convertible": (1.00358, 0.0, 9.7), "mpv": (0.99793, -46.5, 7.8), "ev-crossover": (0.99758, -6.6, 8.4)}
+TUNE = {"supercar": (1.00041, -0.3, -0.3), "sedan": (0.99818, -6.2, 7.8), "hatchback": (0.99759, -11.6, 7.5), "suv-rugged": (0.99874, -49.0, -4.8), "crossover": (0.99777, -42.9, 8.4), "coupe": (1.00503, -2.8, 11.3), "convertible": (1.00358, 0.0, 9.7), "mpv": (0.99793, -46.5, 7.8), "ev-crossover": (0.99758, -6.6, 8.4), "berlinetta": (1.00783, -2.9, 10.2)}
 
 
 def supercar():
@@ -362,8 +362,38 @@ def ev():
                 paint="#11807a", spokes=(5, 66, 134), rim="#2a2c30", extras_dark=flares + ["Intake"], arch_extra=38, glass_t=0.2)
 
 
+def berlinetta():
+    """Mid-engined berlinetta: 4565 long, 1958 wide, 1187 high, 2600 wheelbase, 110 ground
+    clearance; 245/35 R20 front, 305/35 R20 rear. Flowing, not creased: high fender crowns with
+    the bonnet low between them, a narrow cabin set well in so the rear haunches stand out as
+    buttresses either side of the engine cover, scooped intakes in the flanks, slim swept-back
+    headlamps, a wide low grille, a short cut-off tail with a lamp bar, diffuser and exhausts."""
+    L = 4565.0
+    c = Car(L, WB=2600.0, FA=1000.0, front="245/35 R20", rear="305/35 R20",
+            top=[(0, 520), (150, 610), (500, 700), (1000, 770), (1500, 790), (2100, 800), (2800, 860), (3600, 965), (4100, 955), (4450, 900), (L, 830)],
+            dip=[(0, 30), (400, 80), (1000, 95), (1500, 40), (1700, 10), (2900, 10), (3400, 90), (3800, 135), (4300, 100), (L, 40)],
+            bot=[(0, 260), (150, 170), (500, 130), (1000, 115), (2400, 110), (3600, 118), (4200, 170), (L, 330)],
+            half=[(0, 640), (150, 820), (500, 940), (1000, 975), (1600, 950), (2300, 915), (2900, 925), (3600, 979), (4200, 960), (4450, 900), (L, 820)],
+            roof=[(1400, 780), (1750, 1000), (2150, 1150), (2450, 1187), (2850, 1165), (3300, 1060), (3700, 975), (3950, 905)],
+            G0=1400.0, G1=3950.0, tune=TUNE["berlinetta"])
+    c.body(stations(c), SPORT, nose=(45, 0.6), tail=(L - 60, 0.82))
+    c.glasshouse(gstations(c), G_SPORT, inset=230, sink=20, taper=(300, 0.5, 500, 0.6))
+    scoops = c.pair("Scoop", "ELLIPSOID 320 80 150 @0,0,0", 2980, c.hw(2980) - 30, 500, "0,0,-10")
+    c.add("Bar", "BOX 30 1500 36 @0,0,0", "MOVE %.1f,0,%.1f $" % (L - 40, c.zt(L - 40) - 70))
+    c.add("Diffuser", "BOX 320 1300 130 @0,0,0", "MOVE %.1f,0,%.1f $" % (L - 160, c.zb(L - 160) - 10))
+    pipes = c.pair("Pipe", "CYLINDER 42 120 @0,0,0", L - 100, 120, 330, "0,90,0", flip_rot=False)
+    c.mat(pipes, "chrome")
+    c.lamp("Bar", "#c8101a", 0.8)
+    return road(c, doors=[1460, 2580], sill=(1460, 2580), bonnet=(200, 1350, 0.62), mirror_x=1560,
+                grille=(1000, 150, 200), head=("ELLIPSOID 170 110 28 @0,0,0", 260, 660, 600, "0,-12,-22"),
+                tail=("ELLIPSOID 30 160 40 @0,0,0", L - 45, 690, 760, "0,0,0"), lid=(3450, 4400, 0.55),
+                paint="#c1121f", spokes=(5, 62, 140), rim="#2a2c30", caliper="#d8b400", glass_t=0.25,
+                extras_dark=scoops + ["Diffuser"], arch_extra=28, mirror_share=0.9)
+
+
 CARS = {"supercar": supercar, "sedan": sedan, "hatchback": hatchback, "suv-rugged": suv, "crossover": crossover,
-        "coupe": coupe, "convertible": convertible, "mpv": mpv, "ev-crossover": ev}
+        "coupe": coupe, "convertible": convertible, "mpv": mpv, "ev-crossover": ev,
+        "berlinetta": berlinetta}
 
 
 if __name__ == "__main__":
